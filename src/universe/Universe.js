@@ -156,8 +156,8 @@ export class Universe {
     return sys;
   }
 
-  _makePlanet(star, r, index, a, zone, mu, forceLife, isMoon = false) {
-    const seed = hashCombine(star.seed, 0x91a7, index, forceLife ? 7 : 0);
+  _makePlanet(star, r, index, a, zone, mu, forceLife, isMoon = false, opts = {}) {
+    const seed = opts.seed ?? hashCombine(star.seed, 0x91a7, index, forceLife ? 7 : 0);
     const pr = new RNG(seed);
     // choose type by zone
     const byZone = {
@@ -167,10 +167,13 @@ export class Universe {
     };
     let type = pr.weighted(byZone[zone]);
     if (forceLife) type = pr.weighted([['terran', 3], ['jungle', 2], ['archipelago', 2], ['savanna', 1.5], ['exotic', 1.2]]);
+    if (opts.type) type = opts.type;
     const T = PLANET_TYPES[type];
     const isGas = type === 'gas';
-    const radius = isGas ? pr.range(2.6e5, 6.5e5) : pr.range(2.8e4, 1.1e5);
-    const gravity = isGas ? pr.range(15, 30) : 9.81 * pr.range(0.45, 1.35);
+    let radius = isGas ? pr.range(2.6e5, 6.5e5) : pr.range(2.8e4, 1.1e5);
+    let gravity = isGas ? pr.range(15, 30) : 9.81 * pr.range(0.45, 1.35);
+    if (opts.radius) radius = opts.radius;
+    if (opts.gravity) gravity = opts.gravity;
     const lifeRoll = pr.next();
     const hasLife = forceLife || (!isGas && lifeRoll < T.life);
     const flora = hasLife ? pr.range(0.45, 1) : 0;
@@ -255,19 +258,17 @@ export class Universe {
     const lushChance = planet.isGas && planet.zone !== 'hot' ? 0.45 : 0.12;
     const lush = r.chance(lushChance);
     const type = lush ? r.pick(['jungle', 'terran', 'exotic', 'archipelago']) : r.pick(['barren', 'arctic', 'volcanic', 'crystal', 'barren']);
-    const moon = this._makePlanet(star, r, 20 + m, a, lush ? 'warm' : 'cold', planet.mu, lush, true);
-    moon.type = type;
+    const radius = r.range(1.2e4, lush ? 4.5e4 : 3e4);
+    const gravity = 9.81 * r.range(0.25, lush ? 0.9 : 0.5);
+    const amp = r.range(0.04, 0.08);
+    const moon = this._makePlanet(star, r, 20 + m, a, lush ? 'warm' : 'cold', planet.mu, lush, true, { type, radius, gravity, seed });
     moon.isGas = false;
     moon.isMoon = true;
     moon.parent = planet.index;
     moon.index = m;
     moon.id = `${planet.id}.${m}`;
     moon.name = moonName(planet.name, m, seed);
-    moon.radius = r.range(1.2e4, lush ? 4.5e4 : 3e4);
-    moon.gravity = 9.81 * r.range(0.25, lush ? 0.9 : 0.5);
-    moon.mu = moon.gravity * moon.radius * moon.radius;
-    moon.terrain.amplitude = moon.radius * r.range(0.04, 0.08);
-    moon.atmosphere.height = moon.radius * 0.12;
+    moon.terrain.amplitude = moon.radius * amp;
     moon.orbit = { a, e: r.range(0, 0.05), i: r.range(-0.15, 0.15), lan: r.range(0, 6.28), argp: r.range(0, 6.28), M0: r.range(0, 6.28), mu: planet.mu, period: orbitalPeriod(a, planet.mu) };
     moon.moons = [];
     moon.rings = null;

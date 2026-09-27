@@ -35,6 +35,25 @@ feature (a city, a vehicle, a creature herd), make it easy to frame: e.g. docume
 `state()`, `render()`. Sim time is frozen until the mode is ready, then advances only via
 `advance()` — screenshots are reproducible.
 
+### Showcase worlds (galaxy 0 — test your track on SEVERAL of these, not just one)
+
+| key | URL fragment (`/?mode=system&galaxy=0&…`) | world |
+|---|---|---|
+| W1 | `star=6&planet=1` | Golden Valley — Bierstadt terran, ocean, villages (civ 3) |
+| W2 | `star=11&planet=0` | Hyrule Echo — BotW archipelago, ruins (civ 4) |
+| W3 | `star=9&planet=2` | Arzach Dunes — Moebius savanna, white spires (civ 3) |
+| W4 | `star=2&planet=0` | Neon Monsoon — Blade Runner ocean world, neon megacity (civ 4) |
+| W5 | `star=1&planet=2` | Dimension C-137 Wilds — Rick & Morty jungle (civ 3) |
+| W6 | `star=1&planet=3` | Floating Arches — Roger Dean archipelago (civ 5) |
+| W7 | `star=3&planet=2` | Solaris Sea — Tarkovsky terran, monasteries (civ 3) |
+| W8 | `star=2&planet=1` | Loop Lowlands — Stålenhag savanna, industrial (civ 5) |
+| W9 | `star=2&planet=2.1` | Atlas Bloom — NMS jungle moon of a ringed gas giant (civ 4) |
+| W10 | `star=17&planet=0` | Hearthian Campfire — Outer Wilds jungle, wooden villages (civ 5) |
+| W11 | `star=0&planet=0` | Sea of Corruption — Nausicaä exotic, nomads (civ 4) |
+| W12 | `star=9&planet=5` | Tarkovsky arctic world with rings (civ 2) |
+| G1 | `star=2&planet=2` | ringed gas giant (use `view=orbit`) |
+| M1 | `star=0&planet=2.0` | Monolith Silence — Kubrick barren moon |
+
 ## 2. Ownership map (one track = one owner; edit ONLY your paths)
 
 | Track | Owns | Notes |

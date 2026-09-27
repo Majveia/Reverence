@@ -39,7 +39,8 @@ const out = opt('out', 'shots/shot.png');
 const timeout = +opt('timeout', 240) * 1000;
 let steps = opt('steps', null);
 if (steps && steps.startsWith('@')) steps = fs.readFileSync(steps.slice(1), 'utf8');
-steps = steps ? JSON.parse(steps) : [{ advance: +opt('advance', 0.5) }, { shot: out }];
+steps = steps ? JSON.parse(steps) : [{ advance: +opt('advance', 0.5) }];
+if (!steps.some((s) => s.shot)) steps.push({ shot: out });
 
 const log = (...a) => { if (!quiet) console.log(...a); };
 
