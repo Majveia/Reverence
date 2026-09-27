@@ -66,6 +66,27 @@ if (flag('ui')) urlPath += '&ui=1';
 if (!/[?&]q=/.test(urlPath)) urlPath += `&q=${opt('q', 'high')}`;
 const full = baseUrl + urlPath;
 
+// ---- render slots: cap concurrent SwiftShader browsers machine-wide (CPU/RAM protection)
+const SLOTS = +(process.env.RV_SLOTS || 3);
+const slotDir = '/tmp/rv-shoot-slots';
+fs.mkdirSync(slotDir, { recursive: true });
+let slotPath = null;
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+for (let tries = 0; !slotPath; tries++) {
+  for (let i = 0; i < SLOTS && !slotPath; i++) {
+    const p = `${slotDir}/slot${i}`;
+    try { fs.mkdirSync(p); fs.writeFileSync(`${p}/pid`, String(process.pid)); slotPath = p; }
+    catch {
+      try { const pid = +fs.readFileSync(`${p}/pid`, 'utf8'); if (!alive(pid)) fs.rmSync(p, { recursive: true, force: true }); } catch { /* racing */ }
+    }
+  }
+  if (!slotPath) { if (tries % 20 === 0) log(`[shoot] waiting for a render slot (${SLOTS} busy)…`); await new Promise((r) => setTimeout(r, 1500)); }
+}
+const releaseSlot = () => { try { fs.rmSync(slotPath, { recursive: true, force: true }); } catch { /* ignore */ } };
+process.on('exit', releaseSlot);
+process.on('SIGINT', () => { releaseSlot(); process.exit(130); });
+process.on('SIGTERM', () => { releaseSlot(); process.exit(143); });
+
 const browser = await chromium.launch({
   headless: true,
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--disable-gpu-driver-bug-workarounds', '--js-flags=--max-old-space-size=4096'],

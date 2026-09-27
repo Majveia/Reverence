@@ -12,7 +12,8 @@ let failed = false;
 if (!nobuild) {
   console.log('[check] vite build …');
   try {
-    execSync('npx vite build --logLevel error', { cwd: root, stdio: 'pipe', timeout: 300000 });
+    execSync(`npx vite build --logLevel error --outDir /tmp/rv-build-${process.pid} --emptyOutDir`, { cwd: root, stdio: 'pipe', timeout: 300000 });
+    execSync(`rm -rf /tmp/rv-build-${process.pid}`);
     console.log('[check] build OK');
   } catch (e) {
     failed = true;
