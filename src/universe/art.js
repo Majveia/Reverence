@@ -1,0 +1,175 @@
+// Art direction presets. Every planet is assigned one: it drives terrain/sky/flora palettes,
+// civilization architecture, weather mood and the post-processing grade, so each world feels
+// like it was art-directed by a distinct film director / painter / game.
+//
+// Tracks should READ these hints (planet.art) rather than inventing unrelated palettes.
+// Colors are sRGB hex strings (convert with new THREE.Color(hex) — three converts to linear).
+
+export const ART_PRESETS = [
+  {
+    key: 'ghibli', name: 'Laputa Meadows', inspiration: 'Hayao Miyazaki · Studio Ghibli',
+    types: ['terran', 'archipelago', 'jungle'], civ: 'village', flora: 'lush', clouds: 'cumulus',
+    palette: { grass: '#78b84e', grass2: '#a8d468', rock: '#8e8676', sand: '#eadcad', snow: '#f5f8fc', water: '#2d8bb5', deep: '#0f3f63',
+      flora: ['#3f7f35', '#6cb04a', '#9fd46a', '#f4c6dc', '#ffe08a'], accent: '#ffcf7a', sky: '#7ab8ff', fog: '#cfe4f4' },
+    grade: { temperature: 0.08, saturation: 1.12, contrast: 1.04, lift: [0.01, 0.012, 0.02] },
+    weather: { rain: 0.15, fog: 0.15, wind: 0.45 },
+  },
+  {
+    key: 'moebius', name: 'Arzach Dunes', inspiration: 'Moebius · Jean Giraud',
+    types: ['desert', 'savanna', 'exotic'], civ: 'spire', flora: 'sparse-alien', clouds: 'wisp',
+    palette: { grass: '#d9b27c', grass2: '#e8c99a', rock: '#c98f6e', sand: '#f3dcc0', snow: '#fff7f0', water: '#58b8b0', deep: '#1c5c66',
+      flora: ['#e98f75', '#86c6b7', '#f5d38c', '#b97fd0'], accent: '#ff7a59', sky: '#9fd4e8', fog: '#f4e3cf' },
+    grade: { temperature: 0.12, saturation: 0.95, contrast: 0.96, lift: [0.03, 0.025, 0.02] },
+    weather: { dust: 0.25, fog: 0.1, wind: 0.5 },
+  },
+  {
+    key: 'villeneuve', name: 'Arrakeen Dusk', inspiration: 'Denis Villeneuve · Dune / Blade Runner 2049',
+    types: ['desert', 'barren', 'volcanic'], civ: 'brutalist', flora: 'sparse', clouds: 'haze',
+    palette: { grass: '#b08455', grass2: '#c79a64', rock: '#7c5a42', sand: '#d9a86c', snow: '#efe4d6', water: '#4a6e78', deep: '#1f3238',
+      flora: ['#6b5a3a', '#8a7a4a', '#c2a36a'], accent: '#ff9a3c', sky: '#e8a05a', fog: '#d89a5e' },
+    grade: { temperature: 0.35, saturation: 0.85, contrast: 1.12, lift: [0.02, 0.01, 0.0] },
+    weather: { dust: 0.6, fog: 0.35, wind: 0.7 },
+  },
+  {
+    key: 'bladerunner', name: 'Neon Monsoon', inspiration: 'Ridley Scott · Blade Runner / Syd Mead',
+    types: ['toxic', 'ocean', 'terran'], civ: 'neon', flora: 'bioluminescent', clouds: 'storm',
+    palette: { grass: '#2f4a4a', grass2: '#3d5e5a', rock: '#3a3a44', sand: '#56545c', snow: '#c8d0e0', water: '#1a3a4a', deep: '#081820',
+      flora: ['#23ffd5', '#ff3fa4', '#5a7cff', '#1f6b5a'], accent: '#ff2e88', sky: '#27324a', fog: '#3a4660' },
+    grade: { temperature: -0.2, saturation: 1.15, contrast: 1.15, lift: [0.0, 0.01, 0.03] },
+    weather: { rain: 0.7, fog: 0.4, wind: 0.4 },
+  },
+  {
+    key: 'stalenhag', name: 'Loop Lowlands', inspiration: 'Simon Stålenhag · Pacific Drive',
+    types: ['terran', 'arctic', 'savanna'], civ: 'industrial', flora: 'boreal', clouds: 'stratus',
+    palette: { grass: '#7d8b5c', grass2: '#9aa06a', rock: '#6c6a66', sand: '#b8ae94', snow: '#e9eef2', water: '#51707e', deep: '#243a44',
+      flora: ['#3e5238', '#5d7045', '#8c9a5a', '#c9b37a'], accent: '#ffb347', sky: '#b9c8d6', fog: '#c9d2d8' },
+    grade: { temperature: -0.05, saturation: 0.82, contrast: 1.0, lift: [0.02, 0.022, 0.028] },
+    weather: { rain: 0.3, fog: 0.45, wind: 0.35 },
+  },
+  {
+    key: 'rogerdean', name: 'Floating Arches', inspiration: 'Roger Dean · Avatar',
+    types: ['jungle', 'exotic', 'archipelago'], civ: 'organic', flora: 'giant', clouds: 'cumulus',
+    palette: { grass: '#4e9a6a', grass2: '#7cc48a', rock: '#9a7e6a', sand: '#e6cf9c', snow: '#f0f6f7', water: '#2aa6b8', deep: '#0b4a5e',
+      flora: ['#2e7d5b', '#5fbf8f', '#e27fb0', '#7fd2ff', '#ffd36b'], accent: '#6fffe9', sky: '#88d2e8', fog: '#b8e6ea' },
+    grade: { temperature: 0.02, saturation: 1.18, contrast: 1.02, lift: [0.0, 0.015, 0.02] },
+    weather: { fog: 0.3, rain: 0.2, wind: 0.3 },
+  },
+  {
+    key: 'tarkovsky', name: 'Solaris Sea', inspiration: 'Andrei Tarkovsky · Solaris / Stalker',
+    types: ['ocean', 'arctic', 'terran'], civ: 'monastery', flora: 'moss', clouds: 'stratus',
+    palette: { grass: '#5f7458', grass2: '#7b8c68', rock: '#56574f', sand: '#a19c86', snow: '#dfe5e6', water: '#2e5560', deep: '#0e2329',
+      flora: ['#3f5a45', '#5c7457', '#8da07a'], accent: '#d6e7c0', sky: '#8fa3a8', fog: '#9fb0b0' },
+    grade: { temperature: -0.08, saturation: 0.7, contrast: 1.05, lift: [0.015, 0.02, 0.02] },
+    weather: { fog: 0.6, rain: 0.35, wind: 0.25 },
+  },
+  {
+    key: 'friedrich', name: 'Wanderer Above the Fog', inspiration: 'Caspar David Friedrich',
+    types: ['arctic', 'terran', 'barren'], civ: 'monastery', flora: 'boreal', clouds: 'fogsea',
+    palette: { grass: '#6e7e62', grass2: '#8d9676', rock: '#5c5a58', sand: '#b3a98f', snow: '#f2f4f7', water: '#4d6a7a', deep: '#1c2f3a',
+      flora: ['#344a3a', '#4f644a', '#7f8a6a'], accent: '#ffd7a0', sky: '#c0cbd6', fog: '#dde3e8' },
+    grade: { temperature: 0.05, saturation: 0.78, contrast: 1.08, lift: [0.02, 0.02, 0.025] },
+    weather: { fog: 0.75, snow: 0.2, wind: 0.3 },
+  },
+  {
+    key: 'bierstadt', name: 'Golden Valley', inspiration: 'Albert Bierstadt · Hudson River School',
+    types: ['terran', 'savanna', 'jungle'], civ: 'village', flora: 'lush', clouds: 'cumulus',
+    palette: { grass: '#8a9a4e', grass2: '#b6b45e', rock: '#8b7563', sand: '#dcc596', snow: '#fbf5ea', water: '#4b8ea8', deep: '#173e52',
+      flora: ['#4b6d32', '#7b8f3e', '#c9a64a', '#e0784a'], accent: '#ffc46b', sky: '#9cc6e8', fog: '#f0d9b0' },
+    grade: { temperature: 0.22, saturation: 1.05, contrast: 1.06, lift: [0.02, 0.012, 0.0] },
+    weather: { fog: 0.3, wind: 0.3 },
+  },
+  {
+    key: 'beksinski', name: 'Cathedral of Bones', inspiration: 'Zdzisław Beksiński',
+    types: ['volcanic', 'barren', 'toxic'], civ: 'ruins', flora: 'dead', clouds: 'haze',
+    palette: { grass: '#7a5a3a', grass2: '#8a6844', rock: '#4a3a30', sand: '#a67c52', snow: '#d9c7a8', water: '#5a3a2a', deep: '#241410',
+      flora: ['#3a2a20', '#6a4a30', '#a07048'], accent: '#ff6a2a', sky: '#c77a3a', fog: '#b0703c' },
+    grade: { temperature: 0.4, saturation: 0.8, contrast: 1.2, lift: [0.02, 0.005, 0.0] },
+    weather: { dust: 0.4, fog: 0.5, wind: 0.4 },
+  },
+  {
+    key: 'nausicaa', name: 'Sea of Corruption', inspiration: 'Nausicaä of the Valley of the Wind',
+    types: ['toxic', 'jungle', 'exotic'], civ: 'nomad', flora: 'fungal', clouds: 'haze',
+    palette: { grass: '#8a9a5a', grass2: '#b0b86a', rock: '#7a6a58', sand: '#c9b88a', snow: '#eef0e6', water: '#6a8a6a', deep: '#243a2a',
+      flora: ['#c9d27a', '#7ab0a0', '#e8e0b0', '#a07ac0', '#5ac0b0'], accent: '#eaff8a', sky: '#c7c78a', fog: '#d8d8a0' },
+    grade: { temperature: 0.05, saturation: 0.95, contrast: 1.0, lift: [0.02, 0.025, 0.01] },
+    weather: { fog: 0.45, dust: 0.2, wind: 0.35 },
+  },
+  {
+    key: 'bebop', name: 'Tharsis Frontier', inspiration: 'Cowboy Bebop · Shinichirō Watanabe',
+    types: ['desert', 'barren', 'savanna'], civ: 'frontier', flora: 'sparse', clouds: 'wisp',
+    palette: { grass: '#a06a45', grass2: '#b8845a', rock: '#8a4e36', sand: '#d08a5a', snow: '#f0e0d0', water: '#3a6a7a', deep: '#14303a',
+      flora: ['#6a7a4a', '#9a8a5a', '#c0a060'], accent: '#ffb04a', sky: '#d9a079', fog: '#e0a880' },
+    grade: { temperature: 0.25, saturation: 0.9, contrast: 1.1, lift: [0.03, 0.015, 0.01] },
+    weather: { dust: 0.45, wind: 0.5 },
+  },
+  {
+    key: 'rickmorty', name: 'Dimension C-137 Wilds', inspiration: 'Rick and Morty',
+    types: ['exotic', 'jungle', 'toxic'], civ: 'bizarre', flora: 'wacky', clouds: 'cumulus',
+    palette: { grass: '#8bd14f', grass2: '#c1f06a', rock: '#8a6fc0', sand: '#f0d27a', snow: '#e8f7ff', water: '#3fe0c8', deep: '#16706a',
+      flora: ['#ff5fb0', '#6af0ff', '#b6ff4a', '#ffd23f', '#9b5cff'], accent: '#4dff88', sky: '#7ff0c8', fog: '#c0ffe0' },
+    grade: { temperature: 0.0, saturation: 1.35, contrast: 1.05, lift: [0.0, 0.02, 0.01] },
+    weather: { fog: 0.1, wind: 0.3 },
+  },
+  {
+    key: 'kubrick', name: 'Monolith Silence', inspiration: 'Stanley Kubrick · 2001: A Space Odyssey',
+    types: ['barren', 'arctic', 'crystal'], civ: 'monolith', flora: 'none', clouds: 'none',
+    palette: { grass: '#8a8a88', grass2: '#9a9a96', rock: '#5a5a5c', sand: '#b0aca4', snow: '#f4f4f4', water: '#303a44', deep: '#0a0e12',
+      flora: ['#666666'], accent: '#ffffff', sky: '#000000', fog: '#202020' },
+    grade: { temperature: -0.05, saturation: 0.6, contrast: 1.2, lift: [0.0, 0.0, 0.0] },
+    weather: {},
+  },
+  {
+    key: 'turner', name: 'Luminous Tempest', inspiration: 'J. M. W. Turner',
+    types: ['ocean', 'archipelago', 'terran'], civ: 'harbor', flora: 'lush', clouds: 'storm',
+    palette: { grass: '#8fa05e', grass2: '#b4b26e', rock: '#8a7a64', sand: '#e6cf98', snow: '#fff6e6', water: '#6a8e8a', deep: '#223a3a',
+      flora: ['#5f7a3e', '#8f9a4e', '#d9b25a'], accent: '#ffd06a', sky: '#f2d49a', fog: '#f0dcae' },
+    grade: { temperature: 0.3, saturation: 0.9, contrast: 0.98, lift: [0.04, 0.03, 0.015] },
+    weather: { rain: 0.3, fog: 0.4, wind: 0.6 },
+  },
+  {
+    key: 'crystal', name: 'Prism Cathedral', inspiration: 'Annihilation · Jeff VanderMeer',
+    types: ['crystal', 'exotic', 'arctic'], civ: 'crystal', flora: 'crystal', clouds: 'wisp',
+    palette: { grass: '#b9a6d9', grass2: '#d0c0ea', rock: '#6a5f8a', sand: '#e0d6f0', snow: '#f6f2ff', water: '#7ac8e0', deep: '#243a6a',
+      flora: ['#ff9ad5', '#9ad5ff', '#d5ff9a', '#fff09a', '#c09aff'], accent: '#a6f0ff', sky: '#b8c8ff', fog: '#e0d8ff' },
+    grade: { temperature: -0.05, saturation: 1.15, contrast: 1.0, lift: [0.015, 0.01, 0.03] },
+    weather: { fog: 0.2 },
+  },
+  {
+    key: 'botw', name: 'Hyrule Echo', inspiration: 'Breath of the Wild · Nintendo',
+    types: ['terran', 'savanna', 'archipelago'], civ: 'ruins', flora: 'lush', clouds: 'cumulus',
+    palette: { grass: '#7dab45', grass2: '#b8cf5c', rock: '#8c8a80', sand: '#e0d0a0', snow: '#f7fbff', water: '#3a9ac0', deep: '#12506e',
+      flora: ['#3f7a33', '#6aa844', '#a8c858', '#f0e070', '#e070a0'], accent: '#ffe27a', sky: '#78b6f0', fog: '#d8ecf8' },
+    grade: { temperature: 0.06, saturation: 1.08, contrast: 1.02, lift: [0.015, 0.015, 0.025] },
+    weather: { rain: 0.2, fog: 0.2, wind: 0.5 },
+  },
+  {
+    key: 'outerwilds', name: 'Hearthian Campfire', inspiration: 'Outer Wilds · Mobius Digital',
+    types: ['terran', 'jungle', 'ocean', 'arctic'], civ: 'hearth', flora: 'boreal', clouds: 'cumulus',
+    palette: { grass: '#6f9a4a', grass2: '#95b457', rock: '#7a6b5a', sand: '#d6c08a', snow: '#f2f5f8', water: '#2f7fa0', deep: '#0f3a50',
+      flora: ['#2f5a36', '#4f7f3f', '#e59a4a', '#c05a3a'], accent: '#ff9a4a', sky: '#6ea8e0', fog: '#b8d0e0' },
+    grade: { temperature: 0.1, saturation: 1.05, contrast: 1.06, lift: [0.01, 0.012, 0.02] },
+    weather: { fog: 0.2, wind: 0.35 },
+  },
+  {
+    key: 'nms', name: 'Atlas Bloom', inspiration: "No Man's Sky · Chris Foss pulp sci-fi",
+    types: ['exotic', 'jungle', 'toxic', 'desert', 'crystal'], civ: 'outpost', flora: 'alien', clouds: 'cumulus',
+    palette: { grass: '#e0a040', grass2: '#f0c060', rock: '#b05a7a', sand: '#f0c89a', snow: '#fff0f6', water: '#40c0c0', deep: '#105a6a',
+      flora: ['#ff6a3a', '#ffcf4a', '#40e0a0', '#6a8aff', '#ff4ab0'], accent: '#ff5a8a', sky: '#f09ab0', fog: '#f8c8b0' },
+    grade: { temperature: 0.1, saturation: 1.3, contrast: 1.05, lift: [0.02, 0.0, 0.02] },
+    weather: { fog: 0.25, wind: 0.4 },
+  },
+  {
+    key: 'starfield', name: 'Constellation Frontier', inspiration: 'Starfield · NASA-punk',
+    types: ['barren', 'desert', 'arctic', 'terran'], civ: 'nasapunk', flora: 'sparse', clouds: 'wisp',
+    palette: { grass: '#8a8f6a', grass2: '#a4a47a', rock: '#6e6860', sand: '#c4b290', snow: '#eef2f6', water: '#3f6a80', deep: '#122a3a',
+      flora: ['#4f5f3f', '#7a8a5a', '#aab07a'], accent: '#e8e8e8', sky: '#a8b8c8', fog: '#c0c8d0' },
+    grade: { temperature: 0.0, saturation: 0.9, contrast: 1.1, lift: [0.01, 0.01, 0.015] },
+    weather: { dust: 0.2, wind: 0.3 },
+  },
+];
+
+export function pickArt(rng, planetType) {
+  const fits = ART_PRESETS.filter((p) => p.types.includes(planetType));
+  const pool = fits.length ? fits : ART_PRESETS;
+  return rng.pick(pool);
+}
