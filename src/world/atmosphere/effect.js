@@ -1,0 +1,260 @@
+// Atmosphere post effect (pipeline order 100). OWNED BY THE ATMOSPHERE TRACK.
+//
+// For every pixel (reads scene color + depth):
+//   • sky pixels (depth = far, or beyond the atmosphere: stars, sun disk, other planets drawn by the
+//     space track) → background × view transmittance × daylight star visibility + in-scattered sky
+//     (sky-view LUT inside the atmosphere, per-pixel ray march from space; blended near the top)
+//   • geometry → aerial perspective: color × T(camera→surface) + in-scattering (ray-marched,
+//     Rayleigh + Mie + ozone + multiple scattering, planet shadow → terminator/twilight wedge)
+//   • night: moonlit sky, starlight/airglow gradient, airglow emission layer (limb band from space),
+//     aurora curtains (weather.aurora)
+import * as THREE from 'three';
+import { fsMaterial, FSQuad } from './fs.js';
+
+const FRAG = /* glsl */ `
+#include <rv_common>
+#include <rv_atmo>
+#include <rv_atmo_sky>
+#include <rv_atmo_view>
+#include <rv_noise>
+uniform sampler2D tColor;
+uniform sampler2D tDepth;
+uniform vec3 uCamPlanet;      // camera position, planet-centered (m)
+uniform vec3 uSunDir;
+uniform vec3 uSunIll;         // sun illuminance color (top of atmosphere)
+uniform float uGeoSteps;
+uniform float uSpaceSteps;
+uniform float uSpaceBlend;    // 0: LUT for sky, 1: per-pixel march
+uniform vec3 uNightSky;       // starlight/airglow sky radiance (zenith)
+uniform vec3 uMoonDir;
+uniform vec3 uMoonSky;        // moonlit sky radiance scale
+uniform float uStarVis;       // contrast threshold factor for stars by day
+uniform float uFallbackSun;   // 1 → draw a sun disk (no space track)
+uniform vec3 uAirglow;        // airglow emission (radiance at zenith)
+uniform float uAirglowR;      // radius of the airglow layer
+uniform float uAirglowW;      // half thickness
+uniform float uAurora;        // aurora strength (0 = off)
+uniform float uAuroraLat;     // sin(latitude) where the auroral band starts
+uniform vec3 uAuroraCol1;
+uniform vec3 uAuroraCol2;
+uniform float uTime;
+uniform float uHasAtmo;
+uniform float uDebug;
+varying vec2 vUv;
+
+// chord length of a ray through a spherical shell [r0, r1], clipped to [0, tMax]
+float shellChord(vec3 ro, vec3 rd, float r0, float r1, float tMax){
+  vec2 o = atmo_raySphere(ro, rd, r1);
+  if (o.y <= 0.0) return 0.0;
+  float a = max(o.x, 0.0), b = min(o.y, tMax);
+  if (b <= a) return 0.0;
+  float len = b - a;
+  vec2 i = atmo_raySphere(ro, rd, r0);
+  if (i.y > 0.0){
+    float ia = max(i.x, a), ib = min(i.y, b);
+    if (ib > ia) len -= (ib - ia);
+  }
+  return max(len, 0.0);
+}
+
+// Aurora curtains: folded emissive sheets in a high shell, brighter toward the poles.
+vec3 auroraMarch(vec3 ro, vec3 rd, float tMax, float jitter){
+  float H = uAtmoRt - uAtmoRb;
+  float r0 = uAtmoRb + H * 0.50, r1 = uAtmoRb + H * 0.86;
+  vec2 o = atmo_raySphere(ro, rd, r1);
+  if (o.y <= 0.0) return vec3(0.0);
+  float a = max(o.x, 0.0), b = min(o.y, tMax);
+  vec2 i = atmo_raySphere(ro, rd, r0);
+  if (i.x > a && i.x < b) b = i.x;          // looking up from below: first segment only
+  else if (i.y > a && i.y < b && i.x < a) a = i.y;
+  if (b <= a) return vec3(0.0);
+  const float N = 28.0;
+  float dt = (b - a) / N;
+  vec3 acc = vec3(0.0);
+  for (float k = 0.0; k < N; k += 1.0){
+    vec3 p = ro + rd * (a + (k + jitter) * dt);
+    float r = length(p);
+    vec3 n = p / r;
+    float hf = clamp((r - r0) / (r1 - r0), 0.0, 1.0);
+    float band = smoothstep(uAuroraLat, uAuroraLat + 0.25, abs(n.y));
+    if (band <= 0.0) continue;
+    // curtain field on the sphere: warped longitude/latitude lines
+    float lon = atan(n.x, n.z);
+    vec2 q = vec2(lon * 3.0, n.y * 9.0);
+    float w1 = rv_snoise(vec3(q * 0.7, uTime * 0.05));
+    float w2 = rv_snoise(vec3(q * 1.9 + 3.1, uTime * 0.11));
+    float f = n.y * 14.0 + w1 * 1.6 + w2 * 0.45;
+    float curtain = pow(1.0 - abs(fract(f) * 2.0 - 1.0), 10.0);
+    curtain += 0.5 * pow(1.0 - abs(fract(f * 1.7 + 0.37) * 2.0 - 1.0), 14.0);
+    // rays (vertical striations)
+    float rays = 0.55 + 0.45 * rv_snoise(vec3(lon * 90.0, hf * 0.6, uTime * 0.35));
+    // vertical profile: sharp bottom, long fading top
+    float prof = smoothstep(0.0, 0.07, hf) * exp(-hf * 2.6);
+    vec3 col = mix(uAuroraCol1, uAuroraCol2, smoothstep(0.25, 0.85, hf));
+    acc += col * curtain * rays * prof * band * dt;
+  }
+  return acc * uAurora / (r1 - r0);
+}
+
+void main(){
+  vec3 col = texture(tColor, vUv).rgb;
+  if (uHasAtmo < 0.5){ gl_FragColor = vec4(col, 1.0); return; }
+  float depth = texture(tDepth, vUv).r;
+  vec3 vd = atmo_viewDir(vUv);
+  vec3 dir = normalize(mat3(uCamWorld) * vd);
+  bool far = atmo_isFar(depth);
+  float tHit = far ? 1e30 : atmo_depthToDist(depth, vd);
+  vec3 ro = uCamPlanet;
+  float camR = length(ro);
+  vec3 up = ro / camR;
+  float nu = dot(dir, uSunDir);
+  float jitter = rv_ign(gl_FragCoord.xy);
+
+  vec2 top = atmo_raySphere(ro, dir, uAtmoRt);
+  bool beyond = far || top.y <= 0.0 || tHit >= top.y;   // surface is outside the atmosphere
+  vec3 outc;
+  if (!beyond){
+    // ---------------- aerial perspective on geometry
+    float t0 = max(top.x, 0.0);
+    float t1 = tHit;
+    float len = max(t1 - t0, 0.0);
+    // more steps for long paths (from altitude / space)
+    float steps = clamp(uGeoSteps * (0.5 + len / 6000.0), 4.0, uGeoSteps * 2.0);
+    AtmoInscatter a = atmo_march(ro, dir, t0, t1, uSunDir, steps, 0.5);
+    vec3 L = atmo_combine(a, nu) * uSunIll;
+    // moonlit / starlit air (tiny, keeps night silhouettes readable)
+    float airT = 1.0 - dot(a.T, vec3(0.3333));
+    L += (uNightSky * 0.8 + uMoonSky * atmo_phaseRayleigh(dot(dir, uMoonDir)) * 6.0) * airT;
+    outc = col * a.T + L;
+  } else {
+    // ---------------- sky / background
+    float tAtmEnd = far ? top.y : min(tHit, top.y);
+    vec3 L = vec3(0.0);
+    vec3 T = vec3(1.0);
+    bool hitsAtmo = top.y > 0.0;
+    if (hitsAtmo){
+      vec2 bot = atmo_raySphere(ro, dir, uAtmoRb);
+      bool hitGround = bot.x > 0.0;
+      if (uDebug > 0.5 && camR < uAtmoRt){
+        float cosZ = dot(dir, up);
+        vec3 sH = uSunDir - up * dot(uSunDir, up);
+        vec3 vH = dir - up * cosZ;
+        float ls = length(sH), lv = length(vH);
+        float cosAz = (ls > 1e-5 && lv > 1e-5) ? dot(sH, vH) / (ls * lv) : 1.0;
+        vec2 bot2 = atmo_raySphere(up * camR, dir, uAtmoRb);
+        vec2 uv = atmo_skyViewUV(bot2.x > 0.0, cosZ, cosAz, camR);
+        vec3 dbg = uDebug < 1.5 ? texture(uSkyR, uv).rgb * atmo_phaseRayleigh(nu) : uDebug < 2.5 ? texture(uSkyM, uv).rgb * atmo_phaseMie(nu, uMieG) : uDebug < 3.5 ? texture(uSkyMS, uv).rgb : vec3(uv, 0.0) / 6.0;
+        gl_FragColor = vec4(dbg * uSunIll, 1.0); return;
+      }
+      if (uSpaceBlend < 1.0 && camR < uAtmoRt){
+        vec3 Llut = atmo_skyLUT(dir, up, camR, uSunDir, nu);
+        T = hitGround ? vec3(0.0) : atmo_transmittance(camR, dot(dir, up));
+        L = Llut;
+      }
+      if (uSpaceBlend > 0.0){
+        float t0 = max(top.x, 0.0);
+        float t1 = hitGround ? bot.x : tAtmEnd;
+        float len = max(t1 - t0, 0.0);
+        float steps = clamp(uSpaceSteps * (0.35 + len / (uAtmoRt - uAtmoRb) * 0.35), 6.0, uSpaceSteps);
+        AtmoInscatter a = atmo_march(ro, dir, t0, t1, uSunDir, steps, jitter);
+        vec3 Lm = atmo_combine(a, nu);
+        vec3 Tm = hitGround ? vec3(0.0) : a.T;
+        L = mix(L, Lm, uSpaceBlend);
+        T = mix(T, Tm, uSpaceBlend);
+      }
+      L *= uSunIll;
+      // night sky: starlight/airglow gradient + moonlit sky (inside the atmosphere)
+      float inside = 1.0 - smoothstep(uAtmoRt * 0.985, uAtmoRt, camR);
+      if (inside > 0.0 && !hitGround){
+        float cz = max(dot(dir, up), 0.0);
+        float airmass = 1.0 / (cz + 0.12);
+        vec3 ns = uNightSky * (0.45 + 0.18 * airmass);
+        float mnu = dot(dir, uMoonDir);
+        vec3 ms = uMoonSky * (atmo_phaseRayleigh(mnu) * (0.6 + 0.15 * airmass) + 0.35 * atmo_phaseHG(mnu, 0.8));
+        L += (ns + ms) * inside;
+      }
+      // airglow emission layer (limb brightening; visible at night and from space)
+      float ch = shellChord(ro, dir, uAirglowR - uAirglowW, uAirglowR + uAirglowW, hitGround ? bot.x : 1e30);
+      L += uAirglow * ch / (2.0 * uAirglowW) * mix(vec3(1.0), T, 0.5);
+      // aurora
+      if (uAurora > 0.0) L += auroraMarch(ro, dir, hitGround ? bot.x : top.y, jitter) * mix(vec3(1.0), T, 0.3);
+    }
+    // background (stars, sun disk, planets) seen through the atmosphere; faint stars vanish by day
+    vec3 bg = col;
+    if (uFallbackSun > 0.5){
+      float cs = cos(uSunAngR);
+      float sd = smoothstep(cs - 0.00002, cs + 0.00002, nu);
+      bg += uSunIll * sd * 4000.0;
+      bg += uSunIll * pow(max(nu, 0.0), 2000.0) * 6.0;
+    }
+    bg *= T;
+    float bl = rv_luma(bg);
+    float sl = rv_luma(L);
+    float vis = clamp((bl - uStarVis * sl) / max(bl, 1e-6), 0.0, 1.0);
+    outc = bg * vis + L;
+  }
+  gl_FragColor = vec4(outc, 1.0);
+}`;
+
+export class AtmosphereEffect {
+  constructor(atmo) {
+    this.atmo = atmo;
+    this.name = 'atmosphere';
+    this.order = 100;
+    this.enabled = true;
+    const q = atmo.quality;
+    this.quad = new FSQuad();
+    const tier = q.tier;
+    this.u = {
+      tColor: { value: null }, tDepth: { value: null },
+      uSkyR: { value: null }, uSkyM: { value: null }, uSkyMS: { value: null },
+      uCamPlanet: { value: new THREE.Vector3() },
+      uCamWorld: { value: new THREE.Matrix4() },
+      uProjParams: { value: new THREE.Vector4(1, 1, 0, 0) },
+      uNear: { value: 0.05 }, uFar: { value: 2e10 },
+      uSunDir: atmo.shared.uSunDir,
+      uSunIll: atmo.shared.uSunIll,
+      uGeoSteps: { value: tier === 'low' ? 5 : tier === 'med' ? 7 : tier === 'high' ? 10 : 14 },
+      uSpaceSteps: { value: tier === 'low' ? 12 : tier === 'med' ? 18 : 28 },
+      uSpaceBlend: { value: 0 },
+      uNightSky: atmo.shared.uNightSky,
+      uMoonDir: atmo.shared.uMoonDir,
+      uMoonSky: atmo.shared.uMoonSky,
+      uStarVis: { value: 1.2 },
+      uFallbackSun: { value: 0 },
+      uAirglow: atmo.shared.uAirglow,
+      uAirglowR: { value: atmo.model.Rb + atmo.model.height * 0.62 },
+      uAirglowW: { value: atmo.model.height * 0.035 },
+      uAurora: atmo.shared.uAurora,
+      uAuroraLat: atmo.shared.uAuroraLat,
+      uAuroraCol1: { value: new THREE.Vector3(0.1, 1.0, 0.45) },
+      uAuroraCol2: { value: new THREE.Vector3(0.9, 0.15, 0.55) },
+      uTime: atmo.shared.uTime,
+      uHasAtmo: { value: atmo.model.present ? 1 : 0 },
+      uDebug: { value: +(atmo.world.params?.atmoDebug ?? 0) },
+      ...atmo.atmoUniforms,
+    };
+    this.mat = fsMaterial(FRAG, this.u);
+  }
+
+  updateCamera(camera) {
+    const u = this.u, p = camera.projectionMatrix.elements;
+    u.uCamWorld.value.copy(camera.matrixWorld);
+    u.uProjParams.value.set(p[0], p[5], p[8], p[9]);
+    u.uNear.value = camera.near; u.uFar.value = camera.far;
+  }
+
+  render(renderer, io) {
+    const u = this.u;
+    if (!this.atmo.model.present && !this.atmo.needsSkyPass) { io.skip = true; return; }
+    this.atmo.beforeComposite?.(renderer);
+    u.tColor.value = io.input.texture;
+    u.tDepth.value = io.depth;
+    const sky = this.atmo.luts?.skyTextures;
+    if (sky) { u.uSkyR.value = sky[0]; u.uSkyM.value = sky[1]; u.uSkyMS.value = sky[2]; }
+    this.updateCamera(io.camera);
+    this.quad.render(renderer, this.mat, io.output);
+  }
+
+  dispose() { this.mat.dispose(); this.quad.dispose(); }
+}
