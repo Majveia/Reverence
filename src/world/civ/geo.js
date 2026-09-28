@@ -151,7 +151,7 @@ export class Geo {
     const hx = w / 2, hy = h / 2, hz = d / 2, cy = y0 + hy;
     const cell = CELL_PATS.has(M.pat);
     const Mtop = cell ? (opt?.top || { ...M, pat: PAT.PLAIN }) : (opt?.top || M);
-    const e = Math.min(bevel, hx * 0.45, hy * 0.45, hz * 0.45);
+    const e = Math.min(w, h, d) < 0.3 ? 0 : Math.min(bevel, hx * 0.45, hy * 0.45, hz * 0.45);
     const sx = this.win.sx, fh = this.win.fh, wy0 = this.win.y0;
     const side = (len) => (cell ? Math.max(1, Math.round(len / sx)) / len : 1);
     // faces: [normal, tangent u, extent along u, extent along v(up for sides)]

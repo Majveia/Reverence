@@ -221,3 +221,15 @@ visualizations). What separates AAA from "tech demo":
   `camyaw`, `zoom` URL params.
 * **vehicles** (from player) — the unoccupied parked bike renders a rider mannequin (remove it when parked);
   moving vehicle colliders flagged `vehicle: true` are checked per frame by the player.
+* **flora + terrain (PERF, from lead)** — measured on W2 forest at `high`: flora 2.7M tris + 1.0M as shadow
+  casters, terrain 1.8M; with 3 CSM cascades ≈ 9M tris/frame (budget: < 3M main + < 1M casters at high,
+  far less on med/low/mobile). Fix: grass must not cast shadow-map shadows (use AO/contact darkening), trees
+  cast only into the near cascade(s), grass as multi-blade clumps/cards with fewer tris, earlier impostors,
+  coarser terrain chunks at distance. Software captures use a reduced profile (`quality.captureProfile`:
+  floraDensity ≤ 0.45, terrainDetail ≤ 0.85, 1024 shadow maps); add `&full=1` for full-quality hero shots.
+* **terrain** (from flora) — tint the ground toward grass colour (biome + moisture) under dense grass so
+  meadows read denser at mid-distance.
+* **player** (from flora) — avoid spawn positions within ~4 m of colliders tagged `'tree'`.
+* **post** (from flora) — TAA or SMAA to anti-alias alpha-tested foliage/grass edges (alpha-to-coverage
+  only applies when `quality.msaa > 0`, which software captures disable).
+* **debug (lead)** — `?disable=fauna,vehicles` skips subsystems; `?only=terrain,atmosphere` loads just those.

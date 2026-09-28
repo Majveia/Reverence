@@ -67,7 +67,7 @@ const PLANT_VERT_PARS = /* glsl */`
 #include <rv_flora>
 attribute vec4 iPos; attribute vec4 iRot; attribute vec4 iData;
 attribute vec4 aInfo; attribute vec3 aShade; attribute vec3 aColor; attribute vec3 aCorner;
-uniform vec4 uFade; uniform vec4 uThin; uniform float uWindAmp; uniform float uBillboard;
+uniform vec4 uFade; uniform vec4 uDFade; uniform vec4 uThin; uniform float uWindAmp; uniform float uBillboard;
 uniform vec3 uCamPos; uniform vec3 uPlanetCenter; uniform float uTime; uniform vec3 uWindDir; uniform float uWindStrength;
 uniform float uTintVar; uniform float uShadowPush;
 #include <rv_flora_wind>
@@ -83,7 +83,11 @@ vec3 transformed;
   vec3 pl = wb - uPlanetCenter;
   vec3 up = normalize(pl);
   float d = length(wb - uCamPos);
-  vFade = rvLodFade(d, uFade);
+  #ifdef DEPTH_PASS
+    vFade = rvLodFade(d, uDFade);
+  #else
+    vFade = rvLodFade(d, uFade);
+  #endif
   float thin = rvThin(d, iData.y, uThin);
   float sc = iPos.w * thin;
   vec3 wp = rvQrot(iRot, position * sc);
@@ -207,7 +211,7 @@ if (kind < 0.5) {
 // LOD crossfade (complementary dither)
 float dth = rvIGN(gl_FragCoord.xy);
 // dissolve foliage/branches right in front of the camera so they never smother the view
-{ float cd = length(vViewPosition); if (cd < 2.6 && dth > smoothstep(0.9, 2.6, cd)) discard; }
+{ float cd = length(vViewPosition); if (cd < 3.2 && dth > smoothstep(1.0, 3.2, cd)) discard; }
 if (vFade.y < 0.999 && dth >= vFade.y) discard;
 if (vFade.x < 0.999 && (1.0 - dth) >= vFade.x) discard;
 diffuseColor.rgb *= albedo;
@@ -311,7 +315,7 @@ export function makePlantMaterials(p) {
     uTint2: { value: new THREE.Color().fromArray(p.tint2 ?? [0.12, 0.08, 0.05]) },
     uTransl: { value: p.transl ?? 0.8 }, uGlowStr: { value: p.glow ?? 0 }, uCardGlow: { value: p.cardGlow ?? 0 },
     uMoss: { value: new THREE.Color().fromArray(p.moss ?? [0.1, 0.16, 0.05]) }, uMossAmt: { value: p.mossAmt ?? 0.3 },
-    uFade: { value: new THREE.Vector4(...(p.fade ?? [0, 0, 1e9, 1e9])) },
+    uFade: { value: new THREE.Vector4(...(p.fade ?? [0, 0, 1e9, 1e9])) }, uDFade: { value: new THREE.Vector4(...(p.dfade ?? p.fade ?? [0, 0, 1e9, 1e9])) },
     uThin: { value: new THREE.Vector4(...(p.thin ?? [0, 1, 0, 0])) },
     uWindAmp: { value: p.windAmp ?? 1 }, uBillboard: { value: p.billboard ?? 0.85 },
     uTintVar: { value: p.tintVar ?? 0.35 }, uShadowPush: { value: p.shadowPush ?? 0.35 }, uSpec: { value: p.spec ?? 1 },
@@ -351,9 +355,11 @@ export function makePlantMaterials(p) {
     let fs = shader.fragmentShader;
     fs = fs.replace('#include <common>', '#include <common>\n' + /* glsl */`
 uniform sampler2D uAtlas; uniform float uAtlasSize;
-varying vec2 vAtlasUv; varying vec4 vInfo; varying vec2 vFade;`);
+varying vec2 vAtlasUv; varying vec4 vInfo; varying vec2 vFade;
+float rvIGNd(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }`);
     fs = fs.replace('#include <alphatest_fragment>', /* glsl */`
 {
+  if (vFade.y < 0.999 && rvIGNd(gl_FragCoord.xy) >= vFade.y) discard;
   float kind = floor(vInfo.x / 16.0 + 0.001);
   if (kind > 0.5 && kind < 2.5) {
     float a = texture2D(uAtlas, vAtlasUv).a;

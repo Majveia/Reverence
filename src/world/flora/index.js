@@ -147,7 +147,7 @@ class Flora {
       const models = [];
       for (let v = 0; v < (low ? 1 : 2); v++) {
         const rnd = mulberry(hashCombine(this.seed, 977 + fi, v));
-        const P = { rect: F.rect, colA: F.colA, colB: F.colB, type: F.type, height: F.height ?? 0.42, radius: 0.35, headSize: F.type === 'daisy' ? 0.075 : 0.09, count: F.type === 'daisy' ? 9 : 5, stem: [0.05, 0.1, 0.03] };
+        const P = { rect: F.rect, colA: F.colA, colB: F.colB, type: F.type, height: F.height ?? 0.42, radius: 0.35, headSize: F.type === 'daisy' ? 0.058 : 0.09, count: F.type === 'daisy' ? 7 : 5, stem: [0.05, 0.1, 0.03] };
         let r;
         try { r = flowerPatch(rnd, P); } catch (e) { console.warn('[flora] flower failed', e); continue; }
         const m = { idx: this.models.length, layer: 'flower', sp: { id: 'flower' + fi, tint2: F.tint2, glow: F.glow || 0, cardGlow: F.glow || 0, billboard: 0.9 }, geo0: r.lod0.build(), geo1: r.lod1.build(), height: r.height, radius: r.radius, imp: -1 };
@@ -171,9 +171,9 @@ class Flora {
     T.layers.rock.species.push({ id: 'rocks', biomes: Array.from(rs.biomes), m: null, t: null, slope: 3, alt: null, zone: -1, dens: 1, scale: [0.35, 2.6], lean: 0.4, sink: 0.22, shore: 0, align: 0.8, models: rockModels });
   }
 
-  _plantMat(m, lod, fade, thin, cast) {
+  _plantMat(m, lod, fade, thin, dfade) {
     const sp = m.sp, S = this.S;
-    const p = makePlantMaterials({
+    const p = makePlantMaterials({ dfade,
       shared: this.shared, barkLayer: sp.barkLayer ?? 0, barkScale: sp.barkScale ?? 1, tint2: sp.tint2 ?? [0.12, 0.08, 0.05],
       transl: S.translucency ?? 0.9, glow: sp.glow ?? 0, cardGlow: sp.cardGlow ?? 0,
       moss: S.rock.moss, mossAmt: S.key === 'moss' ? 0.8 : 0.3, windAmp: (sp.windAmp ?? 1) * (S.windAmp ?? 1),
@@ -195,7 +195,7 @@ class Flora {
     };
     // distances (m)
     const D = this.D = {
-      c0: [55 * dd, 70 * dd], c1: [190 * dd, 240 * dd], cI: [680 * dd, 800 * dd],
+      c0: [55 * dd, 70 * dd], c1: [190 * dd, 240 * dd], cI: [680 * dd, 800 * dd], cS: [30, 38],
       u0: [20 * dd, 28 * dd], uR: 150 * dd * Math.sqrt(this.density),
       r0: [45 * dd, 60 * dd], rR: 560 * dd,
       f0: [14, 20], fR: 48 * Math.sqrt(this.density),
@@ -203,14 +203,14 @@ class Flora {
     for (const m of this.models) {
       if (m.layer === 'canopy') {
         const f0 = [0, 0, D.c0[0], D.c0[1]], f1 = [D.c0[0], D.c0[1], D.c1[0], D.c1[1]];
-        m.L0 = add(m, 0, m.geo0, this._plantMat(m, 0, f0, null), { cap: 256, cast: true, fade: f0 });
+        m.L0 = add(m, 0, m.geo0, this._plantMat(m, 0, f0, null, [0, 0, D.cS[0], D.cS[1]]), { cap: 256, cast: true, fade: f0 });
         m.L1 = add(m, 1, m.geo1, this._plantMat(m, 1, f1, null), { cap: 1024, cast: false, fade: f1 });
         this.bandLayers.canopy.push(m);
       } else if (m.layer === 'under' || m.layer === 'flower') {
         const near = m.layer === 'flower' ? D.f0 : D.u0, R = m.layer === 'flower' ? D.fR : D.uR;
         const f0 = [0, 0, near[0], near[1]], f1 = [near[0], near[1], R * 0.8, R];
         const thin = [near[1] * 1.3, 0.9, 0.2, 1];
-        m.L0 = add(m, 0, m.geo0, this._plantMat(m, 0, f0, null), { cap: 512, cast: m.layer === 'under' && m.height > 1.0, fade: f0 });
+        m.L0 = add(m, 0, m.geo0, this._plantMat(m, 0, f0, null, [0, 0, 16, 22]), { cap: 512, cast: m.layer === 'under' && m.height > 1.0, fade: f0 });
         m.L1 = add(m, 1, m.geo1, this._plantMat(m, 1, f1, thin), { cap: 2048, cast: false, fade: f1 });
         this.bandLayers[m.layer === 'flower' ? 'flower' : 'under'].push(m);
       } else if (m.layer === 'rock') {
@@ -235,7 +235,7 @@ class Flora {
         const quad = makeImpostorQuad();
         this.impQuad = quad;
         const fN = [D.c1[0], D.c1[1], D.cI[0], D.cI[1]];
-        const matN = makeImpostorMaterials(bk, { fade: fN, dfade: [D.c0[0], D.c0[1], D.cI[0], D.cI[1]], transl: S.translucency ?? 0.9, glow: 1 });
+        const matN = makeImpostorMaterials(bk, { fade: fN, dfade: [D.cS[0], D.cS[1], D.cI[0], D.cI[1]], transl: S.translucency ?? 0.9, glow: 1 });
         const LN = new InstanceLayer(quad, matN.material, matN.depth, { capacity: 4096, parent: this.group, castShadow: shadows, name: 'flora-imp-near', boundsPad: 40 });
         LN.uniforms = matN.uniforms;
         this.layers.push(LN);
@@ -260,20 +260,20 @@ class Flora {
     const dens = this.density * (G.density ?? 1);
     this.table.grass = {
       cover: Array.from(G.cover || new Float32Array(14)), spacing: 0.72 / Math.sqrt(clamp(dens, 0.3, 1.3)),
-      dryAmount: G.dryAmount ?? 0.2, flowerAmt: 0.4, flowers: this.flowerList, flowerWsum: this.flowerList.reduce((a, f) => a + f.freq, 0),
+      dryAmount: G.dryAmount ?? 0.2, flowerAmt: 0.3, flowers: this.flowerList, flowerWsum: this.flowerList.reduce((a, f) => a + f.freq, 0),
     };
     if (!anyGrass) return;
-    const R = this.grassR = (low ? 28 : 48) * Math.sqrt(clamp(this.density, 0.3, 1.5)) * (this.shot ? 1 : 1);
+    const R = this.grassR = (low ? 28 : 44) * Math.sqrt(clamp(this.density, 0.3, 1.5));
     const hgt = G.height ?? 0.55;
     const common = {
       base: G.base, tip: G.tip, dry: G.dry, glowTip: G.glowTip, glowAmt: 1.6, push: this.pushU,
       height: hgt * 0.62, patchR: 0.6, transl: 0.9, stiff: 1,
     };
-    const dense = makeGrassPatch(low ? 30 : 64, low ? 3 : 4, 11);
-    const sparse = makeGrassPatch(low ? 14 : 26, 2, 23);
+    const dense = makeGrassPatch(low ? 30 : 60, 3, 11);
+    const sparse = makeGrassPatch(low ? 14 : 24, 2, 23);
     const nearF = [9, 13];
     const mD = makeGrassMaterial({ ...common, fade: [0, 0, nearF[0], nearF[1]], keep: [1e6, 1, 1, 1], width: 0.048, widenK: 0.008, density: 1 });
-    const mS = makeGrassMaterial({ ...common, fade: [nearF[0], nearF[1], R * 0.72, R], keep: [nearF[1] * 1.4, 0.9, 0.25, 1], width: 0.1, widenK: 0.014, density: 1 });
+    const mS = makeGrassMaterial({ ...common, fade: [nearF[0], nearF[1], R * 0.72, R], keep: [1e6, 1, 1, 1], width: 0.1, widenK: 0.014, patchR: 0.72, density: 1 });
     const LD = new InstanceLayer(dense, mD.material, null, { capacity: 2048, parent: this.group, castShadow: false, name: 'flora-grass-dense', boundsPad: 2 });
     const LS = new InstanceLayer(sparse, mS.material, null, { capacity: 8192, parent: this.group, castShadow: false, name: 'flora-grass-sparse', boundsPad: 2 });
     LD.uniforms = mD.uniforms; LS.uniforms = mS.uniforms;
@@ -285,7 +285,7 @@ class Flora {
     const R = this.R, dd = this.dd;
     const lv = (m) => levelFor(R, m);
     this.bands = [
-      { name: 'grass', kind: 'grass', L: lv(18), radius: this.grassR || 0, step: 1.5, enabled: !!this.grass, maxAlt: 250 },
+      { name: 'grass', kind: 'grass', L: lv(18), radius: this.grassR || 0, step: 2.5, enabled: !!this.grass, maxAlt: 250 },
       { name: 'under', kind: 'layer', layer: 'under', L: lv(64), radius: this.D.uR + 20, step: 4, enabled: this.table.layers.under.species.length > 0, maxAlt: 600 },
       { name: 'rock', kind: 'layer', layer: 'rock', L: lv(128), radius: this.D.rR + 40, step: 8, enabled: true, maxAlt: 2500 },
       { name: 'canopy', kind: 'layer', layer: 'canopy', L: lv(160), radius: this.D.cI[1] + 40, step: 8, enabled: this.table.layers.canopy.species.length > 0, maxAlt: 3000 },
@@ -494,7 +494,7 @@ class Flora {
           if (d2 < nr2) G.dense.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], I[o + 3], I[o + 8], I[o + 9], I[o + 10], I[o + 11]);
           if (d2 > 100) {
             // distance thinning: fewer, larger patches far away (keeps the silhouette, cuts triangles)
-            const keep = d2 < 484 ? 1 : Math.max(0.28, Math.pow(484 / d2, 0.65));
+            const keep = d2 < 400 ? 1 : Math.max(0.22, Math.pow(400 / d2, 0.75));
             if (I[o + 8] < keep) G.sparse.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], I[o + 3] / Math.sqrt(keep), I[o + 8], I[o + 9], I[o + 10], I[o + 11]);
           }
         }
@@ -533,7 +533,7 @@ class Flora {
     const mid = b.name === 'canopy' ? D.c1 : null;
     const margin = b.step + 2;
     const l0max = (near[1] + margin) ** 2, l1min = Math.max(0, near[0] - margin) ** 2;
-    const l1max = mid ? (mid[1] + margin) ** 2 : Infinity, impMin = mid ? Math.max(0, near[0] - margin) ** 2 : Infinity;
+    const l1max = mid ? (mid[1] + margin) ** 2 : Infinity, impMin = mid ? Math.max(0, D.cS[0] - margin) ** 2 : Infinity;
     // understory LOD1: CPU-side rank thinning matching the shader's rvThin (fewer far instances)
     const thinRef2 = b.name === 'under' ? (D.u0[1] * 1.3) ** 2 : 0;
     for (const m of list) { m.L0.begin(cx, cy, cz); m.L1.begin(cx, cy, cz); }

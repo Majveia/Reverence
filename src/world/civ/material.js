@@ -20,6 +20,98 @@ varying vec3 vUpW;
 varying vec3 vNW;
 uniform vec3 uPlanetC;
 `;
+// ---- vertex animation variants (instanced): NPC walkers, flying traffic, boats
+const ANIM_PARS = {
+  npc: /* glsl */`
+attribute vec3 aA; attribute vec3 aB; attribute vec4 aP; attribute vec3 aTint;
+uniform vec3 uUpL; uniform float uTimeA;
+mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale;
+`,
+  traffic: /* glsl */`
+attribute vec4 aL; attribute vec4 aL2;
+uniform vec3 uUpL; uniform vec3 uEastL; uniform vec3 uNorthL; uniform vec3 uSiteC; uniform float uRBase; uniform float uTimeA;
+mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale;
+`,
+  boat: /* glsl */`
+attribute vec4 aL; attribute vec4 aL2;
+uniform vec3 uUpL; uniform vec3 uEastL; uniform vec3 uNorthL; uniform vec3 uSiteC; uniform float uRBase; uniform float uTimeA;
+mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale;
+`,
+};
+const ANIM_NORMAL = {
+  npc: /* glsl */`
+{
+  vec3 ab = aB - aA; float L = max(length(ab), 0.01);
+  float s = uTimeA * aP.x / L + aP.y;
+  float ph = fract(s * 0.5);
+  float tri = abs(ph * 2.0 - 1.0);
+  rvOff = mix(aA, aB, 1.0 - tri);
+  vec3 fwd = (ph < 0.5 ? 1.0 : -1.0) * ab / L;
+  if (aP.x < 0.01) fwd = normalize(vec3(sin(aP.y * 6.28), 0.0, cos(aP.y * 6.28)));
+  vec3 up = uUpL;
+  vec3 fw = normalize(fwd - up * dot(fwd, up) + 1e-5);
+  rvRot = mat3(cross(up, fw), up, fw);
+  rvWalk = aP.x > 0.01 ? s * L / 0.75 * 3.14159 : 0.0;
+  rvScale = aP.z;
+}
+objectNormal = rvRot * objectNormal;
+`,
+  traffic: /* glsl */`
+{
+  float ang = aL2.z + uTimeA * aL2.y / max(0.5 * (aL.z + aL.w), 1.0);
+  float c = cos(aL2.w), sn = sin(aL2.w);
+  vec2 e = vec2(cos(ang) * aL.z, sin(ang) * aL.w);
+  vec2 de = vec2(-sin(ang) * aL.z, cos(ang) * aL.w) * sign(aL2.y);
+  vec2 p2 = aL.xy + vec2(e.x * c - e.y * sn, e.x * sn + e.y * c);
+  vec2 d2 = normalize(vec2(de.x * c - de.y * sn, de.x * sn + de.y * c));
+  vec3 tp = uEastL * p2.x + uNorthL * p2.y;
+  vec3 dirW = normalize(uSiteC + tp);
+  float bob = sin(uTimeA * 0.7 + aL2.z * 5.0) * 0.6;
+  rvOff = dirW * (uRBase + aL2.x + bob) - uSiteC;
+  vec3 up = dirW;
+  vec3 fwd = uEastL * d2.x + uNorthL * d2.y;
+  vec3 fw = normalize(fwd - up * dot(fwd, up));
+  vec3 rt = cross(up, fw);
+  float bank = 0.25 * sign(aL2.y);
+  up = normalize(up * cos(bank) + rt * sin(bank)); rt = cross(up, fw);
+  rvRot = mat3(rt, up, fw);
+  rvWalk = 0.0; rvScale = 1.0;
+}
+objectNormal = rvRot * objectNormal;
+`,
+  boat: /* glsl */`
+{
+  vec2 p2 = aL.xy;
+  vec3 tp = uEastL * p2.x + uNorthL * p2.y;
+  vec3 dirW = normalize(uSiteC + tp);
+  float bob = sin(uTimeA * 1.1 + aL2.x * 6.0) * 0.18;
+  rvOff = dirW * (uRBase + aL.z + bob) - uSiteC;
+  vec3 up = dirW;
+  float hd = aL.w + sin(uTimeA * 0.13 + aL2.x * 9.0) * 0.12;
+  vec3 fwd = uEastL * sin(hd) + uNorthL * cos(hd);
+  vec3 fw = normalize(fwd - up * dot(fwd, up));
+  vec3 rt = cross(up, fw);
+  float roll = sin(uTimeA * 0.9 + aL2.x * 4.0) * 0.06, pitch = sin(uTimeA * 0.7 + aL2.x * 3.0) * 0.04;
+  up = normalize(up + rt * roll + fw * pitch); fw = normalize(cross(rt, up)); rt = cross(up, fw);
+  rvRot = mat3(rt, up, fw);
+  rvWalk = 0.0; rvScale = aL2.y;
+}
+objectNormal = rvRot * objectNormal;
+`,
+};
+const ANIM_POS = /* glsl */`
+{
+  vec3 p = transformed * rvScale;
+  if (rvWalk != 0.0) {
+    float sw = sin(rvWalk);
+    if (p.y < 0.86 * rvScale) { float side = sign(p.x); p.z += (0.86 * rvScale - p.y) * sw * 0.55 * side; p.y += abs(sw) * 0.03 * step(0.0, side * sw); }
+    else if (p.y < 1.45 * rvScale && abs(p.x) > 0.19 * rvScale) { p.z -= (1.45 * rvScale - p.y) * sw * 0.6 * sign(p.x); }
+    p.y += abs(cos(rvWalk)) * 0.035;
+  }
+  transformed = rvOff + rvRot * p;
+}
+`;
+
 const VERT_MAIN = /* glsl */`
 vColL = pow(aCol, vec3(2.2));
 vMatA = vec4(aMat.x / 255.0, aMat.y / 255.0, aMat.z / 16.0, aMat.w);
@@ -42,6 +134,7 @@ varying vec3 vUpW;
 varying vec3 vNW;
 uniform float uNightF;
 uniform float uTimeC;
+uniform vec3 uSunDirC;
 uniform float uWet;
 uniform float uSnowC;
 uniform vec3 uWinCol;
@@ -80,7 +173,7 @@ float rvGlyph(vec2 f, float h){
 // computes rvAlb / rvRough / rvMetal / rvEmi / rvH / rvBumpK
 const FRAG_SURF = /* glsl */`
 vec3 rvAlb = vColL; float rvRough = vMatA.x; float rvMetal = vMatA.y; vec3 rvEmi = vec3(0.0);
-float rvH = 0.0; float rvBumpK = 0.0; float rvAO = 1.0;
+float rvH = 0.0; float rvBumpK = 0.0; float rvAO = 1.0; float rvGlass = 0.0;
 int rvPat = int(vMatA.w + 0.5);
 vec2 uv = vUvM;
 vec3 lp = vLPos;
@@ -92,7 +185,7 @@ float nC = rv_vnoise(lp * 7.3 + 5.0);
 float macro = nA * 0.55 + nB * 0.3 + nC * 0.15;
 vec2 fw = fwidth(uv);
 float fwl = max(fw.x, fw.y);
-float night = uNightF;
+float night = max(uNightF * 0.0, 1.0 - smoothstep(-0.14, 0.06, dot(vUpW, normalize(uSunDirC))));
 
 if (rvPat == 1 || rvPat == 6 || rvPat == 15 || rvPat == 22) {
   // ------------------------------------------------ windows (cell units)
@@ -137,18 +230,30 @@ if (rvPat == 1 || rvPat == 6 || rvPat == 15 || rvPat == 22) {
   vec3 trim = mix(rvAlb * 1.35 + 0.05, vec3(0.9, 0.88, 0.82), 0.35);
   if (rvPat == 6) trim = rvAlb * 0.6;
   rvAlb = mix(rvAlb, trim, clamp(frame, 0.0, 1.0));
-  rvAlb = mix(rvAlb, mix(glass, interior, rvPat == 6 ? 0.08 : 0.35), win);
-  rvRough = mix(rvRough, 0.05, win);
-  rvMetal = mix(rvMetal, rvPat == 6 ? 0.65 : 0.1, win);
-  rvH = frame * 0.6 - win * 0.8;
+  rvAlb = mix(rvAlb, mix(glass, interior, (rvPat == 6 ? 0.06 : 0.22) * (0.4 + 0.6 * night)), win);
+  rvRough = mix(rvRough, 0.04 + 0.05 * hsh2, win);
+  rvMetal = mix(rvMetal, rvPat == 6 ? 0.65 : 0.25, win);
+  rvGlass = win;
+  // plaster / cladding micro relief outside the panes
+  rvH = frame * 0.6 - win * 0.8 + (1.0 - win - frame) * (nC * 0.25 + nB * 0.1);
   rvBumpK = 0.03;
   // night lights (and dim interior by day)
   float lit = step(hsh, uLitFrac);
-  vec3 wc = mix(uWinCol, uWinCol2, step(0.8, hsh2)) * (0.55 + 0.9 * hsh2);
-  // light gradient: lampshade glow in the upper part of the pane
-  float grad = 0.65 + 0.5 * smoothstep(0.2, 0.9, f.y);
+  float hsh3 = rv_hash12(id * 2.71 + seed * 1.9 + 17.0);
+  vec3 wc = hsh2 > 0.82 ? uWinCol2 : (hsh2 > 0.72 ? vec3(0.75, 1.0, 0.8) : uWinCol);
+  wc *= mix(0.2, 1.25, hsh3 * hsh3);
+  // blinds / curtains on some windows
+  float bl = f.y * 9.0; float fwb = fwidth(bl) * 1.2;
+  float blinds = hsh2 > 0.45 && hsh2 < 0.7 ? mix(0.72, 0.4 + 0.6 * smoothstep(0.4 - fwb, 0.4 + fwb, abs(fract(bl) - 0.5) * 2.0), 1.0 - smoothstep(0.25, 0.5, fwb)) : 1.0;
+  // light gradient: lampshade glow in the upper part of the pane, plus a dim floor-lamp pool low
+  float grad = (0.55 + 0.6 * smoothstep(0.2, 0.95, f.y)) * blinds;
   float onK = mix(0.03, 1.0, night);
-  rvEmi += wc * lit * win * grad * onK * uEmitK * (rvPat == 6 ? 0.8 : 1.6);
+  rvEmi += wc * lit * win * grad * onK * uEmitK * (rvPat == 6 ? 0.9 : 1.6);
+  rvAlb *= mix(1.0, blinds, win * 0.5);
+} else if (rvPat == 0) {
+  // plain surfaces: subtle trowel / cast relief so close-ups are never flat
+  rvH = nC * 0.35 + nB * 0.2;
+  rvBumpK = 0.008;
 } else if (rvPat == 2) {
   // ------------------------------------------------ planks (horizontal boards)
   float bw = 0.24;
@@ -203,7 +308,7 @@ if (rvPat == 1 || rvPat == 6 || rvPat == 15 || rvPat == 22) {
   rvH = -seam + rivet * 0.6 + h * 0.05;
   rvBumpK = 0.02;
   rvRough = clamp(rvRough + (h - 0.5) * 0.15, 0.05, 1.0);
-  if (rvPat == 19 || uAge > 0.3) {
+  if (rvPat == 19 || uAge > 0.58) {
     float streak = rv_vnoise(vec3(uv.x * 3.0, uv.y * 0.25, seed));
     float rust = smoothstep(0.5, 0.8, macro * 0.7 + streak * 0.5 + (rvPat == 19 ? 0.15 : uAge * 0.1) - 0.1);
     vec3 rc = mix(vec3(0.32, 0.12, 0.04), vec3(0.55, 0.26, 0.08), nC);
@@ -220,8 +325,11 @@ if (rvPat == 1 || rvPat == 6 || rvPat == 15 || rvPat == 22) {
   float id = rv_hash12(vec2(floor(uv.x / tw + row * 0.5), row) + seed);
   float prof = sin(fx * 3.14159);
   float lip = smoothstep(0.0, 0.18, fy);
-  float fade = 1.0 - smoothstep(0.08, 0.3, fwl);
-  rvAlb *= mix(1.0, (0.7 + 0.45 * id) * mix(0.5, 1.0, lip) * (0.8 + 0.25 * prof), fade);
+  float fade = 1.0 - smoothstep(0.03, 0.12, fwl);
+  float tpatch = rv_vnoise(vec3(uv * 0.35, seed));
+  rvAlb *= mix(0.86, 1.1, tpatch);
+  rvAlb *= mix(1.0, (0.88 + 0.18 * id) * mix(0.62, 1.0, lip) * (0.88 + 0.14 * prof), fade);
+  rvAlb *= mix(1.0, 0.9, (1.0 - fade) * 0.5);
   rvH = (prof * 0.5 + fy * 0.8) * fade;
   rvBumpK = 0.05;
   float moss = smoothstep(0.55, 0.85, macro + nC * 0.2);
@@ -347,7 +455,7 @@ if (rvPat == 1 || rvPat == 6 || rvPat == 15 || rvPat == 22) {
 
 // ---------------------------------------------------- weathering & context
 if (rvPat != 7 && rvPat != 8 && rvPat != 17) {
-  float ageK = 0.1 + uAge * 0.5;
+  float ageK = (0.1 + uAge * 0.5) * (1.0 - rvGlass * 0.85);
   // macro colour variation + grime
   rvAlb *= mix(1.0 - 0.25 * ageK, 1.0 + 0.08 * ageK, macro);
   // rain streaks on facades
@@ -382,7 +490,7 @@ export function makeCivMaterial(style = {}, opts = {}) {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0, envMapIntensity: 1.0 });
   const U = {
     uNightF: G.uNight, uTimeC: G.uTime, uWet: G.uWetness, uSnowC: G.uSnow,
-    uPlanetC: G.uPlanetCenter,
+    uPlanetC: G.uPlanetCenter, uSunDirC: G.uSunDir,
     uWinCol: { value: new THREE.Color(style.winCol ?? '#ffb467') },
     uWinCol2: { value: new THREE.Color(style.winCol2 ?? '#9fd8ff') },
     uLitFrac: { value: style.litFrac ?? 0.55 },
@@ -391,12 +499,22 @@ export function makeCivMaterial(style = {}, opts = {}) {
     uWinRect: { value: new THREE.Vector4(...(style.winRect ?? [0.26, 0.3, 0.74, 0.82])) },
   };
   m.userData.u = U;
-  const key = 'rvciv' + (opts.key || '');
+  const anim = opts.anim || null;
+  if (anim) {
+    U.uUpL = { value: new THREE.Vector3(0, 1, 0) }; U.uEastL = { value: new THREE.Vector3(1, 0, 0) }; U.uNorthL = { value: new THREE.Vector3(0, 0, 1) };
+    U.uSiteC = { value: new THREE.Vector3() }; U.uRBase = { value: 0 }; U.uTimeA = G.uTime;
+  }
+  const key = 'rvciv' + (opts.key || '') + (anim || '');
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\n' + VERT_PARS)
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + VERT_MAIN);
+    let vs = sh.vertexShader.replace('#include <common>', '#include <common>\n' + VERT_PARS + (anim ? ANIM_PARS[anim] : ''));
+    if (anim) {
+      vs = vs.replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n' + ANIM_NORMAL[anim])
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + ANIM_POS);
+      if (anim === 'npc') vs = vs.replace('#include <begin_vertex>', '#include <begin_vertex>');
+    }
+    vs = vs.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + VERT_MAIN + (anim === 'npc' ? '\n if (aMat.w > 17.5 && aMat.w < 18.5) vColL = aTint;\n' : ''));
+    sh.vertexShader = vs;
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' + FRAG_PARS)
       .replace('#include <color_fragment>', '#include <color_fragment>\n' + FRAG_SURF + '\n diffuseColor.rgb = rvAlb;')
@@ -420,43 +538,53 @@ export function makeCivMaterial(style = {}, opts = {}) {
 export function makeGlowMaterial() {
   return new THREE.ShaderMaterial({
     uniforms: {
-      uNightF: G.uNight, uTimeC: G.uTime, uPixH: { value: 540 }, uFov: { value: 1 },
+      uNightF: G.uNight, uTimeC: G.uTime, uPixH: { value: 540 }, uFov: { value: 1 }, uSunDirC: G.uSunDir, uPlanetC: G.uPlanetCenter,
       uFarFade: { value: new THREE.Vector2(0, 1e9) }, uDayK: { value: 0.0 }, uScale: { value: 1 },
     },
     vertexShader: /* glsl */`
       attribute vec3 aColor; attribute float aSize; attribute float aKind; attribute float aPhase;
-      uniform float uNightF, uTimeC, uPixH, uFov, uDayK, uScale; uniform vec2 uFarFade;
-      varying vec3 vC; varying float vA;
+      uniform float uNightF, uTimeC, uPixH, uFov, uDayK, uScale; uniform vec2 uFarFade; uniform vec3 uSunDirC, uPlanetC;
+      varying vec3 vC; varying float vA; varying float vBlob;
       void main(){
         vec3 p = position;
+        vBlob = step(3.5, aKind);
         float k = aKind;
-        float on = mix(uDayK, 1.0, uNightF);
+        vec3 wp = (modelMatrix * vec4(p, 1.0)).xyz;
+        vec3 prel = wp - uPlanetC;
+        float nightL = 1.0 - smoothstep(-0.14, 0.06, dot(normalize(prel), normalize(uSunDirC)));
+        float horizon = step(0.0, dot(prel, cameraPosition - wp));
+        float on = mix(uDayK, 1.0, nightL);
         float fl = 1.0;
         if (k > 0.5 && k < 1.5) { fl = step(0.55, fract(uTimeC * 0.5 + aPhase)); on = max(on, 0.6); }
         else if (k > 1.5 && k < 2.5) { p.x += sin(uTimeC * 1.3 + aPhase * 6.28) * 0.06; p.z += cos(uTimeC * 1.1 + aPhase * 6.28) * 0.06; fl = 0.9 + 0.1 * sin(uTimeC * 11.0 + aPhase * 40.0); }
+        else if (k > 3.5) { fl = 1.0; }
         else if (k > 2.5) { fl = 0.85 + 0.15 * sin(uTimeC * 0.7 + aPhase * 30.0); }
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         float d = -mv.z;
         gl_Position = projectionMatrix * mv;
         float px = aSize * uScale * uPixH / (2.0 * tan(uFov * 0.5) * max(d, 0.1));
         float fade = smoothstep(uFarFade.x * 0.7, uFarFade.x, d) * (1.0 - smoothstep(uFarFade.y * 0.8, uFarFade.y, d));
-        vA = on * fl * fade;
+        vA = on * fl * fade * horizon;
         // keep tiny distant lights visible as 1.5px points, energy-conserving
         float cl = max(px, 1.6);
-        vA *= min(1.0, (px * px) / (cl * cl) * 6.0 + 0.15);
+        if (k > 3.5) {
+          // city glow blob: only from afar (fades in beyond ~2.5 km), keeps a visible core from orbit
+          vA *= smoothstep(2500.0, 6000.0, d) * clamp(px / cl, 0.5, 1.0) * mix(0.35, 1.0, smoothstep(2.0, 12.0, px)) * 0.8;
+          cl = max(px, 2.2);
+        } else vA *= min(1.0, (px * px) / (cl * cl) * 6.0 + 0.15);
         gl_PointSize = min(cl, 96.0);
         vC = aColor;
         if (vA < 0.002) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
       }`,
     fragmentShader: /* glsl */`
-      varying vec3 vC; varying float vA;
+      varying vec3 vC; varying float vA; varying float vBlob;
       void main(){
         vec2 q = gl_PointCoord * 2.0 - 1.0;
         float r2 = dot(q, q);
         if (r2 > 1.0) discard;
         float core = exp(-r2 * 14.0);
         float halo = exp(-r2 * 3.5) * 0.35;
-        gl_FragColor = vec4(vC * (core * 1.6 + halo) * vA, 1.0);
+        gl_FragColor = vec4(vC * (vBlob > 0.5 ? exp(-r2 * 4.0) * 0.9 : core * 1.6 + halo) * vA, 1.0);
       }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
   });

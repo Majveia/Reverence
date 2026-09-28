@@ -34,7 +34,7 @@ export function buildStyle(body, atlas) {
     rock: { spacing: 9, cover: bw({ ROCK: 0.5, TUNDRA: 0.3, DESERT: 0.12, SAVANNA: 0.1, GRASSLAND: 0.07, FOREST: 0.12, TAIGA: 0.2, SNOW: 0.2, BEACH: 0.1, JUNGLE: 0.05, VOLCANIC: 0.35, CRYSTAL: 0.2, TOXIC: 0.1 }), species: [], slopeBoost: 1.2 },
     grass: {
       density: 1, height: 0.55, cover: bw({ GRASSLAND: 1, SAVANNA: 0.95, FOREST: 0.55, JUNGLE: 0.75, TAIGA: 0.5, TUNDRA: 0.55, BEACH: 0.12, DESERT: 0.05, TOXIC: 0.6, CRYSTAL: 0.4 }),
-      base: mix3(grass, [0.015, 0.035, 0.008], 0.5), tip: mix3(mix3(grass, grass2, 0.55), [0.75, 1, 0.45], 0.08), dry: mix3(sand, grass2, 0.4),
+      base: mix3(grass, [0.015, 0.035, 0.008], 0.3), tip: mix3(mix3(grass, grass2, 0.55), [0.75, 1, 0.45], 0.08), dry: mix3(sand, grass2, 0.4),
       dryAmount: 0.08, glowTip: null, flowers: [], widthMul: 1,
     },
     glow: 0, cardGlow: 0, windAmp: 1, translucency: 0.9,
@@ -64,7 +64,7 @@ export function buildStyle(body, atlas) {
     
     barkLayer: BARK.plates, tint2: [0.08, 0.06, 0.04], billboard: 0, windAmp: 0.8,
     biomes: bw({ TAIGA: 1, FOREST: 0.35, TUNDRA: 0.5, GRASSLAND: 0.08, SNOW: 0.15 }), m: [0.2, 1.5], t: [-0.1, 0.8], slope: 0.85, alt: [-0.01, 0.8],
-    zone: 1, dens: 1, scale: [0.7, 1.3], lean: 0.02, sink: 0.4, ...o, params: { height: 20, trunkR: 0.35, branchLen: 3.8, whorlGap: 0.62, droop: 0.3, rect: R('needle'), leafA: fl(0), leafB: mix3(fl(0), fl(1), 0.6), bark: mix3(barkBrown, [0.12, 0.06, 0.035], 0.4), ...o.params },
+    zone: 1, dens: 1, scale: [0.7, 1.3], lean: 0.02, sink: 0.4, ...o, params: { height: 20, trunkR: 0.35, branchLen: 3.8, whorlGap: 0.62, droop: 0.3, crownBase: 0.27, rect: R('needle'), leafA: fl(0), leafB: mix3(fl(0), fl(1), 0.6), bark: mix3(barkBrown, [0.12, 0.06, 0.035], 0.4), ...o.params },
   });
   const birch = (o = {}) => ({
     id: 'birch', layer: 'canopy', gen: T.slender, variants: 2, collider: 'tree',
@@ -138,7 +138,7 @@ export function buildStyle(body, atlas) {
       add('under', bushSp({ params: { radius: 0.8, flowerChance: 0.05 }, dens: 0.6 }));
       add('under', shrubDry({ dens: 0.5 }));
       S.canopy.cover = bw({ FOREST: 0.9, TAIGA: 0.92, TUNDRA: 0.35, GRASSLAND: 0.18, SAVANNA: 0.1, DESERT: 0.035, SNOW: 0.06, BEACH: 0.02 });
-      S.grass.height = 0.45; S.grass.dryAmount = 0.3;
+      S.grass.height = 0.62; S.grass.dryAmount = 0.22;
       S.grass.cover[B.DESERT] = 0.15; S.grass.cover[B.TUNDRA] = 0.65;
       S.grass.flowers = [{ rect: R('daisy'), colA: [0.92, 0.9, 0.85], colB: [1, 0.95, 0.75], tint2: [0.85, 0.65, 0.1], type: 'daisy', freq: 0.5 }];
       rocksDefault(0.35, ['boulder', 'boulder', 'angular', 'slab']);
@@ -198,8 +198,8 @@ export function buildStyle(body, atlas) {
         biomes: bw({ SAVANNA: 0.6, GRASSLAND: 0.8, FOREST: 1, JUNGLE: 1, TOXIC: 1, TUNDRA: 0.2 }), m: [0, 1.5], t: [0, 1.4], slope: 0.9, alt: [0, 0.7], zone: 1, dens: 0.8, scale: [0.7, 1.6], lean: 0.1, sink: 0.05 });
       add('under', fernSp({ params: { leafA: mix3(teal, capA, 0.4), leafB: capA }, biomes: bw({ FOREST: 1, JUNGLE: 1, GRASSLAND: 0.4, SAVANNA: 0.3 }), dens: 0.8 }));
       S.canopy.cover = bw({ FOREST: 0.8, JUNGLE: 0.85, GRASSLAND: 0.32, SAVANNA: 0.26, TUNDRA: 0.08, DESERT: 0.05, TOXIC: 0.8, BEACH: 0.02 });
-      S.under.cover = bw({ FOREST: 0.6, JUNGLE: 0.7, GRASSLAND: 0.35, SAVANNA: 0.3, TUNDRA: 0.15, DESERT: 0.06, TOXIC: 0.6 });
-      S.grass.base = mix3(grass, [0.03, 0.04, 0.02], 0.5); S.grass.tip = mix3(grass2, capB, 0.35); S.grass.height = 0.5; S.grass.glowTip = glowC;
+      S.under.cover = bw({ FOREST: 0.8, JUNGLE: 0.85, GRASSLAND: 0.45, SAVANNA: 0.35, TUNDRA: 0.15, DESERT: 0.08, TOXIC: 0.8 });
+      S.grass.base = mix3(mix3(grass, teal, 0.35), [0.03, 0.04, 0.02], 0.35); S.grass.tip = mix3(mix3(grass2, capA, 0.4), teal, 0.2); S.grass.height = 0.72; S.grass.density = 1.25; S.grass.dryAmount = 0.02; S.grass.glowTip = glowC;
       S.grass.cover[B.DESERT] = 0.25; S.grass.cover[B.SAVANNA] = 1; S.grass.cover[B.FOREST] = 0.85; S.grass.cover[B.JUNGLE] = 0.9; S.grass.cover[B.GRASSLAND] = 1;
       S.grass.flowers = [{ rect: R('spores'), colA: glowC, colB: lav, tint2: [1, 1, 0.9], type: 'daisy', freq: 0.7, glow: 2.5 }];
       S.glow = 2.6;

@@ -87,7 +87,13 @@ const GRASS_CORE = /* glsl */`
   vec3 sl = rvQrotG(iRot, vec3(-sin(ang), 0.0, cos(ang)));      // across the blade
   // static curvature (blades arc outward from the patch center + random lean)
   vec3 outward = length(rootL) > 1e-3 ? normalize(root) : fl;
-  vec3 D = (outward * 0.35 + fl * (h3 - 0.5) * 0.7) * H * (0.25 + 0.35 * h2);
+  // coherent 'combed' lean over the field (flow field in world space) + slight tuft arc + noise
+  vec3 plR = rootW - uPlanetCenter;
+  float fa = sin(dot(plR, vec3(0.043, 0.037, 0.051))) * 2.2 + sin(dot(plR, vec3(-0.011, 0.017, 0.013))) * 3.0;
+  vec3 e1 = normalize(cross(upP, abs(upP.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+  vec3 e2 = cross(upP, e1);
+  vec3 flow = e1 * cos(fa) + e2 * sin(fa);
+  vec3 D = (flow * 0.32 + outward * 0.12 + fl * (h3 - 0.5) * 0.45) * H * (0.3 + 0.4 * h2);
   // wind: travelling gusts (coherent over the field) + per-blade flutter
   vec3 wd = uWindDir - upP * dot(uWindDir, upP);
   wd = length(wd) > 1e-3 ? normalize(wd) : sl;
@@ -122,7 +128,7 @@ const GRASS_CORE = /* glsl */`
   if (dot(bn, uCamPos - rootW) < 0.0) bn = -bn;
   bn = normalize(bn + sl * aSeg.y * 0.45);
   rvGrassN = normalize(mix(bn, upP, 0.55));
-  vT = t; vDry = iData.w; vRand = h1; vAO = mix(0.25, 1.0, smoothstep(0.0, 0.85, t)); vSide = aSeg.y;
+  vT = t; vDry = iData.w; vRand = h1; vAO = mix(0.4, 1.0, smoothstep(0.0, 0.8, t)); vSide = aSeg.y;
   vGW = rootW;
   if (H < 1e-3) rvGrassPos = iPos.xyz;
 }

@@ -34,7 +34,7 @@ class Occ {
   }
   idx(x, z) { const i = Math.floor(x / this.cell) + this.half, j = Math.floor(z / this.cell) + this.half; return (i < 0 || j < 0 || i >= this.n || j >= this.n) ? -1 : j * this.n + i; }
   /** rotated rectangle test/mark */
-  rect(cx, cz, w, d, rot, mark, val = 1) {
+  rect(cx, cz, w, d, rot, mark, val = 1, mask = 255) {
     const c = Math.cos(rot), s = Math.sin(rot);
     const st = this.cell * 0.7;
     for (let lx = -w / 2; lx <= w / 2 + 1e-6; lx += Math.min(st, w / 2)) {
@@ -42,7 +42,7 @@ class Occ {
         const x = cx + lx * c + lz * s, z = cz - lx * s + lz * c;
         const i = this.idx(x, z);
         if (i < 0) { if (!mark) return false; continue; }
-        if (mark) this.a[i] = Math.max(this.a[i], val); else if (this.a[i]) return false;
+        if (mark) this.a[i] |= val; else if (this.a[i] & mask) return false;
       }
     }
     return true;
@@ -50,7 +50,7 @@ class Occ {
   disc(cx, cz, r, val = 1) {
     for (let x = -r; x <= r; x += this.cell * 0.7) for (let z = -r; z <= r; z += this.cell * 0.7) {
       if (x * x + z * z > r * r) continue;
-      const i = this.idx(cx + x, cz + z); if (i >= 0) this.a[i] = Math.max(this.a[i], val);
+      const i = this.idx(cx + x, cz + z); if (i >= 0) this.a[i] |= val;
     }
   }
 }
@@ -148,20 +148,42 @@ export function layoutSite(site, S, prof, quality = 1) {
       addRoad(pts, prof.streetW, 'ring');
     }
   }
+  // secondary lanes branching off spokes and rings (organic layouts): denser, more intimate towns
+  if (!(prof.grid && kind !== 'village' && kind !== 'camp' && kind !== 'ruin') && prof.lanes !== false) {
+    const base = roads.slice();
+    for (const r of base) {
+      const Lr = polyLen(r.pts);
+      let side = rng.next() < 0.5 ? 1 : -1;
+      for (let s = rng.range(25, 45); s < Lr - 20; s += rng.range(38, 62) * (kind === 'village' || kind === 'camp' ? 1.25 : 1)) {
+        const p = along(r.pts, s);
+        if (Math.hypot(p.x, p.z) < plazaR + 20) continue;
+        let a = Math.atan2(p.tx * side, -p.tz * side);
+        const nx = -p.tz * side, nz = p.tx * side;
+        a = Math.atan2(nz, nx) + rng.range(-0.3, 0.3);
+        const pts = [];
+        let x = p.x + nx * r.w * 0.5, z = p.z + nz * r.w * 0.5;
+        const len = rng.range(30, 85);
+        for (let t = 0; t < len; t += 8) { pts.push({ x, z }); a += rng.range(-0.12, 0.12); x += Math.cos(a) * 8; z += Math.sin(a) * 8; if (Math.hypot(x, z) > R * 1.1) break; }
+        if (pts.length >= 3) addRoad(pts, prof.streetW * 0.85, 'lane');
+        side = -side;
+      }
+    }
+  }
   // mark roads
   for (const r of roads) {
     const L = polyLen(r.pts);
-    for (let s = 0; s <= L; s += 1.5) { const p = along(r.pts, s); occ.disc(p.x, p.z, r.w / 2 + 1.2, 2); }
+    for (let s = 0; s <= L; s += 1.5) { const p = along(r.pts, s); occ.disc(p.x, p.z, r.w / 2 + 0.6, 2); }
   }
   // plaza
-  occ.disc(0, 0, plazaR, 3);
+  occ.disc(0, 0, plazaR, 4);
   const plaza = { x: 0, z: 0, r: plazaR, h: G.g(0, 0) };
 
   // ------------------------------------------------ special lots (landmarks)
   const tryLot = (L, force = false) => {
     const { x, z, w, d, rot } = L;
     if (Math.hypot(x, z) > R * 1.15 && !force) return false;
-    if (!occ.rect(x, z, w + (L.gap ?? 2), d + (L.gap ?? 2), rot, false)) return false;
+    if (!occ.rect(x, z, w, d, rot, false, 0, 7)) return false;
+    if (!occ.rect(x, z, w + (L.gap ?? 2), d + (L.gap ?? 2), rot, false, 0, 1)) return false;
     // terrain
     const c = Math.cos(rot), s = Math.sin(rot);
     let mn = Infinity, mx = -Infinity, wet = 0;
@@ -218,7 +240,15 @@ export function layoutSite(site, S, prof, quality = 1) {
         const x = p.x + nx * off, z = p.z + nz * off;
         const rot = Math.atan2(-nx, -nz); // front (+z local) faces the road
         const L2 = { x, z, w: spec.w, d: spec.d, rot, t, type: spec.type, spec, gap: spec.gap ?? 2 };
-        tryLot(L2);
+        if (tryLot(L2) && prof.backRow !== false && !prof.grid && rng.next() < (prof.backRow ?? 0.55)) {
+          // second row behind (backyards, alleys) — denser, more organic towns
+          const s2 = prof.lot(Math.min(1.2, t + 0.05), rng, kind, r.type);
+          if (s2) {
+            const off2 = off + spec.d / 2 + rng.range(3, 6) + s2.d / 2;
+            const lx = p.x + nx * off2 + p.tx * rng.range(-3, 3), lz = p.z + nz * off2 + p.tz * rng.range(-3, 3);
+            tryLot({ x: lx, z: lz, w: s2.w, d: s2.d, rot: rot + rng.range(-0.2, 0.2), t, type: s2.type, spec: s2, gap: s2.gap ?? 2 });
+          }
+        }
         s += spec.w + (spec.gap ?? 2) + rng.range(0, 3);
       }
     }

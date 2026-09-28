@@ -85,6 +85,16 @@ export class World {
       } catch (e) { console.error(`[world] failed to load subsystem "${folder}"`, e); }
     }
     defs.sort((a, b) => (a.def.order ?? 100) - (b.def.order ?? 100));
+    // Debug/capture isolation: ?disable=fauna,vehicles skips those subsystems; ?only=terrain,atmosphere
+    // loads just those (plus planet). Handy for profiling and for judging one track in isolation.
+    const csv = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
+    const disable = new Set(csv(this.params.disable));
+    const only = new Set(csv(this.params.only));
+    if (only.size) only.add('planet');
+    for (let i = defs.length - 1; i >= 0; i--) {
+      const n = defs[i].def.name ?? defs[i].folder;
+      if (disable.has(n) || (only.size && !only.has(n))) defs.splice(i, 1);
+    }
     this.celestial.update(this.time);
     for (const { folder, def } of defs) {
       const name = def.name ?? folder;

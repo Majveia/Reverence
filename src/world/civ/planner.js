@@ -122,7 +122,7 @@ export function planSites(world) {
   const spawn = predictSpawn(world);
   const sf = spawn.frame;
   const eye = spawn.dir.clone().multiplyScalar(R + S.height(spawn.dir.x, spawn.dir.y, spawn.dir.z) + 6);
-  const ckind = level === 0 ? 'monument' : capitalKind(level);
+  const ckind = level === 0 ? 'monument' : (style === 'hearth' || style === 'nomad' || style === 'monastery') ? capitalKind(Math.min(level, 3)) : capitalKind(level);
   const cr = level === 0 ? 50 : (KIND_RADIUS[ckind][0] + KIND_RADIUS[ckind][1]) / 2;
   const search = (dists, angles, r, angW, hamlet = false) => {
     let best = null;
@@ -134,10 +134,11 @@ export function planSites(world) {
         const fr = makeFrame(dir, R);
         const st = siteStats(S, fr, r * 0.85, hamlet ? 6 : 16, 8);
         const tgt = dir.clone().multiplyScalar(R + st.mean + Math.min(40, r * 0.1));
-        const block = hamlet ? 0 : clearView(S, R, eye, tgt);
-        let score = -st.rough * 60 - (1 - st.dry) * (waterOK ? 0.4 : 6) - Math.abs(Math.abs(ao) - (hamlet ? 30 : 0)) / angW
-          - Math.abs(dist - dists[1]) / 2500 - Math.min(block, 400) * 0.01;
+        const block = clearView(S, R, eye, tgt) * (hamlet ? 3 : 1);
+        let score = -st.rough * (hamlet ? 30 : 12) - (1 - st.dry) * (waterOK ? 0.4 : 6) - Math.abs(Math.abs(ao) - (hamlet ? 16 : 0)) / angW
+          - Math.abs(dist - dists[1]) / (hamlet ? 1200 : 600) - Math.min(block, 400) * 0.01;
         if (st.mean < sea + 3 && !(waterOK && st.mean > sea - 30)) score -= 4;
+        if (globalThis.__civDebug) console.log('cand', dist, ao, 'rough', st.rough.toFixed(3), 'dry', st.dry.toFixed(2), 'block', Math.round(block), 'mean', Math.round(st.mean), 'score', score.toFixed(2));
         if (!best || score > best.score) best = { score, fr, st, dist };
       }
     }
@@ -154,7 +155,7 @@ export function planSites(world) {
   });
   // outlying hamlet between the spawn and the capital (foreground life from the first frame)
   if (level >= 2) {
-    const hb = search([170, 230, 300, 380], [-50, -40, -30, -20, 20, 30, 40, 50], 55, 30, true);
+    const hb = search([170, 220, 280, 350], [-28, -20, -12, 12, 20, 28], 55, 30, true);
     const fr = hb.fr;
     if (fr.up.angleTo(cap.up) * R > cr + 120) {
       sites.push({ id: 1, hamlet: true, kind: style === 'nomad' ? 'camp' : 'village', style, level: Math.min(level, 2), name: name(1), ...fr,

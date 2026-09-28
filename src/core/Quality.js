@@ -52,7 +52,19 @@ export function detectQuality(requested, renderer) {
   q.pixelRatio = Math.min(window.devicePixelRatio || 1, q.pixelRatioCap);
   // Software GL (headless capture): MSAA roughly doubles frame cost; use the FXAA path instead.
   q.software = software;
-  if (software) q.msaa = 0;
+  if (software) {
+    q.msaa = 0;
+    // Software-capture profile: CPU rasterization makes multi-million-triangle frames take minutes.
+    // Keep the look but thin geometry-heavy systems. ?full=1 forces the real tier (hero shots).
+    let full = false;
+    try { full = new URL(window.location.href).searchParams.get('full') === '1'; } catch (_) { /* ignore */ }
+    if (!full) {
+      q.floraDensity = Math.min(q.floraDensity, 0.45);
+      q.terrainDetail = Math.min(q.terrainDetail, 0.85);
+      q.shadowMapSize = Math.min(q.shadowMapSize, 1024);
+      q.captureProfile = true;
+    }
+  }
   q.mobile = isMobile();
   q.touch = isTouchDevice();
   return q;

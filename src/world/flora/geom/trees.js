@@ -200,12 +200,12 @@ export function conifer(rnd, P) {
         const p1 = [tp.x + ca * L * 0.5, w.y - B.droop * L * 0.55, tp.z + sa * L * 0.5];
         const p2 = [tp.x + ca * L, w.y - B.droop * L * 0.7 + L * 0.12, tp.z + sa * L];
         const flex0 = Math.pow(w.y / H, 2) * 0.2;
-        if (!detail && L > 0.9) {
-          b.tube(bezierPath([p0, p1, p2], 3, Math.max(0.025, r0 * 0.28 * (L / maxL)), 0.012, { flex: (t) => flex0 + t * 0.5, ao: (t) => 0.4 + 0.5 * t }),
+        if (!detail && L > 1.4) {
+          b.tube(bezierPath([p0, p1, p2], 2, Math.max(0.025, r0 * 0.28 * (L / maxL)), 0.012, { flex: (t) => flex0 + t * 0.5, ao: (t) => 0.4 + 0.5 * t }),
             { segs: 3, color: P.bark, phase: B.phase });
         }
         // needle cards along the branch: flat sprays + a tilted duplicate for volume
-        const nCards = detail ? 1 : Math.max(1, Math.round(L / 1.1));
+        const nCards = detail ? 1 : Math.max(1, Math.round(L / 1.5));
         for (let q = 0; q < nCards; q++) {
           const t0 = nCards === 1 ? 0.12 : q / nCards * 0.85 + 0.08;
           const t1 = Math.min(1, t0 + (nCards === 1 ? 0.95 : 1.25 / nCards + 0.1));
@@ -230,7 +230,7 @@ export function conifer(rnd, P) {
             b.card({
               c: pa, right, up: [dir[0] * 1.05, dir[1] * 1.05, dir[2] * 1.05], rect: P.rect,
               kind: KIND.LEAF, flex0: flex0 + t0 * 0.5, flex1: flex0 + t1 * 0.55 + 0.1, ao0: ao * 0.85, ao1: ao, phase: B.phase,
-              color: col, shade, bend: -len * 0.08 * (1 + B.droop), segs: 2,
+              color: col, shade, bend: -len * 0.08 * (1 + B.droop), segs: len > 1.3 ? 2 : 1,
             });
           }
         }
