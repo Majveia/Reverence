@@ -58,7 +58,7 @@ varying vec3 vRvN;
 varying vec4 vRvMat;
 varying vec4 vRvMat2;
 
-vec3 rvN; float rvRough; float rvAO; vec3 rvEmis;
+vec3 rvN; float rvRough; float rvAO; vec3 rvEmis; bool rvStoch;
 float rvLum( vec3 c ) { return dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ); }
 
 // ---- compact triplanar sampling: ONE loop over the projection axes per material group keeps the
@@ -66,15 +66,19 @@ float rvLum( vec3 c ) { return dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ); }
 //      gradients so they are legal inside the dynamic branches.
 vec2 rvAx( int a, vec3 v ) { return a == 0 ? v.zy : ( a == 1 ? v.xz : v.xy ); }
 vec3 rvGw( int a, vec2 g ) { return a == 0 ? vec3( 0.0, g.y, g.x ) : ( a == 1 ? vec3( g.x, 0.0, g.y ) : vec3( g.x, g.y, 0.0 ) ); }
-float rvWa( int a, vec3 w ) { return a == 0 ? w.x : ( a == 1 ? w.y : w.z ); }
+float rvWa( int a, vec3 w ) { float v = a == 0 ? w.x : ( a == 1 ? w.y : w.z ); return v < 0.06 ? 0.0 : v; }
 // IQ "texture repetition" #3: two offset fetches blended by a smooth per-region index
 vec4 rvFetchS( float layer, vec2 uv, vec2 dx, vec2 dy, float k ) {
   float l = k * 7.0; float i = floor( l ); float f = fract( l );
   vec2 oa = fract( sin( vec2( 3.0, 7.0 ) * i + vec2( 0.3, 0.7 ) ) * 43758.5453 );
-  vec2 ob = fract( sin( vec2( 3.0, 7.0 ) * ( i + 1.0 ) + vec2( 0.3, 0.7 ) ) * 43758.5453 );
   vec4 a = textureGrad( uRvDetail, vec3( uv + oa, layer ), dx, dy );
-  vec4 b = textureGrad( uRvDetail, vec3( uv + ob, layer ), dx, dy );
-  return mix( a, b, smoothstep( 0.25, 0.75, f + 0.6 * ( a.b - b.b ) ) );
+  // second fetch only where the blend actually needs it and only up close (tiling is invisible far away)
+  if ( rvStoch && f > 0.2 && f < 0.8 ) {
+    vec2 ob = fract( sin( vec2( 3.0, 7.0 ) * ( i + 1.0 ) + vec2( 0.3, 0.7 ) ) * 43758.5453 );
+    vec4 b = textureGrad( uRvDetail, vec3( uv + ob, layer ), dx, dy );
+    return mix( a, b, smoothstep( 0.25, 0.75, f + 0.6 * ( a.b - b.b ) ) );
+  }
+  return a;
 }
 
 float rvHB( float w, float h, float c ) { // height-blend: detail height pushes transitions around
@@ -96,7 +100,7 @@ void rvTerrain( inout vec3 albedo ) {
   float wetA = vRvMat2.x, glac = vRvMat2.y, curv = vRvMat2.z * 2.0 - 1.0, mtn = vRvMat2.w;
   float slope = 1.0 - dot( Ng, up );
 
-  vec3 wg = pow( abs( Ng ), vec3( 4.0 ) ); wg /= dot( wg, vec3( 1.0 ) );
+  vec3 wg = pow( abs( Ng ), vec3( 6.0 ) ); wg /= dot( wg, vec3( 1.0 ) );
   vec3 wu = pow( abs( up ), vec3( 8.0 ) ); wu /= dot( wu, vec3( 1.0 ) );
   vec3 dCx = dFdx( C ), dCy = dFdy( C );
 
@@ -104,18 +108,19 @@ void rvTerrain( inout vec3 albedo ) {
   vec4 mA = vec4( 0.0 ), mC = vec4( 0.0 );
   for ( int a = 0; a < 3; a++ ) {
     float wa = rvWa( a, wu );
-    if ( wa < 0.02 ) continue;
+    if ( wa <= 0.0 ) continue;
     vec2 uv = rvAx( a, C ), gx = rvAx( a, dCx ), gy = rvAx( a, dCy );
     mA += wa * textureGrad( uRvDetail, vec3( uv * ( 1.0 / 512.0 ), 5.0 ), gx * ( 1.0 / 512.0 ), gy * ( 1.0 / 512.0 ) );
     mC += wa * textureGrad( uRvDetail, vec3( uv * ( 1.0 / 64.0 ), 5.0 ), gx * ( 1.0 / 64.0 ), gy * ( 1.0 / 64.0 ) );
   }
-  { float ws = dot( step( vec3( 0.02 ), wu ), wu ); mA /= ws; mC /= ws; }
+  { float ws = dot( step( vec3( 0.06 ), wu ), wu ); mA /= ws; mC /= ws; }
   float n1 = mA.r - 0.5, n2 = mA.g - 0.5, n3 = mA.b - 0.5, n4 = mC.a - 0.5;
   float kS = mA.a;
 
   float fNear = 1.0 - smoothstep( 18.0, 70.0, dist );
+  rvStoch = dist < 260.0;
   float fMid = ( 1.0 - smoothstep( 250.0, 1400.0, dist ) ) * q;
-  float fFar = ( 1.0 - smoothstep( 3000.0, 12000.0, dist ) ) * q;
+  float fFar = ( 1.0 - smoothstep( 6000.0, 20000.0, dist ) ) * q;
 
   // ---- geometric layer weights
   float sea = uRvP.y;
@@ -139,10 +144,12 @@ void rvTerrain( inout vec3 albedo ) {
     vec3 gM = vec3( 0.0 ), gA = vec3( 0.0 ), gN = vec3( 0.0 ); float ws = 0.0;
     for ( int a = 0; a < 3; a++ ) {
       float wa = rvWa( a, wg );
-      if ( wa < 0.02 ) continue;
+      if ( wa <= 0.0 ) continue;
       vec2 uv = rvAx( a, C ), gx = rvAx( a, dCx ), gy = rvAx( a, dCy );
       ws += wa;
-      vec4 t = textureGrad( uRvDetail, vec3( uv * ( 1.0 / 64.0 ) + 0.37, 0.0 ), gx * ( 1.0 / 64.0 ), gy * ( 1.0 / 64.0 ) );
+      // macro crags: 512 m and 128 m tiles (facets of ~100 m and ~25 m read from kilometres away)
+      // (uv warped by the low-frequency noise so the macro tiles never line up)
+      vec4 t = textureGrad( uRvDetail, vec3( uv * ( 1.0 / 192.0 ) + 0.71 + ( mA.rb - 0.5 ) * 1.4 + ( mC.gr - 0.5 ) * 0.2, 0.0 ), gx * ( 1.0 / 192.0 ), gy * ( 1.0 / 192.0 ) );
       accM += wa * t; gM += wa * rvGw( a, t.rg * 2.0 - 1.0 );
       if ( fMid > 0.0 ) {
         t = rvFetchS( 0.0, uv * 0.125, gx * 0.125, gy * 0.125, kS );
@@ -155,7 +162,7 @@ void rvTerrain( inout vec3 albedo ) {
     }
     float iw = 1.0 / ws;
     accM *= iw; accA *= iw; accN *= iw;
-    gradT += ( gM * iw * fFar * 0.85 + gA * iw * fMid * 0.8 + gN * iw * fNear * 0.45 ) * wRock;
+    gradT += ( gM * iw * fFar * 1.1 + gA * iw * fMid * 0.8 + gN * iw * fNear * 0.45 ) * wRock;
     hRock = mix( 0.5, accM.b, fFar );
     hRock = mix( hRock, hRock * 0.4 + accA.b * 0.6, fMid );
     hRock = mix( hRock, hRock * 0.7 + accN.b * 0.3, fNear );
@@ -164,13 +171,13 @@ void rvTerrain( inout vec3 albedo ) {
     aRock = mix( aRock, aRock * 0.7 + accN.a * 0.3, fNear );
   }
   // ---- ground layers: projected along the planet's up (one axis loop for all of them)
-  if ( wRock < 0.98 && fMid > 0.0 ) {
+  if ( wRock < 0.9 && fMid > 0.0 ) {
     vec4 aG = vec4( 0.0 ), aGn = vec4( 0.0 ), aS = vec4( 0.0 ), aW = vec4( 0.0 ), aP = vec4( 0.0 );
     vec3 gG = vec3( 0.0 ), gGn = vec3( 0.0 ), gS = vec3( 0.0 ), gW = vec3( 0.0 ), gP = vec3( 0.0 ); float ws = 0.0;
     bool doS = wSand > 0.02, doW = snowPot > 0.02, doP = wScree > 0.05, doN = fNear > 0.0;
     for ( int a = 0; a < 3; a++ ) {
       float wa = rvWa( a, wu );
-      if ( wa < 0.02 ) continue;
+      if ( wa <= 0.0 ) continue;
       vec2 uv = rvAx( a, C ), gx = rvAx( a, dCx ), gy = rvAx( a, dCy );
       ws += wa;
       vec4 t = rvFetchS( 1.0, uv * 0.25, gx * 0.25, gy * 0.25, kS ); aG += wa * t; gG += wa * rvGw( a, t.rg * 2.0 - 1.0 );
@@ -183,7 +190,7 @@ void rvTerrain( inout vec3 albedo ) {
     dGround = aG * iw; gradT += gG * iw * wGround * 0.5 * fMid;
     if ( doN ) { dGround = mix( dGround, dGround * 0.5 + aGn * iw * 0.5, fNear ); gradT += gGn * iw * wGround * 0.35 * fNear; }
     hGround = mix( 0.5, dGround.b, fMid );
-    if ( doS ) { dSand = aS * iw; gradT += gS * iw * wSand * ( 1.0 - wRock ) * 0.5 * fMid; hSand = mix( 0.5, dSand.b, fMid ); }
+    if ( doS ) { dSand = aS * iw; gradT += gS * iw * wSand * ( 1.0 - wRock ) * 0.5 * fMid * ( 0.25 + 0.75 * ( 1.0 - smoothstep( 40.0, 300.0, dist ) ) ); hSand = mix( 0.5, dSand.b, fMid ); }
     if ( doW ) { dSnow = aW * iw; gradT += gW * iw * snowPot * ( 1.0 - wRock ) * 0.3 * fMid; hSnow = mix( 0.5, dSnow.b, fMid ); }
     if ( doP ) { dPeb = aP * iw; gradT += gP * iw * wScree * ( 1.0 - wRock ) * 0.6 * fMid; }
   }
@@ -221,7 +228,7 @@ void rvTerrain( inout vec3 albedo ) {
   grassC = mix( grassC, uRvGrass2 * vec3( 1.0, 0.92, 0.78 ), smoothstep( 0.35, 0.15, temp ) * 0.6 );
   grassC = mix( grassC, uRvGrass2, smoothstep( 0.55, 0.8, mC.r ) * 0.35 );
   grassC = mix( grassC, uRvForest * 0.85, smoothstep( 0.5, 0.75, mC.b + 0.3 * n3 ) * 0.4 );
-  grassC = mix( grassC, vec3( rvLum( grassC ) ), 0.18 );
+  grassC = mix( grassC, vec3( rvLum( grassC ) ), 0.26 );
   grassC *= 0.78 + 0.44 * mA.b + 0.2 * n4;
   float soilM = smoothstep( 0.62, 0.8, mC.b + 0.2 * mA.r + 0.25 * wScree );
   vec3 groundC = mix( grassC, uRvSoil, soilM * 0.8 );
@@ -229,7 +236,7 @@ void rvTerrain( inout vec3 albedo ) {
   groundC = mix( groundC, uRvSoil * 0.95, wScree * 0.55 * mix( 0.6, dPeb.b, fMid ) );
 
   // rock tone: palette rock pulled toward neutral grey, strata bands only where the style asks for it
-  vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ), 0.35 );
+  vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ) * vec3( 0.95, 0.99, 1.07 ), 0.62 );
   vec3 rockC = mix( rockBase, uRvRock2, smoothstep( 0.2, 0.9, bh ) * ( 0.15 + 0.6 * uRvS.x * uRvS.x ) );
   rockC = mix( rockC, uRvSand * 0.8, smoothstep( 0.8, 0.97, bh ) * 0.35 * uRvS.x * uRvS.x );
   rockC = mix( rockC, rockBase * 0.55, smoothstep( 0.35, 0.65, mC.g + 0.3 * n2 ) * 0.35 );
@@ -238,7 +245,7 @@ void rvTerrain( inout vec3 albedo ) {
   rockC *= 0.88 + 0.24 * mA.g;
   // lichen / moss on moderately steep, moist rock
   rockC = mix( rockC, grassC * 0.75, ( 1.0 - rockS ) * smoothstep( 0.4, 0.8, moist ) * 0.45 * uRvS2.x );
-  vec3 sandC = uRvSand * ( 0.86 + 0.28 * mix( 0.5, dSand.a, fMid ) + 0.12 * n1 );
+  vec3 sandC = uRvSand * ( 0.86 + 0.28 * mix( 0.5, dSand.a, fMid * fNear * 0.7 + fMid * 0.3 ) + 0.12 * n1 + 0.08 * n4 );
   vec3 snowC = uRvSnow * ( 0.93 + 0.07 * mix( 0.5, dSnow.a, fMid ) );
   snowC = mix( snowC, snowC * vec3( 0.82, 0.9, 1.05 ), clamp( curv, 0.0, 1.0 ) * 0.5 ); // bluish hollows
 
@@ -366,7 +373,7 @@ export function createTerrainMaterial(body, quality) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v5';
+  mat.customProgramCacheKey = () => 'rv-terrain-v7';
   return mat;
 }
 

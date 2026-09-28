@@ -28,7 +28,7 @@ const BOX = 256;            // Mpc/h
 const A_START = 1 / 50;     // z = 49
 const T_OPEN = 32;          // s, opening sequence length (z = 49 → 0)
 const A_PM0 = 0.05;         // COLA starts at z = 19 (2LPT is exact enough before)
-const DA = 0.04;            // PM step in a
+const DA = 0.05;            // PM step in a (19 COLA steps to z = 0)
 const DS_SAT = 0.5;         // saturation of the sub-mesh Zel'dovich growth (truncated ZA)
 const DEG = Math.PI / 180;
 
@@ -51,6 +51,9 @@ function aAt(tau) {
 const subGrowth = (a) => { const d = D1(a); return d / Math.sqrt(1 + (d / DS_SAT) * (d / DS_SAT)); };
 /** Visual expansion: the comoving camera distance shrinks as (a/1)^0.32 while the opening plays. */
 const sVis = (a) => Math.pow(Math.min(a, 1.2), 0.32);
+
+// camera memory across mode switches (returning from a galaxy puts you back where you dove in)
+let MEMORY = null;
 
 function h32(x) { x |= 0; x ^= x >>> 16; x = Math.imul(x, 0x7feb352d); x ^= x >>> 15; x = Math.imul(x, 0x846ca68b); x ^= x >>> 16; return x >>> 0; }
 
@@ -86,13 +89,14 @@ export default class CosmicMode extends Mode {
     const tier = q.tier || 'high';
     this.params = params;
     const num = (k) => { const v = raw?.get?.(k); if (v === null || v === undefined || v === '') return undefined; const f = parseFloat(v); return Number.isFinite(f) ? f : undefined; };
-    const N = tier === 'low' ? 64 : 128;
+    // 128³ lattice ≈ 400 MB of float textures: desktop only; phones and 'low' run 64³ (≈ 50 MB)
+    const N = num('n') ?? (tier === 'low' || q.mobile ? 64 : 128);
     const M = num('mesh') ?? N;             // PM mesh = particle lattice (COLA needs force resolution ≥ lattice)
-    const K = num('k') ?? (tier === 'low' ? 2 : tier === 'med' ? 1 : tier === 'ultra' ? 4 : 3);
+    const K = num('k') ?? (N === 64 ? (tier === 'low' ? 2 : 3) : tier === 'med' ? 2 : tier === 'ultra' ? 4 : 3);
     this.cfg = {
       N, M, K, drawCount: N * N * N,
       h0: (BOX / N) * 0.8,
-      maxPx: tier === 'low' ? 10 : tier === 'med' ? 14 : tier === 'ultra' ? 24 : 18,
+      maxPx: tier === 'low' ? 12 : tier === 'med' ? 20 : tier === 'ultra' ? 40 : 32,
       accumScale: tier === 'low' ? 0.6 : 1,
       galaxyMax: tier === 'low' ? 9000 : tier === 'med' ? 18000 : tier === 'ultra' ? 48000 : 30000,
     };
@@ -107,12 +111,15 @@ export default class CosmicMode extends Mode {
     this.scene.add(this.view.comp);
     // look tuning (URL overrides are for art-direction iteration)
     const cu0 = this.view.compMat.uniforms, au0 = this.view.accMat.uniforms;
-    cu0.uSigma0.value = num('s0') ?? cu0.uSigma0.value;
+    this.sigma0 = cu0.uSigma0.value = num('s0') ?? cu0.uSigma0.value;
+    this.toe = num('toe') ?? cu0.uToe.value;
+    this.bright = num('bright') ?? cu0.uBright.value;
     cu0.uGain.value = num('gain') ?? cu0.uGain.value;
     cu0.uHeatGain.value = num('heat') ?? cu0.uHeatGain.value;
     this.view.U.uFog.value = num('fog') ?? this.view.U.uFog.value;
     au0.uH0.value *= num('h0') ?? 1;
-    au0.uHeatLo.value = num('hlo') ?? au0.uHeatLo.value; au0.uHeatHi.value = num('hhi') ?? au0.uHeatHi.value;
+    const ru0 = this.view.resolveMat.uniforms;
+    ru0.uHeatLo.value = num('hlo') ?? ru0.uHeatLo.value; ru0.uHeatHi.value = num('hhi') ?? ru0.uHeatHi.value;
     this.cocK = num('coc') ?? 1.2;
     this.scene.add(this.view.ring);
     this.scene.background = new THREE.Color(0x000000);
@@ -122,10 +129,17 @@ export default class CosmicMode extends Mode {
     this.camera.fov = 55; this.camera.near = 0.01; this.camera.far = 2000; this.camera.updateProjectionMatrix();
     this.rigCam = new THREE.PerspectiveCamera(55, e.aspect, 0.01, 2000);
     const r0 = new OrbitRig(this.rigCam, {
-      distance: num('dist') ?? 62, minDistance: 1.5, maxDistance: 420,
+      distance: num('dist') ?? 140, minDistance: 1.5, maxDistance: 420,
       yaw: (num('yaw') ?? 38) * DEG, pitch: (num('pitch') ?? 16) * DEG, idleDrift: 0.012, smooth: 4, panSpeed: 0.6,
     });
     this.rig = r0;
+
+    if (params.returning && MEMORY) {
+      this.returned = true;
+      r0.target.copy(MEMORY.target); r0._target.copy(MEMORY.target);
+      r0.yaw = r0._yaw = MEMORY.yaw; r0.pitch = r0._pitch = MEMORY.pitch;
+      r0._dist = 3; r0.distance = MEMORY.distance;       // pull back out of the galaxy we left
+    }
 
     // --- initial conditions (worker)
     this._startWorker();
@@ -152,7 +166,7 @@ export default class CosmicMode extends Mode {
     w.onerror = (err) => { console.error('[cosmic] IC worker error', err.message || err); this.icStage = -1; this.ready = true; };
     w.postMessage({
       cmd: 'ic', seed: e.universe.seed >>> 0, N, M, box: BOX, tilesX,
-      galaxyMax: this.cfg.galaxyMax, clusterMax: 160, clusterSep: 16, rGlow: 7, rGal: 1.6, rCluster: 5, rEnv: 9,
+      galaxyMax: this.cfg.galaxyMax, formBoost: 2.0, clusterMax: 160, clusterSep: 16, rGlow: 7, rGal: 1.6, rCluster: 5, rEnv: 9,
     });
   }
 
@@ -182,7 +196,7 @@ export default class CosmicMode extends Mode {
       this.worker?.terminate(); this.worker = null;
       // jump along the timeline (URL ct / returning): the sim catches up in update()
       if (this.startTau > 0) { this.tau = this.startTau; this.tauJumped = true; }
-      this._frameInitialCamera();
+      if (!this.returned) this._frameInitialCamera();
     }
   }
 
@@ -319,7 +333,11 @@ export default class CosmicMode extends Mode {
     }
 
     // ---- camera
-    if (!this.pending) this.rig.handleInput(input, dt);
+    if (!this.pending) {
+      if (input.axis('look').lengthSq() > 1e-8 || input.zoom || input.axis('move').lengthSq() > 1e-8 || (input.pointer.clicked && !input.pointer.dragging)) this.userMoved = true;
+      this.rig.handleInput(input, dt);
+      if (this.heroPos && !this.userMoved && !this.returned) this.rig.target.lerp(this.heroPos, 1 - Math.exp(-dt * 0.9));
+    }
     this.rig.update(dt);
     const sv = sVis(a);
     const tgt = this.rig._target;
@@ -349,12 +367,21 @@ export default class CosmicMode extends Mode {
     const tanH = Math.tan(this.camera.fov * DEG / 2);
     this.view.accMat.uniforms.uPxScale.value = this.view.accH / (2 * tanH);
     this.view.galMat.uniforms.uPxScale.value = (this._ph || e.height) / (2 * tanH);
-    this.view.accMat.uniforms.uFocus.value = dC;
-    this.view.galMat.uniforms.uFocus.value = dC;
+    const focus = Math.min(dC, 0.42 * BOX);
+    this.view.accMat.uniforms.uFocus.value = focus;
+    this.view.galMat.uniforms.uFocus.value = focus;
     this.view.accMat.uniforms.uCoc.value = this.cocK * (this.view.accH / 720);
     // early universe: the fog glows faintly warm until the first structures form
     const cu = this.view.compMat.uniforms;
-    cu.uDawn.value = 0.55 * smooth(0.075, 0.03, a);
+    cu.uDawn.value = 0.35 * smooth(0.07, 0.025, a);
+    // exposure follows structure growth: the young, nearly uniform fog is lifted out of the toe, the
+    // mature web gets a deep black point so voids read as true OLED black
+    const g = smooth(0.08, 0.55, U.uD1.value);
+    cu.uToe.value = this.toe * g;
+    cu.uBright.value = this.bright * (0.5 + 0.5 * g);
+    cu.uSigma0.value = this.sigma0 * (0.8 + 0.2 * g);
+    U.uSeedD.value = 0.6 * (1 - g);
+    U.uSeedMix.value = 1 - smooth(0.1, 0.35, U.uD1.value);
     this.view.galMat.uniforms.uGalGain.value = 1.0;
 
     // ---- picking / hover / fly-to
@@ -377,10 +404,27 @@ export default class CosmicMode extends Mode {
     if (this.disposed || !this.cl) return;
     const C = this.cl.count;
     this.clusterPos ||= new Float32Array(C * 3);
-    for (let k = 0; k < C; k++) { this.clusterPos[k * 3] = out[k * 4]; this.clusterPos[k * 3 + 1] = out[k * 4 + 1]; this.clusterPos[k * 3 + 2] = out[k * 4 + 2]; }
+    this.clusterRho ||= new Float32Array(C);
+    for (let k = 0; k < C; k++) { this.clusterPos[k * 3] = out[k * 4]; this.clusterPos[k * 3 + 1] = out[k * 4 + 1]; this.clusterPos[k * 3 + 2] = out[k * 4 + 2]; this.clusterRho[k] = out[k * 4 + 3]; }
     const nG = this.galGather.length, o = this.galGatherStart;
     this.galPos ||= new Float32Array(nG * 3);
     for (let j = 0; j < nG; j++) { const t = (o + j) * 4; this.galPos[j * 3] = out[t]; this.galPos[j * 3 + 1] = out[t + 1]; this.galPos[j * 3 + 2] = out[t + 2]; }
+    // gal=<rank> framing: lock onto the gathered (fully evolved) galaxy position once
+    if (this.focusGalaxy !== undefined && !this.galFramed && !this.userMoved && this.galPos) {
+      const j = Math.min(nG - 1, Math.max(0, Math.floor(this.focusGalaxy)));
+      const p = this._nearestImage(this.galPos[j * 3], this.galPos[j * 3 + 1], this.galPos[j * 3 + 2], new THREE.Vector3());
+      this.rig.target.copy(p); this.rig._target.copy(p); this.galFramed = true;
+    }
+    // rank clusters by their present-day core density (the most massive *final* halos)
+    if (this.a > 0.55) {
+      const order = Array.from({ length: C }, (_, k) => k).sort((x, y) => this.clusterRho[y] - this.clusterRho[x]);
+      this.clusterRank = order;
+      if (!this.userMoved && !this.returned && this.focusGalaxy === undefined) {
+        const k = order[Math.min(C - 1, this.focusCluster)];
+        this.heroPos = this._nearestImage(this.clusterPos[k * 3], this.clusterPos[k * 3 + 1], this.clusterPos[k * 3 + 2], this.heroPos || new THREE.Vector3());
+        if (!this.heroSet) { this.heroSet = true; if (this.tau > T_OPEN) { this.rig.target.copy(this.heroPos); this.rig._target.copy(this.heroPos); } }
+      }
+    }
   }
 
   /** Box position (periodic) → nearest comoving world image around the camera. */
@@ -446,13 +490,14 @@ export default class CosmicMode extends Mode {
       const galaxy = this.galIndex[gi] ?? 0;
       const dist = best.kind === 'galaxy' ? 0.35 : Math.max(2.5, 1.5 + this.cl.radius[best.i] * 2);
       this.rig.flyTo(best.pos, dist * sVis(this.a), 2.2);
-      this.pending = { galaxy, t: 0, dur: 2.2, name: best.kind === 'galaxy' ? this._galName(gi) : this.clNames[best.i] };
+      this.pending = { galaxy, t: 0, dur: 2.2, backDist: best.d * 0.6, name: best.kind === 'galaxy' ? this._galName(gi) : this.clNames[best.i] };
       e.audio?.play?.('whoosh', { gain: 0.6 });
     }
     if (this.pending) {
       this.pending.t += dt;
       if (this.pending.t >= this.pending.dur && !this.pending.fired) {
         this.pending.fired = true;
+        MEMORY = { target: this.rig.target.clone(), yaw: this.rig.yaw, pitch: this.rig.pitch, distance: Math.max(20, this.pending.backDist ?? 40) };
         e.director.go('galaxy', { galaxy: this.pending.galaxy }, { transition: 'fade' });
       }
     }
@@ -494,6 +539,29 @@ export default class CosmicMode extends Mode {
     this.view.comp.visible = this.icStage >= 1 && !skip;
     if (this.view.galaxies) this.view.galaxies.visible = !skip;
     pipeline.render(this.scene, this.camera);
+  }
+
+  /** Test helper: screen position (CSS px) of cluster k (by mass rank), or null if off-screen. */
+  screenOfCluster(k = 0) {
+    if (!this.clusterPos) return null;
+    const wp = this._nearestImage(this.clusterPos[k * 3], this.clusterPos[k * 3 + 1], this.clusterPos[k * 3 + 2], new THREE.Vector3());
+    const sc = { x: 0, y: 0, d: 0 };
+    return this._toScreen(wp, sc) ? { x: Math.round(sc.x), y: Math.round(sc.y), d: +sc.d.toFixed(1) } : null;
+  }
+  /** Test helper: the first on-screen cluster rank (most massive first). */
+  visibleCluster() {
+    for (let k = 0; k < (this.cl?.count ?? 0); k++) {
+      const p = this.screenOfCluster(k);
+      if (p && p.x > 60 && p.y > 60 && p.x < this.engine.width - 60 && p.y < this.engine.height - 60 && p.d < 170) return { k, ...p };
+    }
+    return null;
+  }
+  /** Test helper: park the (mouse) pointer over screen px so hover picking runs in shot mode. */
+  hoverAt(x, y) {
+    const ptr = this.engine.input.pointer;
+    ptr.onCanvas = true; ptr.x = x; ptr.y = y;
+    ptr.nx = (x / this.engine.width) * 2 - 1; ptr.ny = -((y / this.engine.height) * 2 - 1);
+    return true;
   }
 
   /** Debug: percentiles of the accumulated column density (R) and heat fraction. */

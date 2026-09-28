@@ -14,20 +14,20 @@ function score(lat,lon){
   const eye=h0+2;
   let best=null;
   for (let yi=0;yi<16;yi++){ const yaw=yi*22.5*D; const f=[0,1,2].map(i=>north[i]*Math.cos(yaw)+east[i]*Math.sin(yaw));
-    let maxAng=-1, water=0, near=0, mid=0, drop=0;
-    for (let d=150; d<30000; d*=1.25){ const p=[0,1,2].map(i=>up[i]+f[i]*d/R); const l=Math.hypot(...p); const h=g.heightLod(p[0]/l,p[1]/l,p[2]/l, d*0.02);
+    let maxAng=-1, water=0, near=0, mid=0, drop=0, feat=0;
+    for (let d=150; d<30000; d*=1.25){ const p=[0,1,2].map(i=>up[i]+f[i]*d/R); const l=Math.hypot(...p); const info={}; const h=g.evaluate(p[0]/l,p[1]/l,p[2]/l, d*0.02, info); if (d>600 && d<9000 && (info.cliff>0.4||info.rock>0.6)) feat++;
       const curv=d*d/(2*R); const ang=Math.atan2(h-eye-curv,d);
       if (d>2500 && ang>maxAng) maxAng=ang;
       if (g.hasOcean && h<0 && d<8000) water+=1;
       if (d<1500 && ang< -0.05) drop++;
       if (d<1500 && ang> 0.12) near++; }
     // want: tall mountains mid-far, open foreground (drop = elevated viewpoint), some water, no wall in front
-    const s = 14 - Math.abs(maxAng*57.3 - 13)*0.8 + Math.min(water,4)*1.5 + drop*0.8 - near*6;
-    if (!best || s>best.s) best={s, yaw:yi*22.5, maxAng:maxAng*57.3, water, drop, near};
+    const s = 14 - Math.abs(maxAng*57.3 - 13)*0.8 + Math.min(water,4)*1.5 + drop*0.8 - near*6 + Math.min(feat,8)*(+process.env.FW||0);
+    if (!best || s>best.s) best={s, yaw:yi*22.5, maxAng:maxAng*57.3, water, drop, near, feat};
   }
   best.lat=lat/D; best.lon=lon/D; best.h=h0; return best;
 }
 const res=[];
 for (let i=0;i<NC;i++){ const y=1-2*(i+0.5)/NC; const lat=Math.asin(y*0.8); const lon=((i*137.508)%360-180)*D; const s=score(lat,lon); if (s) res.push(s); }
 res.sort((a,b)=>b.s-a.s);
-for (const r of res.slice(0,8)) console.log(`lat=${r.lat.toFixed(2)}&lon=${r.lon.toFixed(2)}&yaw=${r.yaw}`, 'score',r.s.toFixed(1),'mtnAng',r.maxAng.toFixed(1),'water',r.water,'drop',r.drop,'h',r.h|0);
+for (const r of res.slice(0,8)) console.log(`lat=${r.lat.toFixed(2)}&lon=${r.lon.toFixed(2)}&yaw=${r.yaw}`, 'score',r.s.toFixed(1),'mtnAng',r.maxAng.toFixed(1),'water',r.water,'drop',r.drop,'feat',r.feat,'h',r.h|0);

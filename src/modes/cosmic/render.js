@@ -35,9 +35,12 @@ vec4 cwView(vec3 x) {
   vec3 rel = x - uWrapC; rel -= floor(rel + 0.5);
   return vec4(rel * uL + uCamOff, length(rel));
 }
+uniform float uSeedD;     // visual growth of the linear seed field during the opening (fog → wrinkles)
+uniform float uSeedMix;   // 1 = linear seeds only, 0 = particle-resolution density only
 float cwDensity(vec3 x, vec4 A) {
-  if (uFieldOn > 0.5) return max(cwField(x).x, 0.02);
-  return max(0.1, 1.0 + uD1 * A.w);
+  float seed = max(0.1, 1.0 + max(uD1, uSeedD) * A.w / max(uSigGlow, 1e-3) * 0.5);
+  if (uFieldOn < 0.5 || uSeedMix >= 1.0) return seed;
+  return mix(max(cwField(x).x, 0.02), seed, uSeedMix);
 }
 // virialised matter keeps moving: particles inside collapsed halos trace randomly oriented,
 // eccentric orbits whose angular frequency scales as √(Gρ)
@@ -63,7 +66,9 @@ const OFF = 'gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0;';
 // Resolve pass: one texel per particle → (position incl. halo orbit + sub-lattice jitter, local density).
 // Runs once per rendered frame so the (many) sprites only need one or two texel fetches each.
 const RESOLVE_FRAG = HEAD + /* glsl */`
+uniform float uHeatLo, uHeatHi;
 layout(location = 0) out vec4 o;
+layout(location = 1) out vec4 oAux;   // heat, speed
 void main() {
   ivec2 tc = ivec2(gl_FragCoord.xy);
   ivec3 L = cwLatticeFromTexel(tc);
@@ -74,18 +79,28 @@ void main() {
   // sub-lattice jitter (render only) hides the Lagrangian grid in voids
   x += (cwHash3(L + ivec3(91, 17, 43)) - 0.5) * (0.9 / float(uN)) * clamp(1.4 - 0.2 * log2(rho + 1.0), 0.2, 1.0);
   o = vec4(x, rho);
+  // shock-heated gas: the intracluster medium extends to a few virial radii, so heat follows the
+  // density smoothed over ~±2.5 Mpc/h (six taps of the particle-resolution field)
+  float e = 2.5 / uL;
+  float rs = cwField(x + vec3(e, 0.0, 0.0)).x + cwField(x - vec3(e, 0.0, 0.0)).x
+           + cwField(x + vec3(0.0, e, 0.0)).x + cwField(x - vec3(0.0, e, 0.0)).x
+           + cwField(x + vec3(0.0, 0.0, e)).x + cwField(x - vec3(0.0, 0.0, e)).x;
+  rs = uFieldOn > 0.5 ? (rs / 6.0) * 0.6 + rho * 0.4 : rho;
+  float heat = smoothstep(uHeatLo, uHeatHi, rs);
+  vec3 P = texelFetch(tP, tc, 0).xyz;
+  oAux = vec4(heat, clamp(length(P) * 60.0, 0.0, 1.0), 0.0, 0.0);
 }
 `;
 
 const ACC_VERT = HEAD + /* glsl */`
 uniform int uK;           // sprites per particle: 1 = particle only, 2-4 adds points on the Lagrangian sheet
 uniform sampler2D tPos;   // resolved positions (xyz) + density (w)
+uniform sampler2D tAux;   // heat, speed
 uniform float uH0;        // base smoothing length, Mpc/h (mean interparticle spacing scale)
 uniform float uMaxPx;
 uniform float uFog;       // attenuation length, Mpc/h
 uniform float uFocus;     // focus distance for the depth-of-field look, Mpc/h
 uniform float uCoc;       // circle of confusion strength, px
-uniform float uHeatLo, uHeatHi;
 out vec3 vW;
 out float vFlat;
 void main() {
@@ -129,9 +144,8 @@ void main() {
   w *= mix(0.3, 1.0, smoothstep(0.12, 1.2, rho));
   // colour channel: mass-weighted local density (Springel-style), 0 at ρ = 0.3 … 1 at ρ ≈ 3000
   float hue = clamp((log2(rho) + 1.7) / 13.2, 0.0, 1.0);
-  vec3 P = texelFetch(tP, tc, 0).xyz;
-  float speed = clamp(length(P) * 60.0, 0.0, 1.0);
-  vW = w * vec3(1.0, hue, speed);
+  float heat = texelFetch(tAux, tc, 0).x;
+  vW = w * vec3(1.0, hue, heat);
   vFlat = sz < 2.5 ? 1.0 : 0.0;
 }
 `;
@@ -162,6 +176,8 @@ uniform float uGain;
 uniform float uHeatGain;
 uniform float uDawn;      // 0..1 early-universe warm glow
 uniform float uStream;
+uniform float uToe;
+uniform float uBright;
 varying vec2 vUv;
 // 2D colour map: brightness from log column density l, hue from mass-weighted log density t.
 // t low (voids, sheets): ink → blue-violet;  t mid (filaments): violet → magenta;
@@ -183,12 +199,15 @@ void main() {
   float S = max(a.r, 0.0);
   float l = log2(1.0 + S / uSigma0) * uGain;
   float t = clamp(a.g / max(S, 1e-6), 0.0, 1.0);
-  float stream = clamp(a.b / max(S, 1e-6), 0.0, 1.0);
+  float heat = clamp(a.b / max(S, 1e-6), 0.0, 1.0);
   // brightness: soft toe to pure black, then ~exponential in l (HDR highlights feed the bloom)
-  float b = smoothstep(0.3, 2.2, l) * 0.042 * exp2(0.92 * l);
+  float b = smoothstep(uToe, uToe + 1.9, l) * uBright * exp2(0.92 * l);
   vec3 col = hueRamp(clamp(t * uHeatGain, 0.0, 1.0)) * b;
-  // bulk streams along filaments: a faint cyan sheen on fast-moving matter
-  col += uStream * stream * vec3(0.05, 0.16, 0.30) * b * (1.0 - smoothstep(0.4, 0.6, t));
+  // shock-heated intracluster gas (TNG-style temperature): magenta rim → orange → gold core
+  vec3 hot = mix(vec3(1.0, 0.25, 0.55), vec3(1.0, 0.55, 0.18), smoothstep(0.2, 0.6, heat));
+  hot = mix(hot, vec3(1.0, 0.82, 0.5), smoothstep(0.6, 1.0, heat));
+  float hb = uStream * smoothstep(0.0, 0.5, heat) * smoothstep(uToe - 0.5, uToe + 2.5, l) * uBright * exp2(0.92 * l + 0.6);
+  col = mix(col, hot * max(b, hb), smoothstep(0.02, 0.55, heat) * 0.85);
   // cosmic dawn: before the first stars the whole fog glows a faint ember
   col = mix(col, vec3(0.60, 0.26, 0.10) * smoothstep(0.2, 3.0, l) * (0.35 + 0.1 * l), uDawn);
   col += (rv_ign(gl_FragCoord.xy) - 0.5) * 0.0025;
@@ -214,7 +233,7 @@ void main() {
   int id = int(aG.x + 0.5);
   ivec3 L = cwLatticeFromId(id);
   vec3 x = texelFetch(tPos, cwAtlas(L), 0).xyz;
-  float ign = smoothstep(aG.z, aG.z * 1.6, uD1);
+  float ign = smoothstep(aG.z, aG.z * 2.2, uD1);
   if (ign <= 0.0) { ${OFF} return; }
   vec4 wv = cwView(x);
   if (wv.w > uFade) { ${OFF} return; }
@@ -224,7 +243,7 @@ void main() {
   gl_Position = projectionMatrix * v;
   float fade = smoothstep(uFade, uFade * 0.75, wv.w) * exp(-max(0.0, d - 0.75 * uFocus) / (uFog * 1.6));
   float flux = aG.y * ign * 900.0 / (d * d + 100.0);
-  float I = 5.0 * pow(flux, 0.6) * uGalGain * fade;
+  float I = 12.0 * pow(flux, 0.6) * uGalGain * fade;
   // physical size: ~15-45 kpc discs, bigger for giants
   float rPhys = (0.012 + 0.03 * sqrt(aG.y)) * (aG.w > 2.5 ? 1.8 : 1.0);
   float pxPhys = rPhys * uPxScale / d;
@@ -332,7 +351,13 @@ void main() {
     vec3 d = x - x0; d -= floor(d + 0.5);
     acc += d;
   }
-  o = vec4(x0 + acc / 27.0, 1.0);
+  vec3 xc = x0 + acc / 27.0;
+  // w = density at the core (hero framing picks the most massive *final* halo, not the highest linear peak)
+  float ec = 1.0 / float(uN);
+  float rho = cwField(xc).x + 0.5 * (cwField(xc + vec3(ec, 0.0, 0.0)).x + cwField(xc - vec3(ec, 0.0, 0.0)).x
+            + cwField(xc + vec3(0.0, ec, 0.0)).x + cwField(xc - vec3(0.0, ec, 0.0)).x
+            + cwField(xc + vec3(0.0, 0.0, ec)).x + cwField(xc - vec3(0.0, 0.0, ec)).x);
+  o = vec4(xc, uFieldOn > 0.5 ? rho / 4.0 : 0.0);
 }
 `;
 
@@ -361,25 +386,26 @@ export class CosmicRenderer {
       uFieldSize: { value: new THREE.Vector2(sim.FW, sim.FH) }, uFieldMix: { value: 0 }, uFieldOn: { value: 0 },
       uWrapC: { value: new THREE.Vector3() }, uCamOff: { value: new THREE.Vector3() },
       uL: { value: opt.L }, uFade: { value: 0.48 }, uPxScale: { value: 500 }, uTime: { value: 0 },
-      uOrbit: { value: 0.0035 }, uSigGlow: { value: 1 },
+      uOrbit: { value: 0.0035 }, uSigGlow: { value: 1 }, uSeedD: { value: 0 }, uSeedMix: { value: 1 },
       uFog: { value: opt.fog ?? 150 },
     };
     // resolved particle positions (one texel per particle)
     this.posRT = new THREE.WebGLRenderTarget(sim.W, sim.H, {
-      type: sim.floatRT ? THREE.FloatType : THREE.HalfFloatType, depthBuffer: false,
+      type: sim.floatRT ? THREE.FloatType : THREE.HalfFloatType, depthBuffer: false, count: 2,
       minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false,
     });
     this.resolveMat = new THREE.RawShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader: S.GLSL_HEAD + S.FS_VERT, fragmentShader: RESOLVE_FRAG,
-      uniforms: { ...U }, depthTest: false, depthWrite: false,
+      uniforms: { ...U, uHeatLo: { value: 12 }, uHeatHi: { value: 90 } }, depthTest: false, depthWrite: false,
     });
-    U.tPos = { value: this.posRT.texture };
+    U.tPos = { value: this.posRT.textures[0] };
+    U.tAux = { value: this.posRT.textures[1] };
     // accumulation layer
     this.accMat = new THREE.RawShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader: ACC_VERT, fragmentShader: ACC_FRAG, ...ADD,
       uniforms: {
         ...U, uPxScale: { value: 500 }, uK: { value: opt.K }, uH0: { value: opt.h0 }, uMaxPx: { value: opt.maxPx },
-        uFocus: { value: 80 }, uCoc: { value: 0 }, uHeatLo: { value: 20 }, uHeatHi: { value: 220 },
+        uFocus: { value: 80 }, uCoc: { value: 0 },
       },
     });
     const g = new THREE.BufferGeometry();
@@ -394,7 +420,7 @@ export class CosmicRenderer {
       vertexShader: COMP_VERT, fragmentShader: COMP_FRAG, depthTest: false, depthWrite: false,
       uniforms: {
         tAccum: { value: this.accum.texture }, uTexel: { value: new THREE.Vector2(1, 1) },
-        uSigma0: { value: 3.0 }, uGain: { value: 1.0 }, uHeatGain: { value: 1.0 }, uDawn: { value: 0 }, uStream: { value: 0.6 },
+        uSigma0: { value: 3.0 }, uGain: { value: 1.0 }, uHeatGain: { value: 1.0 }, uDawn: { value: 0 }, uStream: { value: 1.0 }, uToe: { value: 0.9 }, uBright: { value: 0.05 },
       },
     });
     this.comp = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.compMat);

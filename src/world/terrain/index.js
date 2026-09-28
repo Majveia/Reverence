@@ -60,7 +60,10 @@ class Terrain {
     const hPx = Math.max(360, (eng.height || 720) * (q.pixelRatio || 1));
     const fov = ((world.camera?.fov) || 60) * Math.PI / 180;
     const ppq = { low: 14, med: 10, high: 7, ultra: 5 }[q.tier] ?? 7;
-    this.K = Math.max(1.3, Math.min(2.6, hPx / (fov * RES * ppq) * Math.sqrt(q.terrainDetail ?? 1)));
+    // (deterministic captures run on software GL: slightly coarser target so frames stay renderable)
+    const shotMode = !!world.engine?.shot;
+    this.K = Math.max(shotMode ? 1.05 : 1.3, Math.min(2.6, hPx / (fov * RES * (shotMode ? ppq * 1.3 : ppq)) * Math.sqrt(q.terrainDetail ?? 1)));
+    try { const tk = parseFloat(new URLSearchParams(globalThis.location?.search || '').get('tk')); if (tk > 0.9 && tk < 4) this.K = tk; } catch (_) { /* no url */ }
     const leaf = q.tier === 'low' ? 0.8 : q.tier === 'med' ? 0.5 : 0.35;   // metres between vertices at max depth
     this.maxLevel = Math.max(4, Math.ceil(Math.log2((this.R * Math.PI / 2) / (RES * leaf))));
     this.hMin0 = this.surface.minHeight ?? -this.surface.amp;
@@ -132,7 +135,7 @@ class Terrain {
       tex.magFilter = THREE.LinearFilter;
       tex.minFilter = THREE.LinearMipmapLinearFilter;
       tex.generateMipmaps = true;
-      tex.anisotropy = this.q.tier === 'low' ? 1 : 4;
+      tex.anisotropy = this.q.tier === 'low' ? 1 : this._softGL() ? 2 : 4;
       tex.colorSpace = THREE.NoColorSpace;
       tex.needsUpdate = true;
       this.detailTex = tex;
@@ -141,6 +144,14 @@ class Terrain {
       U.uRvP.value.w = this.q.tier === 'low' ? 0.6 : 1;
       this.texReady = true;
     } catch (e) { console.warn('[terrain] detail texture failed', e); this.texReady = true; }
+  }
+
+  _softGL() {
+    try {
+      const gl = this.engine.renderer.getContext();
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      return /SwiftShader|llvmpipe|Software/i.test(String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER)));
+    } catch (_) { return false; }
   }
 
   // ------------------------------------------------------------------ per frame
@@ -341,7 +352,7 @@ class Terrain {
           count++;
           n.used = f;
           // only chunks that are both near and small enough cast into the (<= ~1 km) sun cascades
-          const cast = this.q.shadows !== false && n.closest < this.shadowDist && n.side < this.shadowDist * 0.75;
+          const cast = this.q.shadows !== false && n.closest < (n.inView ? this.shadowDist : this.shadowDist * 0.25) && n.side < this.shadowDist * 0.75;
           n.mesh.castShadow = cast;
           if (cast) casters++;
         }

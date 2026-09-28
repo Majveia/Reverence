@@ -717,7 +717,7 @@ export class SurfaceGen {
       if (st.seastacks > 0 && c > -0.05 && c < 0.012) {
         const f = R / 380, J = this.nG.jit;
         const zone = sstep(-0.05, -0.012, c) * (1 - sstep(0.004, 0.012, c));
-        const reg = sstep(-0.2, 0.3, nF.n3(px * 7 + 3, py * 7, pz * 7 + 1)) * st.seastacks * zone;
+        const reg = sstep(-0.2, 0.3, nF.n3(px * 7 + 3, py * 7, pz * 7 + 1)) * st.seastacks * zone * (1 - sstep(4, 30, h));
         if (reg > 0.01) {
           const t = this._cells(px * f, py * f + 7, pz * f, f, 0.8, (d, hh) => {
             if (J[(hh + 13) & 4095] > 0.5) return 0;
@@ -856,13 +856,15 @@ export class SurfaceGen {
       const rk = rock > mtn ? rock : mtn;
       const roughK = st.rough * (0.35 + 2.6 * rk) * (1 - 0.6 * dune) * (1 - 0.5 * lake);
       const rr = sstep(0.15, 0.5, rk);
-      let wl = 180, f = R / wl, qx = px * f, qy = py * f, qz = pz * f, a = wl * 0.0065 * roughK, sum = 0;
-      for (let o = 0; o < 12; o++) {
+      // starts at 720 m: the two big octaves only exist on rock (crags & buttresses on mountain faces)
+      let wl = 720, f = R / wl, qx = px * f, qy = py * f, qz = pz * f, a = wl * 0.0072 * roughK, sum = 0;
+      for (let o = 0; o < 14; o++) {
         const lw = lodW(wl, lod);
         if (lw <= 0) break;
         const v = nH.n3(qx, qy, qz);
+        const big = wl > 200 ? rr * (o === 0 ? 1.4 : 1.1) : 1;
         // rock gets sharper (ridged, zero-mean) micro relief, soil stays rounded
-        sum += a * lw * (v + ((0.342 - (v < 0 ? -v : v)) * 1.6 - v) * rr);
+        sum += a * lw * big * (v + ((0.342 - (v < 0 ? -v : v)) * 1.6 - v) * rr);
         a *= 0.49; wl *= ILAC;
         qx = qx * LAC + 1.9; qy = qy * LAC + 7.3; qz = qz * LAC + 3.7;
       }
