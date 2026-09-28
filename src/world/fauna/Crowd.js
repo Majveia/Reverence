@@ -88,12 +88,13 @@ export class Crowd {
         let o = row * W * 4;
         d[o] = c.seed; d[o + 1] = c.glow; d[o + 2] = c.fade; d[o + 3] = c.alert;
         o += 4;
-        const wq = c.wq, wp = c.wp, s = c.scale;
+        const wq = c.wq, wp = c.wp, s0 = c.scale, bs = c.bs;
         // pose may be a few frames old (LOD update rate): shift it to the current root position
         const pr = c.poseRoot;
         const sx = pr ? c.pos[0] - pr[0] - ox : -ox, sy = pr ? c.pos[1] - pr[1] - oy : -oy, sz = pr ? c.pos[2] - pr[2] - oz : -oz;
         for (let b = 0; b < nb; b++, o += 8) {
           const qx = wq[b * 4], qy = wq[b * 4 + 1], qz = wq[b * 4 + 2], qw = wq[b * 4 + 3];
+          const s = bs ? s0 * bs[b] : s0;
           const px = piv[b * 3] * s, py = piv[b * 3 + 1] * s, pz = piv[b * 3 + 2] * s;
           // rotate pivot by q
           const tx = 2 * (qy * pz - qz * py), ty = 2 * (qz * px - qx * pz), tz = 2 * (qx * py - qy * px);

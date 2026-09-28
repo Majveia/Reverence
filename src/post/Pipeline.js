@@ -1,63 +1,77 @@
 // HDR render pipeline. Owned by the POST track (src/post/*), used by every mode.
 //
-//   scene → HDR target (HalfFloat color + Float32 depth texture, reversed-Z, optional MSAA)
-//         → effects[] (ordered; e.g. atmosphere 100, clouds 110, ...; ping-pong HDR targets)
-//         → bloom (dual-filter, Karis-averaged prefilter)
-//         → composite (exposure, filmic tonemap, grading, vignette, grain, CA, dither) → [FXAA] → screen
+//   scene (jittered on TAA tiers) → HDR target (HalfFloat colour + Float32 depth texture, reversed-Z,
+//         optional MSAA)
+//   → GTAO (order 50, system mode) → effects[] (ordered: atmosphere 100, clouds 110, shafts 120,
+//     underwater 130, lens/heat 150 …; ping-pong HDR targets) → camera jitter restored
+//   → TAA resolve (depth + camera-motion reprojection, variance clipping)   [high/ultra]
+//   → depth of field (photo mode / setLook) → camera motion blur (low intensity)
+//   → auto-exposure meter (log-average, centre-weighted, GPU-only adaptation)
+//   → bloom (dual filter, Karis prefilter; additive or energy-conserving scatter)
+//   → sun occlusion probe (depth + luminance)
+//   → composite (exposure, WB, lens flare/ghosts/dirt, Purkinje, AgX + film look, vignette, 3D LUT grade)
+//   → final (FXAA 3.11 quality on low/med · CAS sharpening after TAA; grain, dither, fade) → screen
 //
 // Effect contract:  { name, order, enabled, render(renderer, io) , setSize?(w,h), dispose?() }
 //   io = { input: WebGLRenderTarget (HDR color), output: WebGLRenderTarget (write here),
 //          depth: DepthTexture (scene depth, reversed-Z), camera, scene, pipeline }
 //   An effect MUST write a full-screen result into io.output (or set io.skip = true to pass through).
+//
+// Per-mode defaults: settings marked 'auto' resolve from the current mode (see PROFILES): the
+// planet/system mode gets the full AAA stack (TAA, GTAO, eye adaptation, lens flare, film look,
+// energy-conserving bloom); the cosmic/galaxy modes keep their hand-tuned additive look.
 import * as THREE from 'three';
 import '../shaders/chunks.js';
 import { G } from '../core/Uniforms.js';
+import { makeFullscreenMaterial, FullscreenQuad, hdrRT } from './common.js';
+import { TAA } from './taa.js';
+import { SSAO } from './ssao.js';
+import { AutoExposure } from './exposure.js';
+import { Lens } from './lens.js';
+import { CameraFX } from './camera.js';
+import { buildLUT, gradeSignature, LUT_SIZE } from './grade.js';
+import { COMPOSITE_FRAG, FINAL_FRAG } from './composite.js';
+import { LegacyPipeline } from './legacy.js';
 
-const FS_VERT = /* glsl */ `
-varying vec2 vUv;
-void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
-`;
-
-export function makeFullscreenMaterial(fragmentShader, uniforms = {}, extra = {}) {
-  return new THREE.ShaderMaterial({
-    vertexShader: FS_VERT, fragmentShader, uniforms,
-    depthTest: false, depthWrite: false, ...extra,
-  });
-}
-
-export class FullscreenQuad {
-  constructor(material) {
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
-    this.mesh.frustumCulled = false;
-    this.scene = new THREE.Scene();
-    this.scene.add(this.mesh);
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  }
-  get material() { return this.mesh.material; }
-  set material(m) { this.mesh.material = m; }
-  render(renderer, target) {
-    renderer.setRenderTarget(target);
-    renderer.render(this.scene, this.camera);
-  }
-  dispose() { this.mesh.geometry.dispose(); }
-}
+export { makeFullscreenMaterial, FullscreenQuad };
 
 export const DEFAULT_POST = {
   exposure: 1.0,
-  bloom: { strength: 0.6, radius: 0.85, threshold: 1.0, knee: 0.6 },
+  bloom: { strength: 0.6, radius: 0.85, threshold: 1.0, knee: 0.6, mode: 'auto', scatter: 0.05 },
   tonemap: 'agx',          // 'agx' | 'aces' | 'reinhard' | 'none'
+  filmLook: 'auto',        // 'auto' | 'neutral' | 'film' | 'punchy' | { power, saturation }
   saturation: 1.0,
   contrast: 1.0,
+  vibrance: 0.0,
   temperature: 0.0,        // -1 cool .. +1 warm
   tint: 0.0,               // -1 green .. +1 magenta
-  lift: [0, 0, 0],         // shadows offset (linear)
+  lift: [0, 0, 0],         // shadows offset (fades to 0 at black: OLED-safe)
   gamma: [1, 1, 1],
   gain: [1, 1, 1],
+  shadows: null,           // optional split-tone [r,g,b] added to shadows (linear, small values)
+  highlights: null,        // optional split-tone [r,g,b] added to highlights
   vignette: 0.25,
   grain: 0.035,
   chromatic: 0.0015,
   blackPoint: 0.0,         // keep 0 for true OLED blacks
+  aa: 'auto',              // 'auto' | 'taa' | 'fxaa' | 'none'
+  taa: { feedback: 0.9, sharpen: 0.35, shotSamples: 'auto' },
+  ssao: { enabled: 'auto', radius: 1.6, intensity: 1.25, fadeFar: 900, debug: false },
+  autoExposure: { enabled: 'auto', key: 'auto', strength: 0.7, min: 0.4, max: 4.0, speedUp: 2.5, speedDown: 1.1, floor: 0.004 },
+  flare: { enabled: 'auto', intensity: 1.0, ghosts: 1.0, starburst: 1.0, halo: 1.0, streak: 0.35, dirt: 0.35, ssGhosts: 0.05 },
+  purkinje: 0.35,
+  motionBlur: { enabled: 'auto', strength: 0.3 },
+  dof: { enabled: false, focus: 0, aperture: 1.0, maxCoc: 12 },  // enabled: true | false | 'photo'
 };
+
+// Mode-dependent defaults for 'auto' settings.
+const PROFILES = {
+  system: { aa: 'taa', ssao: true, autoExposure: true, flare: true, film: 'film', bloomMode: 'mix', motionBlur: true, key: 0.28, dof: 'photo' },
+  default: { aa: 'fxaa', ssao: false, autoExposure: false, flare: false, film: 'neutral', bloomMode: 'add', motionBlur: false, key: 0.2, dof: false },
+};
+const FILM_LOOKS = { neutral: [1, 1], film: [1.22, 1.22], punchy: [1.4, 1.45] };
+
+const _v3 = new THREE.Vector3(), _v3b = new THREE.Vector3(), _q = new THREE.Quaternion(), _m4 = new THREE.Matrix4();
 
 export class Pipeline {
   constructor(engine) {
@@ -69,6 +83,10 @@ export class Pipeline {
     this.enabled = true;
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     this.width = size.x; this.height = size.y;
+    this.stats = { taa: false, ssao: false, ae: false, flare: 0, samples: 1, mb: false, dof: false, aa: 'fxaa', ms: 0 };
+
+    const gl = this.renderer.getContext();
+    this.floatRT = !!(this.renderer.extensions.has?.('EXT_color_buffer_float') || gl.getExtension?.('EXT_color_buffer_float'));
 
     // --- HDR scene target with float depth for reversed-Z precision
     this.depthTexture = new THREE.DepthTexture(this.width, this.height, THREE.FloatType);
@@ -78,22 +96,55 @@ export class Pipeline {
       samples: this.q.msaa || 0, depthBuffer: true, stencilBuffer: false, depthTexture: this.depthTexture,
       minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
     });
-    this.pingRT = this._hdrRT(this.width, this.height);
-    this.pongRT = this._hdrRT(this.width, this.height);
-    this.ldrRT = new THREE.WebGLRenderTarget(this.width, this.height, { type: THREE.UnsignedByteType, depthBuffer: false });
+    this.pingRT = hdrRT(this.width, this.height);
+    this.pongRT = hdrRT(this.width, this.height);
+    this.postA = hdrRT(this.width, this.height);  // post-TAA scratch (DOF / motion blur)
+    this.ldrRT = hdrRT(this.width, this.height);   // graded, display-encoded (half float: no banding before dither)
 
+    this._sunUv = new THREE.Vector2(0.5, 0.5);
+    this._sunCol = new THREE.Color(1, 1, 1);
+    this._sun = { uv: this._sunUv, onScreen: 0, radiusPx: 4 };
+    this._sunLumRef = 20;
     this.quad = new FullscreenQuad(null);
+    this.taa = null; this.ssao = null;            // created lazily (tier/mode dependent)
+    this.ae = new AutoExposure();
+    this.lens = new Lens();
+    this.cam = new CameraFX();
     this._buildBloom();
     this._buildComposite();
-    this._buildFXAA();
     this._copyMat = makeFullscreenMaterial(/* glsl */`uniform sampler2D tSrc; varying vec2 vUv; void main(){ gl_FragColor = texture2D(tSrc, vUv); }`, { tSrc: { value: null } });
-  }
 
-  _hdrRT(w, h) {
-    return new THREE.WebGLRenderTarget(w, h, {
-      type: THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false,
-      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, colorSpace: THREE.LinearSRGBColorSpace,
-    });
+    // motion state (camera reprojection)
+    this.motion = {
+      proj: new THREE.Vector4(1, 1, 0, 0), prevProj: new THREE.Vector4(1, 1, 0, 0),
+      curRot: new THREE.Matrix3(), prevRotInv: new THREE.Matrix3(), camDelta: new THREE.Vector3(),
+      near: 0.1, far: 1e9,
+    };
+    this._prevCamPos = new THREE.Vector3();
+    this._prevRot = new THREE.Matrix3();
+    this._prevCam = null; this._prevScene = null; this._prevMode = null;
+    this._lastFrame = -10; this._lastReal = 0;
+    this._fx = [];
+    this._lutSig = null; this.lut = null;
+    this._frameIndex = 0;
+
+    try {
+      engine.events?.on?.('origin:shift', (e) => { if (e?.delta) this._prevCamPos.sub(e.delta); });
+    } catch (_) { /* optional */ }
+
+    // debug hook (captures / console): __rvPost.meter(), __rvPost.stats
+    try {
+      window.__rvPost = {
+        pipeline: this,
+        get stats() { return this.pipeline.stats; },
+        meter: () => this.ae.read(this.renderer),
+        sun: () => {
+          const px = new Uint16Array(4);
+          try { this.renderer.readRenderTargetPixels(this.lens.visB, 0, 0, 1, 1, px); } catch (e) { return String(e); }
+          return { vis: THREE.DataUtils.fromHalfFloat(px[0]), lum: THREE.DataUtils.fromHalfFloat(px[1]), uv: this._sunUv.toArray(), onScreen: this._sun.onScreen, radiusPx: this._sun.radiusPx };
+        },
+      };
+    } catch (_) { /* no window */ }
   }
 
   /** Register a full-screen effect (see contract at top). Returns an unregister fn. */
@@ -108,7 +159,7 @@ export class Pipeline {
     if (i >= 0) this.effects.splice(i, 1);
   }
 
-  /** Merge per-mode / per-planet look settings (art direction). */
+  /** Merge per-mode / per-planet look settings (art direction). Nested objects merge one level deep. */
   setLook(look = {}) {
     const s = this.settings;
     for (const [k, v] of Object.entries(look)) {
@@ -121,10 +172,13 @@ export class Pipeline {
   setSize(w, h) {
     this.width = w; this.height = h;
     this.sceneRT.setSize(w, h);
-    this.pingRT.setSize(w, h); this.pongRT.setSize(w, h); this.ldrRT.setSize(w, h);
+    this.pingRT.setSize(w, h); this.pongRT.setSize(w, h); this.ldrRT.setSize(w, h); this.postA.setSize(w, h);
     this._resizeBloom();
-    this.fxaaMat.uniforms.uInvRes.value.set(1 / w, 1 / h);
+    this.taa?.setSize(w, h);
+    this.ssao?.setSize(w, h);
+    this.finalMat.uniforms.uInvRes.value.set(1 / w, 1 / h);
     for (const e of this.effects) e.setSize?.(w, h);
+    this._lastFrame = -10;
   }
 
   // ------------------------------------------------------------------ bloom
@@ -145,12 +199,12 @@ export class Pipeline {
         vec3 g0 = (a+b+d+e)*0.25, g1 = (b+c+e+f)*0.25, g2 = (d+e+g+h)*0.25, g3 = (e+f+h+i)*0.25, g4 = (j+k+l+m)*0.25;
         float w0 = karis(g0)*0.125, w1 = karis(g1)*0.125, w2 = karis(g2)*0.125, w3 = karis(g3)*0.125, w4 = karis(g4)*0.5;
         vec3 col = (g0*w0 + g1*w1 + g2*w2 + g3*w3 + g4*w4) / (w0+w1+w2+w3+w4);
-        col = min(col, vec3(6.0e4));
+        col = min(max(col, 0.0), vec3(6.0e4));
         // soft-knee threshold
         float br = max(col.r, max(col.g, col.b));
         float rq = clamp(br - uThreshold + uKnee, 0.0, 2.0 * uKnee);
         rq = (rq * rq) / (4.0 * uKnee + 1e-5);
-        float w = max(rq, br - uThreshold) / max(br, 1e-5);
+        float w = uThreshold <= 0.0 ? 1.0 : max(rq, br - uThreshold) / max(br, 1e-5);
         gl_FragColor = vec4(col * w, 1.0);
       }`, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uThreshold: { value: 1 }, uKnee: { value: 0.5 } });
 
@@ -166,15 +220,17 @@ export class Pipeline {
         gl_FragColor = vec4(col, 1.0);
       }`, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() } });
 
+    // upsample: tent filter, blended onto the next-larger mip. uMix = 1 → additive (classic),
+    // uMix < 1 → progressive lerp (energy-conserving, each level keeps its share).
     this.bloomUp = makeFullscreenMaterial(/* glsl */`
-      uniform sampler2D tSrc; uniform vec2 uTexel; uniform float uRadius; varying vec2 vUv;
+      uniform sampler2D tSrc; uniform vec2 uTexel; uniform float uRadius, uMix; varying vec2 vUv;
       vec3 samp(vec2 o){ return texture2D(tSrc, vUv + o * uTexel * uRadius).rgb; }
       void main(){
         vec3 col = samp(vec2(0,0))*4.0 + (samp(vec2(-1,0))+samp(vec2(1,0))+samp(vec2(0,-1))+samp(vec2(0,1)))*2.0
                  + samp(vec2(-1,-1))+samp(vec2(1,-1))+samp(vec2(-1,1))+samp(vec2(1,1));
-        gl_FragColor = vec4(col / 16.0, 1.0);
-      }`, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uRadius: { value: 1 } },
-      { blending: THREE.AdditiveBlending, transparent: true });
+        gl_FragColor = vec4(col / 16.0, uMix);
+      }`, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uRadius: { value: 1 }, uMix: { value: 1 } },
+      { blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, transparent: true });
     this._resizeBloom();
   }
 
@@ -183,32 +239,38 @@ export class Pipeline {
     this.bloomMips = [];
     const levels = this.q.bloomLevels || 5;
     let w = Math.max(1, this.width >> 1), h = Math.max(1, this.height >> 1);
-    for (let i = 0; i < levels; i++) {
-      this.bloomMips.push(this._hdrRT(w, h));
+    for (let i = 0; i < levels + 1; i++) {
+      this.bloomMips.push(hdrRT(w, h));
       w = Math.max(1, w >> 1); h = Math.max(1, h >> 1);
     }
   }
 
-  _renderBloom(srcTex) {
+  _renderBloom(srcTex, mode) {
     const r = this.renderer, s = this.settings.bloom, mips = this.bloomMips;
-    if (!s || s.strength <= 0) return null;
-    // prefilter into mip0
+    if (!s || !(s.strength > 0) || !mips.length) return null;
+    const mix = mode === 'mix';
     this.bloomPrefilter.uniforms.tSrc.value = srcTex;
     this.bloomPrefilter.uniforms.uTexel.value.set(1 / this.width, 1 / this.height);
-    this.bloomPrefilter.uniforms.uThreshold.value = s.threshold;
+    this.bloomPrefilter.uniforms.uThreshold.value = mix ? (s.mixThreshold ?? 0) : s.threshold;
     this.bloomPrefilter.uniforms.uKnee.value = Math.max(1e-3, s.knee ?? 0.5);
-    this.quad.material = this.bloomPrefilter; this.quad.render(r, mips[0]);
+    this.quad.draw(r, this.bloomPrefilter, mips[0]);
     for (let i = 1; i < mips.length; i++) {
       this.bloomDown.uniforms.tSrc.value = mips[i - 1].texture;
       this.bloomDown.uniforms.uTexel.value.set(1 / mips[i - 1].width, 1 / mips[i - 1].height);
-      this.quad.material = this.bloomDown; this.quad.render(r, mips[i]);
+      this.quad.draw(r, this.bloomDown, mips[i]);
     }
+    const bu = this.bloomUp;
+    // energy-conserving: dst = lerp(dst, up, 0.5)-style via constant alpha blend
+    bu.blendSrc = mix ? THREE.SrcAlphaFactor : THREE.OneFactor;
+    bu.blendDst = mix ? THREE.OneMinusSrcAlphaFactor : THREE.OneFactor;
+    bu.uniforms.uMix.value = mix ? 0.6 : 1.0;
+    bu.needsUpdate = false;
     const prevAuto = r.autoClear; r.autoClear = false;
     for (let i = mips.length - 1; i > 0; i--) {
-      this.bloomUp.uniforms.tSrc.value = mips[i].texture;
-      this.bloomUp.uniforms.uTexel.value.set(1 / mips[i].width, 1 / mips[i].height);
-      this.bloomUp.uniforms.uRadius.value = s.radius ?? 0.85;
-      this.quad.material = this.bloomUp; this.quad.render(r, mips[i - 1]);
+      bu.uniforms.tSrc.value = mips[i].texture;
+      bu.uniforms.uTexel.value.set(1 / mips[i].width, 1 / mips[i].height);
+      bu.uniforms.uRadius.value = s.radius ?? 0.85;
+      this.quad.draw(r, bu, mips[i - 1]);
     }
     r.autoClear = prevAuto;
     return mips[0].texture;
@@ -216,116 +278,132 @@ export class Pipeline {
 
   // ------------------------------------------------------------------ composite
   _buildComposite() {
-    this.compositeMat = makeFullscreenMaterial(/* glsl */`
-      #include <rv_common>
-      uniform sampler2D tColor; uniform sampler2D tBloom; uniform float uHasBloom;
-      uniform float uExposure, uBloomStrength, uSaturation, uContrast, uTemperature, uTint;
-      uniform vec3 uLift, uGamma, uGain;
-      uniform float uVignette, uGrain, uChromatic, uBlackPoint, uTime; uniform int uTonemap;
-      uniform vec2 uRes; uniform float uFade; uniform vec3 uFadeColor;
-      varying vec2 vUv;
-
-      // AgX (Troy Sobotka / Benjamin Wrensch fit) — natural highlight desaturation
-      vec3 agxDefaultContrast(vec3 x){
-        vec3 x2 = x*x; vec3 x4 = x2*x2;
-        return 15.5*x4*x2 - 40.14*x4*x + 31.96*x4 - 6.868*x2*x + 0.4298*x2 + 0.1191*x - 0.00232;
-      }
-      vec3 agx(vec3 c){
-        const mat3 m = mat3(0.842479062253094, 0.0423282422610123, 0.0423756549057051,
-                            0.0784335999999992, 0.878468636469772, 0.0784336,
-                            0.0792237451477643, 0.0791661274605434, 0.879142973793104);
-        const mat3 mi = mat3(1.19687900512017, -0.0528968517574562, -0.0529716355144438,
-                             -0.0980208811401368, 1.15190312990417, -0.0980434501171241,
-                             -0.0990297440797205, -0.0989611768448433, 1.15107367264116);
-        c = m * max(c, 0.0);
-        c = clamp(log2(max(c, 1e-10)), -12.47393, 4.026069);
-        c = (c + 12.47393) / (4.026069 + 12.47393);
-        c = agxDefaultContrast(c);
-        c = mi * c;
-        return pow(max(c, 0.0), vec3(2.2)); // back to linear
-      }
-      vec3 aces(vec3 x){ const float a=2.51,b=0.03,c2=2.43,d=0.59,e=0.14; return clamp((x*(a*x+b))/(x*(c2*x+d)+e),0.0,1.0); }
-      vec3 linearToSRGB(vec3 c){ return mix(c * 12.92, 1.055 * pow(c, vec3(1.0/2.4)) - 0.055, step(0.0031308, c)); }
-
-      void main(){
-        vec2 uv = vUv;
-        vec2 dc = uv - 0.5;
-        // chromatic aberration grows toward edges
-        vec2 caOff = dc * uChromatic * (0.5 + dot(dc, dc) * 2.0);
-        vec3 col;
-        col.r = texture2D(tColor, uv - caOff).r;
-        col.g = texture2D(tColor, uv).g;
-        col.b = texture2D(tColor, uv + caOff).b;
-        if (uHasBloom > 0.5) col += texture2D(tBloom, uv).rgb * uBloomStrength;
-        col *= uExposure;
-        // white balance (simple temperature/tint in linear)
-        col *= vec3(1.0 + uTemperature * 0.10, 1.0 - uTint * 0.06, 1.0 - uTemperature * 0.10);
-        // tonemap
-        if (uTonemap == 0) col = agx(col);
-        else if (uTonemap == 1) col = aces(col * 0.8);
-        else if (uTonemap == 2) col = col / (1.0 + col);
-        col = clamp(col, 0.0, 1.0);
-        // grading: lift/gamma/gain (ASC-CDL-like), contrast around mid-grey, saturation
-        // lift fades out toward pure black so OLED blacks stay at exactly 0
-        float lk = smoothstep(0.0, 0.06, rv_luma(col));
-        col = pow(max(col * uGain + uLift * (1.0 - col) * lk, 0.0), 1.0 / max(uGamma, vec3(1e-3)));
-        col = (col - 0.18) * uContrast + 0.18;
-        float l = rv_luma(col);
-        col = max(mix(vec3(l), col, uSaturation), 0.0);
-        // vignette (natural cos^4-ish falloff)
-        float vig = 1.0 - uVignette * smoothstep(0.25, 1.1, length(dc * vec2(uRes.x / uRes.y, 1.0)) * 1.25);
-        col *= vig;
-        // true-black preserving black point
-        col = max(col - uBlackPoint, 0.0) / (1.0 - uBlackPoint);
-        col = linearToSRGB(clamp(col, 0.0, 1.0));
-        // film grain (luma-weighted so blacks stay black on OLED) + dither against banding
-        float n = rv_hash12(gl_FragCoord.xy + fract(uTime * 13.37) * 1000.0) - 0.5;
-        col += n * uGrain * smoothstep(0.0, 0.25, l);
-        col += (rv_ign(gl_FragCoord.xy + uTime * 60.0) - 0.5) / 255.0;
-        col = mix(col, uFadeColor, uFade);
-        gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
-      }`, {
-      tColor: { value: null }, tBloom: { value: null }, uHasBloom: { value: 0 },
-      uExposure: { value: 1 }, uBloomStrength: { value: 0.5 }, uSaturation: { value: 1 }, uContrast: { value: 1 },
-      uTemperature: { value: 0 }, uTint: { value: 0 },
-      uLift: { value: new THREE.Vector3() }, uGamma: { value: new THREE.Vector3(1, 1, 1) }, uGain: { value: new THREE.Vector3(1, 1, 1) },
-      uVignette: { value: 0.25 }, uGrain: { value: 0.03 }, uChromatic: { value: 0.001 }, uBlackPoint: { value: 0 },
-      uTime: G.uTime, uTonemap: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) },
+    this.lut = buildLUT(DEFAULT_POST);
+    this._lutSig = gradeSignature(DEFAULT_POST);
+    this.compositeMat = makeFullscreenMaterial(COMPOSITE_FRAG, {
+      tColor: { value: null }, tBloom: { value: null }, tBloomWide: { value: null }, tAdapt: { value: null },
+      tSunVis: { value: null }, tDirt: { value: this.lens.dirt }, tLUT: { value: this.lut },
+      uHasBloom: { value: 0 }, uBloomMode: { value: 0 }, uBloomStrength: { value: 0.5 }, uBloomScatter: { value: 0.05 },
+      uExposure: { value: 1 }, uAuto: { value: 0 }, uAEKey: { value: 0.2 }, uAEMin: { value: 0.4 }, uAEMax: { value: 4 }, uAEStrength: { value: 0.7 },
+      uTemperature: { value: 0 }, uTint: { value: 0 }, uLookPower: { value: 1 }, uLookSat: { value: 1 },
+      uVignette: { value: 0.25 }, uChromatic: { value: 0.001 }, uBlackPoint: { value: 0 }, uLutSize: { value: LUT_SIZE }, uUseLUT: { value: 1 },
+      uTonemap: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) },
+      uSunUv: { value: this._sunUv }, uSunCol: { value: new THREE.Vector3(1, 1, 1) }, uFlare: { value: 0 },
+      uGhosts: { value: 1 }, uStarburst: { value: 1 }, uStreak: { value: 0.3 }, uHalo: { value: 1 }, uDirt: { value: 0.5 },
+      uSSGhost: { value: 0 }, uHasDirt: { value: this.lens.dirt ? 1 : 0 }, uFlareRot: { value: 0.2 },
+      uPurkinje: { value: 0 },
+    });
+    this.finalMat = makeFullscreenMaterial(FINAL_FRAG, {
+      tSrc: { value: this.ldrRT.texture }, uInvRes: { value: new THREE.Vector2(1 / this.width, 1 / this.height) },
+      uMode: { value: 1 }, uSharpen: { value: 0.35 }, uGrain: { value: 0.03 }, uTime: G.uTime,
       uFade: { value: 0 }, uFadeColor: { value: new THREE.Color(0, 0, 0) },
     });
+    // back-compat alias (older code referenced fxaaMat)
+    this.fxaaMat = this.finalMat;
   }
 
-  _buildFXAA() {
-    // FXAA 3.11-style (quality preset ~12), operates on LDR sRGB.
-    this.fxaaMat = makeFullscreenMaterial(/* glsl */`
-      uniform sampler2D tSrc; uniform vec2 uInvRes; varying vec2 vUv;
-      float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
-      void main(){
-        vec3 rgbM = texture2D(tSrc, vUv).rgb;
-        float lM = luma(rgbM);
-        float lN = luma(texture2D(tSrc, vUv + vec2(0, uInvRes.y)).rgb);
-        float lS = luma(texture2D(tSrc, vUv - vec2(0, uInvRes.y)).rgb);
-        float lE = luma(texture2D(tSrc, vUv + vec2(uInvRes.x, 0)).rgb);
-        float lW = luma(texture2D(tSrc, vUv - vec2(uInvRes.x, 0)).rgb);
-        float lMin = min(lM, min(min(lN, lS), min(lE, lW)));
-        float lMax = max(lM, max(max(lN, lS), max(lE, lW)));
-        float range = lMax - lMin;
-        if (range < max(0.0312, lMax * 0.125)) { gl_FragColor = vec4(rgbM, 1.0); return; }
-        float lNW = luma(texture2D(tSrc, vUv + vec2(-uInvRes.x, uInvRes.y)).rgb);
-        float lNE = luma(texture2D(tSrc, vUv + uInvRes).rgb);
-        float lSW = luma(texture2D(tSrc, vUv - uInvRes).rgb);
-        float lSE = luma(texture2D(tSrc, vUv + vec2(uInvRes.x, -uInvRes.y)).rgb);
-        vec2 dir;
-        dir.x = -((lNW + lNE) - (lSW + lSE));
-        dir.y =  ((lNW + lSW) - (lNE + lSE));
-        float dirReduce = max((lNW + lNE + lSW + lSE) * 0.25 * 0.125, 1.0/128.0);
-        float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
-        dir = clamp(dir * rcpDirMin, vec2(-8.0), vec2(8.0)) * uInvRes;
-        vec3 rgbA = 0.5 * (texture2D(tSrc, vUv + dir * (1.0/3.0 - 0.5)).rgb + texture2D(tSrc, vUv + dir * (2.0/3.0 - 0.5)).rgb);
-        vec3 rgbB = rgbA * 0.5 + 0.25 * (texture2D(tSrc, vUv + dir * -0.5).rgb + texture2D(tSrc, vUv + dir * 0.5).rgb);
-        float lB = luma(rgbB);
-        gl_FragColor = vec4((lB < lMin || lB > lMax) ? rgbA : rgbB, 1.0);
-      }`, { tSrc: { value: null }, uInvRes: { value: new THREE.Vector2(1 / this.width, 1 / this.height) } });
+  // ------------------------------------------------------------------ helpers
+  _profile() {
+    const name = this.engine.director?.currentName;
+    return PROFILES[name] || PROFILES.default;
+  }
+
+  _resolve(v, auto) { return v === 'auto' || v === undefined || v === null ? auto : v; }
+
+  _updateMotion(camera) {
+    const m = this.motion;
+    const p = camera.projectionMatrix.elements;
+    m.prevProj.copy(m.proj);
+    m.proj.set(p[0], p[5], p[8], p[9]);
+    m.near = camera.near ?? 0.1; m.far = camera.far ?? 1e9;
+    camera.matrixWorld.decompose(_v3, _q, _v3b);
+    _m4.makeRotationFromQuaternion(_q);
+    m.curRot.setFromMatrix4(_m4);
+    m.prevRotInv.copy(this._prevRot).transpose();
+    m.camDelta.copy(_v3).sub(this._prevCamPos);
+    // camera cut detection: large jump or big rotation between two rendered frames
+    const e1 = m.curRot.elements, e0 = this._prevRot.elements;
+    const cosFwd = e1[6] * e0[6] + e1[7] * e0[7] + e1[8] * e0[8];
+    const cut = m.camDelta.length() > 20000 || cosFwd < 0.85;
+    this._prevRot.copy(m.curRot);
+    this._prevCamPos.copy(_v3);
+    return cut;
+  }
+
+  _updateSun(camera, prof) {
+    const sun = this._sun;
+    sun.onScreen = 0;
+    if (!prof.flare || !camera.isPerspectiveCamera) return 0;
+    const world = this.engine.director?.current?.world;
+    const sp = world?.space?.sun;
+    // direction toward the sun in scene space (root never rotates → local == scene directions)
+    const dir = _v3.copy(sp?.dir ?? G.uSunDir.value);
+    if (dir.lengthSq() < 1e-8) return 0;
+    dir.normalize();
+    const vis = sp ? (sp.visibility ?? 1) : 1;
+    if (vis <= 0.001) return 0;
+    // project a far point along the direction (camera-relative)
+    const e = camera.matrixWorldInverse.elements;
+    const vx = e[0] * dir.x + e[4] * dir.y + e[8] * dir.z;
+    const vy = e[1] * dir.x + e[5] * dir.y + e[9] * dir.z;
+    const vz = e[2] * dir.x + e[6] * dir.y + e[10] * dir.z;
+    if (vz > -1e-3) return 0;
+    const mp = this.motion.proj;
+    const nx = (mp.x * vx) / -vz - mp.z, ny = (mp.y * vy) / -vz - mp.w;
+    if (Math.abs(nx) > 1.6 || Math.abs(ny) > 1.6) return 0;
+    this._sunUv.set(nx * 0.5 + 0.5, ny * 0.5 + 0.5);
+    // fade the flare in from beyond the screen edge (off-screen sun still veils a little)
+    const edge = Math.max(Math.abs(nx), Math.abs(ny));
+    sun.onScreen = THREE.MathUtils.clamp((1.15 - edge) / 0.25, 0, 1) * vis;
+    const ang = sp?.angularRadius ?? 0.0047;
+    sun.radiusPx = ang * mp.y * 0.5 * this.height;
+    // colour: normalised sun colour (orange at sunset, white in space), brightness kept modest
+    // space track's colour is the star's own (unreddened) colour; fall back to the surface sun colour
+    const sc = (sp?.color && (sp.color.r + sp.color.g + sp.color.b) > 1e-4) ? sp.color : G.uSunColor.value;
+    const l = Math.max(1e-4, 0.2126 * sc.r + 0.7152 * sc.g + 0.0722 * sc.b);
+    this._sunCol.setRGB(sc.r / l, sc.g / l, sc.b / l);
+    return sun.onScreen;
+  }
+
+  _runEffects(r, scene, camera, opts) {
+    let src = this.sceneRT;
+    let list = this.effects;
+    if (opts.effects && opts.effects.length) {
+      const fx = this._fx; fx.length = 0;
+      for (const e of this.effects) fx.push(e);
+      for (const e of opts.effects) fx.push(e);
+      fx.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      list = fx;
+    }
+    const io = this._io || (this._io = { input: null, output: null, depth: null, camera: null, scene: null, pipeline: this, skip: false });
+    io.depth = this.depthTexture; io.camera = camera; io.scene = scene;
+    // GTAO first (order 50)
+    if (this._ssaoOn) {
+      const dst = this.pingRT;
+      try {
+        this.ssao.render(r, this.quad, src.texture, this.depthTexture, dst, this.motion, this.settings.ssao, this._frameIndex);
+        src = dst;
+      } catch (err) { console.error('[pipeline] ssao failed', err); this._ssaoBroken = true; }
+    }
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      if (e.enabled === false) continue;
+      const dst = src === this.pingRT ? this.pongRT : this.pingRT;
+      io.input = src; io.output = dst; io.skip = false;
+      try { e.render(r, io); } catch (err) { console.error(`[pipeline] effect ${e.name} failed`, err); e.enabled = false; continue; }
+      if (!io.skip) src = dst;
+    }
+    return src;
+  }
+
+  _shotSamples() {
+    const v = this.settings.taa?.shotSamples;
+    if (typeof v === 'number') return Math.max(1, Math.min(16, v | 0));
+    try {
+      const p = new URL(window.location.href).searchParams.get('taas');
+      if (p) return Math.max(1, Math.min(16, +p | 0));
+    } catch (_) { /* ignore */ }
+    return this.q.tier === 'ultra' ? 6 : 4;
   }
 
   // ------------------------------------------------------------------ render
@@ -335,61 +413,215 @@ export class Pipeline {
    */
   render(scene, camera, opts = {}) {
     const r = this.renderer;
-    if (!this.enabled) { r.setRenderTarget(null); r.render(scene, camera); return; }
-
-    // 1. scene → HDR
-    r.setRenderTarget(this.sceneRT);
-    r.setClearColor(opts.clearColor ?? 0x000000, 1);
-    r.clear(true, true, false);
-    r.render(scene, camera);
-
-    // 2. effects chain (ping-pong)
-    let src = this.sceneRT;
-    const effects = opts.effects ? [...this.effects, ...opts.effects].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)) : this.effects;
-    const io = { input: null, output: null, depth: this.depthTexture, camera, scene, pipeline: this, skip: false };
-    for (const e of effects) {
-      if (e.enabled === false) continue;
-      const dst = src === this.pingRT ? this.pongRT : this.pingRT;
-      io.input = src; io.output = dst; io.skip = false;
-      try { e.render(r, io); } catch (err) { console.error(`[pipeline] effect ${e.name} failed`, err); e.enabled = false; continue; }
-      if (!io.skip) src = dst;
+    if (!this.enabled || this._broken > 3) { r.setRenderTarget(null); r.render(scene, camera); return; }
+    if (this._legacyMode === undefined) {
+      try { this._legacyMode = new URL(window.location.href).searchParams.get('post') === 'legacy'; } catch (_) { this._legacyMode = false; }
     }
-
-    // 3. bloom
-    const bloomTex = this._renderBloom(src.texture);
-
-    // 4. composite
-    const s = this.settings, u = this.compositeMat.uniforms;
-    u.tColor.value = src.texture;
-    u.tBloom.value = bloomTex; u.uHasBloom.value = bloomTex ? 1 : 0;
-    u.uExposure.value = s.exposure; u.uBloomStrength.value = s.bloom?.strength ?? 0;
-    u.uSaturation.value = s.saturation; u.uContrast.value = s.contrast;
-    u.uTemperature.value = s.temperature; u.uTint.value = s.tint;
-    u.uLift.value.fromArray(s.lift); u.uGamma.value.fromArray(s.gamma); u.uGain.value.fromArray(s.gain);
-    u.uVignette.value = s.vignette; u.uGrain.value = s.grain; u.uChromatic.value = s.chromatic;
-    u.uBlackPoint.value = s.blackPoint;
-    u.uTonemap.value = { agx: 0, aces: 1, reinhard: 2, none: 3 }[s.tonemap] ?? 0;
-    u.uRes.value.set(this.width, this.height);
-    const useFXAA = !(this.q.msaa > 0);
-    this.quad.material = this.compositeMat;
-    this.quad.render(r, useFXAA ? this.ldrRT : null);
-    if (useFXAA) {
-      this.fxaaMat.uniforms.tSrc.value = this.ldrRT.texture;
-      this.quad.material = this.fxaaMat;
-      this.quad.render(r, null);
+    if (this._legacyMode) {
+      // A/B reference: original scaffold pipeline, sharing effects + settings
+      if (!this._legacy) this._legacy = new LegacyPipeline(this.engine);
+      const L = this._legacy;
+      L.effects = this.effects; L.settings = this.settings;
+      if (L.width !== this.width || L.height !== this.height) L.setSize(this.width, this.height);
+      L.compositeMat.uniforms.uFade.value = this.finalMat.uniforms.uFade.value;
+      L.render(scene, camera, opts);
+      return;
+    }
+    try { this._render(scene, camera, opts); this._broken = 0; }
+    catch (err) {
+      // never blank the screen: restore the camera, log once, fall back to a direct render
+      try { this.taa?.restore(); } catch (_) { /* ignore */ }
+      this._broken = (this._broken || 0) + 1;
+      if (this._broken === 1) console.error('[pipeline] post failed, falling back to direct render', err);
+      try { r.setRenderTarget(null); r.render(scene, camera); } catch (_) { /* ignore */ }
     }
   }
 
-  /** Fade overlay drawn inside the composite (0..1). */
+  _render(scene, camera, opts) {
+    const r = this.renderer;
+    const t0 = performance.now();
+    const s = this.settings, q = this.q, st = this.stats;
+    const prof = this._profile();
+    const persp = !!camera.isPerspectiveCamera;
+    const eng = this.engine;
+    const frame = eng.time?.frame ?? 0;
+    const real = eng.time?.real ?? 0;
+    const dt = Math.min(0.25, Math.max(0, real - this._lastReal));
+
+    // ---- feature resolution
+    let aa = this._resolve(s.aa, prof.aa);
+    if (aa === 'taa' && (!(q.tier === 'high' || q.tier === 'ultra') || !persp)) aa = 'fxaa';
+    if (aa === 'fxaa' && q.msaa > 0 && prof.aa !== 'taa') aa = 'none';
+    const useTAA = aa === 'taa';
+    const ssaoOn = !!this._resolve(s.ssao?.enabled, prof.ssao) && !!q.ssao && persp && this.floatRT && !this._ssaoBroken;
+    const aeOn = !!this._resolve(s.autoExposure?.enabled, prof.autoExposure);
+    const flareOn = !!this._resolve(s.flare?.enabled, prof.flare) && (s.flare?.intensity ?? 1) > 0;
+    const bloomMode = this._resolve(s.bloom?.mode, prof.bloomMode);
+    let dofOn = this._resolve(s.dof?.enabled, prof.dof);
+    if (dofOn === 'photo') dofOn = !!eng.ui?.photo && (q.tier === 'high' || q.tier === 'ultra');
+    dofOn = !!dofOn && persp;
+    const mbOn = !!this._resolve(s.motionBlur?.enabled, prof.motionBlur) && (q.tier === 'high' || q.tier === 'ultra') && !eng.shot && persp && (s.motionBlur?.strength ?? 0) > 0;
+
+    if (useTAA && !this.taa) this.taa = new TAA(this.width, this.height);
+    if (ssaoOn && !this.ssao) { try { this.ssao = new SSAO(this.width, this.height, q.tier); } catch (e) { console.error('[pipeline] ssao init failed', e); this._ssaoBroken = true; } }
+    this._ssaoOn = ssaoOn && !!this.ssao;
+
+    // ---- history validity (frame gaps, mode/camera/scene changes, cuts)
+    const modeName = eng.director?.currentName;
+    const cut = this._updateMotion(camera);
+    const gap = frame - this._lastFrame;
+    const historyOK = !cut && gap >= 0 && gap <= 3 && this._prevCam === camera && this._prevScene === scene && this._prevMode === modeName;
+    this._prevCam = camera; this._prevScene = scene; this._prevMode = modeName;
+    this._lastFrame = frame; this._lastReal = real;
+    if (!historyOK) { this.taa?.invalidate(); this.ae.snap = true; this.lens.snap = true; }
+
+    // ---- scene + GTAO + HDR effects (jittered when TAA is on; N sub-frames for shot stills)
+    r.setClearColor(opts.clearColor ?? 0x000000, 1);
+    let hdr;
+    let samples = 1;
+    if (useTAA) {
+      // shot stills: only the frame advance() captures is supersampled (not the progress render)
+      samples = (eng.shot && !this.taa.valid && (eng._advancing || this.forceShotSamples)) ? this._shotSamples() : 1;
+      const sm = r.shadowMap, shadowAuto = sm.autoUpdate;
+      for (let i = 0; i < samples; i++) {
+        if (i === samples - 1 && samples > 1) r.info.reset();
+        // frozen instant: shadow maps from the first sub-frame stay valid
+        if (i === 1) { sm.autoUpdate = false; sm.needsUpdate = false; }
+        this.taa.jitter(camera);
+        try {
+          r.setRenderTarget(this.sceneRT);
+          r.clear(true, true, false);
+          r.render(scene, camera);
+          this._frameIndex++;
+          hdr = this._runEffects(r, scene, camera, opts);
+        } finally { this.taa.restore(); }
+        hdr = this.taa.resolve(r, this.quad, hdr.texture, this.depthTexture, this.motion, {
+          reset: i === 0 && !this.taa.valid,
+          accum: i === 0 ? 0 : 1 / (i + 1),
+          feedback: s.taa?.feedback ?? 0.9,
+        });
+      }
+      sm.autoUpdate = shadowAuto;
+    } else {
+      this.taa?.invalidate();
+      r.setRenderTarget(this.sceneRT);
+      r.clear(true, true, false);
+      r.render(scene, camera);
+      this._frameIndex++;
+      hdr = this._runEffects(r, scene, camera, opts);
+    }
+
+    // ---- camera effects
+    if (dofOn) {
+      const out = hdr === this.postA ? this.pingRT : this.postA;
+      this.cam.dof(r, this.quad, hdr.texture, this.depthTexture, out, this.motion, s.dof || {}, this.width, this.height);
+      hdr = out;
+    }
+    if (mbOn && historyOK && this._cameraMoving(dt)) {
+      const out = hdr === this.postA ? this.pingRT : this.postA;
+      const shutter = (s.motionBlur.strength ?? 0.3) * (dt > 0 ? Math.min(1, (1 / 60) / dt) : 1);
+      this.cam.motionBlur(r, this.quad, hdr.texture, this.depthTexture, out, this.motion, shutter, this.width, this.height);
+      hdr = out;
+      st.mb = true;
+    } else st.mb = false;
+
+    // ---- eye adaptation
+    const aes = s.autoExposure || {};
+    if (aeOn) this.ae.update(r, this.quad, hdr.texture, dt, { ...aes, key: this._resolve(aes.key, prof.key) });
+
+    // ---- bloom
+    const bloomTex = this._renderBloom(hdr.texture, bloomMode);
+
+    // ---- sun occlusion
+    let flareVis = 0;
+    if (flareOn) {
+      flareVis = this._updateSun(camera, prof);
+      if (flareVis > 0 || !this.lens.snap) {
+        this.lens.update(r, this.quad, this.depthTexture, hdr.texture, this._sun, dt, this.width, this.height, this._sunLumRef);
+      }
+    }
+
+    // ---- grade LUT (rebuilt only when the grade changes)
+    const sig = gradeSignature(s);
+    if (sig !== this._lutSig) { this._lutSig = sig; try { buildLUT(s, this.lut); } catch (e) { console.error('[pipeline] LUT build failed', e); } }
+
+    // ---- composite
+    const u = this.compositeMat.uniforms;
+    u.tColor.value = s.debugView === 'scene' ? this.sceneRT.texture : hdr.texture;
+    u.tBloom.value = bloomTex; u.uHasBloom.value = bloomTex ? 1 : 0;
+    u.tBloomWide.value = bloomTex ? this.bloomMips[Math.min(3, this.bloomMips.length - 1)].texture : null;
+    u.uBloomMode.value = bloomMode === 'mix' ? 1 : 0;
+    u.uBloomStrength.value = s.bloom?.strength ?? 0;
+    u.uBloomScatter.value = THREE.MathUtils.clamp((s.bloom?.scatter ?? 0.05), 0, 0.5);
+    u.uExposure.value = s.exposure;
+    u.uAuto.value = aeOn ? 1 : 0; u.tAdapt.value = this.ae.texture;
+    u.uAEKey.value = this._resolve(aes.key, prof.key); u.uAEMin.value = aes.min ?? 0.4; u.uAEMax.value = THREE.MathUtils.lerp(aes.max ?? 4.0, Math.min(aes.max ?? 4.0, aes.spaceMax ?? 1.1), this._spaceK(modeName)); u.uAEStrength.value = aes.strength ?? 0.7;
+    u.uTemperature.value = s.temperature ?? 0; u.uTint.value = s.tint ?? 0;
+    let look = this._resolve(s.filmLook, prof.film);
+    look = typeof look === 'object' ? [look.power ?? 1, look.saturation ?? 1] : (FILM_LOOKS[look] || FILM_LOOKS.neutral);
+    u.uLookPower.value = look[0]; u.uLookSat.value = look[1];
+    u.uVignette.value = s.vignette ?? 0; u.uChromatic.value = s.chromatic ?? 0;
+    u.uBlackPoint.value = Math.min(0.5, s.blackPoint ?? 0);
+    u.uTonemap.value = { agx: 0, aces: 1, reinhard: 2, none: 3 }[s.tonemap] ?? 0;
+    u.uRes.value.set(this.width, this.height);
+    const f = s.flare || {};
+    u.uFlare.value = flareOn ? (f.intensity ?? 1) : 0;
+    u.tSunVis.value = this.lens.visTexture;
+    u.uSunCol.value.set(this._sunCol.r, this._sunCol.g, this._sunCol.b);
+    u.uGhosts.value = f.ghosts ?? 1; u.uStarburst.value = f.starburst ?? 1; u.uHalo.value = f.halo ?? 1;
+    u.uStreak.value = f.streak ?? 0.35; u.uDirt.value = flareOn ? (f.dirt ?? 0.5) : 0;
+    u.uSSGhost.value = flareOn ? (f.ssGhosts ?? 0.012) : 0;
+    u.uPurkinje.value = aeOn ? (s.purkinje ?? 0) : 0;
+    this.quad.draw(r, this.compositeMat, this.ldrRT);
+
+    // ---- final: AA / sharpen, grain, dither, fade → screen
+    const fu = this.finalMat.uniforms;
+    let mode = 0;
+    if (aa === 'fxaa') mode = 1;
+    else if (aa === 'taa') mode = (this.taa && this.taa.age >= 2) || samples > 1 ? 2 : 1;
+    fu.uMode.value = mode;
+    fu.uSharpen.value = s.taa?.sharpen ?? 0.35;
+    fu.uGrain.value = s.grain ?? 0;
+    fu.tSrc.value = this.ldrRT.texture;
+    this.quad.draw(r, this.finalMat, null);
+
+    st.taa = useTAA; st.ssao = this._ssaoOn; st.ae = aeOn; st.flare = +flareVis.toFixed(3); st.samples = samples;
+    st.dof = dofOn; st.aa = aa; st.mode = modeName; st.ms = +(performance.now() - t0).toFixed(1);
+  }
+
+  /** 0 on the ground / inside the atmosphere … 1 in space above the current body (system mode). */
+  _spaceK(modeName) {
+    if (modeName !== 'system') return 0;
+    const R = G.uPlanetRadius.value, H = Math.max(1, G.uAtmosphereRadius.value - R);
+    const alt = G.uCameraAltitude.value;
+    return THREE.MathUtils.smoothstep(alt, H * 0.9, H * 3.0);
+  }
+
+  _cameraMoving(dt) {
+    const m = this.motion;
+    const e1 = m.curRot.elements, e0 = m.prevRotInv.elements; // prevRotInv = transpose(prevRot)
+    // forward vectors: column 2 of rot; for transpose, row 2
+    const cosFwd = e1[6] * e0[2] + e1[7] * e0[5] + e1[8] * e0[8];
+    const ang = Math.acos(Math.min(1, Math.max(-1, cosFwd)));
+    const px = ang * m.proj.y * 0.5 * this.height;
+    const tr = m.camDelta.length() / 4 * m.proj.y * 0.5 * this.height; // displacement of a point 4 m away
+    return px > 1.5 || tr > 1.5;
+  }
+
+  /** Fade overlay drawn in the final pass (0..1). */
   setFade(v, color) {
-    this.compositeMat.uniforms.uFade.value = v;
-    if (color !== undefined) this.compositeMat.uniforms.uFadeColor.value.set(color);
+    this.finalMat.uniforms.uFade.value = v;
+    if (color !== undefined) this.finalMat.uniforms.uFadeColor.value.set(color);
   }
 
   dispose() {
-    this.sceneRT.dispose(); this.pingRT.dispose(); this.pongRT.dispose(); this.ldrRT.dispose();
+    this.sceneRT.dispose(); this.pingRT.dispose(); this.pongRT.dispose(); this.ldrRT.dispose(); this.postA.dispose();
     for (const rt of this.bloomMips) rt.dispose();
     for (const e of this.effects) e.dispose?.();
+    this.taa?.dispose(); this.ssao?.dispose(); this.ae.dispose(); this.lens.dispose(); this.cam.dispose();
+    this.lut?.dispose();
+    this.compositeMat.dispose(); this.finalMat.dispose(); this.bloomPrefilter.dispose(); this.bloomDown.dispose(); this.bloomUp.dispose();
+    this._copyMat.dispose();
     this.quad.dispose();
   }
 }

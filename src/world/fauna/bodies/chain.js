@@ -6,7 +6,7 @@
 // Bones (all kinds): 0 root · 1 head · 2..(1+nT) tail chain · then per-kind extras:
 //   bird : wL1 wL2 wR1 wR2              ray  : wL1 wL2 wR1 wR2
 //   whale: finL finR fin2L fin2R          fish : (none)
-//   jelly: bell rim0..rim3 tentA0..2 tentB0..2 (head/tail unused)
+//   jelly: bell rim tentA0..2 tentB0..2 (head unused; per-bone scale c.bs pulses the bell)
 import { MeshBuilder, spline, chainSkin, PART, MAT } from '../MeshBuilder.js';
 
 const r2 = (rng, a, b) => rng.range(a, b);
@@ -93,16 +93,12 @@ export function chainRig(g) {
     const R = g.R, H = g.H;
     bone('head', 0, V(0, H * 0.5, 0));
     rig.extra.bell = bone('bell', 0, V(0, H * 0.35, 0));
-    rig.extra.rim = [];
-    for (let k = 0; k < 4; k++) {
-      const a = k * Math.PI / 2;
-      rig.extra.rim.push(bone('rim' + k, rig.extra.bell, V(Math.sin(a) * R * 0.55, H * 0.3, Math.cos(a) * R * 0.55)));
-    }
+    rig.extra.rim = bone('rim', rig.extra.bell, V(0, H * 0.3, 0));
     const Lt = g.tentLen;
     rig.extra.tentA = []; rig.extra.tentB = [];
-    for (const [arr, off] of [[rig.extra.tentA, 0.2], [rig.extra.tentB, -0.2]]) {
+    for (const arr of [rig.extra.tentA, rig.extra.tentB]) {
       let parent = rig.extra.bell;
-      for (let k = 0; k < 3; k++) { parent = bone('tent' + k, parent, V(0, -Lt * k / 3 + (k === 0 ? 0 : 0), off * R * (k ? 0 : 1))); arr.push(parent); }
+      for (let k = 0; k < 3; k++) { parent = bone('tent' + k, parent, V(0, H * 0.3 - Lt * [0.05, 0.36, 0.7][k], 0)); arr.push(parent); }
     }
     rig.length = R * 2; rig.height = H + Lt; rig.radius = Math.max(R, (H + Lt) * 0.5); rig.center = -Lt * 0.35;
   } else {
@@ -467,17 +463,10 @@ function jellyGeo(mb, rig, hi) {
   const ni = hi ? 6 : 3;
   for (let i = 1; i <= ni; i++) { const a = (1 - i / ni) * Math.PI * 0.5; prof.push([Math.sin(a) * R * 0.88, H * 0.36 + Math.cos(a) * H * 0.45, 1 + i / ni]); }
   const lobes = g.lobes;
-  const tmp = [0, 0, 1];
   mb.lathe([0, 0, 0], [0, 1, 0], prof.map((p) => [Math.max(1e-3, p[0]), p[1]]), segs,
     (i, k, out) => {
       const v = prof[i][2];
-      const ang = (k / segs) * 4;
-      const r0 = Math.floor(ang) % 4, r1 = (r0 + 1) % 4, f = ang - Math.floor(ang);
-      const wr = sstep(0.35, 0.95, v > 1 ? 2 - v : v);
-      // two strongest influences: bell + nearest rim bone
-      const near = f < 0.5 ? r0 : r1;
-      tmp[0] = rim[near]; tmp[1] = bell; tmp[2] = wr;
-      out[0] = tmp[0]; out[1] = tmp[1]; out[2] = tmp[2];
+      out[0] = rim; out[1] = bell; out[2] = sstep(0.35, 0.95, v > 1 ? 2 - v : v);
     },
     (i, k, out) => { const v = prof[i][2]; out[0] = code(PART.BODY, MAT.JELLY); out[1] = v > 1 ? 2 - v : v; out[2] = v > 1 ? -0.5 : 1 - v; out[3] = 1; }, false);
   // scalloped rim lobes: small flaps
@@ -485,8 +474,7 @@ function jellyGeo(mb, rig, hi) {
     for (let l = 0; l < lobes; l++) {
       const a = (l / lobes) * Math.PI * 2;
       const c = [Math.sin(a) * R * 1.0, H * 0.28, Math.cos(a) * R * 1.0];
-      const near = Math.round((a / (Math.PI * 2)) * 4) % 4;
-      mb.ellipsoid(c, R * 0.12, H * 0.05, R * 0.06, 8, 4, (t, o) => { o[0] = rim[near]; o[1] = rim[near]; o[2] = 1; },
+      mb.ellipsoid(c, R * 0.12, H * 0.05, R * 0.06, 8, 4, (t, o) => { o[0] = rim; o[1] = rim; o[2] = 1; },
         (t, s, o) => { o[0] = code(PART.FIN, MAT.GLOW); o[1] = 1; o[2] = 0; o[3] = 1; },
         [[Math.cos(a), 0, -Math.sin(a)], [0, 1, 0], [Math.sin(a), 0, Math.cos(a)]]);
     }

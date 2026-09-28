@@ -208,9 +208,9 @@ export class LeggedAnimator {
     hAll /= nl;
     const avgF = nF ? hF / nF : hAll, avgH = nH ? hH / nH : hAll;
     const span = Math.max(0.1, (this.zFront - this.zHind) * s);
-    const pitchT = this.kind === 'hopper' ? 0 : -Math.atan2(avgF - avgH, span) * 0.85;
+    const pitchT = this.kind === 'hopper' ? 0 : clamp(-Math.atan2(avgF - avgH, span) * 0.85, -0.45, 0.45);
     c.bodyPitch += (pitchT - c.bodyPitch) * damp(8, dt);
-    const liftT = Math.min(avgF, avgH) * 0.35 + (avgF + avgH) * 0.5 * 0.65;
+    const liftT = clamp(Math.min(avgF, avgH) * 0.35 + (avgF + avgH) * 0.5 * 0.65, -this.legH * s * 0.45, this.legH * s * 0.35);
     c.bodyLift += (liftT - c.bodyLift) * damp(10, dt);
 
     // -------------------------------------------------- body (pelvis/spine/chest)

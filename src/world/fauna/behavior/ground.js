@@ -151,7 +151,9 @@ export class Herd {
     // nearest member distance (threat is personal)
     let dNear = Infinity;
     for (const m of this.members) { const d = Math.hypot(P[0] - m.pos[0], P[1] - m.pos[1], P[2] - m.pos[2]); m.dPlayer = d; if (d < dNear) dNear = d; }
-    const threatBoost = env.playerSpeed > 6 ? 1.8 : env.playerSpeed > 3 ? 1.25 : 1;
+    // a still observer is tolerated (Planet Earth camera-crew rule); a running / driving one is not
+    const still = env.playerSpeed < 0.6;
+    const threatBoost = env.playerSpeed > 6 ? 1.8 : env.playerSpeed > 3 ? 1.25 : still ? 0.55 : 1;
     this.timer -= dt;
     switch (this.state) {
       case GRAZE:
@@ -165,7 +167,7 @@ export class Herd {
         break;
       }
       case ALERT:
-        if (this.fleeR > 0 && dNear < this.fleeR * threatBoost) {
+        if (this.fleeR > 0 && dNear < this.fleeR * threatBoost * (still ? 0.6 : 1)) {
           this.state = FLEE; this.timer = this.rng.range(5, 9);
           this.fleeDir[0] = -dxp; this.fleeDir[1] = -dyp; this.fleeDir[2] = -dzp;
         } else if (dNear > this.alertR * 1.35 * threatBoost) { if (this.timer <= 0) { this.state = GRAZE; this.timer = this.rng.range(6, 20); } }

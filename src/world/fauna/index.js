@@ -2,8 +2,12 @@
 //
 // Planets teem with life: procedurally generated species (deterministic from body.seed, styled by
 // body.art), streamed around the player in deterministic cells, animated procedurally on the CPU
-// (gaits, foot planting IK, look-at, tails, wings…) and rendered with GPU skinning + instancing
-// (one or two draw calls per species).
+// (gaits, foot planting IK, look-at, tails, wing flaps, fin undulation, bell pulses…) and rendered
+// with GPU skinning + instancing (one or two draw calls per species) plus one particle draw call
+// (fireflies / pollen / insects).
+//
+// Layers: ground (herds of legged species) · air (bird flocks, sky rays) · sky (sky-whale pods)
+//         · float (jellyfish swarms) · water (fish schools near the shore).
 //
 // Public API (world.get('fauna')):
 //   .roster                       species list [{ id, name, archetype, layer, … }]
@@ -12,17 +16,27 @@
 //   .getState()                   counts, draw calls, discovered species
 // Events: emits 'discovery' { kind: 'creature', name, species, archetype } once per species seen.
 // URL: &fauna=<archetype>  frames a showcase group of that archetype in front of the spawn camera
-//      (grazer|giant|hexapod|hopper|critter|birds|rays|whales|jellies|fish|serpent|none).
+//      (grazer|giant|hexapod|hopper|critter|birds|rays|whales|jellies|fish|none).
 import * as THREE from 'three';
 import { RNG, hashCombine } from '../../core/rng.js';
 import { makeRoster } from './species.js';
 import { leggedRig, leggedGeometry } from './bodies/legged.js';
+import { chainRig, chainGeometry } from './bodies/chain.js';
 import { LeggedAnimator } from './anim/LeggedAnimator.js';
+import { ChainAnimator } from './anim/ChainAnimator.js';
 import { Crowd } from './Crowd.js';
 import { moveGround, Herd, tangentBasis } from './behavior/ground.js';
+import { Flock, Pod, Swarm, School } from './behavior/air.js';
 import { cellsPerFace, cellsAround, cellDir } from './cells.js';
+import { Motes } from './particles.js';
 
 const LEGGED = new Set(['grazer', 'giant', 'hexapod', 'hopper', 'critter']);
+const SHOW = { birds: 'bird', bird: 'bird', rays: 'ray', ray: 'ray', whales: 'whale', whale: 'whale', jellies: 'jelly', jelly: 'jelly', fish: 'fish' };
+// per archetype: draw distance (m), LOD0 distance, discovery distance
+const DIST = {
+  grazer: [900, 95, 70], giant: [2000, 160, 220], hexapod: [900, 95, 70], hopper: [700, 70, 60], critter: [300, 40, 25],
+  bird: [750, 70, 140], ray: [1200, 140, 220], whale: [7000, 1100, 1800], jelly: [600, 90, 90], fish: [180, 30, 45],
+};
 const _v3 = new THREE.Vector3(), _sph = new THREE.Sphere(), _mat = new THREE.Matrix4();
 const _e = new Float64Array(3), _n = new Float64Array(3), _d = new Float64Array(3);
 
@@ -35,6 +49,7 @@ class Fauna {
     this.body = world.body;
     this.R = world.body.radius;
     this.sea = this.surface.seaLevel > -1e8 ? this.surface.seaLevel : -1e9;
+    this.hasOcean = !!world.body.ocean?.present && this.surface.seaLevel > -1e8;
     this.roster = makeRoster(world.body);
     this.rt = new Map();                      // species id → runtime { rig, animator, crowd }
     this.groups = [];
@@ -46,14 +61,19 @@ class Fauna {
     this.root.name = 'fauna';
     world.root.add(this.root);
     const tier = this.q.tier || 'high';
+    this.tierK = { low: 0.4, med: 0.65, high: 1.0, ultra: 1.3 }[tier] ?? 1;
     this.density = { low: 0.35, med: 0.6, high: 1.0, ultra: 1.3 }[tier] ?? 1;
-    this.maxCreatures = { low: 40, med: 80, high: 150, ultra: 220 }[tier] ?? 150;
-    this.drawDist = 900 * (this.q.drawDistance ?? 1);
-    this.lod0Dist = { low: 35, med: 60, high: 95, ultra: 140 }[tier] ?? 95;
+    this.maxCreatures = { low: 90, med: 180, high: 320, ultra: 450 }[tier] ?? 320;
+    this.dd = Math.min(1.4, this.q.drawDistance ?? 1);
+    this.lodK = { low: 0.4, med: 0.65, high: 1.0, ultra: 1.4 }[tier] ?? 1;
     this.cellSize = 210;
     this.N = cellsPerFace(this.R, this.cellSize);
-    this.streamR = 620 * Math.min(1.3, this.q.drawDistance ?? 1);
+    this.airCell = 800; this.NA = cellsPerFace(this.R, this.airCell);
+    this.skyCell = 3200; this.NS = cellsPerFace(this.R, this.skyCell);
+    this.fishCell = 260; this.NF = cellsPerFace(this.R, this.fishCell);
+    this.streamR = 620 * Math.min(1.3, this.dd);
     this._cellSet = new Set();
+    this._keep = new Set();
     this._lastStream = null;
     this._streamT = 0;
     this.frame = 0;
@@ -80,24 +100,42 @@ class Fauna {
     };
     this.animCtx = { ground: this.env.ground, sample: true, t: 0 };
     this.showcase = String(world.params?.fauna ?? '').toLowerCase();
+    this.motes = null;
+    try { this.motes = new Motes(this); } catch (e) { console.warn('[fauna] motes disabled', e); }
   }
 
   // ------------------------------------------------------------------------------ species runtime
   runtime(sp) {
     let rt = this.rt.get(sp.id);
     if (rt) return rt;
+    const shadows = !!this.q.shadows;
     if (LEGGED.has(sp.archetype)) {
       const rig = leggedRig(sp.genome);
       const lods = [leggedGeometry(rig, 0), leggedGeometry(rig, 1)];
       const animator = new LeggedAnimator(rig);
-      const crowd = new Crowd(this.root, { name: sp.name, bones: rig.nb, pivots: rig.pivots, lods, look: sp.look, castShadow: !!this.q.shadows, capacity: 16 });
-      rt = { rig, animator, crowd, radius: Math.max(rig.length, rig.height) * 0.6, height: rig.height };
+      const crowd = new Crowd(this.root, { name: sp.name, bones: rig.nb, pivots: rig.pivots, lods, look: sp.look, castShadow: shadows, capacity: 16 });
+      rt = { rig, animator, crowd, radius: Math.max(rig.length, rig.height) * 0.6, height: rig.height, centerUp: rig.height * 0.5 };
+    } else {
+      const rig = chainRig(sp.genome);
+      const lods = [chainGeometry(rig, 0), chainGeometry(rig, 1)];
+      const animator = new ChainAnimator(rig);
+      const jelly = sp.archetype === 'jelly';
+      const crowd = new Crowd(this.root, {
+        name: sp.name, bones: rig.nb, pivots: rig.pivots, lods, look: sp.look, capacity: 16,
+        castShadow: shadows && (sp.archetype === 'whale' || sp.archetype === 'bird' || sp.archetype === 'ray'),
+        transparent: jelly, opacity: 0.72, renderOrder: jelly ? 2 : 0,
+      });
+      rt = { rig, animator, crowd, radius: rig.radius, height: rig.height, centerUp: rig.center || 0 };
     }
+    const D = DIST[sp.archetype] || [800, 90, 70];
+    rt.far = D[0] * (sp.archetype === 'whale' ? 1 : this.dd);
+    rt.lod0 = D[1] * this.lodK;
+    rt.discover = D[2];
     this.rt.set(sp.id, rt);
     return rt;
   }
 
-  // ------------------------------------------------------------------------------ spawning
+  // ------------------------------------------------------------------------------ spawning (ground)
   _makeCreature(sp, rt, gpos, fwd, scale, seed01, rng) {
     const g = sp.genome;
     const up = new Float64Array(3);
@@ -123,7 +161,7 @@ class Fauna {
   }
 
   /** Spawn a herd of species sp around ground point center (planet-local). */
-  _spawnHerd(sp, center, rng, count) {
+  _spawnHerd(sp, center, rng, count, heading) {
     const rt = this.runtime(sp);
     if (!rt) return null;
     const g = sp.genome;
@@ -132,7 +170,7 @@ class Fauna {
     const ul = Math.hypot(center[0], center[1], center[2]);
     const ux = center[0] / ul, uy = center[1] / ul, uz = center[2] / ul;
     tangentBasis(ux, uy, uz, _e, _n);
-    const baseA = rng.range(0, Math.PI * 2);
+    const baseA = heading ?? rng.range(0, Math.PI * 2);
     const spacing = (g.S * g.bodyLen + g.S * 0.8) * 1.15;
     for (let i = 0; i < n; i++) {
       const a = i * 2.39996 + rng.range(-0.4, 0.4);
@@ -142,7 +180,7 @@ class Fauna {
       const pz = center[2] + (_e[2] * Math.cos(a) + _n[2] * Math.sin(a)) * r;
       const h = this.env.ground(px, py, pz, _d, 0);
       if (h < this.sea + 0.6) continue;
-      const head = baseA + rng.range(-0.9, 0.9);
+      const head = baseA + rng.range(-0.9, 0.9) * (heading !== undefined ? 0.5 : 1);
       const fx = _e[0] * Math.cos(head) + _n[0] * Math.sin(head), fy = _e[1] * Math.cos(head) + _n[1] * Math.sin(head), fz = _e[2] * Math.cos(head) + _n[2] * Math.sin(head);
       const juvenile = rng.chance(sp.archetype === 'giant' ? 0.25 : 0.18);
       const scale = juvenile ? rng.range(0.5, 0.65) : rng.range(0.88, 1.12);
@@ -155,6 +193,121 @@ class Fauna {
     for (const m of members) { m.group = herd; this.creatures.push(m); }
     this.groups.push(herd);
     return herd;
+  }
+
+  // ------------------------------------------------------------------------------ spawning (air/sky/water)
+  _makeFlyer(sp, rt, pos, fwd, scale, rng) {
+    const up = new Float64Array(3);
+    const l = Math.hypot(pos[0], pos[1], pos[2]);
+    up[0] = pos[0] / l; up[1] = pos[1] / l; up[2] = pos[2] / l;
+    const f = Float64Array.from(fwd);
+    const fl = Math.hypot(f[0], f[1], f[2]) || 1; f[0] /= fl; f[1] /= fl; f[2] /= fl;
+    const c = {
+      species: sp, rt, air: true, index: 0,
+      pos: Float64Array.from(pos), up, fwd: f, vel: new Float64Array(3), off: new Float64Array(3),
+      poseRoot: Float64Array.from(pos),
+      speed: 0, turnRate: 0, climb: 0, flap: 1, bank: 0,
+      scale, seed: rng.next(), glow: sp.glowing ? 1 : 0, fade: 1, alert: 0, look: null,
+      dist: 1e9, animAcc: 0, visible: false,
+    };
+    rt.animator.init(c, rng);
+    return c;
+  }
+
+  /** point `agl` meters above the ground (or sea) under planet-local p */
+  _above(p, agl, out) {
+    const l = Math.hypot(p[0], p[1], p[2]) || 1;
+    const h = Math.max(this.sea, this.surface.height(p[0] / l, p[1] / l, p[2] / l));
+    const r = this.R + h + agl;
+    out[0] = p[0] / l * r; out[1] = p[1] / l * r; out[2] = p[2] / l * r;
+    return h;
+  }
+
+  /** spawn an air/sky/float/water group of species sp centred on planet-local ground point `home` */
+  _spawnAir(sp, home, rng, count, opts = {}) {
+    const rt = this.runtime(sp);
+    if (!rt) return null;
+    const g = sp.genome, A = sp.archetype;
+    const n = Math.max(1, Math.round((count ?? rng.int(sp.group[0], sp.group[1])) * (A === 'bird' || A === 'fish' ? Math.max(0.5, this.tierK) : 1)));
+    const ul = Math.hypot(home[0], home[1], home[2]);
+    tangentBasis(home[0] / ul, home[1] / ul, home[2] / ul, _e, _n);
+    const head = opts.heading ?? rng.range(0, Math.PI * 2);
+    const fx = _e[0] * Math.cos(head) + _n[0] * Math.sin(head), fy = _e[1] * Math.cos(head) + _n[1] * Math.sin(head), fz = _e[2] * Math.cos(head) + _n[2] * Math.sin(head);
+    const members = [];
+    const P = new Float64Array(3);
+    let grp;
+    if (A === 'bird' || A === 'ray') {
+      const ray = A === 'ray';
+      const size = ray ? g.span : g.span;
+      const agl = opts.agl ?? (ray ? [18, 60] : [22, 110]);
+      const spread = ray ? size * 2.2 : size * 3.2;
+      for (let i = 0; i < n; i++) {
+        const a = i * 2.39996, r = spread * Math.sqrt(i + 0.5) * 0.7;
+        const ox = (_e[0] * Math.cos(a) + _n[0] * Math.sin(a)) * r, oy = (_e[1] * Math.cos(a) + _n[1] * Math.sin(a)) * r, oz = (_e[2] * Math.cos(a) + _n[2] * Math.sin(a)) * r;
+        P[0] = home[0] + ox; P[1] = home[1] + oy; P[2] = home[2] + oz;
+        this._above(P, (agl[0] + agl[1]) * 0.5 + rng.range(-1, 1) * spread * 0.4, P);
+        const c = this._makeFlyer(sp, rt, P, [fx, fy, fz], rng.range(0.85, 1.15), rng);
+        c.index = i;
+        c.off[0] = ox * 0.35; c.off[1] = oy * 0.35; c.off[2] = oz * 0.35;
+        const sp0 = g.speed * (ray ? 1 : 1);
+        c.vel[0] = fx * sp0; c.vel[1] = fy * sp0; c.vel[2] = fz * sp0;
+        members.push(c);
+      }
+      grp = new Flock(sp, members, home, rng.fork('flock'), this.env, {
+        agl, radius: opts.radius ?? (ray ? rng.range(90, 180) : rng.range(80, 220)), speed: g.speed, ray,
+        seek: ray ? 1.2 : 4.0, coh: ray ? 0.02 : 0.06, ali: ray ? 0.4 : 0.9, sep: size * (ray ? 1.6 : 1.3), sepK: ray ? 1.5 : 6,
+        fear: ray ? 18 : 30, minAgl: ray ? 10 : 6, wobble: ray ? 0.5 : 2.5,
+      });
+    } else if (A === 'whale') {
+      const agl = opts.agl ?? [140, 320];
+      for (let i = 0; i < n; i++) {
+        const side = i === 0 ? 0 : (i % 2 ? 1 : -1);
+        const back = i === 0 ? 0 : g.L * (0.9 + 0.4 * Math.floor((i - 1) / 2));
+        const lx = fy * (home[2] / ul) - fz * (home[1] / ul), ly = fz * (home[0] / ul) - fx * (home[2] / ul), lz = fx * (home[1] / ul) - fy * (home[0] / ul);
+        P[0] = home[0] + lx * side * g.L * 0.8 - fx * back; P[1] = home[1] + ly * side * g.L * 0.8 - fy * back; P[2] = home[2] + lz * side * g.L * 0.8 - fz * back;
+        const aglI = rng.range(agl[0], agl[1]) + (i ? rng.range(-20, 20) : 0);
+        this._above(P, aglI, P);
+        const scale = i === 0 ? 1.1 : rng.chance(0.3) ? rng.range(0.45, 0.6) : rng.range(0.8, 1.0);
+        const c = this._makeFlyer(sp, rt, P, [fx, fy, fz], scale, rng);
+        c.index = i; c.agl = aglI; c.slot = [side * g.L * 0.8, back];
+        c.vel[0] = fx * g.speed; c.vel[1] = fy * g.speed; c.vel[2] = fz * g.speed;
+        members.push(c);
+      }
+      grp = new Pod(sp, members, rng.fork('pod'), this.env, { speed: g.speed });
+    } else if (A === 'jelly') {
+      const agl = opts.agl ?? [5, 38];
+      for (let i = 0; i < n; i++) {
+        const a = i * 2.39996, r = g.R * 5 * Math.sqrt(i + 0.5);
+        P[0] = home[0] + (_e[0] * Math.cos(a) + _n[0] * Math.sin(a)) * r; P[1] = home[1] + (_e[1] * Math.cos(a) + _n[1] * Math.sin(a)) * r; P[2] = home[2] + (_e[2] * Math.cos(a) + _n[2] * Math.sin(a)) * r;
+        const aglI = rng.range(agl[0], agl[1]);
+        this._above(P, aglI, P);
+        const c = this._makeFlyer(sp, rt, P, [fx, fy, fz], rng.chance(0.3) ? rng.range(0.4, 0.65) : rng.range(0.8, 1.2), rng);
+        c.index = i; c.agl = aglI;
+        members.push(c);
+      }
+      grp = new Swarm(sp, members, home, rng.fork('swarm'), this.env, { drift: rng.range(0.3, 0.9), range: 60 });
+    } else if (A === 'fish') {
+      const l = Math.hypot(home[0], home[1], home[2]);
+      for (let i = 0; i < n; i++) {
+        const a = i * 2.39996, r = g.L * 1.6 * Math.sqrt(i + 0.5);
+        const depthT = rng.range(0.5, 1.8);
+        P[0] = home[0] + (_e[0] * Math.cos(a) + _n[0] * Math.sin(a)) * r; P[1] = home[1] + (_e[1] * Math.cos(a) + _n[1] * Math.sin(a)) * r; P[2] = home[2] + (_e[2] * Math.cos(a) + _n[2] * Math.sin(a)) * r;
+        const pl = Math.hypot(P[0], P[1], P[2]);
+        const rr = this.R + this.sea - depthT;
+        P[0] *= rr / pl; P[1] *= rr / pl; P[2] *= rr / pl;
+        const c = this._makeFlyer(sp, rt, P, [fx, fy, fz], rng.range(0.75, 1.25), rng);
+        c.index = i; c.depthT = depthT;
+        c.off[0] = (_e[0] * Math.cos(a) + _n[0] * Math.sin(a)) * r * 0.5; c.off[1] = (_e[1] * Math.cos(a) + _n[1] * Math.sin(a)) * r * 0.5; c.off[2] = (_e[2] * Math.cos(a) + _n[2] * Math.sin(a)) * r * 0.5;
+        c.vel[0] = fx * g.speed; c.vel[1] = fy * g.speed; c.vel[2] = fz * g.speed;
+        members.push(c);
+      }
+      void l;
+      grp = new School(sp, members, home, rng.fork('school'), this.env, { speed: g.speed, range: opts.range ?? 22, seek: 2.5, sep: g.L * 1.1 });
+    }
+    if (!grp) return null;
+    for (const m of members) { m.group = grp; this.creatures.push(m); }
+    this.groups.push(grp);
+    return grp;
   }
 
   _removeGroup(grp) {
@@ -180,80 +333,241 @@ class Fauna {
     return rng.weighted(cands);
   }
 
+  _pickLayer(rng, layer) {
+    const cands = this.roster.filter((s) => s.layer === layer).map((s) => [s, s.density ?? 1]);
+    return cands.length ? rng.weighted(cands) : null;
+  }
+
+  // ------------------------------------------------------------------------------ streaming
+  _streamLayer(tag, N, cellSize, radius, ux, uy, uz, spawn) {
+    const set = this._cellSet, keep = this._keep;
+    cellsAround(ux, uy, uz, this.R, radius, cellSize, N, set);
+    for (const key of set) {
+      const k = tag + key;
+      if (this.cells.has(k)) continue;
+      const entry = { groups: [] };
+      this.cells.set(k, entry);
+      const rng = new RNG(hashCombine(this.body.seed, 0xce11, tag.charCodeAt(0), key));
+      try { spawn(key, rng, entry); } catch (e) { console.warn('[fauna] spawn failed', e); }
+    }
+    cellsAround(ux, uy, uz, this.R, radius * 1.3, cellSize, N, keep);
+    for (const [k, entry] of this.cells) {
+      if (k[0] !== tag || keep.has(+k.slice(1)) || k === 'welcome') continue;
+      for (const g of entry.groups) if (!g.welcome) this._removeGroup(g);
+      this.cells.delete(k);
+    }
+  }
+
   _streamCells() {
     const P = this.playerPos;
     const l = Math.hypot(P[0], P[1], P[2]);
     const ux = P[0] / l, uy = P[1] / l, uz = P[2] / l;
     const alt = l - this.R - Math.max(0, this.surface.height(ux, uy, uz));
-    if (alt > 2500) return;               // high above: no ground population streaming
-    cellsAround(ux, uy, uz, this.R, this.streamR, this.cellSize, this.N, this._cellSet);
-    const seed = this.body.seed;
-    // spawn new cells
-    for (const key of this._cellSet) {
-      if (this.cells.has(key)) continue;
-      const entry = { groups: [] };
-      this.cells.set(key, entry);
-      const rng = new RNG(hashCombine(seed, 0xce11, key));
-      const pGroup = Math.min(0.85, (0.3 + 0.55 * (this.body.life?.fauna ?? 0.5)) * this.density);
-      const tries = 2;
-      for (let k = 0; k < tries; k++) {
-        if (!rng.chance(k === 0 ? pGroup : pGroup * 0.35)) continue;
-        cellDir(key, this.N, _d, rng.range(0.15, 0.85), rng.range(0.15, 0.85));
-        const h = this.surface.height(_d[0], _d[1], _d[2]);
-        if (h < this.sea + 2) continue;
-        const sp = this._pickGround(rng, _d, h);
-        if (!sp) continue;
-        if (this.creatures.length > this.maxCreatures) continue;
-        const r = this.R + h;
-        const center = new Float64Array([_d[0] * r, _d[1] * r, _d[2] * r]);
-        const grp = this._spawnHerd(sp, center, rng.fork('g' + k));
-        if (grp) entry.groups.push(grp);
+    const F = this.body.life?.fauna ?? 0.5;
+    const room = () => this.creatures.length < this.maxCreatures;
+    if (alt < 2500) {
+      // ground herds
+      this._streamLayer('g', this.N, this.cellSize, this.streamR, ux, uy, uz, (key, rng, entry) => {
+        const pGroup = Math.min(0.85, (0.3 + 0.55 * F) * this.density);
+        for (let k = 0; k < 2; k++) {
+          if (!rng.chance(k === 0 ? pGroup : pGroup * 0.35)) continue;
+          cellDir(key, this.N, _d, rng.range(0.15, 0.85), rng.range(0.15, 0.85));
+          const h = this.surface.height(_d[0], _d[1], _d[2]);
+          if (h < this.sea + 2 || !room()) continue;
+          const sp = this._pickGround(rng, _d, h);
+          if (!sp) continue;
+          const r = this.R + h;
+          const grp = this._spawnHerd(sp, new Float64Array([_d[0] * r, _d[1] * r, _d[2] * r]), rng.fork('g' + k));
+          if (grp) entry.groups.push(grp);
+        }
+      });
+      // air: flocks, rays, jellies
+      this._streamLayer('a', this.NA, this.airCell, 1300 * this.dd, ux, uy, uz, (key, rng, entry) => {
+        const tries = [['air', 0.55 * this.density + 0.2], ['air', 0.25 * this.density], ['float', 0.3 * this.density]];
+        for (let k = 0; k < tries.length; k++) {
+          const [layer, p] = tries[k];
+          if (!rng.chance(p) || !room()) continue;
+          const sp = this._pickLayer(rng, layer);
+          if (!sp) continue;
+          cellDir(key, this.NA, _d, rng.range(0.1, 0.9), rng.range(0.1, 0.9));
+          const h = this.surface.height(_d[0], _d[1], _d[2]);
+          if (sp.archetype === 'jelly' && h < this.sea + 1) continue;
+          const r = this.R + Math.max(h, this.sea);
+          const grp = this._spawnAir(sp, new Float64Array([_d[0] * r, _d[1] * r, _d[2] * r]), rng.fork('a' + k));
+          if (grp) entry.groups.push(grp);
+        }
+      });
+      // water: fish schools near the player's shores
+      if (this.hasOcean) {
+        this._streamLayer('f', this.NF, this.fishCell, 420, ux, uy, uz, (key, rng, entry) => {
+          if (!rng.chance(0.55 * this.density + 0.2) || !room()) return;
+          const sp = this._pickLayer(rng, 'water');
+          if (!sp) return;
+          for (let k = 0; k < 4; k++) {
+            cellDir(key, this.NF, _d, rng.range(0.1, 0.9), rng.range(0.1, 0.9));
+            const h = this.surface.height(_d[0], _d[1], _d[2]);
+            if (h > this.sea - 1.5 || h < this.sea - 40) continue;
+            const r = this.R + this.sea;
+            const grp = this._spawnAir(sp, new Float64Array([_d[0] * r, _d[1] * r, _d[2] * r]), rng.fork('f' + k));
+            if (grp) entry.groups.push(grp);
+            return;
+          }
+        });
       }
     }
-    // despawn far cells (hysteresis: not in the enlarged set)
-    const keep = new Set();
-    cellsAround(ux, uy, uz, this.R, this.streamR * 1.3, this.cellSize, this.N, keep);
-    for (const [key, entry] of this.cells) {
-      if (keep.has(key) || key === 'welcome') continue;
-      for (const g of entry.groups) this._removeGroup(g);
-      this.cells.delete(key);
+    // sky whales (visible from far away, also from low flight)
+    if (alt < 12000) {
+      this._streamLayer('s', this.NS, this.skyCell, 5200, ux, uy, uz, (key, rng, entry) => {
+        if (!rng.chance(0.4 * Math.min(1, this.density + 0.2))) return;
+        const sp = this._pickLayer(rng, 'sky');
+        if (!sp) return;
+        cellDir(key, this.NS, _d, rng.range(0.2, 0.8), rng.range(0.2, 0.8));
+        const h = Math.max(this.sea, this.surface.height(_d[0], _d[1], _d[2]));
+        const r = this.R + h;
+        const grp = this._spawnAir(sp, new Float64Array([_d[0] * r, _d[1] * r, _d[2] * r]), rng.fork('s'));
+        if (grp) entry.groups.push(grp);
+      });
     }
   }
 
-  /** A showcase group in front of the spawn camera (the player lands and sees life at once). */
+  // ------------------------------------------------------------------------------ welcome / showcase
+  /** is planet-local point p visible from the camera (terrain + big colliders)? */
+  _clearView(cam, px, py, pz, lift) {
+    const cx = cam.x, cy = cam.y, cz = cam.z;
+    const l = Math.hypot(px, py, pz);
+    const tx = px + px / l * lift, ty = py + py / l * lift, tz = pz + pz / l * lift;
+    for (let i = 1; i < 16; i++) {
+      const t = i / 16;
+      const x = cx + (tx - cx) * t, y = cy + (ty - cy) * t, z = cz + (tz - cz) * t;
+      const r = Math.hypot(x, y, z);
+      if (r - this.R < this.surface.height(x / r, y / r, z / r) + 0.3) return false;
+    }
+    const dx = tx - cx, dy = ty - cy, dz = tz - cz, L2 = dx * dx + dy * dy + dz * dz;
+    for (const c of this._nearCol || []) {
+      const p = c.pos;
+      const t = Math.max(0, Math.min(1, ((p.x - cx) * dx + (p.y - cy) * dy + (p.z - cz) * dz) / L2));
+      const qx = cx + dx * t - p.x, qy = cy + dy * t - p.y, qz = cz + dz * t - p.z;
+      const rad = (c.radius || Math.max(c.halfExtents?.x || 0, c.halfExtents?.z || 0) || 1) + 0.4;
+      if (qx * qx + qy * qy + qz * qz < rad * rad && t > 0.02) return false;
+    }
+    return true;
+  }
+
   _welcome() {
     if (this.showcase === 'none') return;
     const cam = this.world.camera;
-    const P = this.playerPos;
-    const l = Math.hypot(P[0], P[1], P[2]);
-    const ux = P[0] / l, uy = P[1] / l, uz = P[2] / l;
-    // camera forward projected on the tangent plane
+    const C = cam.position;           // planet-local (camera is a child of world.root)
+    const l = Math.hypot(C.x, C.y, C.z);
+    const ux = C.x / l, uy = C.y / l, uz = C.z / l;
     cam.getWorldDirection(_v3);
     let fx = _v3.x, fy = _v3.y, fz = _v3.z;
     const d = fx * ux + fy * uy + fz * uz;
     fx -= ux * d; fy -= uy * d; fz -= uz * d;
     const fl = Math.hypot(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
     const rx = fy * uz - fz * uy, ry = fz * ux - fx * uz, rz = fx * uy - fy * ux;   // right
-    const rng = new RNG(hashCombine(this.body.seed, 0x3e1c, Math.round(P[0]), Math.round(P[1]), Math.round(P[2])));
-    const want = this.showcase;
-    const filter = LEGGED.has(want) ? (sp) => sp.archetype === want : null;
-    let sp = filter ? this.roster.find(filter) : null;
-    for (let attempt = 0; attempt < 14; attempt++) {
-      const ang = [0, 0.35, -0.35, 0.7, -0.7, 1.1, -1.1, 1.6, -1.6, 2.2, -2.2, 2.8, -2.8, 3.1][attempt];
-      const c = Math.cos(ang), s = Math.sin(ang);
-      const dx = fx * c + rx * s, dy = fy * c + ry * s, dz = fz * c + rz * s;
+    const rng = new RNG(hashCombine(this.body.seed, 0x3e1c, Math.round(C.x), Math.round(C.z)));
+    this._nearCol = (this.world.colliders || []).filter((c) => c.pos && Math.hypot(c.pos.x - C.x, c.pos.y - C.y, c.pos.z - C.z) < 260);
+    const want = SHOW[this.showcase] || this.showcase;
+    const entry = { groups: [] };
+    this.cells.set('welcome', entry);
+    const mark = (g) => { if (g) { g.welcome = true; entry.groups.push(g); } return g; };
+    const dirAt = (ang) => { const c = Math.cos(ang), s = Math.sin(ang); return [fx * c + rx * s, fy * c + ry * s, fz * c + rz * s]; };
+    const at = (dir, dist, side = 0) => [C.x + dir[0] * dist + rx * side, C.y + dir[1] * dist + ry * side, C.z + dir[2] * dist + rz * side];
+
+    // ---- ground herd (default, or the requested legged archetype)
+    const legged = LEGGED.has(want);
+    if (!want || legged) {
+      let sp = legged ? this.roster.find((x) => x.archetype === want) : null;
       const probe = sp || this.roster.find((x) => x.layer === 'ground' && x.archetype === 'grazer');
-      if (!probe) return;
-      const g = probe.genome;
-      const dist = Math.min(95, Math.max(16, 11 + g.S * 16 + (probe.archetype === 'giant' ? 40 : 0))) * (attempt > 5 ? 0.7 : 1);
-      const px = P[0] + dx * dist + rx * dist * 0.12, py = P[1] + dy * dist + ry * dist * 0.12, pz = P[2] + dz * dist + rz * dist * 0.12;
-      const h = this.env.ground(px, py, pz, _d, 0);
-      if (h < this.sea + 2) continue;
-      if (!sp) sp = this._pickGround(rng, [ux, uy, uz], h, (x) => x.archetype !== 'critter') || probe;
-      const grp = this._spawnHerd(sp, Float64Array.from(_d), rng.fork('welcome'), sp.archetype === 'giant' ? rng.int(3, 4) : rng.int(Math.max(4, sp.group[0]), Math.max(6, sp.group[1])));
-      if (grp) { this.cells.set('welcome', { groups: [grp] }); grp.welcome = true; }
-      return;
+      if (probe) {
+        const g = probe.genome;
+        const base = Math.min(90, Math.max(12, 7 + g.S * (legged ? 7 : 10) + (probe.archetype === 'giant' ? 38 : 0)));
+        const angs = [0, 0.3, -0.3, 0.55, -0.55, 0.8, -0.8];
+        let placed = false;
+        for (const k of [1, 0.7, 1.4, 0.5]) {
+          for (const ang of angs) {
+            const p = at(dirAt(ang), base * k);
+            const h = this.env.ground(p[0], p[1], p[2], _d, 0);
+            if (h < this.sea + 2) continue;
+            if (!this._clearView(C, _d[0], _d[1], _d[2], g.S * 0.8)) continue;
+            if (!sp) sp = this._pickGround(rng, [ux, uy, uz], h, (x) => x.archetype !== 'critter') || probe;
+            // broadside to the camera: heading along the camera's right vector
+            const dl = Math.hypot(_d[0], _d[1], _d[2]);
+            tangentBasis(_d[0] / dl, _d[1] / dl, _d[2] / dl, _e, _n);
+            const hd = Math.atan2(rx * _n[0] + ry * _n[1] + rz * _n[2], rx * _e[0] + ry * _e[1] + rz * _e[2]) + (rng.chance(0.5) ? Math.PI : 0) + 0.35;
+            mark(this._spawnHerd(sp, Float64Array.from(_d), rng.fork('welcome'), sp.archetype === 'giant' ? rng.int(3, 4) : rng.int(Math.max(5, sp.group[0]), Math.max(8, sp.group[1])), hd));
+            const hg = entry.groups[entry.groups.length - 1];
+            if (hg) hg.timer = 75;          // stay and graze in front of the camera
+            placed = true;
+            break;
+          }
+          if (placed) break;
+        }
+      }
     }
+    // ---- sky life framed in the spawn view
+    const wantSky = SHOW[this.showcase];
+    const pick = (a) => this.roster.find((x) => x.archetype === a);
+    if (!want || wantSky === 'bird') {
+      const sp = pick('bird');
+      if (sp) {
+        const p = at(dirAt(wantSky ? 0.1 : 0.35), wantSky ? 70 : 150);
+        this.env.ground(p[0], p[1], p[2], _d, 0);
+        mark(this._spawnAir(sp, _d, rng.fork('wb'), wantSky ? Math.max(16, sp.group[1]) : undefined, { agl: wantSky ? [18, 34] : [30, 70], radius: wantSky ? 45 : 110, heading: rng.range(0, 6.28) }));
+      }
+    }
+    if (wantSky === 'ray' || (!want && rng.chance(0.5))) {
+      const sp = pick('ray');
+      if (sp) {
+        const p = at(dirAt(-0.15), wantSky ? 60 + sp.genome.span * 3 : 220);
+        this.env.ground(p[0], p[1], p[2], _d, 0);
+        mark(this._spawnAir(sp, _d, rng.fork('wr'), wantSky ? 5 : undefined, { agl: wantSky ? [14, 30] : [30, 70], radius: 60 }));
+      }
+    }
+    if (wantSky === 'whale' || !want) {
+      const sp = pick('whale');
+      if (sp) {
+        const dist = wantSky ? 260 + sp.genome.L * 2 : 700;
+        const p = at(dirAt(wantSky ? -0.12 : 0.25), dist);
+        this.env.ground(p[0], p[1], p[2], _d, 0);
+        const gh = Math.max(this.sea, this.surface.height(_d[0] / Math.hypot(..._d), _d[1] / Math.hypot(..._d), _d[2] / Math.hypot(..._d)));
+        const camH = l - this.R;
+        const agl = Math.max(70, camH - gh + (wantSky ? 45 + dist * 0.2 : 180));
+        // cruise across the view (right → left, angled slightly toward the camera)
+        tangentBasis(_d[0] / Math.hypot(..._d), _d[1] / Math.hypot(..._d), _d[2] / Math.hypot(..._d), _e, _n);
+        const hx = rx * _e[0] + ry * _e[1] + rz * _e[2], hy = rx * _n[0] + ry * _n[1] + rz * _n[2];
+        mark(this._spawnAir(sp, _d, rng.fork('ww'), wantSky ? 3 : undefined, { agl: [agl, agl + 30], heading: Math.atan2(hy, hx) + Math.PI - 0.3 }));
+      }
+    }
+    if (wantSky === 'jelly' || (!want && ((this.world.params?.tod ?? 0.5) > 0.7 || (this.world.params?.tod ?? 0.5) < 0.25))) {
+      const sp = pick('jelly');
+      if (sp) {
+        const p = at(dirAt(0), wantSky ? 22 + sp.genome.R * 6 : 60);
+        this.env.ground(p[0], p[1], p[2], _d, 0);
+        mark(this._spawnAir(sp, _d, rng.fork('wj'), wantSky ? 12 : undefined, { agl: [2.5, 14] }));
+      }
+    }
+    if (wantSky === 'fish' && this.hasOcean) {
+      const sp = pick('fish');
+      if (sp) {
+        // nearest water in front of the camera
+        for (let dist = 8; dist < 400; dist *= 1.25) {
+          let done = false;
+          for (const ang of [0, 0.35, -0.35, 0.7, -0.7, 1.2, -1.2]) {
+            const p = at(dirAt(ang), dist);
+            const pl = Math.hypot(...p);
+            const h = this.surface.height(p[0] / pl, p[1] / pl, p[2] / pl);
+            if (h < this.sea - 1.5) {
+              const r = this.R + this.sea;
+              mark(this._spawnAir(sp, [p[0] / pl * r, p[1] / pl * r, p[2] / pl * r], rng.fork('wf'), 28, { range: 8 }));
+              done = true; break;
+            }
+          }
+          if (done) break;
+        }
+      }
+    }
+    this._nearCol = null;
   }
 
   // ------------------------------------------------------------------------------ frame
@@ -263,8 +577,9 @@ class Fauna {
     const src = (ctrl && ctrl.pos) || w.player?.pos || w.camera.position;
     const P = this.playerPos;
     if (this._prevPlayer && dt > 0) {
-      const v = Math.hypot(src.x - this._prevPlayer[0], src.y - this._prevPlayer[1], src.z - this._prevPlayer[2]) / dt;
-      this.playerSpeed += (Math.min(v, 200) - this.playerSpeed) * Math.min(1, dt * 4);
+      const jump = Math.hypot(src.x - this._prevPlayer[0], src.y - this._prevPlayer[1], src.z - this._prevPlayer[2]);
+      const v = jump / dt;
+      if (jump < 60) this.playerSpeed += (Math.min(v, 200) - this.playerSpeed) * Math.min(1, dt * 4);   // ignore teleports
     }
     P[0] = src.x; P[1] = src.y; P[2] = src.z;
     this._prevPlayer = this._prevPlayer || new Float64Array(3);
@@ -282,8 +597,20 @@ class Fauna {
     this.frame++;
     this._updatePlayer(dt);
     if (!this.ready) {
-      this._welcome();
+      // wait a couple of frames so the player has placed the camera, then frame the showcase
+      if (this.frame < 3) return;
+      // …and until the other subsystems are ready (vehicles / civ / flora colliders exist) so the
+      // showcase group is framed in a clear line of sight
+      if (this.frame < 1500) {
+        for (const s of this.world.order || []) {
+          if (s === this) continue;
+          try { if (s.isReady && s.isReady() === false) return; } catch (_) { /* ignore */ }
+        }
+      }
+      try { this._welcome(); } catch (e) { console.warn('[fauna] welcome failed', e); }
       this._streamCells();
+      this._lastStream = Float64Array.from(this.playerPos);
+      this._streamT = 2.0;
       this.ready = true;
     } else {
       this._streamT -= dt;
@@ -296,12 +623,16 @@ class Fauna {
       }
     }
     if (dt <= 0) { this._animateAll(0); return; }
-    for (const g of this.groups) g.update(dt, this.env);
+    for (const g of this.groups) {
+      try { g.update(dt, this.env); } catch (e) { if (!g._err) { g._err = true; console.warn('[fauna] group update failed', e); } }
+    }
     for (const c of this.creatures) {
-      const every = c.dist < this.lod0Dist ? 1 : c.dist < 250 ? 3 : 6;
+      if (c.air || !c.want) continue;
+      const every = c.dist < c.rt.lod0 ? 1 : c.dist < 250 ? 3 : 6;
       moveGround(c, dt, this.env, every);
     }
     this._animateAll(dt);
+    this.motes?.update(dt, t);
   }
 
   _animateAll(dt) {
@@ -309,9 +640,10 @@ class Fauna {
     for (let i = 0; i < this.creatures.length; i++) {
       const c = this.creatures[i];
       c.animAcc += dt;
-      const interval = !c.visible ? 8 : c.dist < this.lod0Dist ? 1 : c.dist < 220 ? 2 : 4;
+      const l0 = c.rt.lod0;
+      const interval = !c.visible ? 8 : c.dist < l0 ? 1 : c.dist < l0 * 2.5 ? 2 : 4;
       if (dt > 0 && (f + i) % interval !== 0) continue;
-      this.animCtx.sample = c.dist < this.lod0Dist * 1.6;
+      this.animCtx.sample = c.dist < l0 * 1.6;
       const adt = Math.min(c.animAcc, 0.25);
       c.animAcc = 0;
       c.rt.animator.update(c, adt, this.animCtx);
@@ -332,21 +664,22 @@ class Fauna {
     for (const c of this.creatures) {
       const rt = c.rt;
       const s = c.scale;
-      const hx = c.pos[0] + c.up[0] * rt.height * 0.5 * s, hy = c.pos[1] + c.up[1] * rt.height * 0.5 * s, hz = c.pos[2] + c.up[2] * rt.height * 0.5 * s;
+      const k = rt.centerUp * s;
+      const hx = c.pos[0] + c.up[0] * k, hy = c.pos[1] + c.up[1] * k, hz = c.pos[2] + c.up[2] * k;
       const dist = Math.hypot(hx - cp.x, hy - cp.y, hz - cp.z);
       c.dist = dist;
       c.visible = false;
-      if (dist > this.drawDist * (c.species.archetype === 'giant' ? 2.2 : 1)) continue;
+      const far = rt.far;
+      if (dist > far) continue;
       _sph.center.set(hx - O.x, hy - O.y, hz - O.z);
       _sph.radius = rt.radius * s * 1.3 + 2;
       if (dist > 30 && !this.frustum.intersectsSphere(_sph)) continue;
       c.visible = true;
-      // distance fade-in at the far edge
-      const far = this.drawDist * (c.species.archetype === 'giant' ? 2.2 : 1);
       c.fade = Math.min(1, (far - dist) / (far * 0.12));
-      rt.crowd.add(c, dist < this.lod0Dist * (0.7 + 0.3 * s) ? 0 : 1);
+      rt.crowd.add(c, dist < rt.lod0 * (0.7 + 0.3 * s) ? 0 : 1);
     }
     for (const rt of this.rt.values()) rt.crowd.commit(O);
+    this.motes?.lateUpdate();
     if (this.frame % 15 === 0) this._discover();
   }
 
@@ -356,14 +689,13 @@ class Fauna {
     for (const c of this.creatures) {
       const sp = c.species;
       if (!c.visible || this.discovered.has(sp.id)) continue;
-      const lim = sp.archetype === 'giant' ? 220 : sp.archetype === 'critter' ? 25 : 70;
-      if (c.dist < lim && c.dist < bestD) { best = c; bestD = c.dist; }
+      if (c.dist < c.rt.discover && c.dist < bestD) { best = c; bestD = c.dist; }
     }
     if (!best) return;
     const sp = best.species;
     this.discovered.add(sp.id);
     this._lastDiscovery = this.t;
-    this.world.events.emit('discovery', { kind: 'creature', name: sp.name, species: sp.id, archetype: sp.archetype });
+    this.world.events?.emit?.('discovery', { kind: 'creature', name: sp.name, species: sp.id, archetype: sp.archetype });
   }
 
   nearest(archetype = null, from = null) {
@@ -381,13 +713,17 @@ class Fauna {
 
   getState() {
     let drawn = 0, calls = 0;
+    const byKind = {};
     for (const rt of this.rt.values()) { drawn += rt.crowd.drawn; for (const m of rt.crowd.meshes) if (m.visible) calls++; }
+    for (const c of this.creatures) byKind[c.species.archetype] = (byKind[c.species.archetype] || 0) + 1;
     return {
       species: this.roster.length,
+      roster: this.roster.map((s) => `${s.archetype}:${s.name}`),
       groups: this.groups.length,
-      creatures: this.creatures.length,
-      drawn, meshes: calls,
-      discovered: [...this.discovered].map((id) => this.roster[id]?.name),
+      creatures: this.creatures.length, byKind,
+      drawn, meshes: calls + (this.motes?.visible ? 1 : 0),
+      motes: this.motes?.getState?.(),
+      discovered: [...this.discovered].map((id) => this.roster.find((s) => s.id === id)?.name),
     };
   }
 
@@ -396,6 +732,7 @@ class Fauna {
   dispose() {
     for (const rt of this.rt.values()) rt.crowd.dispose();
     this.rt.clear();
+    this.motes?.dispose();
     this.root.removeFromParent();
     this.groups.length = 0; this.creatures.length = 0;
   }
@@ -413,6 +750,7 @@ export default {
       try { f.runtime(sp); } catch (e) { console.error('[fauna] species build failed', sp.name, e); }
       await new Promise((r) => setTimeout(r, 0));
     }
+    f.roster = f.roster.filter((sp) => f.rt.has(sp.id));
     return f;
   },
 };

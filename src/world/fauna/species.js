@@ -5,6 +5,7 @@ import { RNG, hashCombine } from '../../core/rng.js';
 import { word } from '../../universe/names.js';
 import { BIOMES } from '../planet/PlanetSurface.js';
 import { leggedGenome } from './bodies/legged.js';
+import { chainGenome } from './bodies/chain.js';
 
 // how wild / stylized each art preset's creatures are (0 naturalistic … 1 outlandish), glow propensity
 const STYLE = {
@@ -43,9 +44,10 @@ const HABITAT = {
   critter: { [B.GRASSLAND]: 1, [B.SAVANNA]: 0.8, [B.FOREST]: 1, [B.JUNGLE]: 1, [B.DESERT]: 0.6, [B.TUNDRA]: 0.6, [B.TAIGA]: 0.8, [B.BEACH]: 0.7, [B.ROCK]: 0.4, [B.TOXIC]: 0.5, [B.CRYSTAL]: 0.5, [B.SNOW]: 0.3 },
 };
 
-const col = (h, s, l) => new THREE.Color().setHSL(((h % 1) + 1) % 1, Math.max(0, Math.min(1, s)), Math.max(0, Math.min(1, l)));
+// HSL is authored in sRGB (three's setHSL defaults to the linear working space → washed-out colours)
+const col = (h, s, l) => new THREE.Color().setHSL(((h % 1) + 1) % 1, Math.max(0, Math.min(1, s)), Math.max(0, Math.min(1, l)), THREE.SRGBColorSpace);
 const hexCol = (hex) => new THREE.Color(hex);
-function hslOf(c) { const o = {}; c.getHSL(o); return o; }
+function hslOf(c) { const o = {}; c.getHSL(o, THREE.SRGBColorSpace); return o; }
 
 /** Colors & surface params for a species. */
 export function makeLook(rng, art, archetype, st, glowing) {
@@ -61,12 +63,12 @@ export function makeLook(rng, art, archetype, st, glowing) {
     const fam = rng.weighted([['tan', 3], ['rufous', 2], ['grey', 1.5], ['dark', 1], ['cream', 0.8], ['olive', 1]]);
     const H = { tan: [0.075, 0.11], rufous: [0.03, 0.065], grey: [0.05, 0.12], dark: [0.04, 0.1], cream: [0.09, 0.13], olive: [0.13, 0.2] }[fam];
     const h = rng.range(H[0], H[1]);
-    const S = { tan: [0.35, 0.55], rufous: [0.45, 0.7], grey: [0.04, 0.14], dark: [0.12, 0.3], cream: [0.25, 0.45], olive: [0.2, 0.4] }[fam];
-    const L = { tan: [0.34, 0.5], rufous: [0.28, 0.42], grey: [0.3, 0.5], dark: [0.1, 0.2], cream: [0.62, 0.76], olive: [0.22, 0.36] }[fam];
-    const s = rng.range(S[0], S[1]) * sat, l = rng.range(L[0], L[1]);
+    const S = { tan: [0.45, 0.68], rufous: [0.55, 0.8], grey: [0.06, 0.18], dark: [0.15, 0.35], cream: [0.3, 0.5], olive: [0.25, 0.45] }[fam];
+    const L = { tan: [0.26, 0.38], rufous: [0.2, 0.32], grey: [0.2, 0.34], dark: [0.07, 0.14], cream: [0.46, 0.58], olive: [0.18, 0.28] }[fam];
+    const s = Math.min(0.9, rng.range(S[0], S[1]) * sat), l = rng.range(L[0], L[1]);
     back = col(h, s, l);
-    belly = col(h + 0.01, s * 0.45, Math.min(0.9, l + rng.range(0.25, 0.42)));
-    pattern = rng.chance(0.55) ? col(h - 0.01, s * 0.8, l * rng.range(0.25, 0.5)) : col(h, s * 0.3, Math.min(0.92, l + 0.4));
+    belly = col(h + 0.01, s * 0.5, Math.min(0.72, l + rng.range(0.14, 0.3)));
+    pattern = rng.chance(0.6) ? col(h - 0.01, s * 0.85, l * rng.range(0.25, 0.5)) : col(h + 0.01, s * 0.35, Math.min(0.8, l + rng.range(0.25, 0.4)));
     accent = accentC.clone().lerp(back, 0.5);
     keratin = col(rng.range(0.07, 0.11), rng.range(0.1, 0.35), rng.range(0.55, 0.8));
     eye = col(rng.range(0.05, 0.12), 0.6, rng.range(0.15, 0.35));
@@ -75,10 +77,10 @@ export function makeLook(rng, art, archetype, st, glowing) {
     // stylized: build from the world's flora / accent colors
     const base = flora.length ? rng.pick(flora).clone() : accentC.clone();
     const hb = hslOf(base);
-    back = col(hb.h + rng.range(-0.05, 0.05), Math.min(0.85, hb.s * rng.range(0.7, 1.05) * sat), rng.range(0.25, 0.48));
+    back = col(hb.h + rng.range(-0.05, 0.05), Math.min(0.9, Math.max(0.35, hb.s) * rng.range(0.8, 1.1) * sat), rng.range(0.2, 0.4));
     const other = flora.length > 1 ? rng.pick(flora).clone() : accentC.clone();
     const ho = hslOf(other);
-    belly = rng.chance(0.5) ? col(ho.h, ho.s * 0.5, rng.range(0.6, 0.8)) : col(hb.h + 0.08, hb.s * 0.35, rng.range(0.62, 0.8));
+    belly = rng.chance(0.5) ? col(ho.h, ho.s * 0.55, rng.range(0.5, 0.7)) : col(hb.h + 0.08, hb.s * 0.4, rng.range(0.52, 0.7));
     pattern = rng.chance(0.5) ? col(ho.h, Math.min(0.9, ho.s * 1.1), rng.range(0.15, 0.4)) : col(hb.h + 0.5, hb.s * 0.7, rng.range(0.2, 0.55));
     accent = accentC.clone();
     keratin = rng.chance(0.5) ? col(ho.h, 0.35, rng.range(0.55, 0.8)) : col(0.1, 0.25, rng.range(0.65, 0.85));
@@ -92,8 +94,8 @@ export function makeLook(rng, art, archetype, st, glowing) {
     : archetype === 'giant' ? rng.weighted([[1, 2], [7, 1.5], [3, 1.2], [4, 2], [0, 1.2], [2, 1]])
     : rng.weighted([[0, 1.3], [1, 1.2 + exotic], [2, 1.2], [3, 0.6 + exotic * 0.6], [4, 2], [5, 1.2], [7, 0.6]]);
   const scaleByType = { 0: 1, 1: rng.range(1.4, 2.6), 2: rng.range(2.2, 4.0), 3: rng.range(1.8, 3.2), 4: rng.range(1.5, 2.5), 5: rng.range(2.5, 4.0), 6: rng.range(1.5, 3), 7: rng.range(0.9, 1.8) };
-  const sizeK = archetype === 'giant' ? 0.35 : archetype === 'critter' ? 3.5 : archetype === 'hopper' ? 1.6 : 1;
-  const fur = archetype === 'grazer' || archetype === 'hopper' || archetype === 'critter';
+  const sizeK = { giant: 0.35, critter: 3.5, hopper: 1.6, bird: 2.2, ray: 0.45, whale: 0.09, fish: 4, jelly: 1.2 }[archetype] ?? 1;
+  const fur = archetype === 'grazer' || archetype === 'hopper' || archetype === 'critter' || archetype === 'bird';
   return {
     back, belly, pattern, accent, keratin, eye, glow,
     patternParams: [patternType, scaleByType[patternType] * sizeK, rng.range(0.1, 0.45), patternType ? rng.range(0.55, 0.95) : 0],
@@ -131,6 +133,9 @@ export function makeRoster(body) {
     if (['grazer', 'giant', 'hexapod', 'hopper', 'critter'].includes(archetype)) {
       sp.genome = leggedGenome(r, archetype, st);
       sp.habitat = HABITAT[archetype];
+    } else {
+      sp.genome = chainGenome(r, archetype, st);
+      sp.chain = true;
     }
     sp.look = makeLook(r, art, archetype, st, glowing);
     list.push(sp);
@@ -144,6 +149,16 @@ export function makeRoster(body) {
   if (rng.chance(0.35 + st.exotic * 0.5)) add('hexapod', 'ground', { group: [2, 6], density: 0.55, temper: rng.weighted([['calm', 2], ['curious', 2], ['skittish', 1]]) });
   if (rng.chance(0.4 + F * 0.3)) add('hopper', 'ground', { group: [3, 7], density: 0.5, temper: 'skittish' });
   add('critter', 'ground', { group: [1, 3], density: 0.8, temper: 'skittish' });
+  // air / sky / water
+  const atmo = body.atmosphere?.present !== false;
+  if (atmo) {
+    add('bird', 'air', { group: [9, 22], density: 1.0, temper: 'skittish' });
+    if (rng.chance(0.35 + st.exotic * 0.3)) add('bird', 'air', { group: [4, 9], density: 0.6, temper: 'skittish' });
+    if (rng.chance(0.2 + st.exotic * 0.55)) add('ray', 'air', { group: [3, 7], density: 0.5, temper: 'calm', glowBias: 1.4 });
+    if (st.exotic >= 0.7 || rng.chance(0.18 + F * 0.15)) add('whale', 'sky', { group: [1, 3], density: 0.6, temper: 'calm', glowBias: 1.2 });
+    if (rng.chance(0.15 + st.glow * 0.7)) add('jelly', 'float', { group: [6, 14], density: 0.5, temper: 'calm', glowBias: 99 });
+  }
+  if (body.ocean?.present && (body.ocean.liquid ?? 'water') === 'water') add('fish', 'water', { group: [14, 30], density: 1, temper: 'skittish', glowBias: 0.6 });
   return list;
 }
 
