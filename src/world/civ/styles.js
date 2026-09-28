@@ -420,7 +420,7 @@ S.spire = {
     g.windows(2.4, 3.2, 0);
     const hh = rng.range(3.2, 6.4);
     g.cyl(0, 0.4, 0, r, r * 0.96, hh, 16, false, rng.next() < 0.5 ? M.wall : M.wall2);
-    g.push().translate(0, 0.4 + hh, 0); g.dome(0, 0, 0, r * 0.97, 16, 6, M.white, rng.range(0.55, 0.9)); g.pop();
+    g.push().translate(0, 0.4 + hh, 0); g.dome(0, 0, 0, r * 0.97, 16, 6, rng.next() < 0.45 ? M.roofs[rng.int(0, 2)] : M.white, rng.range(0.55, 0.9)); g.pop();
     g.cyl(0, 0.4 + hh - 0.2, 0, r + 0.12, r + 0.12, 0.3, 16, true, M.trim);
     // chimney-vent / little turret
     if (rng.next() < 0.6) { g.cyl(r * 0.4, 0.4 + hh, 0, 0.5, 0.45, r * 0.7 + 1.5, 8, true, M.white); g.sphere(r * 0.4, 0.4 + hh + r * 0.7 + 1.6, 0, 0.6, 8, 5, M.roofs[rng.int(0, 2)]); }
