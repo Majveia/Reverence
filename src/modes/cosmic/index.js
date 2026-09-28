@@ -97,8 +97,9 @@ export default class CosmicMode extends Mode {
     this.cfg = {
       N, M, K, drawCount: N * N * N,
       h0: (BOX / N) * (N === 64 ? 0.62 : 0.8),
-      maxPx: tier === 'low' ? 12 : tier === 'med' ? 20 : tier === 'ultra' ? 40 : 32,
-      accumScale: tier === 'low' ? 0.6 : 1,
+      // big sprites only occur for the few samples near the camera (close-ups): SPH overlap needs room
+      maxPx: tier === 'low' ? 24 : tier === 'med' ? 48 : tier === 'ultra' ? 112 : 72,
+      accumScale: tier === 'low' ? 0.75 : 1,
       galaxyMax: tier === 'low' ? 9000 : tier === 'med' ? 18000 : tier === 'ultra' ? 48000 : 30000,
     };
     this.startTau = params.returning ? T_OPEN + 6 : (num('ct') ?? params.ct ?? 0);
@@ -108,7 +109,7 @@ export default class CosmicMode extends Mode {
     // --- GPU sim + renderer
     this.sim = new CosmicSim(e.renderer, { N, M, sub: subGrowth });
     if (num('pm') === 0) this.sim.ok = false;
-    this.view = new CosmicRenderer(e, this.sim, { L: BOX, K, drawCount: this.cfg.drawCount, h0: this.cfg.h0, maxPx: this.cfg.maxPx, accumScale: this.cfg.accumScale, fog: 60 });
+    this.view = new CosmicRenderer(e, this.sim, { L: BOX, K, drawCount: this.cfg.drawCount, h0: this.cfg.h0, maxPx: this.cfg.maxPx, accumScale: this.cfg.accumScale, fog: 60, sph: num('sph'), kt: num('kt') });
     this.scene.add(this.view.comp);
     // look tuning (URL overrides are for art-direction iteration)
     const cu0 = this.view.compMat.uniforms, au0 = this.view.accMat.uniforms;
@@ -122,6 +123,7 @@ export default class CosmicMode extends Mode {
     const ru0 = this.view.resolveMat.uniforms;
     ru0.uHeatLo.value = num('hlo') ?? ru0.uHeatLo.value; ru0.uHeatHi.value = num('hhi') ?? ru0.uHeatHi.value;
     this.cocK = num('coc') ?? 1.2;
+    this.qBlack = num('qb');                // override: fraction of the screen below the black point
     this.scene.add(this.view.ring);
     this.scene.background = new THREE.Color(0x000000);
     this._syncSize();
@@ -378,11 +380,12 @@ export default class CosmicMode extends Mode {
     U.uFog.value = this.fog * (0.45 + 0.55 * smooth(0.1, 0.5, U.uD1.value));
     // exposure follows structure growth: the young, nearly uniform fog is lifted out of the toe, the
     // mature web gets a deep black point so voids read as true OLED black
-    const g = smooth(0.08, 0.55, U.uD1.value);
-    const young = Math.min(1, Math.max(0, 1 - U.uD1.value));
-    cu.uToe.value = this.toe * g * (1 - 0.45 * young);
-    cu.uBright.value = this.bright * (0.7 + 0.3 * g) * (1 + 1.1 * young);
+    const d1 = U.uD1.value;
+    const g = smooth(0.08, 0.55, d1);
+    const young = Math.min(1, Math.max(0, 1 - d1));
+    cu.uBright.value = this.bright * (0.7 + 0.3 * g) * (1 + 0.5 * young);
     cu.uSigma0.value = this.sigma0 * (0.8 + 0.2 * g);
+    this._updateLevels(d1, g, young, dt);
     U.uSeedD.value = 0.6 * (1 - g);
     U.uSeedMix.value = 1 - smooth(0.1, 0.35, U.uD1.value);
     this.view.galMat.uniforms.uGalGain.value = 1.0;
@@ -401,6 +404,42 @@ export default class CosmicMode extends Mode {
       e.ui?.setTelemetry?.({ z: formatZ(Math.max(z, -0.99)), age: formatAge(ageGyr(a)) });
       e.audio?.setParam?.('cosmicGrowth', Math.min(1, D1(a)));
     }
+  }
+
+  /**
+   * Black point / toe width / highlight knee. The toe sits at a measured percentile of the on-screen column
+   * density, so voids are true black at every epoch, zoom and quality tier: the primordial fog keeps only
+   * its deepest troughs black (faint wrinkles on black), the mature web ~half the screen (voids).
+   */
+  _updateLevels(d1, g, young, dt) {
+    const cu = this.view.compMat.uniforms;
+    let toe = this.toe * g * (1 - 0.45 * young), w = 1.9, knee = 99, expo = 1;   // fallback (no readback)
+    const L = this.levelsSorted;
+    if (L) {
+      const n = L.length, s0 = cu.uSigma0.value, gain = cu.uGain.value;
+      const lq = (q) => Math.log2(1 + Math.max(0, L[Math.min(n - 1, Math.floor(q * (n - 1)))]) / s0) * gain;
+      // z ≳ 10: the whole near-uniform fog glows dimly; z ≈ 3: the deepest ~quarter of the troughs are black;
+      // today: ~40 % of the screen (the voids)
+      const qb = this.qBlack ?? (0.06 + 0.18 * smooth(0.04, 0.3, d1) + 0.2 * smooth(0.3, 0.85, d1) + (this.cfg.N === 64 ? 0.05 : 0));
+      toe = lq(qb) - 0.1 * (1 - smooth(0.04, 0.2, d1));
+      w = Math.min(1.9, Math.max(1.0, lq(0.999) - toe));
+      // highlights: a knee above the brightest ~3 % of the screen, and a highlight exposure that keeps the
+      // brightest 0.5 % near 2 (HDR) — a cluster core filling the view keeps its gradient under the bloom
+      knee = Math.max(toe + w + 1.2, lq(0.97) + 0.5);
+      // (hot cluster gas is drawn ~1.5× the base ramp)
+      const l995 = lq(0.995), lk = Math.min(l995, knee) + Math.max(0, l995 - knee) * 0.35;
+      expo = Math.min(1, Math.max(0.3, 1.0 / (cu.uBright.value * Math.pow(2, 0.92 * lk))));
+    }
+    const lv = this.lev;
+    if (!lv || (L && !this._levSnapped)) {
+      this.lev = { toe, w, knee, expo };
+      if (L) this._levSnapped = true;
+    } else {
+      const k = 1 - Math.exp(-Math.min(dt, 0.1) * 3);
+      lv.toe += (toe - lv.toe) * k; lv.w += (w - lv.w) * k; lv.knee += (knee - lv.knee) * k; lv.expo += (expo - lv.expo) * k;
+    }
+    cu.uToe.value = this.lev.toe; cu.uToeW.value = this.lev.w; cu.uKnee.value = this.lev.knee;
+    cu.uBright.value *= this.lev.expo;
   }
 
   _onGather(out) {
@@ -516,14 +555,22 @@ export default class CosmicMode extends Mode {
       ring.uSize.value = this.hover.r * 2.2;
       ring.uPixelRatio.value = (this._ph || e.height) / e.height;
       this.view.galMat.uniforms.uHover.value = this.hover.kind === 'galaxy' ? this.gal.host[this.hover.i] : -1;
-      const label = this.hover.kind === 'galaxy'
-        ? this._galName(this.hover.i)
-        : `${this.clNames[this.hover.i]} · ${this.clMembers[this.hover.i]} galaxies`;
-      e.ui?.setMarkers?.([{ id: 'cw-hover', x: this.hover.x, y: this.hover.y - this.hover.r * 1.15 - 10, visible: true, label, kind: this.hover.kind, distance: this.hover.d }]);
+      const hv = this.hover, dMpc = `${Math.round(hv.d)} Mpc/h`;
+      let label, sub;
+      if (hv.kind === 'galaxy') {
+        label = this._galName(hv.i);
+        let type = '';
+        try { type = this.engine.universe.galaxy(this.galIndex[hv.i] ?? 0)?.type ?? ''; } catch (_) { /* optional */ }
+        sub = type ? `${type} galaxy · ${dMpc}` : dMpc;
+      } else {
+        label = this.clNames[hv.i];
+        sub = `${this.clMembers[hv.i]} galaxies · ${dMpc}`;
+      }
+      e.ui?.setMarkers?.([{ id: 'cw-hover', x: hv.x, y: hv.y - hv.r * 1.15 - 10, visible: true, label, sub, kind: 'cosmic', distance: hv.d }]);
     } else {
       if (!this.pending) ring.uPos.value.set(0, 0, -1e3);
       this.view.galMat.uniforms.uHover.value = -1;
-      e.ui?.setMarkers?.(this.pending ? [{ id: 'cw-hover', x: e.width / 2, y: e.height / 2 - 60, visible: true, label: this.pending.name }] : []);
+      e.ui?.setMarkers?.(this.pending ? [{ id: 'cw-hover', x: e.width / 2, y: e.height / 2 - 60, visible: true, label: this.pending.name, sub: 'descending', kind: 'cosmic' }] : []);
     }
     void U;
   }
@@ -537,7 +584,10 @@ export default class CosmicMode extends Mode {
     // shot mode: don't burn software-rendering time on progress frames before the sim is ready
     const skip = this.engine.params.shot && !this.engine.isReady;
     if (this.icStage >= 1 && this.view && !skip) {
-      try { this.view.renderAccum(this.camera); } catch (err) { if (!this._warned) { console.error('[cosmic] accum', err); this._warned = true; } }
+      try {
+        this.view.renderAccum(this.camera);
+        if (this._frame % 15 === 1 || !this.levelsSorted) this.view.measureLevels((sorted) => { if (!this.disposed) this.levelsSorted = sorted; }, !!this.engine.params.shot);
+      } catch (err) { if (!this._warned) { console.error('[cosmic] accum', err); this._warned = true; } }
     }
     this.view.comp.visible = this.icStage >= 1 && !skip;
     if (this.view.galaxies) this.view.galaxies.visible = !skip;
@@ -577,7 +627,12 @@ export default class CosmicMode extends Mode {
     for (let i = 0; i < w * h; i += 7) { R.push(buf[i * 4]); Hh.push(buf[i * 4 + 1] / Math.max(1e-6, buf[i * 4])); }
     R.sort((x, y) => x - y); Hh.sort((x, y) => x - y);
     const pc = (A, p) => +A[Math.min(A.length - 1, Math.floor(p * A.length))].toPrecision(3);
-    return { R: [0.01, 0.1, 0.5, 0.9, 0.99, 0.999].map((p) => pc(R, p)), heat: [0.5, 0.9, 0.99].map((p) => pc(Hh, p)) };
+    const cu = v.compMat.uniforms, P = [0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 0.99, 0.999];
+    const lv = (x) => +(Math.log2(1 + x / cu.uSigma0.value) * cu.uGain.value).toFixed(2);
+    return {
+      D1: +D1(this.a).toFixed(3), R: P.map((p) => pc(R, p)), l: P.map((p) => lv(pc(R, p))), heat: [0.5, 0.9, 0.99].map((p) => pc(Hh, p)),
+      toe: +cu.uToe.value.toFixed(3), toeW: +cu.uToeW.value.toFixed(3), knee: +cu.uKnee.value.toFixed(3), sigma0: +cu.uSigma0.value.toFixed(3), bright: +cu.uBright.value.toFixed(4),
+    };
   }
 
   getState() {

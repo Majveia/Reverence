@@ -11,8 +11,10 @@
 //   4 pebbles   gravel / scree / river stones
 //   5 noise     4 independent smooth periodic fbm channels (macro variation, stochastic tiling)
 //   6 strata    horizontally layered sedimentary rock (cliff faces), v = up
+//   7 streaks   drainage / desert-varnish streaks (irregular spacing, width, length), v = up;
+//               B = streak density (0 none), A = light (calcite) vs dark (varnish) tint
 export const DETAIL_SIZE = 256;
-export const DETAIL_LAYERS = 7;
+export const DETAIL_LAYERS = 8;
 
 function makeHash(seed) {
   return (x, y) => {
@@ -86,14 +88,15 @@ export function bakeDetail(size = DETAIL_SIZE) {
     for (let i = 0; i < H.length; i++) H[i] = (H[i] - mn) * k;
   };
 
-  // ---- 0 rock: planar-faceted blocks + two joint families + ridged grain + lichen blotches
+  // ---- 0 rock: planar-faceted blocks + joint sets whose orientation changes per block (no global
+  //      parallel "wood-grain" lines) + isotropic ridged grain + lichen blotches
   {
     const h1 = makeHash(11), h2 = makeHash(12), h3 = makeHash(13), h4 = makeHash(14);
-    const cell = [0, 0, 0];
+    const cell = [0, 0, 0, 0, 0, 0];
     const facet = (u, v, p, seedH) => {
       // voronoi cells, each with its own random plane → angular chunks
       const x = u * p, y = v * p, ix = Math.floor(x), iy = Math.floor(y);
-      let f1 = 9, f2 = 9, hv = 0;
+      let f1 = 9, f2 = 9, hv = 0, bx = 0, by = 0, id = 0;
       for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
         const cx = ix + i, cy = iy + j, wx = ((cx % p) + p) % p, wy = ((cy % p) + p) % p;
         const px = cx + 0.5 + (seedH(wx, wy) - 0.5) * 0.85, py = cy + 0.5 + (seedH(wy + 911, wx + 71) - 0.5) * 0.85;
@@ -102,9 +105,10 @@ export function bakeDetail(size = DETAIL_SIZE) {
           f2 = f1; f1 = d;
           const a = seedH(wx + 5, wy + 17) * Math.PI * 2, sl = 0.35 + 0.5 * seedH(wx + 29, wy + 3);
           hv = 0.45 * seedH(wx + 313, wy + 177) + sl * (Math.cos(a) * dx + Math.sin(a) * dy);
+          bx = dx; by = dy; id = seedH(wx + 57, wy + 211);
         } else if (d < f2) f2 = d;
       }
-      cell[0] = f1; cell[1] = f2; cell[2] = hv;
+      cell[0] = f1; cell[1] = f2; cell[2] = hv; cell[3] = bx / p; cell[4] = by / p; cell[5] = id;
       return cell;
     };
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
@@ -112,19 +116,26 @@ export function bakeDetail(size = DETAIL_SIZE) {
       const wu = u + 0.03 * pnoise(h2, u, v, 5), wv = v + 0.03 * pnoise(h2, u + 0.5, v + 0.3, 5);
       facet(wu, wv, 5, h1);
       const big = cell[2], edge = 1 - (1 - sst(0.0, 0.06, cell[1] - cell[0])) * sst(-0.15, 0.35, pnoise(h4, u + 0.4, v + 0.9, 4));
+      // joints: two fracture families whose orientation, spacing and presence belong to the block
+      // (coordinates relative to the block's seed point → exactly periodic, discontinuous per block)
+      const bdx = cell[3], bdy = cell[4], bid = cell[5];
+      const a1 = bid * Math.PI * 2, a2 = a1 + 1.1 + 0.9 * ((bid * 7.31) % 1);
+      const fq1 = 22 + 20 * ((bid * 3.7) % 1), fq2 = 16 + 18 * ((bid * 5.3) % 1);
+      const wob = 0.25 * pfbm(h4, u, v, 6, 2);
+      const j1 = Math.abs(Math.sin(Math.PI * (fq1 * (Math.cos(a1) * bdx + Math.sin(a1) * bdy) + wob)));
+      const j2 = Math.abs(Math.sin(Math.PI * (fq2 * (Math.cos(a2) * bdx + Math.sin(a2) * bdy) - wob)));
+      const pres1 = (bid * 11.7) % 1 < 0.7 ? 1 : 0, pres2 = (bid * 13.9) % 1 < 0.45 ? 1 : 0;
       facet(u, v, 13, h3);
       const small = cell[2], edge2 = 1 - (1 - sst(0.0, 0.05, cell[1] - cell[0])) * sst(-0.1, 0.4, pnoise(h4, u + 0.1, v + 0.6, 7));
-      // joints: two families of near-parallel fractures, broken up by noise so they are discontinuous
-      const j1 = Math.abs(Math.sin(Math.PI * (7 * wu + 2 * wv + 0.6 * pfbm(h4, u, v, 3, 2))));
-      const j2 = Math.abs(Math.sin(Math.PI * (-3 * wu + 8 * wv + 0.6 * pfbm(h4, u + 0.3, v, 3, 2))));
-      const m1 = sst(0.1, 0.4, pnoise(h4, u, v, 6)), m2 = sst(0.15, 0.45, pnoise(h4, u + 0.7, v + 0.2, 6));
-      const joint = 1 - (1 - sst(0.0, 0.05, j1)) * m1 - (1 - sst(0.0, 0.04, j2)) * m2 * 0.8;
+      const m1 = sst(0.05, 0.4, pnoise(h4, u, v, 6)) * pres1, m2 = sst(0.1, 0.45, pnoise(h4, u + 0.7, v + 0.2, 6)) * pres2;
+      const joint = 1 - (1 - sst(0.0, 0.07, j1)) * m1 * 0.8 - (1 - sst(0.0, 0.06, j2)) * m2 * 0.6;
       let rid = 0, amp = 0.5, pp = 8;
       for (let o = 0; o < 4; o++) { rid += amp * (1 - Math.abs(pnoise(h2, u + o * 0.17, v + o * 0.31, pp))); amp *= 0.5; pp *= 2; }
-      const hgt = (0.55 * big * (0.6 + 0.4 * edge) + 0.22 * small * edge2 + 0.2 * rid) * (0.55 + 0.45 * Math.max(0, joint)) - 0.15 * (1 - edge);
+      const pits = sst(0.55, 0.8, pfbm(h1, u + 0.21, v + 0.63, 16, 3)) * 0.12;
+      const hgt = (0.55 * big * (0.6 + 0.4 * edge) + 0.22 * small * edge2 + 0.2 * rid) * (0.7 + 0.3 * Math.max(0, joint)) - 0.15 * (1 - edge) - pits;
       H[y * S + x] = hgt;
       const lich = sst(0.3, 0.55, pfbm(h3, u, v, 5, 4)) * sst(0.4, 0.7, pnoise(h1, u, v, 24) * 0.5 + 0.5);
-      A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.3 * (big - 0.25) + 0.12 * (rid - 0.45) - 0.3 * (1 - edge) - 0.12 * (1 - edge2) - 0.22 * (1 - Math.max(0, joint)) + 0.14 * lich));
+      A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.22 * (big - 0.25) + 0.1 * (rid - 0.45) + 0.12 * (bid - 0.5) - 0.24 * (1 - edge) - 0.1 * (1 - edge2) - 0.14 * (1 - Math.max(0, joint)) + 0.12 * lich));
     }
     norm(); put(0, 0.10);
   }
@@ -221,6 +232,46 @@ export function bakeDetail(size = DETAIL_SIZE) {
       A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.28 * (thick - 0.5) + 0.1 * grain - 0.2 * (1 - joint) - 0.12 * (1 - ledge)));
     }
     norm(); put(6, 0.08);
+  }
+  // ---- 7 streaks: water / desert-varnish staining below ledges. Irregularly spaced, variable width,
+  //      length and strength, slightly wandering, fading downward — never a periodic stripe pattern.
+  {
+    const h1 = makeHash(81), h2 = makeHash(82);
+    H.fill(0); A.fill(0.5);
+    const NS = 70;
+    const D = new Float32Array(S * S), L = new Float32Array(S * S);
+    for (let k = 0; k < NS; k++) {
+      const uc = h1(k, 1), v0 = h1(k, 2), len = 0.15 + 0.7 * h1(k, 3) ** 1.5;
+      const wid = 0.003 + 0.022 * h1(k, 4) ** 2, str = 0.35 + 0.65 * h1(k, 5), light = h1(k, 6) < 0.18;
+      const wf = 1 + Math.floor(h1(k, 7) * 3), wa = 0.004 + 0.01 * h1(k, 8), wp = h1(k, 9) * 6.283;
+      const x0 = Math.floor((uc - 0.08) * S), x1 = Math.ceil((uc + 0.08) * S);
+      for (let y = 0; y < S; y++) {
+        const v = y / S;
+        let t = v0 - v; t -= Math.floor(t);              // distance below the streak's source (wraps)
+        if (t > len) continue;
+        const tt = t / len;
+        const fade = sst(0, 0.04, tt) * Math.pow(1 - tt, 1.3);
+        const wv = wid * (0.6 + 0.7 * tt) * (0.8 + 0.4 * pnoise(h2, uc, v, 9));
+        const cu = uc + wa * Math.sin(6.283 * wf * v + wp) + 0.004 * pnoise(h2, uc + 0.5, v, 23);
+        for (let xi = x0; xi <= x1; xi++) {
+          const x = ((xi % S) + S) % S;
+          let du = xi / S - cu; du -= Math.round(du);
+          const q = Math.abs(du) / wv;
+          if (q > 2.2) continue;
+          const prof = Math.exp(-q * q * 1.6) * (0.75 + 0.25 * pnoise(h2, x / S, v, 64));
+          const val = prof * fade * str;
+          const i = y * S + x;
+          D[i] = 1 - (1 - D[i]) * (1 - val);
+          if (light) L[i] = Math.max(L[i], val); 
+        }
+      }
+    }
+    for (let i = 0; i < S * S; i++) { H[i] = -D[i] * 0.4; A[i] = 0.5 + 0.5 * L[i] - 0.1 * (D[i] - L[i]); }
+    norm();
+    // put() stores the normalized height in B; the shader wants the density itself → overwrite B
+    put(7, 0.02);
+    const base = 7 * S * S * 4;
+    for (let i = 0; i < S * S; i++) out[base + i * 4 + 2] = Math.max(0, Math.min(255, Math.round(D[i] * 255)));
   }
   return out;
 }

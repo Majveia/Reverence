@@ -71,18 +71,34 @@ float rvLum( vec3 c ) { return dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ); }
 vec2 rvAx( int a, vec3 v ) { return a == 0 ? v.zy : ( a == 1 ? v.xz : v.xy ); }
 vec3 rvGw( int a, vec2 g ) { return a == 0 ? vec3( 0.0, g.y, g.x ) : ( a == 1 ? vec3( g.x, 0.0, g.y ) : vec3( g.x, g.y, 0.0 ) ); }
 float rvWa( int a, vec3 w ) { float v = a == 0 ? w.x : ( a == 1 ? w.y : w.z ); return v < 0.06 ? 0.0 : v; }
-// IQ "texture repetition" #3: two offset fetches blended by a smooth per-region index
-vec4 rvFetchS( float layer, vec2 uv, vec2 dx, vec2 dy, float k ) {
+// Lattice-preserving orientation (the 8 symmetries of the square: swaps + mirrors). Arbitrary angles
+// would break the exact 4096 m periodicity that keeps patterns stable across origin shifts; the D4
+// group keeps it while still varying the grain/strata DIRECTION between regions.
+mat2 rvOri( float h ) {
+  float e = floor( fract( h ) * 8.0 );
+  float sw = mod( e, 2.0 ), sx = mod( floor( e * 0.5 ), 2.0 ) * 2.0 - 1.0, sy = floor( e * 0.25 ) * 2.0 - 1.0;
+  return mat2( sx * ( 1.0 - sw ), sy * sw, sx * sw, sy * ( 1.0 - sw ) );
+}
+float rvH1( float i ) { return fract( sin( i * 17.137 + 1.73 ) * 43758.5453 ); }
+// one oriented + offset fetch; RG (height slope) is rotated back into the unrotated uv frame
+vec4 rvTexO( float layer, vec2 uv, vec2 dx, vec2 dy, float id, float rot ) {
+  vec2 o = fract( sin( vec2( 3.0, 7.0 ) * id + vec2( 0.3, 0.7 ) ) * 43758.5453 );
+  if ( rot < 0.5 ) return textureGrad( uRvDetail, vec3( uv + o, layer ), dx, dy );
+  mat2 M = rvOri( rvH1( id ) );
+  vec4 t = textureGrad( uRvDetail, vec3( M * uv + o, layer ), M * dx, M * dy );
+  t.rg = ( ( t.rg * 2.0 - 1.0 ) * M ) * 0.5 + 0.5;
+  return t;
+}
+// IQ "texture repetition" #3 + per-region orientation: two variants blended by a smooth region index
+vec4 rvFetchS( float layer, vec2 uv, vec2 dx, vec2 dy, float k, float rot ) {
   float l = k * 7.0; float i = floor( l ); float f = fract( l );
-  vec2 oa = fract( sin( vec2( 3.0, 7.0 ) * i + vec2( 0.3, 0.7 ) ) * 43758.5453 );
-  vec4 a = textureGrad( uRvDetail, vec3( uv + oa, layer ), dx, dy );
-  // second fetch only where the blend actually needs it and only up close (tiling is invisible far away)
+  vec4 a = rvTexO( layer, uv, dx, dy, i, rot );
+  // second fetch only inside the transition band between two regions
   if ( rvStoch && f > 0.2 && f < 0.8 ) {
-    vec2 ob = fract( sin( vec2( 3.0, 7.0 ) * ( i + 1.0 ) + vec2( 0.3, 0.7 ) ) * 43758.5453 );
-    vec4 b = textureGrad( uRvDetail, vec3( uv + ob, layer ), dx, dy );
+    vec4 b = rvTexO( layer, uv, dx, dy, i + 1.0, rot );
     return mix( a, b, smoothstep( 0.25, 0.75, f + 0.6 * ( a.b - b.b ) ) );
   }
-  return a;
+  return f < 0.5 ? a : rvTexO( layer, uv, dx, dy, i + 1.0, rot );
 }
 
 float rvHB( float w, float h, float c ) { // height-blend: detail height pushes transitions around
@@ -124,7 +140,7 @@ void rvTerrain( inout vec3 albedo ) {
   float kS = mA.a;
 
   float fNear = ( 1.0 - smoothstep( 18.0, 70.0, dist ) ) * ( 1.0 - uRvLite );
-  rvStoch = dist < 260.0 && uRvLite < 0.5;
+  rvStoch = true;
   float fMid = ( 1.0 - smoothstep( uRvF.x, uRvF.y, dist ) ) * q;
   float fFar = ( 1.0 - smoothstep( uRvF.z, uRvF.w, dist ) ) * q;
 
@@ -156,22 +172,27 @@ void rvTerrain( inout vec3 albedo ) {
       // macro crags: 512 m and 128 m tiles (facets of ~100 m and ~25 m read from kilometres away)
       // (uv warped by the low-frequency noise so the macro tiles never line up)
       // organic buttresses/undulations (noise relief, 96 m) + faceted crags (layer 0, 256 m, warped)
-      vec4 t = textureGrad( uRvDetail, vec3( uv * ( 1.0 / 512.0 ) + 0.13, 5.0 ), gx * ( 1.0 / 512.0 ), gy * ( 1.0 / 512.0 ) );
-      vec4 t2 = textureGrad( uRvDetail, vec3( uv * ( 1.0 / 192.0 ) + 0.71 + ( mA.rb - 0.5 ) * 1.4, 0.0 ), gx * ( 1.0 / 192.0 ), gy * ( 1.0 / 192.0 ) );
+      // each projection axis gets its own orientation so the three planes never show the same grain
+      float fa = float( a );
+      vec4 t = rvTexO( 5.0, uv * ( 1.0 / 512.0 ), gx * ( 1.0 / 512.0 ), gy * ( 1.0 / 512.0 ), 11.0 + fa, 1.0 );
+      vec4 t2 = rvTexO( 0.0, uv * ( 1.0 / 192.0 ) + ( mA.rb - 0.5 ) * 1.4, gx * ( 1.0 / 192.0 ), gy * ( 1.0 / 192.0 ), 23.0 + fa * 3.0, 1.0 );
       t = vec4( 0.5 + ( t.rg - 0.5 ) * 1.0 + ( t2.rg - 0.5 ) * 0.6, t.b * 0.5 + t2.b * 0.5, t.a * 0.4 + t2.a * 0.6 );
       accM += wa * t; gM += wa * rvGw( a, t.rg * 2.0 - 1.0 );
       if ( fMid > 0.0 ) {
-        t = rvFetchS( 0.0, uv * 0.125, gx * 0.125, gy * 0.125, kS );
+        t = rvFetchS( 0.0, uv * 0.125, gx * 0.125, gy * 0.125, kS + fa * 0.37, 1.0 );
         accA += wa * t; gA += wa * rvGw( a, t.rg * 2.0 - 1.0 );
         if ( fNear > 0.0 ) {
-          t = textureGrad( uRvDetail, vec3( uv * 0.5, 0.0 ), gx * 0.5, gy * 0.5 );
+          t = rvTexO( 0.0, uv * 0.5, gx * 0.5, gy * 0.5, floor( kS * 11.0 ) + 5.0 + fa, 1.0 );
           accN += wa * t; gN += wa * rvGw( a, t.rg * 2.0 - 1.0 );
         }
       }
     }
     float iw = 1.0 / ws;
     accM *= iw; accA *= iw; accN *= iw;
-    gradT += ( gM * iw * fFar * 1.1 + gA * iw * fMid * 1.0 + gN * iw * fNear * 0.6 ) * wRock;
+    // relief strength: full on real faces, gentler where "rock" is only a generator hint on a mild
+    // slope (under low sun, strong mid-scale bumps on near-flat ground read as brush strokes / fur)
+    float kRel = 0.45 + 0.55 * max( rockS, smoothstep( 0.08, 0.3, slope ) );
+    gradT += ( gM * iw * fFar * 0.9 + gA * iw * fMid * 0.75 + gN * iw * fNear * 0.6 ) * wRock * kRel;
     hRock = mix( 0.5, accM.b, fFar );
     hRock = mix( hRock, hRock * 0.4 + accA.b * 0.6, fMid );
     hRock = mix( hRock, hRock * 0.7 + accN.b * 0.3, fNear );
@@ -189,9 +210,9 @@ void rvTerrain( inout vec3 albedo ) {
       if ( wa <= 0.0 ) continue;
       vec2 uv = rvAx( a, C ), gx = rvAx( a, dCx ), gy = rvAx( a, dCy );
       ws += wa;
-      vec4 t = rvFetchS( 1.0, uv * 0.25, gx * 0.25, gy * 0.25, kS ); aG += wa * t; gG += wa * rvGw( a, t.rg * 2.0 - 1.0 );
+      vec4 t = rvFetchS( 1.0, uv * 0.25, gx * 0.25, gy * 0.25, kS, 1.0 ); aG += wa * t; gG += wa * rvGw( a, t.rg * 2.0 - 1.0 );
       if ( doN ) { t = textureGrad( uRvDetail, vec3( uv, 1.0 ), gx, gy ); aGn += wa * t; gGn += wa * rvGw( a, t.rg * 2.0 - 1.0 ); }
-      if ( doS ) { t = rvFetchS( 2.0, uv * 0.25, gx * 0.25, gy * 0.25, kS ); aS += wa * t; gS += wa * rvGw( a, t.rg * 2.0 - 1.0 ); }
+      if ( doS ) { t = rvFetchS( 2.0, uv * 0.25, gx * 0.25, gy * 0.25, kS, 0.0 ); aS += wa * t; gS += wa * rvGw( a, t.rg * 2.0 - 1.0 ); }
       if ( doW ) { t = textureGrad( uRvDetail, vec3( uv * 0.125, 3.0 ), gx * 0.125, gy * 0.125 ); aW += wa * t; gW += wa * rvGw( a, t.rg * 2.0 - 1.0 ); }
       if ( doP ) { t = textureGrad( uRvDetail, vec3( uv * 0.5, 4.0 ), gx * 0.5, gy * 0.5 ); aP += wa * t; gP += wa * rvGw( a, t.rg * 2.0 - 1.0 ); }
     }
@@ -204,20 +225,43 @@ void rvTerrain( inout vec3 albedo ) {
     if ( doP ) { dPeb = aP * iw; gradT += gP * iw * wScree * ( 1.0 - wRock ) * 0.6 * fMid; }
   }
 
-  // ---- strata ledges on cliffs (altitude-locked, subtle) + vertical weathering streaks
-  float band = alt / ( 16.0 + 14.0 * uRvS.x ) + 2.2 * n2 + 1.4 * n4 + 0.8 * n1;
+  // ---- cliff faces: sedimentary strata (layer 6, altitude-locked, noise-warped) and drainage /
+  //      desert-varnish streaks (layer 7). Both project on the two horizontal axes (x → z,alt and
+  //      z → x,alt), blended by the geometric normal — seamless, no single-axis switch.
+  float bandH = 16.0 + 14.0 * uRvS.x;
+  float band = alt / bandH + 2.2 * n2 + 1.4 * n4 + 0.8 * n1;
   float bi = floor( band ), bf = fract( band );
   float bh = fract( sin( bi * 12.9898 + 4.1 ) * 43758.5453 );
-  float streak = 0.5;
-  if ( rockS > 0.05 && fFar > 0.0 ) {
-    float hx = ( wg.x > wg.z ? C.z : C.x );
-    vec2 uvS = vec2( hx / 16.0, alt / 160.0 );
-    streak = mix( 0.5, textureGrad( uRvDetail, vec3( uvS, 5.0 ), dFdx( uvS ), dFdy( uvS ) ).g, fFar );
-    // ledge: a small step at each band boundary, facing up
-    float ledge = smoothstep( 0.0, 0.08, bf ) * ( 1.0 - smoothstep( 0.08, 0.3, bf ) );
-    gradT -= up * ( ledge - 0.3 ) * uRvS.x * rockS * 0.35 * fFar;
+  float streakD = 0.0, streakL = 0.0, strA = 0.5;
+  float sideW = wg.x + wg.z;
+  if ( rockS > 0.05 && fFar > 0.0 && sideW > 0.05 ) {
+    float wx = wg.x / sideW, wz = wg.z / sideW;
+    float dAx = dot( dCx, up ), dAy = dot( dCy, up );
+    // streaks: 110 m x 260 m tiles, horizontal coordinate warped by two noise scales (no fixed period)
+    float warp = ( mA.r - 0.5 ) * 90.0 + ( mC.b - 0.5 ) * 24.0;
+    vec4 sx = vec4( 0.0 ), sz = vec4( 0.0 );
+    if ( wx > 0.02 ) sx = textureGrad( uRvDetail, vec3( ( C.z + warp ) / 110.0, alt / 260.0, 7.0 ), vec2( dCx.z / 110.0, dAx / 260.0 ), vec2( dCy.z / 110.0, dAy / 260.0 ) );
+    if ( wz > 0.02 ) sz = textureGrad( uRvDetail, vec3( ( C.x + warp ) / 110.0 + 0.37, alt / 260.0 + 0.21, 7.0 ), vec2( dCx.x / 110.0, dAx / 260.0 ), vec2( dCy.x / 110.0, dAy / 260.0 ) );
+    vec4 st7 = sx * wx + sz * wz;
+    // streaks gather in chutes/concavities, avoid convex ribs, and come and go in patches
+    float sMask = smoothstep( 0.3, 0.8, rockS ) * clamp( 0.3 + 1.1 * max( curv, 0.0 ) - 0.6 * max( -curv, 0.0 ) + 0.6 * ( mC.b - 0.5 ), 0.0, 1.0 )
+                * smoothstep( 0.25, 0.65, mA.a + 0.25 * n4 ) * fFar;
+    streakD = st7.b * sMask;
+    streakL = max( st7.a - 0.5, 0.0 ) * 2.0 * sMask;
+    // strata: real ledges (layer 6 relief) aligned with the colour bands, only on layered-rock worlds
+    float kStr = smoothstep( 0.4, 0.9, uRvS.x ) * rockS * fFar;
+    if ( kStr > 0.01 ) {
+      float vS = band / 9.0, dvx = dAx / ( bandH * 9.0 ), dvy = dAy / ( bandH * 9.0 );
+      vec4 ax = vec4( 0.5 ), az = vec4( 0.5 );
+      if ( wx > 0.02 ) ax = textureGrad( uRvDetail, vec3( C.z / 96.0, vS, 6.0 ), vec2( dCx.z / 96.0, dvx ), vec2( dCy.z / 96.0, dvy ) );
+      if ( wz > 0.02 ) az = textureGrad( uRvDetail, vec3( C.x / 96.0 + 0.5, vS, 6.0 ), vec2( dCx.x / 96.0, dvx ), vec2( dCy.x / 96.0, dvy ) );
+      vec4 s6 = ax * wx + az * wz;
+      vec3 gS = ( wx * ( ax.r * 2.0 - 1.0 ) ) * vec3( 0.0, 0.0, 1.0 ) + ( wz * ( az.r * 2.0 - 1.0 ) ) * vec3( 1.0, 0.0, 0.0 ) + ( s6.g * 2.0 - 1.0 ) * up;
+      gradT += gS * kStr * 0.9;
+      hRock = mix( hRock, hRock * 0.5 + s6.b * 0.5, kStr );
+      strA = mix( 0.5, s6.a, kStr );
+    }
   }
-
   // ---- detail normal (surface gradient, world space)
   gradT -= Ng * dot( gradT, Ng );
   rvN = normalize( Ng - gradT * 1.1 );
@@ -246,12 +290,21 @@ void rvTerrain( inout vec3 albedo ) {
 
   // rock tone: palette rock pulled toward neutral grey, strata bands only where the style asks for it
   vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ) * vec3( 0.95, 0.99, 1.07 ), 0.45 );
-  vec3 rockC = mix( rockBase, uRvRock2, smoothstep( 0.2, 0.9, bh ) * ( 0.15 + 0.6 * uRvS.x * uRvS.x ) );
-  rockC = mix( rockC, uRvSand * 0.8, smoothstep( 0.8, 0.97, bh ) * 0.35 * uRvS.x * uRvS.x );
-  rockC = mix( rockC, rockBase * 0.55, smoothstep( 0.35, 0.65, mC.g + 0.3 * n2 ) * 0.35 );
-  rockC *= 0.55 + 0.9 * aRock;
-  rockC *= mix( 1.0, 0.86 + 0.28 * streak, rockS );
-  rockC *= 0.88 + 0.24 * mA.g;
+  float sk = uRvS.x * uRvS.x;
+  // colour bands only on real faces: on gentle slopes altitude-locked bands become contour rings
+  // (the "wood grain" look)
+  float kBand = smoothstep( 0.25, 0.6, slope );
+  vec3 rockC = mix( rockBase, uRvRock2, smoothstep( 0.2, 0.9, bh ) * ( 0.05 + 0.7 * sk ) * kBand );
+  rockC = mix( rockC, uRvSand * 0.8, smoothstep( 0.8, 0.97, bh ) * 0.35 * sk * kBand );
+  // large lighter / darker rock bodies (tens to hundreds of metres) — not uniform grey noise
+  rockC = mix( rockC, rockBase * 0.62, smoothstep( 0.35, 0.65, mC.g + 0.3 * n2 ) * 0.3 );
+  rockC = mix( rockC, rockBase * 1.18 + 0.02, smoothstep( 0.55, 0.8, mA.g + 0.25 * n3 ) * 0.35 );
+  rockC *= 0.68 + 0.64 * aRock;
+  rockC *= 0.8 + 0.4 * strA;
+  // drainage streaks: dark varnish (slightly warm) and rarer pale mineral streaks
+  rockC = mix( rockC, rockC * vec3( 0.6, 0.56, 0.52 ), clamp( streakD * 0.75, 0.0, 0.6 ) );
+  rockC = mix( rockC, rockC * 1.2 + vec3( 0.03 ), clamp( streakL * 0.6, 0.0, 0.5 ) );
+  rockC *= 0.9 + 0.2 * mA.g;
   rockC *= mix( vec3( 1.07, 1.0, 0.9 ), vec3( 0.9, 0.97, 1.08 ), smoothstep( 0.25, 0.75, mA.b + 0.3 * n4 ) );
   // lichen / moss on moderately steep, moist rock
   rockC = mix( rockC, grassC * 0.75, ( 1.0 - rockS ) * smoothstep( 0.4, 0.8, moist ) * 0.45 * uRvS2.x );
@@ -262,6 +315,10 @@ void rvTerrain( inout vec3 albedo ) {
   vec3 col = groundC;
   col = mix( col, sandC, bSand );
   col = mix( col, rockC, bRock );
+  // vegetation on up-facing ledges of lush-world cliffs (moss/grass pockets break up big faces)
+  float ledgeUp = smoothstep( 0.72, 0.93, ndu + 0.25 * ( hRock - 0.5 ) + 0.1 * n4 );
+  float vegOK = uRvS2.x * smoothstep( 0.25, 0.55, moist + 0.2 * n3 ) * smoothstep( 0.05, 0.3, temp ) * ( 1.0 - smoothstep( 0.85, 1.0, rockA * mtn ) * 0.5 );
+  col = mix( col, grassC * 0.72, bRock * ledgeUp * vegOK * 0.85 );
   col = mix( col, snowC, bSnow );
 
   // ---- shore / underwater / wetness
@@ -283,10 +340,12 @@ void rvTerrain( inout vec3 albedo ) {
   float cav = clamp( curv, 0.0, 1.0 );
   float hD = mix( mix( hGround, hSand, bSand ), hRock, bRock );
   hD = mix( hD, hSnow, bSnow * 0.7 );
-  rvAO = clamp( ( 1.0 - 0.5 * cav ) * mix( mix( 0.55, 0.38, bRock ), 1.08, hD ), 0.2, 1.0 );
-  col *= mix( 1.0, 0.62 + 0.6 * hD, bRock ) * ( 1.0 - 0.18 * cav * ( 1.0 - bSnow ) );
-  col *= 1.0 + ( 0.12 + 0.12 * bRock ) * clamp( -curv, 0.0, 1.0 );
-  col *= 1.0 - 0.14 * bRock * cav;
+  // one occlusion budget: albedo cavity + ambient AO never stack below a sane floor (the old
+  // multiplicative chain drove shadowed rock toward black, especially under ambient-only light)
+  rvAO = clamp( ( 1.0 - 0.35 * cav ) * mix( mix( 0.62, 0.5, bRock ), 1.06, hD ), 0.45, 1.0 );
+  float occ = mix( 1.0, 0.74 + 0.46 * hD, bRock ) * ( 1.0 - 0.16 * cav * ( 1.0 - bSnow ) );
+  col *= max( occ, 0.66 );
+  col *= 1.0 + ( 0.1 + 0.1 * bRock ) * clamp( -curv, 0.0, 1.0 );
 
   // ---- emissive extras
   rvEmis = vec3( 0.0 );
@@ -394,7 +453,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v15' + (opts.lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-v16' + (opts.lite ? 'L' : '');
   return mat;
 }
 
