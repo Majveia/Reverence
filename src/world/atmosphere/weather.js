@@ -253,14 +253,14 @@ export class Weather {
       const age = t - this._boltT;
       // double-pulse flash
       const f = age < 0 ? 0 : Math.exp(-age * 9) + 0.6 * Math.exp(-Math.abs(age - 0.16) * 25);
-      st.flash = this.forceBolt && shot ? 1 : f;
+      st.flash = this.forceBolt && shot ? 0.55 : f;
       this.boltMat.uniforms.uI.value = 60 * st.flash;
       this.bolt.visible = st.flash > 0.02;
       if (!this.forceBolt && age > 1.2) { this._boltT = -1; this.bolt.visible = false; }
     }
     // environment flash (all PBR materials)
     const scene = this.world.scene;
-    scene.environmentIntensity = 1 + st.flash * 5;
+    scene.environmentIntensity = 1 + st.flash * 2.5;
   }
 
   _strike(t, force) {

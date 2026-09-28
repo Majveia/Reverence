@@ -34,22 +34,25 @@ export function isMobile() {
 
 export function detectQuality(requested, renderer) {
   let name = requested;
+  let gpu = '';
+  try {
+    const gl = renderer?.getContext();
+    const dbg = gl?.getExtension('WEBGL_debug_renderer_info');
+    gpu = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
+  } catch (_) { /* ignore */ }
+  const software = /SwiftShader|llvmpipe|Software/i.test(gpu);
   if (!TIERS[name]) {
     if (isMobile()) name = 'med';
-    else {
-      name = 'high';
-      try {
-        const gl = renderer?.getContext();
-        const dbg = gl?.getExtension('WEBGL_debug_renderer_info');
-        const r = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
-        if (/SwiftShader|llvmpipe|Software/i.test(r)) name = 'high'; // headless capture: keep visuals honest
-        else if (/Intel|Mali|Adreno [1-5]|PowerVR/i.test(r)) name = 'med';
-        else if (/RTX|RX 6|RX 7|RX 9|Apple M[2-9]|M[1-9] (Pro|Max|Ultra)/i.test(r)) name = 'ultra';
-      } catch (_) { /* ignore */ }
-    }
+    else if (software) name = 'high'; // headless capture: keep visuals honest
+    else if (/Intel|Mali|Adreno [1-5]|PowerVR/i.test(gpu)) name = 'med';
+    else if (/RTX|RX 6|RX 7|RX 9|Apple M[2-9]|M[1-9] (Pro|Max|Ultra)/i.test(gpu)) name = 'ultra';
+    else name = 'high';
   }
   const q = { ...TIERS[name] };
   q.pixelRatio = Math.min(window.devicePixelRatio || 1, q.pixelRatioCap);
+  // Software GL (headless capture): MSAA roughly doubles frame cost; use the FXAA path instead.
+  q.software = software;
+  if (software) q.msaa = 0;
   q.mobile = isMobile();
   q.touch = isTouchDevice();
   return q;

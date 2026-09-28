@@ -65,7 +65,7 @@ export class Scarf {
   constructor(world, palette, quality) {
     this.world = world;
     const q = quality?.tier === 'low' ? 0.7 : 1;
-    this.strips = [new Strip(3, Math.round(15 * q), 0.17, 1.45, 0.35), new Strip(3, Math.round(10 * q), 0.13, 0.85, 0.3)];
+    this.strips = [new Strip(3, Math.round(13 * q), 0.16, 1.05, 0.3), new Strip(3, Math.round(9 * q), 0.12, 0.7, 0.3)];
     // anchors in chest space (back of the neck wrap)
     this.anchorsC = [
       [new THREE.Vector3(-0.02, 0.215, -0.1), new THREE.Vector3(0.05, 0.22, -0.095), new THREE.Vector3(0.12, 0.215, -0.07)],
@@ -136,7 +136,8 @@ export class Scarf {
     if (!this.initialized) this.reset(anchorsW, this._n.copy(up).negate());
     const steps = dt > 1 / 45 ? 3 : 2;
     const h = Math.min(dt, 1 / 20) / steps;
-    const gx = -up.x * g, gy = -up.y * g, gz = -up.z * g;
+    const gg = g * 0.55; // light silk: stylised float (Journey)
+    const gx = -up.x * gg, gy = -up.y * gg, gz = -up.z * gg;
     for (let k = 0; k < this.strips.length; k++) {
       const s = this.strips[k], A = anchorsW[k];
       const X = s.x, Pp = s.p, N = s.nrm;
@@ -155,9 +156,9 @@ export class Scarf {
           const nx = N[o], ny = N[o + 1], nz = N[o + 2];
           const vn = rx * nx + ry * ny + rz * nz;
           const kN = 1.6, kT = 0.28;
-          let ax = gx + (vn * nx * kN + rx * kT) * Math.min(rl, 30) * 0.12 + nx * fl * Math.min(rl, 25) * 0.55;
-          let ay = gy + (vn * ny * kN + ry * kT) * Math.min(rl, 30) * 0.12 + ny * fl * Math.min(rl, 25) * 0.55;
-          let az = gz + (vn * nz * kN + rz * kT) * Math.min(rl, 30) * 0.12 + nz * fl * Math.min(rl, 25) * 0.55;
+          let ax = gx + (vn * nx * kN + rx * kT) * Math.min(rl, 30) * 0.3 + nx * fl * Math.min(rl, 25) * 0.7;
+          let ay = gy + (vn * ny * kN + ry * kT) * Math.min(rl, 30) * 0.3 + ny * fl * Math.min(rl, 25) * 0.7;
+          let az = gz + (vn * nz * kN + rz * kT) * Math.min(rl, 30) * 0.3 + nz * fl * Math.min(rl, 25) * 0.7;
           const damp = 0.985;
           const nxp = X[o] + (X[o] - Pp[o]) * damp + ax * h * h;
           const nyp = X[o + 1] + (X[o + 1] - Pp[o + 1]) * damp + ay * h * h;

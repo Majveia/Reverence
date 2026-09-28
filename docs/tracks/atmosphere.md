@@ -83,6 +83,10 @@ world.atmosphere = {
 | Aerial perspective, mountains in haze at sunset (W1) | `star=6&planet=1&view=fly&alt=800&tod=0.74&pitch=2&yaw=270` |
 | Blade Runner rain storm (W4) | `star=2&planet=0&view=surface&tod=0.45` steps `[{"look":[0,8]},{"advance":0.5}]` |
 | Storm + lightning (W1) | `star=6&planet=1&view=fly&alt=800&tod=0.45&pitch=4&weather=storm&lightning=1` |
+| Sea of clouds from altitude (W1) | `star=6&planet=1&view=fly&alt=3000&tod=0.5` |
+| Aurora curtains + stars (W8) | `star=2&planet=1&view=fly&alt=800&tod=0.02&pitch=12&weather=aurora` |
+| Snow (W12 arctic) | `star=9&planet=5&view=surface&tod=0.45&weather=snow` steps `[{"look":[0,10]},{"advance":0.5}]` |
+| Terminator from orbit (W1) | `star=6&planet=1&view=orbit&tod=0.22` |
 | Planet from orbit: limb, terminator, cloud shell | `star=11&planet=0&view=orbit&tod=0.4` |
 | Low tier clouds | add `&q=low` |
 
@@ -105,6 +109,8 @@ world.atmosphere = {
 * Fallback star field is a stand-in until the space track renders stars (it switches itself off when
   `world.get('space')` exists).
 * The orbit view camera currently never rotates (player track stub), so orbit framing is fixed.
+* Lightning bolts are drawn without a depth test (they can show through a near ridge).
+* Storm/overcast bases pick up a slightly warm tint on warm-graded worlds.
 
 ## Requests
 * **core / tools**: `tools/shoot.mjs` uses Playwright's default 30 s `page.screenshot` timeout; with
@@ -113,6 +119,9 @@ world.atmosphere = {
 * **post**: MSAA on the HDR scene target roughly doubles the SwiftShader frame; consider `samples: 0`
   in shot mode, or TAA. The atmosphere writes physically based HDR (sun ≈ 6, sky ≈ 0.3–1.0): auto
   exposure keyed to `G.uSunIntensity` + `G.uAmbientSky` would help nights and storms.
+* **post**: art grades with `lift` (e.g. Stålenhag `[0.02,0.022,0.028]`) turn night skies into a grey
+  veil (AgX toe + lift). Please scale `lift` by `(1 - G.uNight)` (or apply lift before exposure) so
+  nights keep OLED blacks; the atmosphere already outputs ~0 radiance for a moonless night sky.
 * **space**: please render stars / sun disk / planets into the background (depth = far) — the
   atmosphere pass multiplies them by the view transmittance and hides faint stars by day. Once
   `world.get('space')` exists the fallback sun/stars are disabled automatically.

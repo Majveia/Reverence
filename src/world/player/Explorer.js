@@ -12,6 +12,7 @@ import {
   xf, mirrorX, rigid, blendY, bandsY, quad, flatUv,
 } from './geo.js';
 import { getTextures } from './textures.js';
+import { G } from '../../core/Uniforms.js';
 
 // ------------------------------------------------------------------ skeleton
 export const B = {
@@ -132,6 +133,41 @@ function patchLighting(mat, { rim = 0.0 } = {}) {
   return mat;
 }
 
+/**
+ * Gold-film astronaut visor: a procedural sky / horizon / ground / sun reflection (in the planet's local
+ * frame) layered over the PBR env reflection, so the dome always reads as polished glass (Starfield/NMS).
+ * `mat.userData.uUp` must be fed the player's local up each frame.
+ */
+function patchVisor(mat, P) {
+  const uUp = { value: new THREE.Vector3(0, 1, 0) };
+  const tint = { value: P.visorGold || new THREE.Color(1.0, 0.74, 0.4) };
+  mat.userData.uUp = uUp;
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uVUp = uUp; sh.uniforms.uVTint = tint;
+    sh.uniforms.uVSun = G.uSunColor; sh.uniforms.uVSunDir = G.uSunDir; sh.uniforms.uVSky = G.uAmbientSky; sh.uniforms.uVGround = G.uAmbientGround;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uVUp; uniform vec3 uVTint; uniform vec3 uVSun; uniform vec3 uVSunDir; uniform vec3 uVSky; uniform vec3 uVGround;')
+      .replace('#include <opaque_fragment>', `
+        {
+          vec3 Vv = normalize(vViewPosition);
+          vec3 Rv = reflect(-Vv, normal);
+          vec3 Rw = normalize((vec4(Rv, 0.0) * viewMatrix).xyz);
+          float h = dot(Rw, uVUp);
+          float fres = 0.3 + 0.7 * pow(1.0 - clamp(dot(normal, Vv), 0.0, 1.0), 2.5);
+          vec3 sky = mix(uVSky * 1.1 + 0.02, uVSky * 2.6 + 0.04, smoothstep(0.0, 0.8, h));
+          vec3 grd = uVGround * 0.25 + 0.004;
+          vec3 env = mix(grd, sky, smoothstep(-0.06, 0.05, h));
+          env += (uVSun * 0.12 + uVSky * 0.6) * exp(-abs(h) * 16.0);
+          float sd = max(dot(Rw, normalize(uVSunDir)), 0.0);
+          vec3 spec = uVSun * (pow(sd, 1200.0) * 40.0 + pow(sd, 60.0) * 0.5);
+          outgoingLight += (env * fres) * uVTint * 0.85 + spec;
+        }
+        #include <opaque_fragment>`);
+  };
+  mat.customProgramCacheKey = () => 'rv-visor';
+  return mat;
+}
+
 export function makeMaterials(renderer, P, quality) {
   const tex = getTextures(renderer);
   const hi = quality?.tier !== 'low';
@@ -146,10 +182,11 @@ export function makeMaterials(renderer, P, quality) {
   const glow = new THREE.MeshBasicMaterial({ vertexColors: true, color: new THREE.Color(1, 1, 1).multiplyScalar(4.0) });
   const visor = hi
     ? new THREE.MeshPhysicalMaterial({
-      color: P.visorTint, roughness: 0.04, metalness: 0.35, clearcoat: 1, clearcoatRoughness: 0.02,
-      iridescence: 0.85, iridescenceIOR: 1.33, iridescenceThicknessRange: [200, 460], envMapIntensity: 1.6, specularIntensity: 1,
+      color: new THREE.Color(0.06, 0.05, 0.04), roughness: 0.07, metalness: 0.85, clearcoat: 1, clearcoatRoughness: 0.03,
+      iridescence: 0.4, iridescenceIOR: 1.4, iridescenceThicknessRange: [250, 520], envMapIntensity: 1.2,
     })
-    : new THREE.MeshStandardMaterial({ color: P.visorTint, roughness: 0.06, metalness: 0.6, envMapIntensity: 1.6 });
+    : new THREE.MeshStandardMaterial({ color: new THREE.Color(0.06, 0.05, 0.04), roughness: 0.08, metalness: 0.85, envMapIntensity: 1.2 });
+  patchVisor(visor, P);
   patchLighting(fabric, { rim: 0.6 });
   patchLighting(hard, { rim: 0.8 });
   const mats = { fabric, hard, metal, glow, visor };
@@ -239,6 +276,7 @@ export function buildExplorer(renderer, body, quality) {
       { y: 1.33, rx: 0.058, rz: 0.06, ox: x, oz: z },
       { y: 1.45, rx: 0.056, rz: 0.058, ox: x, oz: z },
     ];
+    for (const q of secs) { q.rx *= 1.13; q.rz *= 1.13; }
     const skin = bandsY([[ax('hand'), 0.845], [ax('foreArm'), 0.875], [ax('foreArm'), 1.085], [ax('upperArm'), 1.14]]);
     A.add('fabric', loft(secs, { radial: R(18), sub: 3 }), P.suit, skin);
     const AS = loftSurface(secs);
@@ -290,6 +328,7 @@ export function buildExplorer(renderer, body, quality) {
       { y: 0.9, rx: 0.087, rz: 0.089, ox: x },
       { y: 0.99, rx: 0.08, rz: 0.08, ox: x - side * 0.01 },
     ];
+    for (const q of secs) { if (q.y > 0.2) { q.rx *= 1.14; q.rz *= 1.14; } }
     const skin = bandsY([[lb('foot'), 0.09], [lb('shin'), 0.15], [lb('shin'), 0.475], [lb('thigh'), 0.555], [lb('thigh'), 0.9], [B.hips, 1.0]]);
     A.add('fabric', loft(secs, { radial: R(20), sub: 3 }), P.suit, skin);
     const LS = loftSurface(secs);

@@ -38,6 +38,7 @@ float rv_viewZFromDepth(float depth, float near, float far){
 
 // Simplex noise (Ashima / Stefan Gustavson, MIT) + fbm helpers.
 registerChunk('rv_noise', /* glsl */ `
+#include <rv_common>
 #ifndef RV_NOISE
 #define RV_NOISE
 vec3 rv_mod289(vec3 x){ return x - floor(x * (1.0 / 289.0)) * 289.0; }

@@ -167,7 +167,9 @@ export class Engine {
     if (this._advancing) return;
     const mode = this.director.current;
     if (!mode) return;
-    this.step(0, (this.time.frame % 20) === 0);
+    // Before ready: render rarely (progress only). After ready: never render idly — frames are
+    // rendered only by advance()/render(), so screenshots never queue behind idle software frames.
+    this.step(0, !this.isReady && (this.time.frame % 60) === 0);
     if (!this.isReady && mode.entered) {
       if (mode.isReady()) { if (++this._readyFrames >= 3) { this.isReady = true; this.render(); events.emit('ready'); } }
       else this._readyFrames = 0;

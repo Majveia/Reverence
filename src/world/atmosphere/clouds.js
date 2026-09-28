@@ -290,7 +290,7 @@ void main(){
     amb = mix(amb, vec3(dot(amb, vec3(0.2126, 0.7152, 0.0722))) * 0.8, ocb * 0.9) * (1.0 - 0.35 * ocb) * (1.0 - 0.55 * wxs.b * (1.0 - h));
     // energy lost by the truncated octave series (thick clouds reflect ~75%): art gain on the key light
     vec3 S = (sunT * lum * powder * 2.4 + amb) * s;
-    if (uFlash.w > 0.001){ vec3 fd = p - uFlash.xyz; S += vec3(0.75, 0.82, 1.0) * uFlash.w * 900.0 * exp(-dot(fd, fd) / (thick * thick * 2.5)) * s; }
+    if (uFlash.w > 0.001){ vec3 fd = p - uFlash.xyz; S += vec3(0.75, 0.82, 1.0) * uFlash.w * 120.0 * exp(-dot(fd, fd) / (thick * thick * 1.2)) * s; }
     float Ts = exp(-s * dt);
     L += T * (S - S * Ts) / max(s, 1e-7);
     tSum += t * T * (1.0 - Ts); wSum += T * (1.0 - Ts);

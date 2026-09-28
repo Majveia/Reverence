@@ -54,59 +54,59 @@ export function buildStyle(body, atlas) {
   // ------------------------------------------------------------------ common species factories
   const oak = (o = {}) => ({
     id: 'oak', layer: 'canopy', gen: T.broadleaf, variants: 3, collider: 'tree',
-    params: { height: 13, crownR: 5.2, trunkR: 0.42, leafSize: 1.9, leafDensity: 6.5, rects: [R('broad'), R('broad2'), R('broad')], leafA: fl(0), leafB: fl(1), bark: barkBrown, gnarl: 0.3, ...o.params },
+    
     barkLayer: BARK.furrow, tint2: [0.1, 0.07, 0.04],
     biomes: bw({ FOREST: 1, GRASSLAND: 0.8, SAVANNA: 0.35, JUNGLE: 0.5, TAIGA: 0.15 }), m: [0.3, 1.5], t: [0.25, 1.2], slope: 0.7, alt: [-0.01, 0.55],
-    zone: 0, dens: 1, scale: [0.75, 1.3], lean: 0.05, sink: 0.35, ...o,
+    zone: 0, dens: 1, scale: [0.75, 1.3], lean: 0.05, sink: 0.35, ...o, params: { height: 13, crownR: 5.2, trunkR: 0.42, leafSize: 1.9, leafDensity: 6.5, rects: [R('broad'), R('broad2'), R('broad')], leafA: fl(0), leafB: fl(1), bark: barkBrown, gnarl: 0.3, ...o.params },
   });
   const conifer = (o = {}) => ({
     id: 'spruce', layer: 'canopy', gen: T.conifer, variants: 3, collider: 'tree',
-    params: { height: 20, trunkR: 0.35, branchLen: 3.8, whorlGap: 0.62, droop: 0.3, rect: R('needle'), leafA: fl(0), leafB: mix3(fl(0), fl(1), 0.6), bark: mix3(barkBrown, [0.12, 0.06, 0.035], 0.4), ...o.params },
+    
     barkLayer: BARK.plates, tint2: [0.08, 0.06, 0.04], billboard: 0, windAmp: 0.8,
     biomes: bw({ TAIGA: 1, FOREST: 0.35, TUNDRA: 0.5, GRASSLAND: 0.08, SNOW: 0.15 }), m: [0.2, 1.5], t: [-0.1, 0.8], slope: 0.85, alt: [-0.01, 0.8],
-    zone: 1, dens: 1, scale: [0.7, 1.3], lean: 0.02, sink: 0.4, ...o,
+    zone: 1, dens: 1, scale: [0.7, 1.3], lean: 0.02, sink: 0.4, ...o, params: { height: 20, trunkR: 0.35, branchLen: 3.8, whorlGap: 0.62, droop: 0.3, rect: R('needle'), leafA: fl(0), leafB: mix3(fl(0), fl(1), 0.6), bark: mix3(barkBrown, [0.12, 0.06, 0.035], 0.4), ...o.params },
   });
   const birch = (o = {}) => ({
     id: 'birch', layer: 'canopy', gen: T.slender, variants: 2, collider: 'tree',
-    params: { height: 15, trunkR: 0.2, crownR: 2.8, clumpR: 1.35, leafSize: 1.2, leafDensity: 9, rect: R('small'), leafA: mix3(fl(1), fl(2), 0.35), leafB: mix3(fl(2), [0.9, 0.85, 0.3], 0.25), bark: [0.62, 0.6, 0.55], ...o.params },
+    
     barkLayer: BARK.birch, tint2: [0.06, 0.05, 0.03], barkScale: 1,
     biomes: bw({ FOREST: 0.55, TAIGA: 0.5, GRASSLAND: 0.25, TUNDRA: 0.25 }), m: [0.3, 1.5], t: [0.05, 0.9], slope: 0.7, alt: [-0.01, 0.7],
-    zone: 2, dens: 0.8, scale: [0.8, 1.2], lean: 0.06, sink: 0.3, ...o,
+    zone: 2, dens: 0.8, scale: [0.8, 1.2], lean: 0.06, sink: 0.3, ...o, params: { height: 15, trunkR: 0.2, crownR: 2.8, clumpR: 1.35, leafSize: 1.2, leafDensity: 9, rect: R('small'), leafA: mix3(fl(1), fl(2), 0.35), leafB: mix3(fl(2), [0.9, 0.85, 0.3], 0.25), bark: [0.62, 0.6, 0.55], ...o.params },
   });
   const bushSp = (o = {}) => ({
     id: 'bush', layer: 'under', gen: PL.bush, variants: 3,
-    params: { radius: 1.0, rect: R('broad'), leafA: fl(0), leafB: fl(1), flowerRect: R('flowerball'), flowerA: fl(3), flowerB: accent, flowerChance: 0.2, leafSize: 0.95, ...o.params },
+    
     tint2: [0.08, 0.06, 0.03], billboard: 0.8,
     biomes: bw({ FOREST: 1, GRASSLAND: 0.7, JUNGLE: 1, SAVANNA: 0.35, TAIGA: 0.5, TUNDRA: 0.3 }), m: [0.25, 1.5], t: [0.1, 1.2], slope: 0.8, alt: [0, 0.6],
-    zone: 0, dens: 1, scale: [0.6, 1.4], lean: 0.1, sink: 0.15, ...o,
+    zone: 0, dens: 1, scale: [0.6, 1.4], lean: 0.1, sink: 0.15, ...o, params: { radius: 1.0, rect: R('broad'), leafA: fl(0), leafB: fl(1), flowerRect: R('flowerball'), flowerA: fl(3), flowerB: accent, flowerChance: 0.2, leafSize: 0.95, ...o.params },
   });
   const fernSp = (o = {}) => ({
     id: 'fern', layer: 'under', gen: PL.fern, variants: 2,
-    params: { length: 1.1, rect: R('fern'), leafA: mix3(fl(0), fl(1), 0.3), leafB: fl(1), ...o.params },
+    
     tint2: [0.06, 0.1, 0.03], billboard: 0,
     biomes: bw({ FOREST: 1, JUNGLE: 1, TAIGA: 0.8 }), m: [0.35, 1.5], t: [0.15, 1.2], slope: 0.9, alt: [0, 0.6],
-    zone: 1, dens: 1.2, scale: [0.6, 1.3], lean: 0.1, sink: 0.05, ...o,
+    zone: 1, dens: 1.2, scale: [0.6, 1.3], lean: 0.1, sink: 0.05, ...o, params: { length: 1.1, rect: R('fern'), leafA: mix3(fl(0), fl(1), 0.3), leafB: fl(1), ...o.params },
   });
   const reedSp = (o = {}) => ({
     id: 'reeds', layer: 'under', gen: PL.reeds, variants: 2,
-    params: { height: 1.6, rect: R('blades'), colA: mix3(fl(0), grass2, 0.4), colB: grass2, cattail: true, ...o.params },
+    
     tint2: [0.3, 0.28, 0.12], billboard: 0,
     biomes: bw({ BEACH: 1, GRASSLAND: 0.2, FOREST: 0.2, SAVANNA: 0.2, JUNGLE: 0.3 }), m: [0.2, 1.5], t: [0.1, 1.2], slope: 0.35, alt: [-0.01, 0.02],
-    shore: 12, zone: -1, dens: 2.5, scale: [0.7, 1.3], lean: 0.08, sink: 0.1, ...o,
+    shore: 12, zone: -1, dens: 2.5, scale: [0.7, 1.3], lean: 0.08, sink: 0.1, ...o, params: { height: 1.6, rect: R('blades'), colA: mix3(fl(0), grass2, 0.4), colB: grass2, cattail: true, ...o.params },
   });
   const mossSp = (o = {}) => ({
     id: 'moss', layer: 'under', gen: PL.mossMound, variants: 2,
-    params: { radius: 0.9, rect: R('small'), colA: mix3(fl(0), grass, 0.5), colB: fl(1), ...o.params },
+    
     tint2: [0.1, 0.12, 0.04], billboard: 0.6,
     biomes: bw({ FOREST: 1, TAIGA: 1, TUNDRA: 0.6, JUNGLE: 0.5 }), m: [0.35, 1.5], t: [0, 1], slope: 0.9, alt: [0, 0.7],
-    zone: 2, dens: 0.8, scale: [0.6, 1.5], lean: 0.1, sink: 0.12, ...o,
+    zone: 2, dens: 0.8, scale: [0.6, 1.5], lean: 0.1, sink: 0.12, ...o, params: { radius: 0.9, rect: R('small'), colA: mix3(fl(0), grass, 0.5), colB: fl(1), ...o.params },
   });
   const shrubDry = (o = {}) => ({
     id: 'dryshrub', layer: 'under', gen: PL.reeds, variants: 2,
-    params: { height: 0.8, radius: 0.35, count: 3, widthRatio: 0.7, rect: R('twigs'), colA: mix3(rock, sand, 0.4), colB: sand, cattail: false, flex: 0.3, ...o.params },
+    
     tint2: scale3(barkBrown, 1.3), billboard: 0,
     biomes: bw({ DESERT: 1, SAVANNA: 0.7, TUNDRA: 0.4, ROCK: 0.3, BEACH: 0.3 }), m: [-0.5, 1.2], t: [0, 1.4], slope: 0.9, alt: [0, 0.8],
-    zone: -1, dens: 0.8, scale: [0.6, 1.4], lean: 0.12, sink: 0.05, ...o,
+    zone: -1, dens: 0.8, scale: [0.6, 1.4], lean: 0.12, sink: 0.05, ...o, params: { height: 0.8, radius: 0.35, count: 3, widthRatio: 0.7, rect: R('twigs'), colA: mix3(rock, sand, 0.4), colB: sand, cattail: false, flex: 0.3, ...o.params },
   });
 
   // ------------------------------------------------------------------ styles

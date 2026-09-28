@@ -15,7 +15,7 @@ import { buildChunk, buildIndices, cubeDir } from './chunkBuild.js';
 import { bakeDetail, DETAIL_SIZE, DETAIL_LAYERS } from './detailTex.js';
 import { createTerrainMaterial, createTerrainDepthMaterial, updateOriginMod } from './material.js';
 
-const RES = 64;
+const RES_DEFAULT = 64;
 const _dir = new Float64Array(3), _dir2 = new Float64Array(3);
 const _v = new THREE.Vector3();
 const _sphere = new THREE.Sphere();
@@ -54,6 +54,9 @@ class Terrain {
     world.root.add(this.group);
     this.material = createTerrainMaterial(world.body, q, { lite: this._liteLighting(q) });
     this.depthMaterial = createTerrainDepthMaterial();
+    // quads per chunk side
+    this.RES = RES_DEFAULT;
+    const RES = this.RES;
     this.index = new THREE.BufferAttribute(buildIndices(RES), 1);
     // CDLOD range factor from a screen-space error target: a chunk quad should cover ~ppq pixels
     // at the closest distance it is drawn (D = K · side). Fixed per world (baked into morph data).
@@ -63,7 +66,8 @@ class Terrain {
     const ppq = { low: 14, med: 10, high: 7, ultra: 5 }[q.tier] ?? 7;
     // (deterministic captures run on software GL: slightly coarser target so frames stay renderable)
     const shotMode = !!world.engine?.shot;
-    this.K = Math.max(shotMode ? 1.05 : 1.3, Math.min(2.6, hPx / (fov * RES * (shotMode ? ppq * 1.3 : ppq)) * Math.sqrt(q.terrainDetail ?? 1)));
+    const ppqEff = ppq * (shotMode ? 1.3 : 1);
+    this.K = Math.max(shotMode ? 1.05 : 1.3, Math.min(2.6, hPx / (fov * RES * ppqEff) * Math.sqrt(q.terrainDetail ?? 1)));
     try { const tk = parseFloat(new URLSearchParams(globalThis.location?.search || '').get('tk')); if (tk > 0.9 && tk < 4) this.K = tk; } catch (_) { /* no url */ }
     const leaf = q.tier === 'low' ? 0.8 : q.tier === 'med' ? 0.5 : 0.35;   // metres between vertices at max depth
     this.maxLevel = Math.max(4, Math.ceil(Math.log2((this.R * Math.PI / 2) / (RES * leaf))));
@@ -72,7 +76,8 @@ class Terrain {
     this.shadowDist = q.tier === 'ultra' ? 2800 : q.tier === 'med' ? 300 : 900;
     // software rasterizers (headless captures) are fill-rate bound in the shadow cascades: terrain
     // only casts into the near cascades there (GPU tiers keep the full range)
-    if (this._softGL()) this.shadowDist = Math.min(this.shadowDist, 260);
+    this.receiveDist = this.shadowDist * 1.15;
+    if (this._softGL()) { this.shadowDist = Math.min(this.shadowDist, 110); this.receiveDist = Math.min(this.receiveDist, 420); }
     this.shot = !!world.engine?.shot;
     this.uploadBudgetMs = this.shot ? 1e9 : 3;
     this.frame = 0;
@@ -272,7 +277,7 @@ class Terrain {
   }
 
   _job(n) {
-    return { face: n.face, u0: n.u0, v0: n.v0, size: n.size, RES, Dp: n.parent ? n.parent.D : 0 };
+    return { face: n.face, u0: n.u0, v0: n.v0, size: n.size, RES: this.RES, Dp: n.parent ? n.parent.D : 0 };
   }
 
   _dispatch() {
@@ -376,7 +381,7 @@ class Terrain {
           const cast = this.q.shadows !== false && n.closest < (n.inView ? this.shadowDist * 0.6 : this.shadowDist * 0.2) && n.side < this.shadowDist * 0.75;
           n.mesh.castShadow = cast;
           // chunks beyond the last cascade skip the (expensive) shadow lookups entirely
-          n.mesh.receiveShadow = n.closest < this.shadowDist * 1.15;
+          n.mesh.receiveShadow = n.closest < this.receiveDist;
           if (cast) casters++;
         }
       }

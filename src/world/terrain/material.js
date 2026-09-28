@@ -55,6 +55,8 @@ uniform vec4 uRvS;   // strata, snow bias, volcanic glow, crystal sheen
 uniform vec4 uRvS2;  // lushness, forest darkening, global wetness, global snow
 uniform float uRvTime;
 uniform float uRvDebug;
+uniform float uRvLite; // 1 = software-GL budget: no micro layer, single-fetch tiling
+uniform vec4 uRvF;   // detail fade distances: mid start/end, far start/end (scaled by quality)
 varying vec3 vRvW;
 varying vec3 vRvN;
 varying vec4 vRvMat;
@@ -121,10 +123,10 @@ void rvTerrain( inout vec3 albedo ) {
   float n1 = mA.r - 0.5, n2 = mA.g - 0.5, n3 = mA.b - 0.5, n4 = mC.a - 0.5;
   float kS = mA.a;
 
-  float fNear = 1.0 - smoothstep( 18.0, 70.0, dist );
-  rvStoch = dist < 260.0;
-  float fMid = ( 1.0 - smoothstep( 250.0, 1400.0, dist ) ) * q;
-  float fFar = ( 1.0 - smoothstep( 6000.0, 20000.0, dist ) ) * q;
+  float fNear = ( 1.0 - smoothstep( 18.0, 70.0, dist ) ) * ( 1.0 - uRvLite );
+  rvStoch = dist < 260.0 && uRvLite < 0.5;
+  float fMid = ( 1.0 - smoothstep( uRvF.x, uRvF.y, dist ) ) * q;
+  float fFar = ( 1.0 - smoothstep( uRvF.z, uRvF.w, dist ) ) * q;
 
   // ---- geometric layer weights
   float sea = uRvP.y;
@@ -234,11 +236,11 @@ void rvTerrain( inout vec3 albedo ) {
   grassC = mix( grassC, uRvDry, smoothstep( 0.4, 0.15, moist + 0.2 * n3 ) * 0.6 * ( 1.0 - 0.65 * uRvS2.x ) );
   grassC = mix( grassC, uRvGrass2 * vec3( 1.0, 0.92, 0.78 ), smoothstep( 0.28, 0.1, temp ) * 0.6 );
   grassC = mix( grassC, uRvGrass2, smoothstep( 0.55, 0.8, mC.r ) * 0.35 );
-  grassC = mix( grassC, uRvForest * 0.85, smoothstep( 0.5, 0.75, mC.b + 0.3 * n3 ) * 0.4 );
+  grassC = mix( grassC, uRvForest * 0.85, smoothstep( 0.45, 0.85, mC.g * 0.5 + mA.g * 0.5 + 0.3 * n3 ) * 0.35 );
   grassC = mix( grassC, vec3( rvLum( grassC ) ), 0.26 );
   grassC *= 0.78 + 0.44 * mA.b + 0.2 * n4;
-  float soilM = smoothstep( 0.62, 0.8, mC.b + 0.2 * mA.r + 0.25 * wScree );
-  vec3 groundC = mix( grassC, uRvSoil, soilM * 0.8 );
+  float soilM = smoothstep( 0.68, 0.95, mC.b * 0.6 + mA.b * 0.4 + 0.15 * n1 + 0.25 * wScree );
+  vec3 groundC = mix( grassC, uRvSoil, soilM * 0.55 );
   groundC *= 0.8 + 0.4 * mix( 0.5, dGround.a, fMid );
   groundC = mix( groundC, uRvSoil * 0.95, wScree * 0.55 * mix( 0.6, dPeb.b, fMid ) );
 
@@ -360,6 +362,8 @@ export function createTerrainMaterial(body, quality, opts = {}) {
     uRvP: { value: new THREE.Vector4(body.radius, body.ocean?.present ? 0 : -1e9, body.terrain?.amplitude || 3000, quality?.tier === 'low' ? 0.6 : 1) },
     uRvS: { value: new THREE.Vector4(st.strata, st.snowBias, st.volcanic, st.crystal) },
     uRvS2: { value: new THREE.Vector4(st.lush, st.forest, 0, 0) },
+    uRvLite: { value: opts.lite ? 1 : 0 },
+    uRvF: { value: opts.lite ? new THREE.Vector4(160, 700, 2500, 7000) : new THREE.Vector4(250, 1400, 6000, 20000) },
   };
 
   // opts.lite: Lambert lighting (software rasterizers / headless captures, where GGX + IBL on every
@@ -390,7 +394,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v14' + (opts.lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-v15' + (opts.lite ? 'L' : '');
   return mat;
 }
 

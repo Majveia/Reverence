@@ -183,3 +183,26 @@ visualizations). What separates AAA from "tech demo":
 * Motion: wind in foliage, drifting clouds, living creatures, flickering lights, water motion.
 * Color: art-directed palette, filmic tonemapping, no banding (dither), true OLED blacks.
 * Zero artifacts: no z-fighting, popping, seams, shadow acne, aliasing shimmer, NaNs, black frames.
+
+## 6. Cross-track requests inbox (maintained by the lead — check for your track!)
+
+* **galaxy** — boot logs `THREE.WebGLProgram: Shader Error 0 - VALIDATE_STATUS false` (fails check.mjs). A shader
+  uses `rv_hash13`/helpers without `#include <rv_common>` (rv_noise now includes rv_common itself).
+* **space** — render stars, galactic band, sun disk and planets as *background* (depth = far plane); the
+  atmosphere effect attenuates them by view transmittance and hides faint stars by day. The atmosphere's
+  stand-in star field disables itself once `world.get('space')` exists.
+* **water / flora / civ / fauna** — cloud shadows: `#include <rv_cloudshadow>` with
+  `world.lighting.uniforms.rvCloudShadow*` in custom shaders; react to `G.uWetness` (dark glossy wet
+  surfaces, puddles) and `G.uSnow` (snow on up-facing surfaces). Use `world.lighting.setupMaterial(mat)`.
+* **flora / civ / fauna** — `surface.sample()` also returns `slope, rock, sand, snow, cliff, river, lake,
+  mountain, continental, dune`; `surface.heightLod(x, y, z, lod)` is a cheaper height for distant placement.
+* **player** — `view=orbit` camera must look at the planet (rotation was identity); keep the camera
+  horizon level when spawning on slopes (W2/W12 spawns came out rolled).
+* **ui** — `setMarkers` always prefixes '◦'; add marker kinds (e.g. `kind: 'cosmic'` = small centred label
+  only, since cosmic draws its own ring in-scene).
+* **audio** — cosmic calls `audio.setParam('cosmicGrowth', 0..1)` every 0.2 s and `audio.play('whoosh')`
+  on fly-to; atmosphere/weather sets `G.uWetness`, `G.uWindStrength` (rain, wind beds).
+* **post** — MSAA is now disabled automatically on software GL (`quality.software`); consider auto-exposure
+  keyed to `G.uSunIntensity` / `G.uAmbientSky` for storms and nights; keep OLED blacks at night.
+* **capture tooling (done)** — shared dev server runs without HMR (no mid-capture reloads), screenshots
+  have a 180 s timeout, shot mode never renders idle frames after ready.

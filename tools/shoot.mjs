@@ -57,7 +57,7 @@ if (!(await reachable(base + '/'))) {
   const port = await freePort();
   baseUrl = `http://localhost:${port}`;
   log(`[shoot] dev server not reachable at ${base}; starting vite on ${port}`);
-  server = spawn('npx', ['vite', '--port', String(port), '--strictPort', '--host', '127.0.0.1'], { cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..'), stdio: 'ignore', detached: true });
+  server = spawn('npx', ['vite', '--port', String(port), '--strictPort', '--host', '127.0.0.1'], { cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..'), stdio: 'ignore', detached: true, env: { ...process.env, RV_NO_HMR: '1' } });
   for (let i = 0; i < 60 && !(await reachable(baseUrl + '/')); i++) await new Promise((r) => setTimeout(r, 500));
 }
 
@@ -137,7 +137,7 @@ try {
     else if (s.state) console.log('[state]', JSON.stringify(await page.evaluate(() => window.__rv.state())));
     if (s.shot) {
       fs.mkdirSync(path.dirname(path.resolve(s.shot)), { recursive: true });
-      await page.screenshot({ path: s.shot, type: s.shot.endsWith('.jpg') ? 'jpeg' : 'png', quality: s.shot.endsWith('.jpg') ? 92 : undefined });
+      await page.screenshot({ path: s.shot, type: s.shot.endsWith('.jpg') ? 'jpeg' : 'png', quality: s.shot.endsWith('.jpg') ? 92 : undefined, timeout: 180000 });
       log(`[shoot] saved ${s.shot}`);
     }
   }
