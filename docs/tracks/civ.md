@@ -37,15 +37,38 @@ Owner paths: `src/world/civ/**`, this file. Subsystem `civ`, order 35.
 * URL `civdbg=noflora` hides the flora group (debug only, to judge architecture).
 
 ## Capture URLs
-(`/?mode=system&galaxy=0&…`; `getState().civ.capital` gives the capital lat/lon for any world)
+All `/?mode=system&galaxy=0&…`. The capital's lat/lon for any world is in `__rv.state().civ.capital`
+(the planner is deterministic, so these stay valid until the terrain generator changes).
+Add `&civdbg=noflora` to judge architecture without trees (debug only).
 
-* W4 neon night: `star=2&planet=0&tod=0.95&view=fly&alt=61&pitch=-6&lat=1.4077&lon=32.8061&yaw=45`
-* W3 spire: `star=9&planet=2&tod=0.4&view=fly&alt=30&pitch=-8&lat=12.7144&lon=28.2325&yaw=20`
-* W1 village: `star=6&planet=1&tod=0.4&view=fly&lat=7.5&lon=26.655&alt=22&yaw=18&pitch=-12` (capital moved — see state)
+| view | URL |
+|---|---|
+| W4 neon megacity, night, aerial | `/?mode=system&galaxy=0&star=2&planet=0&tod=0.95&view=fly&alt=62&pitch=-6&lat=1.4004&lon=32.7900&yaw=45` |
+| W4 neon street, night | `/?mode=system&galaxy=0&star=2&planet=0&tod=0.95&view=surface&camyaw=0&pitch=12&lat=1.5778&lon=33.0170&yaw=280` |
+| W3 Moebius spire town | `/?mode=system&galaxy=0&star=9&planet=2&tod=0.35&view=fly&alt=30&pitch=-8&lat=12.7144&lon=28.2325&yaw=20` |
+| W7 Tarkovsky monastery town | `/?mode=system&galaxy=0&star=3&planet=2&tod=0.4&view=fly&alt=63&pitch=-26&lat=12.0058&lon=28.4921&yaw=20` |
+| W6 Roger Dean sea city + space elevator | `/?mode=system&galaxy=0&star=1&planet=3&tod=0.4&view=fly&alt=76&pitch=-8&lat=8.4422&lon=34.4330&yaw=45` |
+| W8 Stålenhag industrial + Loop reactor, power lines | `/?mode=system&galaxy=0&star=2&planet=1&tod=0.3&view=fly&alt=63&pitch=-6&lat=12.1822&lon=28.5721&yaw=135` |
+| W1 village street at dusk (lanterns, NPCs) | `/?mode=system&galaxy=0&star=6&planet=1&tod=0.86&view=surface&camyaw=0&pitch=4&lat=7.3241&lon=26.5282&yaw=200` |
+| W1 village golden hour, low aerial | `/?mode=system&galaxy=0&star=6&planet=1&tod=0.29&view=fly&alt=23&pitch=-9&lat=7.1377&lon=26.5678&yaw=340` |
+| W2 BotW ruins | `/?mode=system&galaxy=0&star=11&planet=0&tod=0.4&view=fly&alt=33&pitch=-6&lat=6.3597&lon=26.5589&yaw=315` |
+| W11 Nausicaä nomad camp | `/?mode=system&galaxy=0&star=0&planet=0&tod=0.4&view=fly&alt=50&pitch=-14&lat=12.7438&lon=28.9861&yaw=225` |
+| W10 Hearthian village on stilts + observatory | `/?mode=system&galaxy=0&star=17&planet=0&tod=0.3&view=fly&alt=38&pitch=-12&lat=12.7833&lon=28.3234&yaw=180` |
+| W5 Rick & Morty blobs + portal | `/?mode=system&galaxy=0&star=1&planet=2&tod=0.4&view=fly&alt=50&pitch=-12&lat=15.8554&lon=30.0467&yaw=45` |
+| City lights from orbit (night side) | `/?mode=system&galaxy=0&star=9&planet=2&tod=0.0&view=orbit` |
+| M1 Kubrick monolith (civ 0) | `/?mode=system&galaxy=0&star=0&planet=2.0&tod=0.4` (monolith ~200 m ahead of the default spawn) |
 
 ## Known issues
-* Flora does not know about settlements yet → trees grow through towns (see Requests).
-* Terrain is not flattened under buildings; foundations/terraces bridge slopes instead.
+* Flora does not know about settlements yet → trees and grass grow through towns and roads (see Requests).
+* The default third-person spawn view rarely frames the capital (terrain / trees in between; camera pitch −10°
+  looks at the grass). The capital is placed 0.7–2 km along the default spawn yaw with a line-of-sight score,
+  the hamlet 170–350 m away — see the player Request.
+* Terrain is not flattened under buildings; foundations / terraces / stilts / decks bridge slopes instead.
+* `view=fly` on steep slopes starts with a rolled horizon (player track), e.g. W10.
+* Layout of each far site is computed on the main thread (50–150 ms per metropolis) during the first
+  frames; shot mode hides it, live play shows a few hitches at load. Moving layout to a worker is the next step.
+* Triangle cost: 0.15–0.5 M per detailed town, ~0.75–1 M for level-5 metropolises at `high` (scaled down on
+  med/low via density, tessellation and walker/traffic counts).
 
 ## Requests
 * **flora** — please skip instances inside settlement clearings: `const C = world.civ?.clearings || world.get('civ')?.clearings` (array of `[dx, dy, dz, cosR, keep]`, unit dirs). In `placeLayer` (and grass), for a candidate unit direction `(dx,dy,dz)`: `for (const c of C) if (dx*c[0]+dy*c[1]+dz*c[2] > c[3] && r2 > c[4]) → skip`. Civ is created after flora (order 35 vs 30), so read it lazily when building the worker job config (or listen to `civ:clearings`). Without this, forests grow through every town.

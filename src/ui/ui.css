@@ -309,9 +309,9 @@ body.rv-shot #rv-ui * { transition: none !important; animation: none !important;
 .rv-body:hover .sph, .rv-body.focus .sph { transform: scale(1.12); }
 .rv-body .ring { position: absolute; left: 50%; top: 50%; border-radius: 50%; border: 1.5px solid rgba(235, 220, 190, .45); transform: translate(-50%, -50%) rotateX(72deg) rotate(-18deg); pointer-events: none; }
 .rv-body .here { position: absolute; left: 50%; top: 50%; border-radius: 50%; border: 1px solid rgba(255,220,160,.8); transform: translate(-50%, -50%); pointer-events: none; }
-.rv-body .nm { position: absolute; top: 100%; margin-top: 16px; font-size: 10.5px; font-weight: 500; letter-spacing: .12em; color: var(--ui-fg); white-space: nowrap; text-transform: uppercase; }
-.rv-body .ar { position: absolute; top: 100%; margin-top: 32px; font-size: 9px; letter-spacing: .08em; color: var(--ui-faint); white-space: nowrap; }
-.rv-body .lf { position: absolute; top: 100%; margin-top: 46px; display: flex; gap: 3px; }
+.rv-body .nm { position: absolute; top: calc(50% + 26px); font-size: 10.5px; font-weight: 500; letter-spacing: .12em; color: var(--ui-fg); white-space: nowrap; text-transform: uppercase; }
+.rv-body .ar { position: absolute; top: calc(50% + 42px); font-size: 9px; letter-spacing: .08em; color: var(--ui-faint); white-space: nowrap; }
+.rv-body .lf { position: absolute; top: calc(50% + 57px); display: flex; gap: 3px; }
 .rv-body .lf i { width: 4px; height: 4px; border-radius: 50%; background: rgba(160, 230, 150, .85); }
 .rv-body .lf i.c { background: var(--ui-gold); }
 .rv-moons { position: absolute; top: 100%; left: 50%; margin-top: 66px; display: flex; flex-direction: column; gap: 4px; transform: translateX(-50%); }

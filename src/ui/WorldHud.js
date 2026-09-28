@@ -217,33 +217,57 @@ export class WorldHud {
     if (this._bodySys !== sys) {
       this._bodySys = sys; list.length = 0;
       for (const p of sys?.planets || []) { list.push(p); for (const m of p.moons || []) list.push(m); }
+      if (list.length > this.bodyPool.length) list.length = this.bodyPool.length;
+      this._bodyC = list.map(() => ({ ok: false, x: 0, y: 0, dist: 0, label: false }));
     }
+    const C = this._bodyC || [];
     const W = this.engine.width, H = this.engine.height;
-    let k = 0;
-    if (alpha > 0.01 && cel?.bodyLocal) {
-      for (const b of list) {
-        if (k >= this.bodyPool.length) break;
-        if (b === world.body) continue;
-        cel.bodyLocal(b, _p);
-        const dist = _p.distanceTo(cam.position);
-        _p.sub(world.origin).project(cam);
-        if (!(_p.z < 1 && _p.z > -1 && Math.abs(_p.x) < 0.98 && Math.abs(_p.y) < 0.95)) continue;
-        const m = this.bodyPool[k++];
-        const x = (_p.x * 0.5 + 0.5) * W, y = (-_p.y * 0.5 + 0.5) * H;
-        m.key = b;
-        m.a += (alpha * (b.isMoon ? 0.7 : 0.9) - m.a) * (1 - Math.exp(-dt * 4));
-        if (!m.shown) { m.el.style.display = ''; m.shown = true; }
-        if (b.name !== m.txt) { m.name.textContent = b.name; m.txt = b.name; }
-        const d = fmtDist(dist);
-        if (d !== m.dtxt) { m.dist.textContent = d; m.dtxt = d; }
-        m.el.style.transform = `translate3d(${x.toFixed(1)}px,${y.toFixed(1)}px,0) translate(-50%,-4px)`;
-        m.el.style.opacity = m.a.toFixed(3);
+    const R = world.body.radius;
+    const camP = cam.position, camLen2 = camP.lengthSq();
+    const on = alpha > 0.01 && cel?.bodyLocal;
+    // 1) project + occlusion (hidden behind the current planet)
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i], c = C[i];
+      c.ok = false;
+      if (!on || b === world.body) continue;
+      cel.bodyLocal(b, _p);
+      _d.copy(_p).sub(camP);
+      const dist = _d.length();
+      _d.multiplyScalar(1 / Math.max(1e-9, dist));
+      const t = -camP.dot(_d);
+      if (t > 0 && t < dist && camLen2 - t * t < R * R) continue;
+      _p.sub(world.origin).project(cam);
+      if (!(_p.z < 1 && _p.z > -1 && Math.abs(_p.x) < 0.98 && Math.abs(_p.y) < 0.95)) continue;
+      c.ok = true; c.dist = dist; c.x = (_p.x * 0.5 + 0.5) * W; c.y = (-_p.y * 0.5 + 0.5) * H;
+    }
+    // 2) declutter labels: planets first, then nearer bodies; a label needs a free ~140×30 px box
+    const order = this._bodyOrder || (this._bodyOrder = []);
+    order.length = 0;
+    for (let i = 0; i < list.length; i++) if (C[i].ok) order.push(i);
+    order.sort((a, b) => (list[a].isMoon - list[b].isMoon) || (C[a].dist - C[b].dist));
+    for (let n = 0; n < order.length; n++) {
+      const c = C[order[n]];
+      c.label = true;
+      for (let m = 0; m < n; m++) {
+        const o = C[order[m]];
+        if (o.label && Math.abs(o.x - c.x) < 130 && Math.abs(o.y - c.y) < 34) { c.label = false; break; }
+        if (!o.label && Math.abs(o.x - c.x) < 10 && Math.abs(o.y - c.y) < 10) { c.label = false; break; }
       }
     }
-    for (; k < this.bodyPool.length; k++) {
-      const m = this.bodyPool[k];
-      m.a = 0;
-      if (m.shown) { m.el.style.display = 'none'; m.shown = false; }
+    // 3) write
+    for (let i = 0; i < this.bodyPool.length; i++) {
+      const m = this.bodyPool[i], c = C[i], b = list[i];
+      const want = c?.ok ? alpha * (b.isMoon ? 0.7 : 0.92) : 0;
+      m.a += (want - m.a) * (1 - Math.exp(-dt * 4));
+      if (m.a < 0.01 || !c) { if (m.shown) { m.el.style.display = 'none'; m.shown = false; } continue; }
+      if (!m.shown) { m.el.style.display = ''; m.shown = true; }
+      if (b.name !== m.txt) { m.name.textContent = b.name; m.txt = b.name; }
+      const d = fmtDist(c.dist);
+      if (d !== m.dtxt) { m.dist.textContent = d; m.dtxt = d; }
+      const full = c.label ? '' : 'none';
+      if (m.full !== full) { m.name.style.display = full; m.dist.style.display = full; m.full = full; }
+      if (c.ok) m.el.style.transform = `translate3d(${c.x.toFixed(1)}px,${c.y.toFixed(1)}px,0) translate(-50%,-4px)`;
+      m.el.style.opacity = m.a.toFixed(3);
     }
   }
 

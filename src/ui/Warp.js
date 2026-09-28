@@ -12,7 +12,9 @@ export class Warp {
   constructor(ui) {
     this.ui = ui;
     this.engine = ui.engine;
-    this.enabled = !this.engine.shot;
+    let reduce = false;
+    try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) { /* ignore */ }
+    this.enabled = !this.engine.shot && !reduce;
     // capture/debug: &uipanel=warp shows the transition deterministically (driven by ui.update)
     this.simDriven = this.engine.shot && Params.raw.get('uipanel') === 'warp';
     this.canvas = document.createElement('canvas');

@@ -42,6 +42,8 @@ const TELE_LABEL = { speed: 'Speed', altitude: 'Alt', alt: 'Alt', z: 'Redshift',
 const BAR_KEYS = new Set(['boost', 'throttle', 'fuel', 'energy', 'charge', 'heat']);
 const ease = (t) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
 const approach = (v, t, rate, dt) => v + (t - v) * (1 - Math.exp(-dt * rate));
+/** Write opacity only when it changes (avoids redundant style invalidation every frame). */
+export function op(el, v) { const s = typeof v === 'string' ? v : v.toFixed(3); if (el._rvOp !== s) { el._rvOp = s; el.style.opacity = s; } }
 
 export class UI {
   constructor(engine) {
@@ -164,18 +166,19 @@ export class UI {
       p = { el, text: null, action: null, dev: null, a: 0, dying: false };
       this._prompts.set(id, p);
     }
+    if (p.dying) p._settled = false;
     p.dying = false;
     if (p.text !== text || p.action !== action || p.dev !== this.device) {
       p.text = text; p.action = action; p.dev = this.device;
       p.el.innerHTML = promptHTML(this.input, text, action, this.device);
-      p.a = Math.min(p.a, 0.2);
+      p.a = Math.min(p.a, 0.2); p._settled = false;
     }
     this._refreshPromptActions();
   }
 
   clearPrompt(id) {
     const p = this._prompts.get(id);
-    if (p) p.dying = true;
+    if (p) { p.dying = true; p._settled = false; }
     this._refreshPromptActions();
   }
 
@@ -200,7 +203,7 @@ export class UI {
   hint(text, ms = 6000) {
     const h = this.hintS;
     if (!text) { h.ms = 0.001; h.t = 1; return; }
-    if (text !== h.text) { this.el.hint.textContent = String(text); h.text = text; h.a = Math.min(h.a, 0.1); }
+    if (text !== h.text) { this.el.hint.textContent = this._adaptHint(String(text)); h.text = text; h.a = Math.min(h.a, 0.1); }
     h.t = 0; h.ms = ms > 0 ? ms / 1000 : Infinity;
   }
 
@@ -381,6 +384,7 @@ export class UI {
       this.root.classList.toggle('rv-touchmode', dev === 'touch');
       for (const [, p] of this._prompts) if (!p.dying) { p.el.innerHTML = promptHTML(input, p.text, p.action, dev); p.dev = dev; }
       this.obS.key = '';
+      if (this.hintS.text) this.el.hint.textContent = this._adaptHint(this.hintS.text);
       if (this.menu?.open) this.menu.render();
     }
 
@@ -410,6 +414,7 @@ export class UI {
     const ctx = this._ctx;
     ctx.hidden = hidden; ctx.hudAlpha = this.hudA; ctx.safeL = this._safe.l; ctx.safeB = this._safe.b;
     ctx.titleBusy = !!this.titleS;
+    ctx.hintVisible = this.hintS.a > 0.08;
     const w = this.engine.director.current?.world;
     ctx.playerState = w?.player && w.controller === w.player ? w.player.state : null;
 
@@ -421,9 +426,10 @@ export class UI {
       this.el.photoExit.style.display = show ? '' : 'none';
     } else if (this.el.photoExit.style.display !== 'none') this.el.photoExit.style.display = 'none';
 
-    this.el.hud.style.opacity = hidden ? '0' : this.hudA.toFixed(3);
-    this.el.hud.style.visibility = hidden ? 'hidden' : '';
-    this.el.topbtns.style.opacity = (0.35 + 0.65 * this.hudA).toFixed(3);
+    op(this.el.hud, hidden ? '0' : this.hudA);
+    const vis = hidden ? 'hidden' : '';
+    if (this.el.hud._rvVis !== vis) { this.el.hud._rvVis = vis; this.el.hud.style.visibility = vis; }
+    op(this.el.topbtns, 0.35 + 0.65 * this.hudA);
 
     this._updateCrumbs(dt);
     this._updateTitle(dt);
@@ -467,7 +473,7 @@ export class UI {
   }
 
   _clearTransient() {
-    for (const [, p] of this._prompts) p.dying = true;
+    for (const [, p] of this._prompts) { p.dying = true; p._settled = false; }
     this.setTelemetry(null);
     this.setMarkers([]);
     this.touch?.releaseAll();
@@ -513,8 +519,8 @@ export class UI {
     const t = this.crumbT;
     const want = t < 9 ? 1 : 0.5;
     this.crumbA = approach(this.crumbA, want, t < 9 ? 3 : 0.8, dt);
-    this.el.crumbs.style.opacity = this.crumbA.toFixed(3);
-    this.el.crumbSub.style.opacity = (Math.max(0, Math.min(1, (9.5 - t) / 1.5))).toFixed(3);
+    op(this.el.crumbs, this.crumbA);
+    op(this.el.crumbSub, Math.max(0, Math.min(1, (9.5 - t) / 1.5)));
   }
 
   _updateTitle(dt) {
@@ -555,9 +561,19 @@ export class UI {
       const want = p.dying ? 0 : 1;
       p.a = approach(p.a, want, p.dying ? 10 : 9, dt);
       if (p.dying && p.a < 0.02) { p.el.remove(); this._prompts.delete(id); this._refreshPromptActions(); continue; }
-      p.el.style.opacity = p.a.toFixed(3);
-      p.el.style.transform = `translate3d(0,${((1 - p.a) * 6).toFixed(2)}px,0) scale(${(0.96 + 0.04 * p.a).toFixed(4)})`;
+      if (p.a > 0.999 && p._settled) continue;
+      p._settled = p.a > 0.999;
+      op(p.el, p._settled ? 1 : p.a);
+      p.el.style.transform = p._settled ? 'none' : `translate3d(0,${((1 - p.a) * 6).toFixed(2)}px,0) scale(${(0.96 + 0.04 * p.a).toFixed(4)})`;
     }
+  }
+
+  /** Drop keyboard-only phrases from free-text hints when the touch layer is active. */
+  _adaptHint(text) {
+    if (this.device !== 'touch') return text;
+    const segs = text.replace(/scroll or pinch/g, 'pinch').split(/\s·\s/);
+    const keep = segs.filter((x) => !/WASD|scroll|mouse|Shift|Space|Esc\b|\b[A-Z]\/[A-Z]\b|\b(?:[A-Z]|Ctrl)\s+(?:to\s)?[a-z]+$|^[A-Z]\s|\s[A-Z]$/.test(x));
+    return keep.join(' · ').replace(/\bclick\b/g, 'tap');
   }
 
   _updateHint(dt) {
@@ -567,7 +583,7 @@ export class UI {
     // onboarding hints fade early once the user is clearly playing
     const early = h.t > 3.5 && this.idle === 0 && h.ms !== Infinity ? 0.35 : 1;
     h.a = approach(h.a, want * early, want ? 3 : 1.6, dt);
-    this.el.hint.style.opacity = h.a.toFixed(3);
+    op(this.el.hint, h.a);
   }
 
   _updateTele(dt) {
@@ -575,13 +591,15 @@ export class UI {
     s.a = approach(s.a, s.data ? 1 : 0, s.data ? 6 : 4, dt);
     if (s.a < 0.01) { if (this.el.tele.style.display !== 'none') this.el.tele.style.display = 'none'; return; }
     if (this.el.tele.style.display === 'none') this.el.tele.style.display = '';
-    this.el.tele.style.opacity = s.a.toFixed(3);
+    op(this.el.tele, s.a);
   }
 
   _updateOnboard(dt) {
     const s = this.obS;
     const dev = this.device;
-    const want = (this.scheme === 'character') && dev !== 'touch' && !this.engine.director.busy;
+    const wv = this.engine.director.current?.world;
+    const onFoot = !!(wv?.player && wv.controller === wv.player && wv.player.view !== 'orbit');
+    const want = this.scheme === 'character' && onFoot && dev !== 'touch' && !this.engine.director.busy;
     const key = want ? `${this.scheme}|${dev}` : '';
     if (key !== s.key) {
       s.key = key;
@@ -606,7 +624,7 @@ export class UI {
     s.a = approach(s.a, show ? 0.9 : 0, show ? 2.5 : 1.2, dt);
     if (s.a < 0.01) { if (this.el.onboard.style.display !== 'none') this.el.onboard.style.display = 'none'; return; }
     if (this.el.onboard.style.display === 'none') this.el.onboard.style.display = '';
-    this.el.onboard.style.opacity = s.a.toFixed(3);
+    op(this.el.onboard, s.a);
   }
 
   _updateMarkers(dt, hidden) {

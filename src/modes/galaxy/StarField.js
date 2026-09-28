@@ -11,7 +11,7 @@ export class StarField {
     this.engine = engine;
     this.S = S;
     const q = engine.quality;
-    this.dustSteps = q.tier === 'low' ? 2 : q.tier === 'med' ? 4 : 6;
+    this.dustSteps = q.tier === 'low' ? 3 : q.tier === 'med' ? 5 : 8;
     const common = {
       tMap: shared.tMap, tNoise: shared.tNoise, uMapR: shared.uMapR, uHDust: shared.uHDust, uFlare: shared.uFlare,
       uR: shared.uR, uDustL: shared.uDustL, uNoiseF: shared.uNoiseF, uDustNoise: shared.uDustNoise, uExt: shared.uExt,
@@ -22,7 +22,7 @@ export class StarField {
       uCamPat: { value: new THREE.Vector3() },
       uPixScale: { value: 500 },
       uEps: { value: 0.0025 }, uHaloR: { value: 2.2 }, uHaloFrac: { value: 0.035 }, uCoreSigma: { value: 0.62 },
-      uSpikeFrac: { value: 0.05 }, uSpikeMin: { value: 0.6 },
+      uSpikeFrac: { value: 0.035 }, uSpikeMin: { value: 0.9 }, uSphW: { value: S.type === 'elliptical' ? 1.0 : 0.4 },
     };
     this.common = common;
     const mk = (own) => new THREE.ShaderMaterial({

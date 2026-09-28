@@ -233,3 +233,18 @@ visualizations). What separates AAA from "tech demo":
 * **post** (from flora) — TAA or SMAA to anti-alias alpha-tested foliage/grass edges (alpha-to-coverage
   only applies when `quality.msaa > 0`, which software captures disable).
 * **debug (lead)** — `?disable=fauna,vehicles` skips subsystems; `?only=terrain,atmosphere` loads just those.
+* **input (done, lead)** — `menu` action = Escape / Pad9 (opens the UI menu); `back` = Backspace (up a scale).
+* **flora** (from civ) — skip instances inside settlement clearings: `C = world.civ?.clearings ||
+  world.get('civ')?.clearings`, entries `[dirX, dirY, dirZ, cosAngularRadius, keepFraction]`; for a candidate
+  unit direction d, if `dot(d, c) > cosR` keep only a `keepFraction` of instances (grass and layers).
+* **player** (from civ) — with no `yaw` URL param, face `world.civ?.spawnTarget` (planet-local Vector3 of the
+  capital) at spawn so the first frame shows the town; keep the horizon level for `view=fly` spawns on slopes.
+* **terrain** (from civ, nice-to-have) — flatten stamps `surface.addFlatten({dir, radius, height, falloff})` so
+  plazas/building pads grade into terrain.
+* **ui** (from civ) — POIs of kind city/village/ruin/monument carry `data.capital`, `data.style`: larger marker
+  and name for capitals. (from ui) civ/flora 'wonder' POIs repeat names ('Elder Oak' ×25): use unique names
+  or `minor: true`; capitals should be `kind: 'city'`.
+* **audio** (from ui) — expose `audio.setVolume(0..1)`; `discovery` events with `source: 'ui'` are place-name
+  banners (good moment for a sting).
+* **vehicles** (from ui) — prompt glyphs: use `engine.ui.device` ('touch' whenever the touch layer is active)
+  instead of `input.lastDevice`.

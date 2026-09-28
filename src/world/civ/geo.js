@@ -58,6 +58,7 @@ export class Geo {
     this.bo = new THREE.Vector3(); this.bu = new THREE.Vector3(0, 1, 0); this.seed = 0;
     this.win = { sx: 2.6, fh: 3.4, y0: 0 };
     this.tris = 0;
+    this.segK = 1;      // tessellation multiplier for round primitives (big sites use fewer segments)
     this.lights = [];   // glow sprites: {x,y,z (mesh space), r,g,b (linear * intensity), size, kind, phase}
     this.boxes = [];    // collider boxes: {c: Vector3 (mesh space), q: Quaternion, hx, hy, hz}
   }
@@ -221,7 +222,9 @@ export class Geo {
   }
 
   /** Cylinder/cone frustum along +y from y0, radii r0 (bottom) r1 (top). */
+  _seg(seg) { return seg >= 16 ? Math.max(12, Math.round(seg * this.segK)) : seg >= 8 ? Math.max(7, Math.round(seg * this.segK)) : seg; }
   cyl(cx, y0, cz, r0, r1, h, seg = 12, caps = true, M = this.M, opt = null) {
+    seg = this._seg(seg);
     const cell = CELL_PATS.has(M.pat);
     const circ = Math.PI * (r0 + r1);
     const ncol = cell ? Math.max(3, Math.round(circ / this.win.sx)) : 0;
@@ -253,6 +256,7 @@ export class Geo {
 
   /** Surface of revolution: pts = [[r, y], ...] bottom → top, smooth normals. */
   lathe(cx, cy, cz, pts, seg = 16, M = this.M, opt = null) {
+    seg = this._seg(seg);
     const n = pts.length, base = this.vc;
     const a0 = opt?.a0 ?? 0, a1 = opt?.a1 ?? Math.PI * 2;
     // profile normals
@@ -362,6 +366,7 @@ export class Geo {
 
   /** Tube along a polyline of Vector3 (current frame), radius r (number or fn(t)). */
   tube(path, r, seg = 6, M = this.M, closed = false) {
+    if (this.segK < 0.8 && seg > 4) seg = Math.max(4, Math.round(seg * this.segK));
     const n = path.length; if (n < 2) return this;
     const base = this.vc;
     const T = new THREE.Vector3(), Nn = new THREE.Vector3(), B = new THREE.Vector3(), prevN = new THREE.Vector3();

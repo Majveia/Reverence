@@ -22,7 +22,7 @@ export function galaxyPalette(S) {
   const c = S.colors || { core: [1, 0.7, 0.4], arms: [0.5, 0.65, 1], hii: [1, 0.3, 0.5], dust: [0.3, 0.2, 0.1] };
   const bulge = norm(mix([1.0, 0.72, 0.46], c.core, 0.35));
   const old = norm(mix([1.0, 0.84, 0.68], c.core, 0.15));
-  const young = norm(mix([0.52, 0.68, 1.0], c.arms, 0.3));
+  const young = norm(mix([0.4, 0.58, 1.0], c.arms, 0.25));
   const hii = norm(mix([1.0, 0.28, 0.46], c.hii, 0.35));
   return { bulge, old, young, hii };
 }
@@ -57,14 +57,15 @@ export class GalaxyVolume {
       bulgeA = new THREE.Vector4(a * 0.12, a * 0.45, a * 1.5, a * 4.5);
       bulgeW = new THREE.Vector4(0.1, 0.25, 0.37, 0.28);
       bulgeS = new THREE.Vector3(S.ellQ[0], S.ellQ[1], S.ellQ[2]);
-      bulgeL = 9.0;
+      bulgeL = 60.0;
     } else {
+      // Sérsic-like: nucleus + three Plummer spheres with extended wings (steeper than one Plummer)
       const bc = S.bulgeComp;
-      bulgeA = new THREE.Vector4(S.nucA * K, bc[0].a * K, bc[1].a * K, bc[2].a * K);
-      bulgeW = new THREE.Vector4(0.012, bc[0].w, bc[1].w, bc[2].w);
+      bulgeA = new THREE.Vector4(S.nucA * K, bc[0].a * K * 1.2, bc[1].a * K * 1.1, bc[2].a * K * 2.2);
+      bulgeW = new THREE.Vector4(0.02, 0.2, 0.42, 0.36);
       bulgeS = new THREE.Vector3(1, S.bulgeQ, 1);
       const fb = galaxy.bulgeFrac;
-      bulgeL = (type === 'lenticular' ? 4.2 : 2.6) * (fb / 0.14) * (S.barA > 0 ? 0.55 : 1);
+      bulgeL = (type === 'lenticular' ? (S.dustRing ? 50 : 20) : 24) * (fb / 0.14) * (S.barA > 0 ? 0.6 : 1);
     }
     this.uniforms = {
       ...gu,
@@ -80,12 +81,12 @@ export class GalaxyVolume {
       uColBar: { value: new THREE.Vector3(...pal.bulge).lerp(new THREE.Vector3(...pal.old), 0.4) },
       uColHalo: { value: new THREE.Vector3(1.0, 0.86, 0.72) },
       uExt: { value: new THREE.Vector3(0.58, 0.76, 1.0) },
-      uOldL: { value: type === 'lenticular' ? 1.25 : type === 'irregular' ? 0.6 : 1.0 },
-      uYoungL: { value: type === 'irregular' ? 0.55 : 0.42 },
-      uHiiL: { value: type === 'irregular' ? 1.1 : 0.9 },
-      uDustL: { value: 3.2 },
+      uOldL: { value: type === 'lenticular' ? (S.dustRing ? 0.35 : 0.6) : type === 'irregular' ? 0.3 : 0.35 },
+      uYoungL: { value: type === 'irregular' ? 0.9 : 0.8 },
+      uHiiL: { value: type === 'irregular' ? 2.2 : 2.0 },
+      uDustL: { value: 8.0 }, uScreen: { value: 0.9 },
       uBulgeA: { value: bulgeA }, uBulgeW: { value: bulgeW }, uBulgeS: { value: bulgeS }, uBulgeL: { value: bulgeL },
-      uBar: { value: new THREE.Vector4(S.barA * K || 1, S.barB * K || 1, S.barC * K || 1, S.barA > 0 ? 1.35 * (galaxy.bulgeFrac / 0.14) : 0) },
+      uBar: { value: new THREE.Vector4(S.barA * K || 1, S.barB * K || 1, S.barC * K || 1, S.barA > 0 ? 30 * (galaxy.bulgeFrac / 0.14) : 0) },
       uBarAng: { value: S.phi0 },
       uHalo: { value: new THREE.Vector2(S.haloA * K, type === 'elliptical' ? 0.6 : 0.35) },
       uDsMin: { value: S.hDust * K * 0.25 }, uDsMax: { value: R / 36 }, uDsNear: { value: 0.02 },

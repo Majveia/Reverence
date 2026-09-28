@@ -21,7 +21,7 @@ uniform mat3 uRayMat;          // view → pattern-frame rotation
 uniform float uR, uRmax, uYmax;
 uniform float uHOld, uHYoung, uHDust, uFlare;
 uniform vec3 uColOld, uColYoung, uColHII, uColBulge, uColBar, uColHalo, uExt;
-uniform float uOldL, uYoungL, uHiiL, uDustL;
+uniform float uOldL, uYoungL, uHiiL, uDustL, uScreen;
 uniform vec4 uBulgeA, uBulgeW;
 uniform vec3 uBulgeS;
 uniform float uBulgeL;
@@ -160,6 +160,8 @@ void main(){
     float dm = mix(1.0, clamp(dn, 0.0, 3.0), uDustNoise);
     float gm = mix(1.0, clamp(0.55 + 0.9 * N1.a + 0.5 * w2 * (N2.b - 0.5), 0.2, 2.0), uDustNoise);
     vec3 E = uColOld * (M.r * uOldL * IO) + (uColYoung * (M.g * uYoungL) + uColHII * (M.a * uHiiL)) * (IY * gm);
+    // clumpy dust mixed with the stars: local obscuration of this sample's own light
+    E *= exp(-uExt * (M.b * uScreen * dm));
     // analytic components over the segment
     vec4 G1 = bulgeG(tb, sqAb, hb, c2b);
     float G1h = plumG(tb, 1.0, hh, c2h);

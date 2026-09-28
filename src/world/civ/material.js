@@ -231,7 +231,7 @@ if (rvPat == 1 || rvPat == 6 || rvPat == 15 || rvPat == 22) {
   if (rvPat == 6) trim = rvAlb * 0.6;
   rvAlb = mix(rvAlb, trim, clamp(frame, 0.0, 1.0));
   rvAlb = mix(rvAlb, mix(glass, interior, (rvPat == 6 ? 0.06 : 0.22) * (0.4 + 0.6 * night)), win);
-  rvRough = mix(rvRough, 0.04 + 0.05 * hsh2, win);
+  rvRough = mix(rvRough, 0.12 + 0.06 * hsh2, win);
   rvMetal = mix(rvMetal, rvPat == 6 ? 0.65 : 0.25, win);
   rvGlass = win;
   // plaster / cladding micro relief outside the panes
@@ -476,6 +476,8 @@ if (rvPat != 7 && rvPat != 8 && rvPat != 17) {
   float wet = uWet * (0.6 + 0.4 * smoothstep(0.2, 0.8, upness));
   rvAlb *= 1.0 - 0.35 * wet;
   rvRough = mix(rvRough, rvRough * 0.25, wet);
+  // glass never goes mirror-perfect (the night env map holds stars → sparkle noise)
+  rvRough = max(rvRough, 0.12 * rvGlass);
   // street-level warm bounce at night (lamps, shopfronts)
   rvEmi += rvAlb * uWinCol * night * 0.06 * uEmitK * exp(-max(vAux.x, 0.0) * 0.28);
 }

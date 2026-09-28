@@ -17,7 +17,7 @@ float gxd_vint(float y0, float y1, float dt, float h){
   return h * dt / dy * (tanh(clamp(y1 / h, -15.0, 15.0)) - tanh(clamp(y0 / h, -15.0, 15.0)));
 }
 // optical depth (rgb) between two pattern-frame points
-vec3 gx_dustTau(vec3 a, vec3 b){
+vec3 gx_dustTau(vec3 a, vec3 b, float jit){
   if (uDustSteps <= 0) return vec3(0.0);
   vec3 d = b - a; float len = length(d);
   if (len < 1e-7) return vec3(0.0);
@@ -33,7 +33,7 @@ vec3 gx_dustTau(vec3 a, vec3 b){
   for (int i = 0; i < 12; i++) {
     if (i >= uDustSteps) break;
     float ta = t0 + dt * float(i), tb = ta + dt;
-    vec3 pa = a + dir * ta, pb = a + dir * tb, pm = 0.5 * (pa + pb);
+    vec3 pa = a + dir * ta, pb = a + dir * tb, pm = a + dir * (ta + dt * jit);
     vec2 uv = pm.xz / (2.0 * uMapR) + 0.5;
     if (abs(uv.x - 0.5) >= 0.5 || abs(uv.y - 0.5) >= 0.5) continue;
     float Mb = textureLod(tMap, uv, 0.0).b;
@@ -60,14 +60,15 @@ uniform float uPixScale, uGain, uLumExp, uSoft, uWeight, uLocal, uEps, uHaloR, u
 uniform vec2 uFadeNear;
 uniform vec3 uLodCenter;
 uniform float uLodRadius;
-uniform float uClusterBoost;
+uniform float uClusterBoost, uSphW;
 varying vec3 vCol;
 varying float vSize;
 varying float vSpike;
 vec3 rotT(vec3 p, float a){ float c = cos(a), s = sin(a); return vec3(p.x * c - p.z * s, p.y, p.x * s + p.z * c); }
 void main(){
   int f = int(aCol.a * 255.0 + 0.5);
-  int follow = f / 16;
+  int sph = f / 64;
+  int follow = (f / 16) - sph * 4;
   int cl = (f / 8) - (f / 16) * 2;
   float r = max(length(position.xz), 1e-4);
   float omega = -uV0 * (1.0 - exp(-r / uRt)) / r;
@@ -79,17 +80,21 @@ void main(){
   float L = exp2(aLogL * 3.3219281 * uLumExp);
   float flux = L * uGain / (d * d + uSoft * uSoft);
   flux *= smoothstep(uFadeNear.x, uFadeNear.y, d);
+  vec3 sp = rotT(position, ang - uPat);            // pattern frame
   if (uLocal > 0.5) {
     float dl = length(position - uLodCenter);
     flux *= 1.0 - smoothstep(uLodRadius * 0.72, uLodRadius, dl);
-  } else if (cl == 1) flux *= uClusterBoost;
-  flux *= uWeight;
+  } else {
+    if (cl == 1) flux *= uClusterBoost;
+    // inside the local LOD sphere the real neighborhood stars take over
+    if (uLodRadius > 0.0) flux *= smoothstep(0.5, 1.0, length(sp - uLodCenter) / uLodRadius);
+  }
+  flux *= uWeight * (sph == 1 ? uSphW : 1.0);
   vec3 col = aCol.rgb * aCol.rgb;
   float Fp = flux * uPixScale * uPixScale;
   float lum0 = Fp * max(col.r, max(col.g, col.b));
   if (lum0 < uEps * 0.03 || mv.z > 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vSize = 1.0; vSpike = 0.0; return; }
-  vec3 sp = rotT(position, ang - uPat);
-  col *= exp(-gx_dustTau(sp, uCamPat));
+  col *= exp(-gx_dustTau(sp, uCamPat, fract(float(gl_VertexID) * 0.61803399)));
   float lum = Fp * max(col.r, max(col.g, col.b));
   float x = lum * uHaloFrac / (3.14159265 * uHaloR * uHaloR * uEps);
   float rv = x > 1.0 ? uHaloR * sqrt(sqrt(x) - 1.0) : 0.0;

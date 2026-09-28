@@ -104,7 +104,7 @@ class Civ {
       const prof = { ...kit.style.profile };
       if (s.kind === 'monument') { prof.landmark = false; }
       s.layout = s.kind === 'monument' ? { roads: [], lots: [], props: [], paths: [], plaza: { x: 0, z: 0, r: 16, h: s.h0 }, ground: null, water: false }
-        : layoutSite(s, this.S, prof, this.qk);
+        : layoutSite(s, this.S, prof, this.qk * ({ metropolis: 0.68, city: 0.85 }[s.kind] ?? 1));
       if (s.hamlet) this._hamletRoad(s);
     }
     return s.layout;
@@ -223,6 +223,7 @@ class Civ {
     const { M, style } = kit;
     const rng = new RNG(s.seed ^ 0xde7);
     const g = new Geo();
+    g.segK = ({ metropolis: 0.5, city: 0.65, town: 0.85 }[s.kind] ?? 1) * (this.qk < 0.8 ? 0.75 : 1);
     const ctx = { M, rng, site: s, style: s.kit, level: s.level, kind: s.kind, neonM: M.neon };
     const sea = this.S.seaLevel > -1e8 ? this.S.seaLevel : -Infinity;
     // ---- buildings
@@ -262,20 +263,23 @@ class Civ {
           g.cyl(0, -drop - 1.2, 0, r + bat, r, drop + 1.25, 20, true, M.found);
         } else if (drop > 0.8) {
           // battered retaining terrace (wider at the base) + coping
-          g.box(0, -drop - 1.2, 0, lot.w + 0.5 + bat * 2, drop * 0.5 + 1.2, lot.d + 0.5 + bat * 2, 0.08, M.found);
-          g.box(0, -drop * 0.5, 0, lot.w + 0.5 + bat, drop * 0.5 + 0.05, lot.d + 0.5 + bat, 0.06, M.found);
+          g.box(0, -drop - 1.2, 0, lot.w + 0.5 + bat * 2, drop * 0.5 + 1.2, lot.d + 0.5 + bat * 2, 0, M.found);
+          g.box(0, -drop * 0.5, 0, lot.w + 0.5 + bat, drop * 0.5 + 0.05, lot.d + 0.5 + bat, 0, M.found);
           g.box(0, -0.12, 0, lot.w + 0.7 + bat, 0.2, lot.d + 0.7 + bat, 0.04, M.trim && M.trim.pat !== PAT.NEON ? M.trim : M.found);
-        } else g.box(0, -drop - 1.2, 0, lot.w + 0.5, drop + 1.2 + 0.05, lot.d + 0.5, 0.04, M.found);
-        if (drop > 1.8) { // steps up to the door
+        } else g.box(0, -drop - 1.2, 0, lot.w + 0.5, drop + 1.2 + 0.05, lot.d + 0.5, 0, M.found);
+        if (drop > 1.2 && drop < 4.5 && !style.foundation) { // steps up to the door
           const n = Math.ceil(drop / 0.3);
-          for (let i = 0; i < n; i++) g.box(0, -drop - 0.6, lot.d / 2 + 0.25 + (n - i) * 0.35, 1.6, i * 0.3 + 0.6, 0.36, 0.02, M.found);
+          for (let i = 0; i < n; i++) g.box(0, -drop - 0.6, lot.d / 2 + 0.25 + (n - i) * 0.35, 1.6, i * 0.3 + 0.6, 0.36, 0, M.found);
         }
       }
       let h = 6;
+      const t0 = g.tris;
       try { h = style.build(g, lot, ctx) ?? 6; } catch (e) { if (!this._warned) { console.warn('[civ] build failed', lot.type, e); this._warned = true; } }
       lot.farH = h;
+      if (globalThis.__civProf) { const P2 = globalThis.__civProf; P2[lot.type] = (P2[lot.type] || 0) + g.tris - t0; P2['#' + lot.type] = (P2['#' + lot.type] || 0) + 1; }
       if (++k % 6 === 0) yield;
     }
+    if (globalThis.__civProf) globalThis.__civProf['@lots' + s.id] = g.tris;
     // ---- props: lamps, stalls, plaza centerpiece
     for (const p of L.props) {
       const f = this._frame(s, p.x, p.z, p.rot, p.h + 0.05, _m);
@@ -284,6 +288,9 @@ class Civ {
       else if (p.type === 'stall') P.stall(g, M, rng);
     }
     yield;
+    if (globalThis.__civProf) globalThis.__civProf['@props' + s.id] = g.tris;
+    if (style.profile?.powerLines && s.kind !== 'monument' && s.kind !== 'ruin') { this._powerLines(g, s, L, M, rng); yield; }
+    if (globalThis.__civProf) globalThis.__civProf['@power' + s.id] = g.tris;
     if (s.kind !== 'monument') this._plazaPiece(g, s, L, M, rng, ctx);
     else this._monument(g, s, M, rng, ctx);
     yield;
@@ -510,11 +517,81 @@ class Civ {
     if (pts) { pts.material.depthTest = false; pts.material.uniforms.uFarFade.value.set(4000, 2e6); pts.renderOrder = 6; pts.name = 'civ-network'; this.root.add(pts); this.network = pts; }
   }
 
+  /** Stålenhag / Pacific Drive power lines: chains of lattice mega-pylons marching out of town, sagging cables. */
+  _powerLines(g, s, L, M, rng) {
+    const G = L.ground; if (!G) return;
+    const iron = M.iron || M.metal;
+    const lines = s.kind === 'metropolis' || s.kind === 'city' ? 3 : 2;
+    const f = new THREE.Matrix4();
+    const H = 34, arms = [-7, 7];
+    for (let li = 0; li < lines; li++) {
+      const a0 = s.heading + li / lines * Math.PI * 2 + 0.5;
+      let prev = null;
+      const n = Math.round((s.radius * 1.8 + 900) / 95);
+      for (let i = 0; i < n; i++) {
+        const d = s.radius * 0.6 + i * 95;
+        const a = a0 + Math.sin(i * 0.35 + li) * 0.08;
+        const x = Math.cos(a) * d, z = Math.sin(a) * d;
+        if (G.wet(x, z)) { prev = null; continue; }
+        const h = G.h(x, z);
+        this._frame(s, x, z, a + Math.PI / 2, h, f);
+        g.begin(f, rng.next() * 100);
+        g.box(0, -1.5, 0, 7, 2, 7, 0.1, M.found);
+        P.lattice(g, H, 6.5, 1.4, iron, 8, 0.16);
+        for (const y of [H * 0.72, H * 0.9]) g.box(0, y, 0, 15, 0.5, 0.6, 0.02, iron);
+        for (const y of [H * 0.72, H * 0.9]) for (const ax of arms) g.cyl(ax, y - 1.6, 0, 0.18, 0.18, 1.6, 6, true, mat('#c8d0d0', 0.2, 0, PAT.PLAIN));
+        g.light(0, H + 0.3, 0, '#ff2a1a', 6, 1.8, 1);
+        g.collider(0, H / 2, 0, 3.2, H / 2, 3.2);
+        // attach points in mesh space
+        const pts = [];
+        for (const y of [H * 0.72, H * 0.9]) for (const ax of arms) pts.push(new THREE.Vector3(ax, y - 1.7, 0).applyMatrix4(f));
+        if (prev) {
+          g.begin(new THREE.Matrix4(), 0);
+          for (let k = 0; k < pts.length; k++) {
+            const A = prev[k], B = pts[k];
+            const up = A.clone().add(s.pos).normalize();
+            const cab = [];
+            for (let t = 0; t <= 10; t++) { const u = t / 10; cab.push(A.clone().lerp(B, u).addScaledVector(up, -4.5 * 4 * u * (1 - u))); }
+            g.tube(cab, 0.06, 3, iron);
+          }
+        }
+        prev = pts;
+      }
+    }
+  }
+
   // ------------------------------------------------------------------ centerpieces & monuments
   _plazaPiece(g, s, L, M, rng, ctx) {
     const f = this._frame(s, 0, 0, s.heading, L.plaza.h + 0.2, new THREE.Matrix4());
     g.begin(f, 7);
     const st = s.kit;
+    // festive lantern strings across the plaza (they sway at night) + poles
+    const festive = !MODERN.has(st) || st === 'spire' || st === 'bizarre';
+    if (festive && L.plaza.r > 10) {
+      const pr = L.plaza.r * 0.92, np = 6, poles = [];
+      const lc = st === 'ruins' ? '#ffb060' : st === 'organic' ? '#aff8ff' : st === 'bizarre' ? '#b6ff4a' : '#ffc070';
+      for (let i = 0; i < np; i++) {
+        const a = i / np * Math.PI * 2 + 0.3;
+        const x = Math.cos(a) * pr, z = Math.sin(a) * pr;
+        const gh = (L.ground ? L.ground.g(x, z) : L.plaza.h) - L.plaza.h - 0.2;
+        g.cyl(x, gh - 0.3, z, 0.12, 0.09, 6.3, 6, true, M.wood || M.metal);
+        poles.push([x, gh + 5.8, z]);
+      }
+      for (let i = 0; i < np; i++) {
+        const A = poles[i], B = poles[(i + 2) % np];
+        P.cable(g, A, B, 1.2, 0.02, M.iron || M.wood, 5, lc);
+      }
+      // benches and planted trees around the rim
+      for (let i = 0; i < np; i++) {
+        const a = (i + 0.5) / np * Math.PI * 2 + 0.3;
+        const x = Math.cos(a) * pr * 0.78, z = Math.sin(a) * pr * 0.78;
+        g.push().translate(x, 0, z).rotY(-a + Math.PI / 2);
+        g.box(0, 0.42, 0, 1.8, 0.08, 0.45, 0, M.wood); for (const sx of [-0.75, 0.75]) g.box(sx, 0, 0, 0.1, 0.42, 0.4, 0, M.iron || M.wood);
+        g.box(0, 0.5, -0.2, 1.8, 0.45, 0.06, 0, M.wood);
+        g.pop();
+        if (i % 2 === 0 && st !== 'nomad') P.tree(g, Math.cos(a + 0.25) * pr * 0.85, 0, Math.sin(a + 0.25) * pr * 0.85, rng.range(5, 7), M, rng);
+      }
+    }
     if (st === 'hearth' || st === 'nomad') {
       // campfire ring with logs & benches
       for (let i = 0; i < 9; i++) { const a = i / 9 * Math.PI * 2; g.sphere(Math.cos(a) * 1.3, 0, Math.sin(a) * 1.3, 0.35, 6, 3, M.stone || M.found); }

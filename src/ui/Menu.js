@@ -92,8 +92,9 @@ export class Menu {
   // ---------------------------------------------------------------- render
   render() {
     const loc = this.ui.locationInfo();
-    const dev = this.helpDevice || (this.input.lastDevice || 'keyboard');
-    const kb = (a) => `<span class="kb">${glyphFor(this.input, a, dev === 'touch' ? 'keyboard' : dev)}</span>`;
+    const uiDev = this.ui.device || this.input.lastDevice || 'keyboard';
+    const dev = this.helpDevice || uiDev;
+    const kb = (a) => uiDev === 'touch' ? '' : `<span class="kb">${glyphFor(this.input, a, uiDev)}</span>`;
     let html = `<div class="rv-mn-brand">REVERENCE</div>
       <div class="rv-mn-loc">${escapeHtml(loc.title)}</div>
       <div class="rv-mn-sub">${escapeHtml(loc.subtitle)}</div>`;

@@ -44,8 +44,11 @@ export function packStar(s, i, pos, col, lum) {
   col[i * 4 + 2] = Math.round(Math.sqrt(_sc[2]) * 255);
   const ci = CLASS_INDEX[s.cls] ?? 4;
   const cluster = s.sub === 'cluster' || s.sub === 'gc' ? 8 : 0;
-  col[i * 4 + 3] = ((s.follow ?? 0) & 3) * 16 + cluster + ci;
-  const l = Math.log10(Math.max(1e-4, s.luminosity));
+  const sph = s.component === 'spheroid' || s.component === 'halo' || s.component === 'bulge' ? 64 : 0;
+  col[i * 4 + 3] = sph + ((s.follow ?? 0) & 3) * 16 + cluster + ci;
+  let l = Math.log10(Math.max(1e-4, s.luminosity));
+  // display only: old spheroids hold no bright hot stars (blue stragglers stay faint)
+  if (ci <= 2 && (s.component === 'spheroid' || s.component === 'halo' || s.component === 'bulge')) l -= 2.5;
   lum[i] = l;
   return Math.pow(10, l * 0.35);
 }

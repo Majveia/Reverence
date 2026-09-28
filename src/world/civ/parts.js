@@ -45,7 +45,8 @@ export function flowerBox(g, x, y, z, w, M, rng) {
   const cols = ['#e2506a', '#f4c14a', '#f08bd0', '#ffffff', '#c04030'];
   const fm = mat(cols[Math.floor(rng.next() * cols.length)], 0.9, 0, PAT.PLAIN);
   const leaf = M.leaf || mat('#3f7a33', 0.9);
-  for (let i = 0; i < 4; i++) g.sphere(x - w / 2 + w * (i + 0.5) / 4, y + 0.3, z + 0.18, 0.16, 6, 3, i % 2 ? fm : leaf);
+  g.box(x, y + 0.2, z + 0.15, w * 0.92, 0.16, 0.24, 0, leaf);
+  for (let i = 0; i < 3; i++) g.box(x - w / 2 + w * (i + 0.5) / 3, y + 0.3, z + 0.12 + (i % 2) * 0.06, 0.16, 0.14, 0.16, 0, fm);
 }
 
 /** Balcony slab + rails on the +z face. */
@@ -127,12 +128,12 @@ export function tree(g, x, y, z, h, M, rng, conifer = false) {
   if (conifer) {
     for (let i = 0; i < 3; i++) g.cyl(x, y + h * (0.3 + i * 0.22), z, h * (0.28 - i * 0.07), 0.02, h * 0.38, 8, true, tint(leaf, 0.9 + i * 0.08));
   } else {
-    const n = 4;
+    const n = 3;
     for (let i = 0; i < n; i++) {
-      const a = i / n * 6.28 + rng.next(), r = h * 0.16;
-      g.sphere(x + Math.cos(a) * r, y + h * (0.62 + rng.next() * 0.12), z + Math.sin(a) * r, h * rng.range(0.2, 0.27), 8, 5, tint(leaf, rng.range(0.85, 1.15)));
+      const a = i / n * 6.28 + rng.next(), r = h * 0.15;
+      g.sphere(x + Math.cos(a) * r, y + h * (0.62 + rng.next() * 0.12), z + Math.sin(a) * r, h * rng.range(0.22, 0.29), 7, 4, tint(leaf, rng.range(0.85, 1.15)));
     }
-    g.sphere(x, y + h * 0.8, z, h * 0.24, 8, 5, tint(leaf, 1.1));
+    g.sphere(x, y + h * 0.82, z, h * 0.25, 7, 4, tint(leaf, 1.1));
   }
 }
 

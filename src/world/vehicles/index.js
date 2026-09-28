@@ -18,6 +18,7 @@ import { Particles } from './fx/particles.js';
 import { SpeedBlur } from './fx/speedblur.js';
 import { Streaks } from './fx/streaks.js';
 import { Hoverbike } from './Hoverbike.js';
+import { Rover } from './Rover.js';
 import { clamp, damp, headingDir, orthoForward, fmtSpeed, FastRand } from './util.js';
 import { latLonToDir } from '../../core/math.js';
 import { G } from '../../core/Uniforms.js';
@@ -25,7 +26,7 @@ import { G } from '../../core/Uniforms.js';
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _u = new THREE.Vector3(), _n = new THREE.Vector3();
 const _e = new THREE.Vector3(), _no = new THREE.Vector3();
 
-const KINDS = { bike: Hoverbike };
+const KINDS = { bike: Hoverbike, rover: Rover };
 
 class VehicleManager {
   constructor(world) {
@@ -352,7 +353,7 @@ class VehicleManager {
         v.distToCam = v.pos.distanceTo(cam);
         const vis = v.occupied || v.distToCam < (v.cullDist ?? 1600);
         if (vis !== v.visible) { v.visible = vis; v.group.visible = vis; }
-        if (v.occupied || v.awake) {
+        if ((v.occupied || v.awake) && dt > 0) {
           const steps = v.substeps ?? 1;
           const h = dt / steps;
           for (let i = 0; i < steps; i++) v.simulate(h, input, i === steps - 1);

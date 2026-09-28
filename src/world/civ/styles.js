@@ -181,10 +181,10 @@ S.village = {
       g.push().translate(0, 0, d / 2 + yd / 2 + 0.2);
       const fm = rng.next() < 0.5 ? mat('#e8e4d8', 0.8, 0, PAT.PLANKS) : M.stone;
       P.fence(g, w + 1.2, yd, fm === M.stone ? 0.7 : 1.0, fm, fm !== M.stone);
-      for (let i = 0; i < 3; i++) if (rng.next() < 0.7) g.sphere(rng.range(-w / 2, w / 2), 0.2, rng.range(-yd / 3, yd / 3), rng.range(0.35, 0.6), 7, 4, rng.next() < 0.3 ? mat(['#e2506a', '#f4c14a', '#f08bd0', '#ffffff'][rng.int(0, 3)], 0.9) : M.leaf);
+      for (let i = 0; i < 3; i++) if (rng.next() < 0.7) g.sphere(rng.range(-w / 2, w / 2), 0.2, rng.range(-yd / 3, yd / 3), rng.range(0.35, 0.6), 6, 3, rng.next() < 0.3 ? mat(['#e2506a', '#f4c14a', '#f08bd0', '#ffffff'][rng.int(0, 3)], 0.9) : M.leaf);
       g.pop();
     }
-    if (rng.next() < 0.35) { g.push().translate(-w / 2 - 0.6, 0, -d / 4).rotY(Math.PI / 2); for (let i = 0; i < 3; i++) for (let j = 0; j < 4 - i; j++) { g.push().translate(-1 + j * 0.5 + i * 0.25, 0.2 + i * 0.36, 0).rotX(Math.PI / 2); g.cyl(0, -0.6, 0, 0.18, 0.18, 1.2, 6, true, M.wood); g.pop(); } g.pop(); }
+    if (rng.next() < 0.35) { g.push().translate(-w / 2 - 0.6, 0, -d / 4).rotY(Math.PI / 2); for (let i = 0; i < 2; i++) for (let j = 0; j < 3 - i; j++) { g.push().translate(-0.75 + j * 0.5 + i * 0.25, 0.2 + i * 0.36, 0).rotX(Math.PI / 2); g.cyl(0, -0.6, 0, 0.18, 0.18, 1.2, 5, true, M.wood); g.pop(); } g.pop(); }
     if (rng.next() < 0.5) { g.push().translate(0, 0, -d / 2 - 2.6); P.tree(g, rng.range(-w / 3, w / 3), 0, 0, rng.range(5, 8), M, rng); g.pop(); }
     if (rng.next() < 0.3) P.clutter(g, w / 2 + 0.8, d / 2 - 0.5, M, rng, 2);
     return hgt;
@@ -596,7 +596,7 @@ S.industrial = {
       brick: mat('#7a4a3a', 0.9, 0, PAT.STONE), brickWin: mat('#7a4a3a', 0.9, 0, PAT.WINDOWS), concrete: mat('#8a8a86', 0.9, 0, PAT.CONCRETE),
       shed: mat('#8c9294', 0.55, 0.6, PAT.CORRUGATED), shed2: mat('#5c6a5a', 0.6, 0.5, PAT.CORRUGATED), rust: mat('#6a5042', 0.8, 0.5, PAT.RUST),
       metal: mat('#9a9c98', 0.45, 0.8, PAT.PANELS), iron: mat('#3a3a38', 0.5, 0.7), trim: mat('#e8e4dc', 0.7, 0, PAT.PLANKS),
-      found: mat('#6e6c68', 0.95, 0, PAT.CONCRETE), stone: mat('#7a7874', 0.9, 0, PAT.STONE), roof: mat('#3a3c3e', 0.6, 0.4, PAT.CORRUGATED),
+      found: mat('#8e8c86', 0.95, 0, PAT.CONCRETE), stone: mat('#7a7874', 0.9, 0, PAT.STONE), roof: mat('#3a3c3e', 0.6, 0.4, PAT.CORRUGATED),
       roofs: [mat('#3a3c3e', 0.6, 0.4, PAT.CORRUGATED), mat('#5a3a30', 0.8, 0, PAT.TILES)], wood: mat('#5a4a3a', 0.85, 0, PAT.PLANKS), door: mat('#e8e4dc', 0.6, 0, PAT.PLANKS),
       yellow: mat('#d8a830', 0.6, 0.3, PAT.RUST), glass: mat('#506070', 0.1, 0.4, PAT.GLASS), leaf: mat('#3e5238', 0.9), bark: mat('#4a3a2e', 0.95),
       lampGlow: mat('#ffcf8a', 0.3, 0, PAT.LAMP, 6), road: mat('#4a4a4a', 0.85, 0, PAT.ASPHALT), path: mat('#7a705c', 0.95, 0, PAT.DIRT), plaza: mat('#6a6a66', 0.9, 0, PAT.CONCRETE),
@@ -604,10 +604,10 @@ S.industrial = {
     };
   },
   profile: {
-    roadW: 6.5, streetW: 4.5, slopeTol: 0.3, slopeAdd: 2.5, density: 0.8, infill: 1.2, lampSpacing: 34, grid: true, block: 90,
+    roadW: 6.5, streetW: 4.5, slopeTol: 0.4, slopeAdd: 3.5, density: 0.9, infill: 1.2, lampSpacing: 34, grid: true, block: 72, powerLines: true,
     lot(t, rng, kind, road) {
       const r = rng.next();
-      if (t > 0.85 || road === 'infill') { if (r < 0.35) return { w: 16, d: 16, type: 'cooling' }; if (r < 0.6) return { w: 12, d: 12, type: 'silo' }; return { w: 8, d: 8, type: 'pylon' }; }
+      if (t > 0.85 || road === 'infill') { if (r < 0.25) return { w: 16, d: 16, type: 'cooling' }; if (r < 0.45) return { w: 12, d: 12, type: 'silo' }; if (r < 0.55) return { w: 8, d: 8, type: 'pylon' }; if (r < 0.75) return { w: 12, d: 8, type: 'containers', setback: 2 }; return { w: rng.range(10, 16), d: rng.range(8, 12), type: 'shed', setback: 2 }; }
       if (t < 0.55 && r < 0.45) return { w: rng.range(22, 34), d: rng.range(16, 24), type: 'factory', setback: 3, gap: 4 };
       if (r < 0.62) return { w: rng.range(10, 16), d: rng.range(8, 12), type: 'shed', setback: 2 };
       if (r < 0.7) return { w: 12, d: 8, type: 'containers', setback: 2 };
@@ -615,10 +615,11 @@ S.industrial = {
     },
   },
   lampKind: 'modern',
+  roundTypes: new Set(['cooling', 'landmark']),
   build(g, lot, ctx) {
     const { M, rng } = ctx;
     const { w, d } = lot;
-    if (lot.type === 'landmark') return radarDish(g, ctx, w);
+    if (lot.type === 'landmark') return (ctx.kind === 'city' || ctx.kind === 'metropolis') ? loopReactor(g, ctx, w) : radarDish(g, ctx, w);
     if (lot.type === 'spaceport') return spaceportPad(g, ctx);
     if (lot.type === 'house') return house(g, ctx, { w, d, floors: rng.int(1, 2), fh: 2.8, wall: M.wallWin, roofM: M.roofs[rng.int(0, 1)], roofH: Math.min(w, d) * 0.5, chimney: true, band: true, winSx: 2.2, doorLamp: true, eave: 0.35 });
     if (lot.type === 'shed') {
@@ -690,6 +691,39 @@ function factory(g, ctx, w, d) {
   return H + 20;
 }
 
+function loopReactor(g, ctx, w) {
+  // Stålenhag's "Loop": a colossal sphere cradled in a concrete ring, gantries, pipes, warning lights
+  const { M, rng } = ctx;
+  const R = Math.max(22, w * 0.9);
+  const base = mat('#8a8a86', 0.9, 0, PAT.CONCRETE);
+  g.cyl(0, -2, 0, R * 1.35, R * 1.25, R * 0.35 + 2, 32, true, base);
+  g.cyl(0, R * 0.35, 0, R * 1.26, R * 1.26, 1.2, 32, true, M.rust);
+  g.push().translate(0, R * 0.95, 0);
+  g.sphere(0, 0, 0, R, 32, 18, mat('#b8bcbc', 0.35, 0.85, PAT.PANELS));
+  // equatorial ring + meridian bands
+  const ring = [];
+  for (let i = 0; i <= 48; i++) { const a = i / 48 * Math.PI * 2; ring.push(new THREE.Vector3(Math.cos(a) * R * 1.04, 0, Math.sin(a) * R * 1.04)); }
+  g.tube(ring, 1.4, 8, M.iron);
+  for (let k = 0; k < 6; k++) { const pts = []; for (let i = 0; i <= 24; i++) { const a = -Math.PI / 2 + i / 24 * Math.PI; pts.push(new THREE.Vector3(Math.cos(a) * Math.cos(k * Math.PI / 6) * R * 1.01, Math.sin(a) * R * 1.01, Math.cos(a) * Math.sin(k * Math.PI / 6) * R * 1.01)); } g.tube(pts, 0.35, 5, M.iron); }
+  g.pop();
+  // gantries and stair towers around
+  for (let i = 0; i < 4; i++) {
+    const a = i / 4 * Math.PI * 2 + 0.4;
+    g.push().translate(Math.cos(a) * R * 1.3, R * 0.35, Math.sin(a) * R * 1.3).rotY(-a);
+    P.lattice(g, R * 1.2, 4, 3, M.iron, 7, 0.18);
+    g.light(0, R * 1.2 + 0.5, 0, '#ff2a1a', 8, 1.8, 1);
+    g.pop();
+  }
+  // big pipes snaking out
+  for (let i = 0; i < 3; i++) {
+    const a = i / 3 * Math.PI * 2 + rng.next();
+    P.pipes(g, [[Math.cos(a) * R * 0.7, R * 0.6, Math.sin(a) * R * 0.7], [Math.cos(a) * R * 1.4, R * 0.5, Math.sin(a) * R * 1.4], [Math.cos(a) * R * 1.7, 1.5, Math.sin(a) * R * 1.7], [Math.cos(a + 0.2) * R * 2.3, 1.5, Math.sin(a + 0.2) * R * 2.3]], 1.1, M.rust);
+  }
+  g.light(0, R * 1.97, 0, '#ffd08a', 14, 5, 0);
+  g.collider(0, R, 0, R * 1.1, R, R * 1.1);
+  return R * 2;
+}
+
 function radarDish(g, ctx, w) {
   const { M } = ctx;
   const r = w * 0.55;
@@ -712,7 +746,7 @@ S.organic = {
     const pal = body.art?.palette || {};
     const fl = pal.flora || ['#2e7d5b', '#5fbf8f', '#e27fb0', '#7fd2ff', '#ffd36b'];
     return {
-      shell: mat('#e8dcc4', 0.55, 0.05), shell2: mat('#d8c8b0', 0.6), wall: mat('#e0d2b8', 0.6, 0, PAT.ARCHWIN),
+      shell: mat('#e8dcc4', 0.55, 0.05), shell2: mat('#d8c8b0', 0.6), wall: mat('#efe4cf', 0.6, 0, PAT.ARCHWIN),
       pods: fl.map((c) => tint(mat(c, 0.45, 0.1), 0.85, 0, -0.18)), stem: mat('#8a7a68', 0.8, 0, PAT.STONE), found: mat('#9a8a78', 0.9, 0, PAT.STONE), stone: mat('#b8a890', 0.85, 0, PAT.STONE),
       trim: mat(pal.accent ?? '#6fffe9', 0.4, 0.2), metal: mat('#a8a098', 0.35, 0.7), iron: mat('#6a6258', 0.5, 0.5), wood: mat('#8a6a4a', 0.8, 0, PAT.PLANKS),
       roof: mat(fl[2] ?? '#e27fb0', 0.5), glass: mat('#7fd2ff', 0.05, 0.5, PAT.GLASS), door: mat('#4a3a2a', 0.6),
@@ -771,25 +805,21 @@ S.organic = {
       g.collider(0, h / 2, 0, r * 0.35, h / 2, r * 0.35);
       return h + r;
     }
-    // pod house: tall teardrop shell grown from a flared root, crest in the accent colour, oval windows
+    // pod house: tall teardrop shell grown from a flared root, tinted in the world palette, arched window band,
+    // crest fin, balcony lip — Roger Dean's grown architecture
     const pm = M.pods[rng.int(0, M.pods.length - 1)];
+    const shell = tint(pm, 1.25, 0, -0.2);
     const hh = rng.range(6.5, 11);
     const rr = r * 0.85;
-    g.lathe(0, -0.6, 0, [[rr * 0.9, 0], [rr * 0.7, hh * 0.08], [rr * 0.95, hh * 0.3], [rr, hh * 0.5], [rr * 0.82, hh * 0.72], [rr * 0.45, hh * 0.9], [0.05, hh * 1.0]], 20, M.shell);
-    // crest: a curling fin in the accent colour
+    g.lathe(0, -0.6, 0, [[rr * 0.9, 0], [rr * 0.7, hh * 0.08], [rr * 0.95, hh * 0.3], [rr, hh * 0.5], [rr * 0.82, hh * 0.72], [rr * 0.45, hh * 0.9], [0.05, hh * 1.0]], 20, shell);
     g.push().translate(0, hh * 0.55, 0).rotY(rng.range(0, 6.28));
     const fin = [];
     for (let i = 0; i <= 10; i++) { const t = i / 10; fin.push(V(0, t * hh * 0.62, -rr * (0.9 - t * 0.9) - Math.sin(t * 3.1) * rr * 0.25)); }
-    g.tube(fin, (t) => 0.55 * (1 - t) + 0.08, 8, pm);
+    g.tube(fin, (t) => 0.55 * (1 - t) + 0.08, 8, tint(pm, 0.75));
     g.pop();
-    // oval windows
-    for (let i = 0; i < 4; i++) {
-      const a = -1.2 + i * 0.8;
-      g.push().translate(Math.sin(a) * rr * 0.97, hh * 0.42, Math.cos(a) * rr * 0.97).rotY(a).scale(0.8, 1.2, 0.35);
-      g.sphere(0, 0, 0, 0.8, 10, 6, mat('#1e2a2c', 0.05, 0.6));
-      g.pop();
-      g.light(Math.sin(a) * rr * 1.02, hh * 0.42, Math.cos(a) * rr * 1.02, '#ffe6a0', 1.8, 0.9, 0);
-    }
+    g.windows(2.4, 2.2, hh * 0.3);
+    g.cyl(0, hh * 0.3, 0, rr * 1.0, rr * 0.98, 2.0, 20, false, { ...M.wall, pat: PAT.ARCHWIN }, { a0: -2.2, a1: 0.9 });
+    g.cyl(0, hh * 0.3 - 0.25, 0, rr * 1.12, rr * 1.12, 0.25, 20, true, M.shell2);
     g.cyl(0, hh * 0.24, 0, rr * 0.98, rr * 0.99, 0.2, 20, false, M.glowPod);
     P.door(g, 0, rr * 0.9, 1.2, 2.2, M, M.shell2, M.lampGlow);
     if (rng.next() < 0.5) P.tree(g, -r - 1.5, 0, 0, rng.range(5, 8), M, rng);

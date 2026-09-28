@@ -152,8 +152,8 @@ function buildStructure(g) {
   S.rd = R * (type === 'lenticular' ? r.range(0.2, 0.25) : r.range(0.25, 0.3)); // scale length (old disk)
   S.rdY = R * r.range(0.3, 0.38);                                             // young disk
   S.hOld = R * r.range(0.011, 0.015) * (0.75 + 0.25 * (g.thickness / 1100));  // sech² scale height
-  S.hYoung = S.hOld * 0.3;
-  S.hDust = S.hOld * 0.2;
+  S.hYoung = S.hOld * 0.38;
+  S.hDust = S.hOld * 0.42;
   S.flare = r.range(0.5, 1.1);
 
   // spiral arms
@@ -242,7 +242,7 @@ function buildStructure(g) {
   S.v0 = Math.abs(S.omegaP) * S.rc / (1 - Math.exp(-S.rc / S.rt));
 
   // local LOD normalization (stars per ly³ → expected count). ~30 stars per mid-disk 200 ly cell.
-  S.localNorm = 6e7 * (R / 55000) * (R / 55000);
+  S.localNorm = 2e8 * (R / 55000) * (R / 55000);
 
   // palette (linear rgb) from the universe record
   const col = (c) => (c && c.isColor ? [c.r, c.g, c.b] : c ? [c.r, c.g, c.b] : [1, 1, 1]);
@@ -512,10 +512,12 @@ function placeStar(S, component, ci, young, h, out) {
       const ct = U(h(4)) * 2 - 1, ph = U(h(5)) * TAU, st = Math.sqrt(1 - ct * ct);
       x = rr * st * Math.cos(ph); y = rr * ct * 0.8; z = rr * st * Math.sin(ph);
     } else {
+      // Hernquist spheres (projected profile ≈ de Vaucouleurs: bright cusp, extended wings)
       const uc = U(h(9));
       const bc = uc < S.bulgeComp[0].w ? S.bulgeComp[0] : uc < S.bulgeComp[0].w + S.bulgeComp[1].w ? S.bulgeComp[1] : S.bulgeComp[2];
-      let rr = plummerR(bc.a, U(h(2)));
-      if (rr > R * 0.6) rr = R * 0.6 * U(h(3));
+      const sq = Math.sqrt(Math.min(0.995, U(h(2))));
+      let rr = bc.a * 0.6 * sq / (1 - sq);
+      if (rr > R * 0.6) rr = R * 0.6 * Math.cbrt(U(h(3)));
       const ct = U(h(4)) * 2 - 1, ph = U(h(5)) * TAU, st = Math.sqrt(1 - ct * ct);
       x = rr * st * Math.cos(ph); y = rr * ct * S.bulgeQ; z = rr * st * Math.sin(ph);
     }

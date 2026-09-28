@@ -173,7 +173,7 @@ export class Touch {
 
     // ---- pinch/drag onboarding (orbit scheme, until first zoom)
     if (scheme === 'orbit') { this.pinchT += dt; if (Math.abs(this.input.zoom) > 0.01) this.usedPinch = true; }
-    const pa = scheme === 'orbit' && !this.usedPinch && this.pinchT > 1.2 && this.pinchT < 14 ? 0.9 : 0;
+    const pa = scheme === 'orbit' && !this.usedPinch && !ctx.hintVisible && this.pinchT > 1.2 && this.pinchT < 14 ? 0.9 : 0;
     this.pinchA += (pa - this.pinchA) * (1 - Math.exp(-dt * 3));
     if (this.pinchA > 0.01) { this.pinchEl.classList.remove('rv-hide'); this.pinchEl.style.opacity = this.pinchA.toFixed(3); }
     else this.pinchEl.classList.add('rv-hide');
@@ -181,8 +181,13 @@ export class Touch {
     // ---- buttons: position relative to the bottom-right corner, context visibility + icon swaps
     for (const b of this.buttons) {
       let want = 1;
-      if (b.ctx === 'vehicle') want = ctx.prompts.has('vehicle') ? 1 : 0.0;
-      else if (b.ctx === 'interact') want = ctx.promptActions.has('interact') ? 1 : 0;
+      if (b.ctx === 'vehicle') {
+        const near = ctx.prompts.has('vehicle') && !ctx.prompts.get('vehicle').dying;
+        want = near ? 1 : 0.55;
+        const l = near ? 'ride' : 'hold · call';
+        if (b.lbl && b.lblT !== l) { b.lbl.textContent = l; b.lblT = l; }
+      }
+      if (b.ctx === 'interact') want = ctx.promptActions.has('interact') ? 1 : 0;
       if (b.id === 'slide') want = ctx.playerState === 'ground' || ctx.playerState === 'slide' ? 1 : 0.0;
       if (b.down) want = 1;
       b.a += (want - b.a) * (1 - Math.exp(-dt * 10));
