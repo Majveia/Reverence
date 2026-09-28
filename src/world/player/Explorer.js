@@ -12,6 +12,7 @@ import {
   xf, mirrorX, rigid, blendY, bandsY, quad, flatUv,
 } from './geo.js';
 import { getTextures } from './textures.js';
+import { bakeSurface } from './bake.js';
 import { G } from '../../core/Uniforms.js';
 
 // ------------------------------------------------------------------ skeleton
@@ -76,6 +77,20 @@ export function makeSkeleton() {
 
 // ------------------------------------------------------------------ art-directed hero palette
 const hex = (h) => new THREE.Color(h);
+const clamp01 = (x, a, b) => Math.min(b, Math.max(a, x));
+
+/** Piping / seam cord running over a loft surface S at angle(s) a(y), from y0 to y1, lifted by `lift`. */
+function seam(S, a, y0, y1, lift, radius, n = 14) {
+  const pts = [], p = new THREE.Vector3(), c = new THREE.Vector3();
+  for (let i = 0; i <= n; i++) {
+    const y = y0 + (y1 - y0) * (i / n);
+    const aa = typeof a === 'function' ? a(y) : a;
+    S(aa, y, p); S.inside(aa, y, c);
+    const d = p.clone().sub(c); d.y = 0; d.normalize();
+    pts.push(p.clone().addScaledVector(d, lift));
+  }
+  return tube(pts, radius, n * 3, 5, false);
+}
 export function heroPalette(body) {
   const pal = body?.art?.palette || {};
   const key = body?.art?.key || '';
@@ -108,18 +123,39 @@ export function heroPalette(body) {
   if (key === 'rickmorty') { P.glow = hex('#7dff9a'); }
   if (key === 'botw') { P.scarf = hex('#c8341f'); P.accent = hex('#2f6fd0'); P.accent2 = hex('#244f96'); }
   if (key === 'outerwilds') { P.accent = hex('#d8702a'); P.scarf = hex('#b83a24'); }
+  // dust / grime colour from the world's ground (desaturated, mid value) — the suit wears the planet
+  {
+    const d = new THREE.Color(pal.sand || pal.rock || '#8a7a64');
+    if (pal.rock) d.lerp(new THREE.Color(pal.rock), 0.35);
+    d.getHSL(hsl);
+    d.setHSL(hsl.h, Math.min(hsl.s, 0.32) * 0.8, clamp01(hsl.l * 0.8 + 0.12, 0.3, 0.5));
+    P.dust = d;
+  }
   P.envHue = envHue; P.warm = warm;
   return P;
 }
 
 // ------------------------------------------------------------------ materials
-function patchLighting(mat, { rim = 0.0 } = {}) {
-  // subtle stylised rim/back light so silhouettes read against bright skies (BotW / Journey look)
-  if (!rim) return mat;
+function patchLighting(mat, { rim = 0.0, wear = 1, key = 'x' } = {}) {
+  // • stylised rim/back light so silhouettes read against bright skies (BotW / Journey look)
+  // • per-vertex wear from the surface bake (bake.js): dirt roughens and kills the clearcoat,
+  //   chipped edges turn glossier / metallic
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uRimStrength = { value: rim };
+    sh.uniforms.uWearK = { value: wear };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec2 aWear;\nvarying vec2 vWear;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWear = aWear;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uRimStrength;')
+      .replace('#include <common>', '#include <common>\nuniform float uRimStrength; uniform float uWearK;\nvarying vec2 vWear;')
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        roughnessFactor = clamp(roughnessFactor + vWear.x * 0.32 * uWearK - vWear.y * 0.22 * uWearK, 0.04, 1.0);`)
+      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+        metalnessFactor = clamp(metalnessFactor + vWear.y * 0.3 * uWearK, 0.0, 1.0);`)
+      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+        #ifdef USE_CLEARCOAT
+          material.clearcoat *= 1.0 - clamp(vWear.x * 1.3, 0.0, 1.0);
+        #endif`)
       .replace('#include <opaque_fragment>', `
         {
           vec3 V = normalize(vViewPosition);
@@ -129,7 +165,7 @@ function patchLighting(mat, { rim = 0.0 } = {}) {
         }
         #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'rv-rim-' + rim;
+  mat.customProgramCacheKey = () => 'rv-suit-' + key + '-' + rim;
   return mat;
 }
 
@@ -160,7 +196,10 @@ function patchVisor(mat, P) {
           env += (uVSun * 0.12 + uVSky * 0.6) * exp(-abs(h) * 16.0);
           float sd = max(dot(Rw, normalize(uVSunDir)), 0.0);
           vec3 spec = uVSun * (pow(sd, 1200.0) * 40.0 + pow(sd, 60.0) * 0.5);
-          outgoingLight += (env * fres) * uVTint * 0.85 + spec;
+          outgoingLight += (env * fres) * uVTint * 0.6 + spec * uVTint;
+          // warm gold interference band near the rim of the dome
+          float rimG = pow(1.0 - clamp(dot(normal, Vv), 0.0, 1.0), 4.0);
+          outgoingLight += vec3(1.0, 0.62, 0.2) * rimG * (uVSky * 0.9 + uVSun * 0.08);
         }
         #include <opaque_fragment>`);
   };
@@ -175,20 +214,22 @@ export function makeMaterials(renderer, P, quality) {
   const fabric = new Std({ vertexColors: true, roughness: 0.86, metalness: 0.0, normalMap: tex.fabricNormal, normalScale: new THREE.Vector2(0.55, 0.55) });
   if (hi) { fabric.sheen = 0.55; fabric.sheenRoughness = 0.55; fabric.sheenColor = new THREE.Color(0.55, 0.58, 0.62); }
   if (tex.fabricNormal) tex.fabricNormal.repeat.set(9, 9);
-  const hard = new Std({ vertexColors: true, roughness: 0.46, metalness: 0.0, normalMap: tex.panelNormal, normalScale: new THREE.Vector2(0.9, 0.9), roughnessMap: tex.wearRough });
-  if (hi) { hard.clearcoat = 0.45; hard.clearcoatRoughness = 0.32; }
+  const hard = new Std({ vertexColors: true, roughness: 0.52, metalness: 0.0, normalMap: tex.panelNormal, normalScale: new THREE.Vector2(0.9, 0.9), roughnessMap: tex.wearRough });
+  if (hi) { hard.clearcoat = 0.22; hard.clearcoatRoughness = 0.4; }
   if (tex.wearRough) tex.wearRough.repeat.set(3, 3);
   const metal = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0.92, roughnessMap: tex.wearRough });
   const glow = new THREE.MeshBasicMaterial({ vertexColors: true, color: new THREE.Color(1, 1, 1).multiplyScalar(4.0) });
   const visor = hi
     ? new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color(0.06, 0.05, 0.04), roughness: 0.07, metalness: 0.85, clearcoat: 1, clearcoatRoughness: 0.03,
-      iridescence: 0.4, iridescenceIOR: 1.4, iridescenceThicknessRange: [250, 520], envMapIntensity: 1.2,
+      // gold-film sun visor: gold metal F0 under a glass clearcoat, thin-film sheen at grazing angles
+      color: new THREE.Color(0.62, 0.4, 0.13), roughness: 0.1, metalness: 1.0, clearcoat: 1, clearcoatRoughness: 0.03,
+      iridescence: 0.25, iridescenceIOR: 1.35, iridescenceThicknessRange: [300, 480], envMapIntensity: 1.35,
     })
-    : new THREE.MeshStandardMaterial({ color: new THREE.Color(0.06, 0.05, 0.04), roughness: 0.08, metalness: 0.85, envMapIntensity: 1.2 });
+    : new THREE.MeshStandardMaterial({ color: new THREE.Color(0.62, 0.4, 0.13), roughness: 0.1, metalness: 1.0, envMapIntensity: 1.35 });
   patchVisor(visor, P);
-  patchLighting(fabric, { rim: 0.6 });
-  patchLighting(hard, { rim: 0.8 });
+  patchLighting(fabric, { rim: 0.6, key: 'fabric' });
+  patchLighting(hard, { rim: 0.8, key: 'hard' });
+  patchLighting(metal, { rim: 0.3, key: 'metal', wear: 0.6 });
   const mats = { fabric, hard, metal, glow, visor };
   for (const m of Object.values(mats)) { m.name = 'rv-explorer-' + (m.type || ''); }
   return mats;
@@ -243,6 +284,10 @@ export function buildExplorer(renderer, body, quality) {
   { const g = box(0.035, 0.012, 0.01, 0.004); xf(g, -0.085, 1.325, 0.152, -0.2, -0.45, 0); A.add('glow', g, P.glow, rigid(B.chest)); }
   { const g = box(0.012, 0.09, 0.012, 0.004); xf(g, 0.085, 1.28, 0.148, -0.18, 0.42, 0); A.add('hard', g, P.accent, rigid(B.chest)); }
 
+  // side seams (accent piping) + front zip on the undersuit
+  for (const sd of [1, -1]) A.add('fabric', seam(TS, sd * Math.PI / 2, 0.86, 1.43, 0.003, 0.0052, 16), P.accent2, torsoSkin);
+  A.add('metal', seam(TS, 0, 0.99, 1.17, 0.002, 0.0042, 10), P.metal, torsoSkin);
+  { const g = box(0.012, 0.022, 0.006, 0.002); xf(g, 0, 1.165, 0.118); A.add('metal', g, P.brass, rigid(B.chest)); }
   // belt + buckle + pouches
   { const g = torus(0.158, 0.021, R(8), R(32)); xf(g, 0, 0.978, 0.004, Math.PI / 2, 0, 0, 1, 0.69, 1); A.add('hard', g, P.strap, rigid(B.hips)); }
   { const g = box(0.07, 0.05, 0.024, 0.008); xf(g, 0, 0.978, 0.113); A.add('metal', g, P.brass, rigid(B.hips)); }
@@ -281,6 +326,9 @@ export function buildExplorer(renderer, body, quality) {
     A.add('fabric', loft(secs, { radial: R(18), sub: 3 }), P.suit, skin);
     const AS = loftSurface(secs);
     const outer = side > 0 ? Math.PI / 2 : -Math.PI / 2;
+    // outer piping + inner seam
+    A.add('fabric', seam(AS, outer, 0.9, 1.44, 0.002, 0.0045, 12), P.accent2, skin);
+    A.add('fabric', seam(AS, -outer, 0.9, 1.3, 0.001, 0.0032, 10), P.suit2, skin);
     // gauntlet
     A.add('hard', patch(AS, { u0: outer - 1.55, u1: outer + 1.55, v0: 0.885, v1: 1.06, nu: R(10), nv: R(8), off: 0.008, thick: 0.012, bevel: 0.006, round: 5, uvRect: quad(3) }), P.shell, rigid(ax('foreArm')));
     // upper arm band (accent)
@@ -333,6 +381,9 @@ export function buildExplorer(renderer, body, quality) {
     A.add('fabric', loft(secs, { radial: R(20), sub: 3 }), P.suit, skin);
     const LS = loftSurface(secs);
     const outer = side > 0 ? 0.7 : -0.7;
+    // outer piping + inner seam + knee quilting
+    A.add('fabric', seam(LS, side > 0 ? Math.PI / 2 : -Math.PI / 2, 0.27, 0.95, 0.002, 0.0055, 16), P.accent2, skin);
+    A.add('fabric', seam(LS, side > 0 ? -Math.PI / 2 : Math.PI / 2, 0.27, 0.86, 0.001, 0.0035, 12), P.suit2, skin);
     // thigh plate
     A.add('hard', patch(LS, { u0: outer - 1.15, u1: outer + 1.15, v0: 0.64, v1: 0.86, nu: R(10), nv: R(8), off: 0.009, thick: 0.013, bevel: 0.007, round: 5, uvRect: quad(1) }), P.shell, rigid(lb('thigh')));
     // thigh pouch (right) / holster
@@ -479,6 +530,7 @@ export function buildExplorer(renderer, body, quality) {
 
   // ---------------- assemble
   const geos = A.build();
+  try { bakeSurface(geos, P, lod); } catch (e) { console.warn('[player] suit bake skipped', e); }
   const { bones, skeleton, root } = makeSkeleton();
   const mats = makeMaterials(renderer, P, quality);
   const group = new THREE.Group();

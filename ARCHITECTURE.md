@@ -292,3 +292,17 @@ visualizations). What separates AAA from "tech demo":
 * **audio** (from fauna) — creature ambience from `fauna.creatures` / `nearest()`: bird calls near flocks, whale
   song under pods, night insect chorus; creature `discovery` events carry an `archetype`.
 * **ui** (from fauna) — show an icon from the `archetype` field on creature discovery events.
+* **atmosphere (CRITICAL, from terrain)** — on airless bodies (M1 `star=0&planet=2.0&view=fp&lat=-25.555&lon=-70.154&tod=0.5`,
+  and `view=orbit`) every terrain pixel renders (0,0,0) while `&only=terrain,player` renders fine — likely
+  aerial perspective / transmittance with density 0 (divide-by-zero or NaN). Must be a pass-through when
+  `!body.atmosphere.present`.
+* **water** (from terrain) — shore foam drawn on the ocean where it hides terrain beyond the horizon (W2
+  `lat=18.18&lon=-50.80&yaw=22`): in shaders.js `depthBelow = max(uRs - length(bed - uPC), 0)` is 0 when the
+  bed point is above sea level → spurious foam; gate on actual shallow water.
+* **flora** (from terrain) — forward flatten stamps to workers: `world.surface.onFlattenChange((f, all) =>
+  worker.postMessage({type:'flats', flats: all}))` and `gen.setFlattens(flats)` in the worker so trees don't
+  float/sink on graded plazas.
+* **civ** (from terrain) — `surface.addFlatten({dir, radius, height, falloff})` is available: grade plazas and
+  building pads before placing buildings (terrain chunks rebuild automatically).
+* **player** (from terrain) — `view=surface` without `alt` spawns on the nearest flat spot (at the old W1 lake
+  URL that's a 1.5 km clifftop → reads as aerial); add an option to spawn at the lowest nearby flat spot.

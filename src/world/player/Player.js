@@ -41,6 +41,10 @@ const T = {
   climb: 1.55, climbFast: 2.6,
 };
 
+// climbing body probes: [height along the body, depth of the body's front toward the wall] (toes · shin ·
+// knee · hips · belly · chest · visor · hands-over-head)
+const CLIMB_PROBES = [0.08, 0.2, 0.3, 0.12, 0.5, 0.16, 0.92, 0.14, 1.1, 0.15, 1.32, 0.17, 1.62, 0.2, 1.8, 0.1];
+
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3();
 const _e = new THREE.Vector3(), _n = new THREE.Vector3(), _t = new THREE.Vector3(), _w = new THREE.Vector3();
 const _v = new THREE.Vector3(), _x = new THREE.Vector3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
@@ -89,7 +93,11 @@ export class Player {
     this.hardT = 0; this.landImpact = 0;
     this.glide = { dir: new THREE.Vector3(), s: 0, w: 0, bank: 0, turn: 0, dive: 0, pitch: 0, swayX: new Spring(0, 5, 0.3), swayZ: new Spring(0, 4.5, 0.3), t: 0 };
     this.slideS = { carve: 0, t: 0 };
-    this.climbS = { anchor: new THREE.Vector3(), n: new THREE.Vector3(), t: 0, move: 0, dx: 0, dy: 0, lean: 0 };
+    this.climbS = {
+      anchor: new THREE.Vector3(), n: new THREE.Vector3(), up: new THREE.Vector3(), fwd: new THREE.Vector3(),
+      t: 0, move: 0, dx: 0, dy: 0, lean: 0, push: 0, lunge: 0, speed: 0, wallZ: 0.24, side: 1,
+    };
+    this.climbBlend = 0;
     this.climbPush = 0;
     this.swimT = 0;
     this.time = 0;
@@ -105,7 +113,7 @@ export class Player {
     this.S = {
       state: 'ground', crouch: false, speed: 0, accelLocal: new THREE.Vector3(), accelUp: 0, turnRate: 0,
       hardLand: 0, landImpact: 0, lookYaw: 0, lookPitch: 0, fp: false, vy: 0, airTime: 0, boost: 0, time: 0,
-      glide: { pitch: 0, bank: 0, swayZ: 0, swayX: 0 }, slide: { carve: 0 }, climb: { move: 0, dirX: 0, dirY: 0, lean: 0 },
+      glide: { pitch: 0, bank: 0, swayZ: 0, swayX: 0 }, slide: { carve: 0 }, climb: { move: 0, dirX: 0, dirY: 0, lean: 0, speed: 0, wallZ: 0.24, lunge: 0 },
     };
 
     // ---- camera
@@ -514,12 +522,12 @@ export class Player {
     if ((I.descendDown || (I.descend && this.slideS.t > 0)) && (sp > 4.2 || slopeCos < 0.94)) { this._startSlide(); this._move(dt); return; }
     this.slideS.t = I.descend ? this.slideS.t + dt : 0;
     if (slopeCos < T.slideAutoCos) {
-      if (I.mag > 0.4 && this._wallAhead(I.wish, _n)) { this._enterClimb(_n); return; }
+      if (I.mag > 0.4 && this._wallAhead(I.wish, _n) && this._enterClimb(_n, I.wish)) return;
       this._startSlide(); this._move(dt); return;
     }
     if (I.mag > 0.4 && this._wallAhead(I.wish, _n)) {
       this.climbPush += dt;
-      if (this.climbPush > 0.18) { this._enterClimb(_n); return; }
+      if (this.climbPush > 0.18 && this._enterClimb(_n, I.wish)) return;
     } else this.climbPush = 0;
 
     this._move(dt);
@@ -592,7 +600,7 @@ export class Player {
     this._resolveColliders();
     this.up.copy(this.pos).normalize();
     // climb grab when flying into a steep wall
-    if (I.mag > 0.4 && this.airTime > 0.15 && vy < 3 && this._wallAhead(I.wish, _n)) { this._enterClimb(_n); return; }
+    if (I.mag > 0.4 && this.airTime > 0.15 && vy < 3 && this._wallAhead(I.wish, _n) && this._enterClimb(_n, I.wish)) return;
     // ground / water
     const r = this.pos.length();
     const floor = this._floorR(this.pos, this.up);
@@ -680,7 +688,7 @@ export class Player {
     if (sp > 0.4) this._turnToward(vt, 9, dt);
     // exits
     if (this.jumpBuf > 0) { this._jump(1.05); this._move(dt); return; }
-    if (!I.descend && I.mag > 0.4 && sp < 6 && this._wallAhead(I.wish, _e)) { this._enterClimb(_e); return; }
+    if (!I.descend && I.mag > 0.4 && sp < 6 && this._wallAhead(I.wish, _e) && this._enterClimb(_e, I.wish)) return;
     if ((sp < 0.9 && cosN > T.slideAutoCos) || (!I.descend && sp < 3.2 && cosN > T.walkCos && S.t > 0.4) || (!I.descend && S.t > 0.5 && cosN > 0.97 && sp < 6)) {
       this.state = 'ground';
     }
@@ -744,66 +752,137 @@ export class Player {
     }
   }
 
-  _enterClimb(n) {
-    const C = this.climbS;
-    C.n.copy(n);
-    // anchor on the wall surface in front of the chest
-    C.anchor.copy(this.pos).addScaledVector(this.up, 0.2);
-    C.anchor.setLength(this.heights.groundR(C.anchor));
+  /**
+   * Grab the wall: find the chest contact point on the heightfield along `dir`, return false when there
+   * is nothing to hold on to (then the caller slides / keeps walking).
+   */
+  _enterClimb(n, dir) {
+    const C = this.climbS, up = this.up;
+    const d = projectOnPlane(_v.copy(dir || this.forward), up);
+    if (d.lengthSq() < 1e-6) d.copy(projectOnPlane(_v.copy(n), up)).negate();
+    if (d.lengthSq() < 1e-6) return false;
+    d.normalize();
+    let hit = -1;
+    for (const hgt of [1.3, 0.95, 0.6]) {
+      _t.copy(this.pos).addScaledVector(up, hgt);
+      hit = this.heights.ray(_t, d, 1.4, 0.07);
+      if (hit > 0) break;
+    }
+    if (!(hit > 0)) return false;
+    C.anchor.copy(_t).addScaledVector(d, hit);
+    this.heights.normal(C.anchor, C.n, 0.45);
+    if (C.n.dot(up) > T.walkCos + 0.08) return false; // not steep enough to be a wall here
     this.state = 'climb'; this.vel.set(0, 0, 0); this.climbPush = 0;
     this._openGlider(false);
-    C.t = 0;
+    C.t = 0; C.lunge = 0; C.push = 0.05; C.speed = 0;
+    // which side the camera sits on (keeps the ¾ framing on the side the player already looks from)
+    C.side = _a.crossVectors(this.cam.fwd, d).dot(up) >= 0 ? 1 : -1;
+    this._climbFrame(0, true);
+    return true;
+  }
+
+  /** Body frame + position from the chest anchor on the wall (anti-penetration along the wall normal). */
+  _climbFrame(dt, snap = false) {
+    const C = this.climbS, up = this.up, H = this.heights;
+    const n = C.n;
+    const wallUp = C.up.copy(up).addScaledVector(n, -n.dot(up));
+    if (wallUp.lengthSq() < 1e-6) wallUp.copy(this.forward);
+    wallUp.normalize();
+    C.fwd.copy(n).negate();
+    const CH = 1.3, STAND = 0.24;
+    // feet reference (group origin): chest height below the anchor along the wall, standing off the rock
+    const pos = _d.copy(C.anchor).addScaledVector(n, STAND).addScaledVector(wallUp, -CH);
+    // the rock is not a plane: sample the body's front (toes, knees, hips, chest, visor) and push out
+    let need = 0;
+    for (let i = 0; i < CLIMB_PROBES.length; i += 2) {
+      _e.copy(pos).addScaledVector(wallUp, CLIMB_PROBES[i]).addScaledVector(n, -CLIMB_PROBES[i + 1]);
+      const t = H.pushOut(_e, n, 0.9, 0.035);
+      if (t > need) need = t;
+    }
+    C.push = snap || need > C.push ? need : damp(C.push, need, 5, dt);
+    pos.addScaledVector(n, C.push);
+    C.wallZ = STAND + C.push;
+    // feet never below the floor at the base of the wall: slide the anchor up instead
+    const fr = this._floorR(pos, up);
+    const r = pos.length();
+    if (r < fr) {
+      const k = Math.max(0.35, wallUp.dot(up));
+      C.anchor.addScaledVector(wallUp, (fr - r) / k);
+      pos.addScaledVector(wallUp, (fr - r) / k);
+      C.atBase = true;
+    } else C.atBase = r - fr < 0.08;
+    this.pos.copy(pos);
+    projectOnPlane(_a.copy(C.fwd), up);
+    if (_a.lengthSq() > 1e-6) this.forward.copy(_a.normalize());
   }
 
   _climb(dt, I) {
-    const C = this.climbS, up = this.up;
+    const C = this.climbS, up = this.up, H = this.heights;
     C.t += dt;
-    const n = this._groundNormal(C.anchor, C.n);
-    const nH = projectOnPlane(_a.copy(n), up);
-    if (nH.lengthSq() < 1e-6) { this.state = 'air'; return; }
-    nH.normalize();
-    const wallUp = _b.copy(up).addScaledVector(n, -n.dot(up)).normalize();
+    // smoothed wall normal around the anchor
+    H.normal(C.anchor, _n, 0.5);
+    C.n.lerp(_n, dampF(9, dt)).normalize();
+    const n = C.n;
+    const wallUp = _b.copy(up).addScaledVector(n, -n.dot(up));
+    if (wallUp.lengthSq() < 1e-6) { this.state = 'air'; return; }
+    wallUp.normalize();
     const wallRight = _c.crossVectors(wallUp, n).normalize();
     const spd = I.sprint ? T.climbFast : T.climb;
     const my = I.mv.y, mx = I.mv.x;
-    C.move = damp(C.move, Math.min(1, Math.hypot(mx, my)), 8, dt);
+    const mag = Math.min(1, Math.hypot(mx, my));
     C.dx = damp(C.dx, mx, 8, dt); C.dy = damp(C.dy, my, 8, dt);
-    C.anchor.addScaledVector(wallUp, my * spd * dt).addScaledVector(wallRight, mx * spd * dt);
-    C.anchor.setLength(this.heights.groundR(C.anchor));
+    C.lunge = Math.max(0, C.lunge - dt);
+    const lungeV = C.lunge > 0 ? 4.6 * Math.sin((C.lunge / 0.32) * Math.PI) : 0;
+    const vUp = my * spd + lungeV, vRight = mx * spd;
+    C.speed = Math.hypot(vUp, vRight);
+    C.move = damp(C.move, Math.max(mag, C.lunge > 0 ? 1 : 0), 8, dt);
+    C.anchor.addScaledVector(wallUp, vUp * dt).addScaledVector(wallRight, vRight * dt);
+    // re-project the anchor onto the rock along the wall normal
+    _t.copy(C.anchor).addScaledVector(n, 0.6);
+    if (H.inside(_t)) _t.copy(C.anchor).addScaledVector(n, 1.5);
+    const back = _t.distanceTo(C.anchor);
+    const hit = H.ray(_t, _e.copy(n).negate(), back + 0.9, 0.06);
+    const lostWall = hit < 0;
+    if (!lostWall) C.anchor.copy(_t).addScaledVector(n, -hit);
     const cosN = n.dot(up);
     C.lean = clamp(Math.PI / 2 - Math.acos(clamp(cosN, -1, 1)), -0.2, 0.9);
-    // body: feet ~1.1 m below the chest anchor, standing off the wall
-    this.pos.copy(C.anchor).addScaledVector(nH, 0.36).addScaledVector(up, -1.02);
-    this.forward.copy(nH).negate();
-    this.vel.copy(wallUp).multiplyScalar(my * spd).addScaledVector(wallRight, mx * spd);
-    // exits
-    if (I.jumpDown) {
-      if (my > 0.5) { // climb-jump up the wall
-        C.anchor.addScaledVector(wallUp, 1.1); this.cam.addTrauma(0.05); return;
-      }
-      this.vel.copy(nH).multiplyScalar(3.8).addScaledVector(up, 5.2);
-      this.forward.copy(nH);
-      this.state = 'air'; this.airTime = 0; this.usedDouble = false; this.fallStartR = this.pos.length();
-      return;
-    }
-    if (I.descendDown) { this.vel.copy(nH).multiplyScalar(1.2); this.state = 'air'; this.airTime = 0.3; return; }
-    // mantle over the top
-    _t.copy(C.anchor).addScaledVector(wallUp, 0.5);
-    this._groundNormal(_t, _e);
-    if (_e.dot(up) > 0.78 && my > 0.1) {
-      _t.copy(C.anchor).addScaledVector(nH, -0.6);
-      this.pos.copy(_t).setLength(this._floorR(_t, up) + 0.05);
-      this.vel.copy(nH).multiplyScalar(-2).addScaledVector(up, 2.5);
+    // ---- mantle over the top (the rock above the hands turns walkable, or there is no rock left ahead)
+    _t.copy(C.anchor).addScaledVector(wallUp, 0.55);
+    H.normal(_t, _x, 0.45);
+    if ((lostWall || _x.dot(up) > 0.78) && (my > 0.1 || C.lunge > 0)) {
+      _t.copy(C.anchor).addScaledVector(wallUp, 0.35).addScaledVector(n, -0.55);
+      this.pos.copy(_t).setLength(this._floorR(_t, up) + 0.08);
+      projectOnPlane(_a.copy(n).negate(), up);
+      if (_a.lengthSq() > 1e-6) this.forward.copy(_a.normalize());
+      this.vel.copy(this.forward).multiplyScalar(2.2).addScaledVector(up, 2.2);
       this.state = 'air'; this.airTime = 0.2; this.usedDouble = false; this._quietLand = true;
+      this.cam.addTrauma(0.04);
       return;
     }
-    // reached walkable ground at the bottom
-    const floorHere = this._floorR(this.pos, up);
-    if (cosN > T.walkCos + 0.05 || (my < -0.1 && this.pos.length() <= floorHere + 0.05)) {
-      this.pos.setLength(Math.max(this.pos.length(), floorHere));
-      this.state = 'ground'; this._quietLand = true;
+    if (lostWall || cosN > T.walkCos + 0.12) { // the wall flattened out under us
+      this.state = 'air'; this.airTime = 0.2; this._quietLand = true; this.vel.set(0, 0, 0);
+      return;
     }
-    if (this.pos.length() < floorHere) this.pos.setLength(floorHere);
+    this._climbFrame(dt);
+    this.vel.copy(wallUp).multiplyScalar(vUp).addScaledVector(wallRight, vRight);
+    // ---- exits
+    if (I.jumpDown) {
+      if (my > 0.5 && C.lunge <= 0) { C.lunge = 0.32; this.cam.addTrauma(0.04); this.engine?.audio?.play?.('jump', { surface: 'rock' }); return; }
+      if (my <= 0.5) {
+        const nH = projectOnPlane(_a.copy(n), up).normalize();
+        this.vel.copy(nH).multiplyScalar(3.8).addScaledVector(up, 5.2);
+        this.forward.copy(nH);
+        this.state = 'air'; this.airTime = 0; this.usedDouble = false; this.fallStartR = this.pos.length();
+        return;
+      }
+    }
+    if (I.descendDown) {
+      const nH = projectOnPlane(_a.copy(n), up).normalize();
+      this.vel.copy(nH).multiplyScalar(1.2); this.state = 'air'; this.airTime = 0.3;
+      return;
+    }
+    // climbed down to the foot of the wall
+    if (C.atBase && my < -0.1) { this.state = 'ground'; this._quietLand = true; this.vel.set(0, 0, 0); }
   }
 
   _fly(dt, input) {
@@ -848,6 +927,7 @@ export class Player {
     S.slide.carve = this.slideS.carve;
     const C = this.climbS;
     S.climb.move = C.move; S.climb.dirX = C.dx; S.climb.dirY = C.dy; S.climb.lean = C.lean;
+    S.climb.speed = st === 'climb' ? C.speed : 0; S.climb.wallZ = C.wallZ; S.climb.lunge = C.lunge;
     // head look: toward a nearby point of interest, else where the camera looks
     this._poiT += dt;
     if (this._poiT > 0.5) { this._poiT = 0; this._pickLookTarget(); }
@@ -886,6 +966,12 @@ export class Player {
     if (this.group) this.group.visible = vis;
     if (!this.group) return;
     quatFromUpForward(up, this.forward, this.gquat);
+    // climbing: the whole body frame aligns with the rock (up the wall, facing into it)
+    this.climbBlend = damp(this.climbBlend, this.state === 'climb' ? 1 : 0, this.state === 'climb' ? 10 : 7, dt);
+    if (this.climbBlend > 1e-3) {
+      quatFromUpForward(this.climbS.up, this.climbS.fwd, _q2);
+      this.gquat.slerp(_q2, this.climbBlend);
+    }
     this.gpos.copy(this.pos);
     // swimming: nothing extra (the animator tilts about the chest); sliding: sink the board stance a hair
     this.group.position.copy(this.gpos);
@@ -936,6 +1022,7 @@ export class Player {
     ctx.pos = this.pos; ctx.up = this.up; ctx.vel = this.vel; ctx.state = this.state;
     ctx.heights = this.heights; ctx.colliders = this.colliders; ctx.bank = this.glide.bank;
     ctx.carve = this.slideS.carve; ctx.dive = this.glide.dive > 0.5; ctx.boost = this.boostP;
+    ctx.climbN = this.climbS.n; ctx.climbUp = this.climbS.up; ctx.climbSide = this.climbS.side;
     if (this.view === 'fp') {
       if (this.animator) {
         this.animator.eyeGroup(this.eye).applyQuaternion(this.gquat).add(this.gpos);

@@ -16,7 +16,7 @@ import { clamp, smoothstep, tangentBasis } from './util.js';
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3();
 const _e = new THREE.Vector3(), _f = new THREE.Vector3(), _q = new THREE.Quaternion(), _ax = new THREE.Vector3();
-const _l0 = new THREE.Vector3(), _l1 = new THREE.Vector3(), _n = new THREE.Vector3();
+const _l0 = new THREE.Vector3(), _l1 = new THREE.Vector3(), _n = new THREE.Vector3(), _rq = new THREE.Vector3();
 
 // ---------------------------------------------------------------------------------------------
 // Heightfield
@@ -36,6 +36,9 @@ export class HeightSampler {
     this.hasOcean = !!(this.S && oc?.present && Number.isFinite(this.S.seaLevel) && this.S.seaLevel > -1e8);
     this.sea = this.hasOcean ? this.S.seaLevel : -Infinity;
     this.liquid = oc?.liquid || 'water';
+    // frozen (and crusted lava) seas are walkable: the floor is the sea surface, nothing to swim in
+    this.solidSea = this.hasOcean && (this.liquid === 'ice' || this.liquid === 'lava');
+    this.seaR = this.hasOcean ? this.R + this.sea : -Infinity;
     this._water = null; this._waterT = -99;
     this._s = {};
     this.stats = { raw: 0, cached: 0 };
@@ -101,7 +104,7 @@ export class HeightSampler {
     return this.raw(p.x / l, p.y / l, p.z / l);
   }
   /** Radius of the terrain surface under p. */
-  groundR(p) { return this.R + this.height(p); }
+  groundR(p) { const g = this.R + this.height(p); return this.solidSea && g < this.seaR ? this.seaR : g; }
 
   /** Terrain normal at p (unit, outward) via central differences over `eps` meters. */
   normal(p, out, eps = 0.6) {
@@ -117,9 +120,53 @@ export class HeightSampler {
     return out;
   }
 
+  /** Is p below the terrain surface (radial test against the heightfield)? */
+  inside(p) { const g = this.groundR(p); return p.lengthSq() < g * g; }
+
+  /**
+   * March a ray from o along unit dir over the heightfield. Returns the distance to the first surface
+   * crossing (bisection-refined), 0 if o is already inside, or -1 if nothing within `max` m.
+   */
+  ray(o, dir, max, step = 0.08) {
+    if (this.inside(o)) return 0;
+    const q = _rq;
+    for (let t = step; t <= max + 1e-6; t += step) {
+      q.copy(o).addScaledVector(dir, t);
+      if (this.inside(q)) {
+        let a = t - step, b = t;
+        for (let k = 0; k < 6; k++) {
+          const m = (a + b) * 0.5;
+          q.copy(o).addScaledVector(dir, m);
+          if (this.inside(q)) b = m; else a = m;
+        }
+        return (a + b) * 0.5;
+      }
+    }
+    return -1;
+  }
+
+  /** How far p must move along unit dir to leave the terrain (0 if outside; capped at max). */
+  pushOut(p, dir, max, step = 0.04) {
+    if (!this.inside(p)) return 0;
+    const q = _rq;
+    for (let t = step; t <= max + 1e-6; t += step) {
+      q.copy(p).addScaledVector(dir, t);
+      if (!this.inside(q)) {
+        let a = t - step, b = t;
+        for (let k = 0; k < 5; k++) {
+          const m = (a + b) * 0.5;
+          q.copy(p).addScaledVector(dir, m);
+          if (this.inside(q)) a = m; else b = m;
+        }
+        return b;
+      }
+    }
+    return max;
+  }
+
   /** Liquid surface height (m rel. radius) at p, or -Infinity. Uses the water track's waves if exposed. */
   water(p) {
-    if (!this.hasOcean) return -Infinity;
+    if (!this.hasOcean || this.solidSea) return -Infinity;
     const t = this.world.time;
     if (t - this._waterT > 2 || t < this._waterT) {
       this._waterT = t;

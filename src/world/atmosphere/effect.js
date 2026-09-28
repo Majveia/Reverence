@@ -48,6 +48,7 @@ uniform vec3 uFogAlbedo;
 uniform vec3 uFogAmb;         // ambient radiance for the fog
 uniform vec3 uFogSun;         // sun illuminance at the camera
 uniform vec2 uFogWind;
+uniform vec4 uLavaGlow;       // lava-lit haze: emitted radiance (rgb), 1 / glow height (m) above the fog base
 uniform float uPixAng;        // angular size of a pixel (rad)
 uniform float uGeoGain;       // in-scatter gain over geometry (the sky gain relaxes from altitude/space)
 varying vec2 vUv;
@@ -153,7 +154,10 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 dir, float d, vec3 up, float nu){
   od *= mix(1.0, 0.25 + 1.5 * n, uFog.w);
   float T = exp(-max(od, 0.0));
   vec3 L = uFogAmb * 1.6 + uFogSun * (atmo_phaseHG(nu, 0.55) * 0.9 + 0.05);
-  return col * T + L * uFogAlbedo * (1.0 - T);
+  L *= uFogAlbedo;
+  // lava worlds: the low haze glows with the light of the lava below it
+  if (uLavaGlow.w > 0.0) L += uLavaGlow.rgb * exp(-max(0.5 * (hc + he), 0.0) * uLavaGlow.w);
+  return col * T + L * (1.0 - T);
 }
 
 void main(){
@@ -307,6 +311,7 @@ export class AtmosphereEffect {
       uFogAmb: { value: new THREE.Vector3() },
       uFogSun: { value: new THREE.Vector3() },
       uFogWind: { value: new THREE.Vector2() },
+      uLavaGlow: { value: new THREE.Vector4(0, 0, 0, 0) },
       uPixAng: { value: 0.001 },
       uGeoGain: { value: 1 },
       ...atmo.atmoUniforms,

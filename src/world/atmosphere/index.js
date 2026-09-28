@@ -176,7 +176,8 @@ class Atmosphere {
     const W = this.weather, u = this.effect.u, m = this.model;
     if (!m.present) { u.uFog.value.set(0, 1, 0, 0); return; }
     const fog = W.fog || 0, dust = W.dust || 0, rain = Math.max(W.rain || 0, W.snow || 0);
-    const rho = fog * fog * 2.0e-4 + rain * 5e-5 + dust * 1.2e-3;
+    let rho = fog * fog * 2.0e-4 + rain * 5e-5 + dust * 1.2e-3;
+    if (m.lava) rho *= 0.45;
     const Hf = THREE.MathUtils.lerp(320, 1600, THREE.MathUtils.clamp((rain + dust * 1.5) / Math.max(fog + rain + dust, 1e-3), 0, 1));
     const sea = this.world.surface?.seaLevel ?? 0;
     u.uFog.value.set(rho, Hf, sea + 30, 0.35 + 0.65 * fog);
@@ -190,6 +191,9 @@ class Atmosphere {
     const sc = this.lighting.sunColor, sd = Math.max(0, W.sunDim ?? 1);
     u.uFogSun.value.set(sc.r, sc.g, sc.b).multiplyScalar(sd * sd);
     u.uFogWind.value.set(G.uWindDir.value.x, G.uWindDir.value.z).multiplyScalar(t * 6);
+    // lava glow in the low haze (emission, so it reads most at dusk and night)
+    if (m.lava) u.uLavaGlow.value.set(1.0 * 0.05, 0.3 * 0.05, 0.06 * 0.05, 1 / 350);
+    else u.uLavaGlow.value.w = 0;
   }
 
   // ---------------------------------------------------------------- GPU pre-render

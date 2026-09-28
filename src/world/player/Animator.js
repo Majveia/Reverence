@@ -17,6 +17,7 @@ const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _qi = new THREE
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _m = new THREE.Matrix4();
 const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3(), _n2 = new THREE.Vector3();
+const _pa = new THREE.Vector3(), _pn = new THREE.Vector3(), _pq = new THREE.Quaternion();
 
 /** Pose = everything a layer outputs (blended linearly). Angles are YXZ eulers (x pitch, y yaw, z roll). */
 class Pose {
@@ -31,14 +32,14 @@ class Pose {
     this.handRotL = new THREE.Vector3(); this.handRotR = new THREE.Vector3();
     this.elbowL = new THREE.Vector3(); this.elbowR = new THREE.Vector3();
     this.shoulderL = new THREE.Vector3(); this.shoulderR = new THREE.Vector3();
-    this.fingers = 0; this.terrain = 0; this.pack = 0;
+    this.fingers = 0; this.terrain = 0; this.pack = 0; this.plant = 0;
     this._vecs = Object.values(this).filter((v) => v && v.isVector3);
   }
-  zero() { for (const v of this._vecs) v.set(0, 0, 0); this.fingers = 0; this.terrain = 0; this.pack = 0; return this; }
+  zero() { for (const v of this._vecs) v.set(0, 0, 0); this.fingers = 0; this.terrain = 0; this.pack = 0; this.plant = 0; return this; }
   add(o, w) {
     const a = this._vecs, b = o._vecs;
     for (let i = 0; i < a.length; i++) a[i].addScaledVector(b[i], w);
-    this.fingers += o.fingers * w; this.terrain += o.terrain * w; this.pack += o.pack * w;
+    this.fingers += o.fingers * w; this.terrain += o.terrain * w; this.pack += o.pack * w; this.plant += o.plant * w;
     return this;
   }
 }
@@ -155,7 +156,7 @@ export class Animator {
     if (wsum > 0 && Math.abs(wsum - 1) > 1e-4) {
       const inv = 1 / wsum;
       for (const v of P._vecs) v.multiplyScalar(inv);
-      P.fingers *= inv; P.terrain *= inv; P.pack *= inv;
+      P.fingers *= inv; P.terrain *= inv; P.pack *= inv; P.plant *= inv;
     }
     // ---- hard landing overlay
     if (S.hardLand > 0.001) this._hardLand(P, S.hardLand);
@@ -396,31 +397,69 @@ export class Animator {
   }
 
   _climb(L, S, dt) {
+    // BotW-style four-limb climb. The group is already aligned with the rock (+Y up the wall, +Z into it),
+    // so targets are laid out on a plane `wallZ` ahead of the body axis; _apply() then ray-plants every
+    // hand and foot on the actual heightfield. Limbs are world-planted during stance: the gait phase
+    // advances with the distance climbed so a hand stays put while the body moves past it.
     const c = S.climb;
-    this.climbPhase += c.move * dt * 1.3;
+    const A = 0.21; // stance half-travel (m)
+    this.climbPhase += (c.speed / (4 * A)) * dt;
     const ph = this.climbPhase;
-    // lean into the wall (group faces the wall); body parallel to the rock
-    L.rootRot.x = c.lean;
-    L.pivot.set(0, 0.2, 0.1);
-    L.hipsPos.z = 0.02;
-    L.spine.x = 0.05; L.chest.x = 0.02; L.head.x = -0.45; L.neck.x = -0.2;
-    // four-limb cycle: RH, LF, LH, RF
-    const limb = (off) => { const p = ((ph + off) % 1 + 1) % 1; return p < 0.5 ? Math.sin(p * 2 * Math.PI) : 0; };
-    const reachL = limb(0.5) * 0.28 * c.dirY, reachR = limb(0) * 0.28 * c.dirY;
-    const latL = limb(0.5) * 0.12 * c.dirX, latR = limb(0) * 0.12 * c.dirX;
-    const lift = (x) => Math.max(0, x);
-    // hands on the wall (chest space: wall is ahead at z≈0.26)
-    L.handL.set(0.24 + latL, 0.34 + reachL + Math.sin((ph + 0.5) * TAU) * 0.08 * c.move, 0.27 + lift(limb(0.5)) * -0.06);
-    L.handR.set(-0.24 + latR, 0.26 + reachR + Math.sin(ph * TAU) * 0.08 * c.move, 0.27 + lift(limb(0)) * -0.06);
-    L.elbowL.set(0.9, -0.5, -0.3); L.elbowR.set(-0.9, -0.5, -0.3);
-    L.handRotL.set(-1.2, 0, 0.2); L.handRotR.set(-1.2, 0, -0.2);
-    L.fingers = 0.75;
-    // feet (group space) pushing on the wall, knees out
-    const fL = limb(0.25) * 0.22 * c.dirY, fR = limb(0.75) * 0.22 * c.dirY;
-    L.footL.set(0.15, 0.36 + fL, 0.24); L.footR.set(-0.15, 0.28 + fR, 0.24);
-    L.footRotL.set(-0.6, 0, 0); L.footRotR.set(-0.6, 0, 0);
-    L.kneeL.set(1, 0, 0.6); L.kneeR.set(-1, 0, 0.6);
+    const wz = c.wallZ;
+    // travel direction on the wall (group space: +X = left, climber's right = -X)
+    let ox = -c.dirX, oy = c.dirY;
+    const ol = Math.hypot(ox, oy);
+    if (ol > 1e-3) { ox /= ol; oy /= ol; } else { ox = 0; oy = 1; }
+    const lunge = c.lunge > 0 ? Math.sin((c.lunge / 0.32) * Math.PI) : 0;
+    const limb = (off, out) => { // out.x = offset along travel, out.y = lift off the rock
+      const p = ((ph + off) % 1 + 1) % 1;
+      if (p < 0.5) { out.x = A * (1 - 4 * p); out.y = 0; } else {
+        const s = (p - 0.5) * 2, e = s * s * (3 - 2 * s);
+        out.x = -A + 2 * A * e; out.y = Math.sin(s * Math.PI);
+      }
+      return out;
+    };
+    const o = this._lo || (this._lo = { x: 0, y: 0 });
+    // body: hips close to the rock, chest and head arched away, looking up the route
+    const sway = Math.sin(ph * TAU) * c.move;
+    L.hipsPos.set(-sway * 0.035 * Math.abs(oy), -0.12 - lunge * 0.1, 0.05);
+    L.rootRot.z = sway * 0.05;
+    L.spine.x = -0.14 + lunge * 0.1; L.chest.x = -0.1; L.neck.x = -0.25; L.head.x = -0.4 + lunge * -0.15;
+    L.spine.y = sway * 0.08; L.chest.y = sway * 0.06;
+    L.head.y = -c.dirX * 0.35;
+    L.shoulderL.z = -0.08; L.shoulderR.z = 0.08;
+    // hands (group layout → chest space; the planting pass puts them on the rock)
+    const cx = CHEST_REST.x, cy = CHEST_REST.y, cz = CHEST_REST.z;
+    limb(0.5, o); // left hand pairs with the right foot
+    L.handL.set(0.22 + ox * o.x - cx, 1.56 + oy * o.x + lunge * 0.22 - cy, wz - 0.06 - o.y * 0.12 - cz);
+    limb(0.0, o);
+    L.handR.set(-0.22 + ox * o.x - cx, 1.48 + oy * o.x + lunge * 0.26 - cy, wz - 0.06 - o.y * 0.12 - cz);
+    L.elbowL.set(0.9, -0.55, -0.35); L.elbowR.set(-0.9, -0.55, -0.35);
+    L.handRotL.set(-1.1, 0, 0.25); L.handRotR.set(-1.1, 0, -0.25);
+    L.fingers = 0.7;
+    // feet (group space) on small holds, knees splayed out like a frog
+    limb(0.0, o);
+    L.footL.set(0.17 + ox * o.x * 0.9, 0.36 + oy * o.x * 0.9 - lunge * 0.05, wz - 0.16 - o.y * 0.1);
+    limb(0.5, o);
+    L.footR.set(-0.17 + ox * o.x * 0.9, 0.28 + oy * o.x * 0.9 - lunge * 0.05, wz - 0.16 - o.y * 0.1);
+    L.footRotL.set(-0.15, -0.35, 0); L.footRotR.set(-0.15, 0.35, 0);
+    L.kneeL.set(1, 0.1, 0.45); L.kneeR.set(-1, 0.1, 0.45);
     L.pack = 0.6;
+    L.plant = 1;
+  }
+
+  /** Put an effector (group-space target t) on the rock ahead: ray along the group's +Z. */
+  _plant(t, off, w) {
+    const H = this.H;
+    _pa.copy(t).applyQuaternion(this.gquat).add(this.gpos);
+    _pn.set(0, 0, 1).applyQuaternion(this.gquat);
+    _pa.addScaledVector(_pn, -0.45);
+    const hit = H.ray(_pa, _pn, 1.0, 0.05);
+    if (hit < 0) return false;
+    _pa.addScaledVector(_pn, Math.max(0, hit - off));
+    _pa.sub(this.gpos).applyQuaternion(_pq.copy(this.gquat).invert());
+    t.lerp(_pa, w);
+    return true;
   }
 
   _hardLand(P, w) {
@@ -524,6 +563,7 @@ export class Animator {
         if (dh < minDh) minDh = dh;
         this.H.normal(_v, this.footN[side], 0.35);
       } else this.footGround[side] = 0;
+      if (P.plant > 0.01 && this.H?.ray) this._plant(_t, 0.13, clamp(P.plant, 0, 1));
       // don't let feet sink below ground in other states (except swim/climb)
       this.footWorld[side].copy(_t).applyQuaternion(this.gquat).add(this.gpos);
       const bu = side === 'L' ? B.thighL : B.thighR, bl = side === 'L' ? B.shinL : B.shinR, be = side === 'L' ? B.footL : B.footR;
@@ -552,6 +592,7 @@ export class Animator {
     for (const side of ['L', 'R']) {
       const hand = side === 'L' ? P.handL : P.handR;
       _t.copy(hand).applyQuaternion(this.gq[B.chest]).add(this.gp[B.chest]);
+      if (P.plant > 0.01 && this.H?.ray) this._plant(_t, 0.045, clamp(P.plant, 0, 1));
       const bu = side === 'L' ? B.upperArmL : B.upperArmR, bl = side === 'L' ? B.foreArmL : B.foreArmR, be = side === 'L' ? B.handL : B.handR;
       _z.copy(side === 'L' ? P.elbowL : P.elbowR);
       if (_z.lengthSq() < 1e-6) _z.set(0, 0, -1);

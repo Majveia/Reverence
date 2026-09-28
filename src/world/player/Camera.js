@@ -89,7 +89,15 @@ export class CameraRig {
       this.recenter(up, vt, k * smoothstep(1.5, 7, sp), dt, st === 'glide' || st === 'slide' ? 3.0 : 2.3);
     }
     const vyC = ctx.vel.dot(up);
-    if (this.idleLook > 0.9 && sp > 2.5 && (st === 'slide' || st === 'ground')) {
+    if (st === 'climb' && ctx.climbN && this.idleLook > 0.9) {
+      // climbing: swing to a ¾ view of the wall on the side we came from, looking a touch up the route
+      _a.copy(ctx.climbN).negate(); projectOnPlane(_a, up);
+      if (_a.lengthSq() > 1e-6) {
+        _a.normalize().applyAxisAngle(up, (ctx.climbSide || 1) * 0.85);
+        this.recenter(up, _a, 1.4, dt, 3.1);
+      }
+      this.pitch = damp(this.pitch, 0.02, 1.2, dt);
+    } else if (this.idleLook > 0.9 && sp > 2.5 && (st === 'slide' || st === 'ground')) {
       // follow the grade of the motion: look down the slope you're surfing / running down
       const target = clamp(-0.13 + Math.atan2(vyC, sp) * 0.75, -0.95, 0.25);
       this.pitch = damp(this.pitch, target, 1.6 * smoothstep(2.5, 9, sp), dt);
@@ -99,7 +107,7 @@ export class CameraRig {
     }
     // ---- arm length by state
     const glideK = st === 'glide' ? 1 : 0;
-    let arm = 3.7 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (1.3 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? -0.4 : 0) + (st === 'climb' ? 1.0 : 0);
+    let arm = 3.7 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (1.3 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? -0.4 : 0) + (st === 'climb' ? 0.5 : 0);
     // looking up from low: shorten the arm so the camera does not dig into the ground (BotW)
     arm *= 1 - 0.35 * smoothstep(0.05, 0.9, this.pitch);
     arm *= this.zoom;
@@ -112,6 +120,9 @@ export class CameraRig {
     const ff = 2 / this.pivot.omega;
     const tgt = _a.copy(ctx.pos).addScaledVector(up, pivotH).addScaledVector(vt, 0.1 + ff * 0.85)
       .addScaledVector(up, vy * ff * smoothstep(4, 12, Math.abs(vy)));
+    if (st === 'climb' && ctx.climbN) { // chest height along the wall, pulled off the rock
+      tgt.copy(ctx.pos).addScaledVector(ctx.climbUp, 1.2).addScaledVector(ctx.climbN, 0.55);
+    }
     if (!this.pivotInit) { this.pivot.reset(tgt); this.pivotInit = true; }
     this.pivot.update(tgt, dt);
     // never let the pivot drift too far (teleports / high speeds)

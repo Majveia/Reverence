@@ -11,11 +11,11 @@ Subsystem `atmosphere` (order 20) auto-loaded by `World`. Every pass is fault-is
 | `model.js` | CPU side: per-body Rayleigh / Mie / ozone coefficients from `body.atmosphere` + `body.art`, art-tint calibration, CPU transmittance table, CPU sky radiance/irradiance (ambient, cloud ambient) |
 | `glsl.js` | shader chunks `rv_atmo` (medium, phases, LUT lookups, `atmo_march`, `atmo_transSegment`, `atmo_sunTransmittance`), `rv_atmo_sky` (sky-view LUT), `rv_atmo_view` (screen ray reconstruction), `rv_cloudshadow` |
 | `luts.js` | Hillaire 2020 LUTs on the GPU: transmittance 256×64, multiple scattering 32×32 (once per planet), sky-view 192×108 MRT (Rayleigh / Mie / multi-scatter split, phases applied per pixel → sharp aureole) every frame |
-| `effect.js` | pipeline effect **`atmosphere` (order 100)**: sky from the ground (LUT) → seamless per-pixel march from altitude/space; aerial perspective on all geometry; background (stars / sun / planets of the space track) × transmittance with daytime star suppression; night sky (starlight, moonlit sky, airglow layer with limb brightening); aurora curtains; analytic height-fog banks (weather); fallback sun disk + star field + galactic band **only when no `space` subsystem exists** |
-| `clouds.js` | pipeline effect **`clouds` (order 110)**: volumetric cloud shell (same march from ground, altitude and orbit), GPU-generated tileable Perlin-Worley 3D noise, planet-wide weather cube map (coverage / tallness / storm cells) drifting with the wind, per-type shaping, Beer-powder + dual-lobe HG + silver lining + 4-octave multiple scattering, sun light × atmospheric transmittance per sample (gold/pink clouds at sunset, planet shadow after dusk), overcast/storm base darkening, lightning flash, aerial fade into the sky; half-res + depth-aware upsample; **cloud shadow map** projected along the key light; `q=low` → cheap 2-sample slab |
-| `lightshafts.js` | pipeline effect **`volumetric-light` (order 120)**: crepuscular rays / god rays (quarter-res mask of unoccluded sky × cloud transmittance, two radial blur passes), scaled by world haze, low sun and weather |
-| `weather.js` | weather state machine + pipeline effect **`weather` (order 125)**: rain streaks, snow flakes, dust motes (camera-local volume wrapped in the vertex shader, soft depth test), lightning bolt + cloud flash + environment flash; drives `uWetness`, `uSnow`, `uWindStrength` |
-| `lighting.js` | `SunLight` key light with custom N-cascade shadows (`RVSunShadow`: 2–4 cascades in one atlas, texel snapping, per-cascade normal bias), moon as key light at night (phase-aware), PMREM environment of the sky (+ smooth cloud deck) on `scene.environment`, hemisphere fallback, material auto-setup (cloud shadows on the key light) |
+| `effect.js` | pipeline effect **`atmosphere` (order 100)**: sky from the ground (LUT, ×`uSkyViewGain` ≈ 1.28 for a game-bright sky dome) → seamless per-pixel march from altitude/space; aerial perspective on all geometry (the art sky gain relaxes to physical from altitude/orbit → deep blue oceans from space); background (stars / sun / planets of the space track) × transmittance with daytime star suppression on the **far-plane background only**; night sky (deep-blue starlight gradient brighter toward the horizon, moonlit sky, green airglow band / limb ring from space); aurora curtains; analytic height-fog banks (weather); **lava-lit glowing low haze** on lava worlds; fallback sun disk + star field + galactic band **only when no `space` subsystem exists** |
+| `clouds.js` | pipeline effect **`clouds` (order 110)**: volumetric cloud shell (same march from ground, altitude and orbit), GPU-generated tileable Perlin-Worley 3D noise + a second, finer curl-offset detail octave (cauliflower edges), lumpy bases/tops, density gradient (translucent bases, solid tops), planet-wide weather cube map (coverage / tallness / storm cells / orbit detail) with **deterministic cyclones** (spiral bands, clear eyes) drifting with the wind, per-type shaping, lighting = single + 3 multiple-scattering octaves (desaturated: light inside clouds loses the low-sun tint), view-dependent powder (dark sun-facing edges seen from the anti-sun side, none toward the sun), silver lining, **column optical depth above each sample** (ambient occlusion + diffuse transmission → mottled, darker thick bases; storm decks with structure), sun × atmospheric transmittance per sample, overcast/storm darkening, localized lightning flash, aerial fade into the sky; **distance LOD** (22–70 km × size): far away the 3D noise tile averages out and the weather map's cellular detail carries the shapes (no tiling from orbit); half-res + depth-aware upsample; **cloud shadow map** projected along the key light; `q=low` → cheap 2-sample slab |
+| `lightshafts.js` | pipeline effect **`volumetric-light` (order 120)**: (1) **ray-marched volumetric light** (quarter res, MRT, depth-aware upsample): each view ray is marched through the air below and between the clouds; a near segment samples the **sun's cascaded shadow map** (trees, buildings, ridges → Pacific-Drive-style shafts in fog), the whole ray samples the **cloud shadow map** (crepuscular rays through cloud gaps, anti-crepuscular rays). Shadowed air loses the single scattering the atmosphere pass gave it (hue-preserving darkening, weighted by the clouds in front), lit weather haze (fog / dust / rain / morning haze) glows with a forward phase; **rain curtains** hang under dense / stormy cells of the weather map (grey extinction + in-scatter); (2) screen-space radial streaks around the key light (quarter-res sky × cloud-transmittance mask, two radial blurs) |
+| `weather.js` | weather state machine + pipeline effect **`weather` (order 125)**: rain streaks (thin, dim lens-like drops, faded near the lens), snow flakes, dust motes (camera-local volume wrapped in the vertex shader, soft depth test), **no precipitation above the cloud deck / dust layer or outside the atmosphere**; lightning = fractal (midpoint-displacement) branched bolt with **depth test** against the scene, localized cloud flash, environment flash scaled by darkness; strikes are scheduled deterministically from sim time, so captures of stormy worlds see bolts too; drives `uWetness`, `uSnow`, `uWindStrength` |
+| `lighting.js` | `SunLight` key light with custom N-cascade shadows (`RVSunShadow`: 2–4 cascades in one atlas, texel snapping, per-cascade normal bias), moon as key light at night (phase-aware), PMREM environment of the sky + cloud deck (cover / colours follow the weather and time of day) on `scene.environment`, **overcast-aware ambient** (the deck greys and dims the sky dome; blocked direct sun returns as diffuse light), hemisphere fallback, material auto-setup (cloud shadows on the key light) |
 | `index.js` | subsystem glue, per-frame CPU state, pre-render GPU work (LUTs, env map, cloud shadow map) |
 
 ### Physical model & art direction (the important numbers)
@@ -78,53 +78,64 @@ world.atmosphere = {
 | view | URL / steps |
 |---|---|
 | BotW cumulus sky (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.4&pitch=8` |
-| Golden-hour sunset through clouds (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.74&pitch=6&yaw=270` |
-| Morning, sun behind clouds (W1) | `star=6&planet=1&view=fly&alt=800&tod=0.3&pitch=2&yaw=90` |
-| Aerial perspective, mountains in haze at sunset (W1) | `star=6&planet=1&view=fly&alt=800&tod=0.74&pitch=2&yaw=270` |
-| Blade Runner rain storm (W4) | `star=2&planet=0&view=surface&tod=0.45` steps `[{"look":[0,8]},{"advance":0.5}]` |
-| Storm + lightning (W1) | `star=6&planet=1&view=fly&alt=800&tod=0.45&pitch=4&weather=storm&lightning=1` |
-| Sea of clouds from altitude (W1) | `star=6&planet=1&view=fly&alt=3000&tod=0.5` |
+| Golden-hour sunset, sunbeams fanning from behind the ridge (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.74&pitch=6&yaw=270` |
+| Crepuscular rays under a broken deck, morning (W1) | `star=6&planet=1&view=fly&alt=800&tod=0.28&pitch=6&yaw=90&cover=0.8` |
+| Storm over the sea: dark cells, rain, branched lightning (W4) | `star=2&planet=0&view=fly&alt=300&tod=0.45&pitch=6` |
+| Blade Runner rain storm in the forest (W4) | `star=2&planet=0&view=surface&tod=0.45` steps `[{"look":[0,8]},{"advance":0.5}]` |
+| Sea of clouds, peaks piercing the deck (W7 Solaris) | `star=3&planet=2&view=fly&alt=3000&tod=0.3&yaw=90` |
+| Night: deep-blue starry sky, horizon glow (W9) | `star=2&planet=2.1&view=fly&alt=600&tod=0.02&pitch=12` |
+| Night over the archipelago (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.02&pitch=12` |
 | Aurora curtains + stars (W8) | `star=2&planet=1&view=fly&alt=800&tod=0.02&pitch=12&weather=aurora` |
+| Terminator from orbit: orange band, reddened sun at the limb, airglow ring (W1) | `star=6&planet=1&view=orbit&tod=0.22` |
+| Planet from orbit: cyclone, cumulus fields, deep oceans (W2) | `star=11&planet=0&view=orbit&tod=0.4` |
+| Lava moon at dusk (glowing haze, clear air over lava) | `star=7&planet=4.0&view=fly&alt=300&tod=0.78&pitch=-4` |
 | Snow (W12 arctic) | `star=9&planet=5&view=surface&tod=0.45&weather=snow` steps `[{"look":[0,10]},{"advance":0.5}]` |
-| Terminator from orbit (W1) | `star=6&planet=1&view=orbit&tod=0.22` |
-| Planet from orbit: limb, terminator, cloud shell | `star=11&planet=0&view=orbit&tod=0.4` |
 | Low tier clouds | add `&q=low` |
 
+**Art / capture overrides:** `&weather=clear|rain|storm|snow|dust|fog|aurora`, `&lightning=1` (forced bolt on
+the captured frame), `&clouds=cumulus|storm|stratus|wisp|haze|fogsea|none`, `&cover=0..1` (cloud coverage).
+Debug: `&atmoDebug=5` shows the volumetric-light terms (R: added light, G: shadowed/removed light, B: 1 − T).
+`__rv.state().atmosphere` now also reports `moon {name, ill, elev, az}`, `sunAz` (compass, = `yaw` to face
+it) and `overcast`.
+
 ## Performance
-* high: atmosphere pass (≤ 10–20 samples/pixel, full res) + clouds (half res, ≤ 56 steps, 5 light
-  steps, early exit) + rays (quarter res) + weather (6k instanced quads, one draw) + LUT sky-view
-  (192×108) per frame; transmittance/MS LUTs, 3D noise (64³) and weather cube built once; env map
-  PMREM only when the sun moves / altitude changes; cloud shadow map every 3rd frame.
-* Measured in SwiftShader (960×540, system-surface check view): the whole atmosphere track ≈ 1.6 s
-  of a ≈ 17 s frame (~10 %); the rest is scene + MSAA + post.
-* Tiers: low = no shadows, 2D cloud slab, no god rays, 1.4k particles; med = 2 cascades, 36 steps;
-  ultra = 4 cascades, 80 steps, 96³ noise. Zero per-frame allocations in hot paths.
+* high: atmosphere pass (≤ 10–20 samples/pixel, full res) + clouds (half res, ≤ 56 steps (84 in shot mode),
+  5 light steps + 2 column samples, early exit, distance LOD skips the detail fetches far away) +
+  volumetric light (quarter res, 36 steps: 14 near with the sun cascades, 22 far with the cloud shadow map)
+  + streaks (quarter res, 2 blurs) + weather (6k instanced quads, one draw) + sky-view LUT (192×108) per
+  frame; transmittance/MS LUTs, 3D noise (64³) and weather cube (384² × 6) built once; env map PMREM only
+  when the sun / altitude / cloud cover change; cloud shadow map every 3rd frame.
+* Tiers: low = no shadows, 2D cloud slab, no volumetric light, 1.4k particles; med = 2 cascades, 36 steps,
+  1 column sample and no second detail octave (`CL_HQ` off), 22 volumetric steps; ultra = 4 cascades, 80 steps, 96³ noise, 48 volumetric steps. Zero per-frame
+  allocations in hot paths.
 
 ## Known issues
-* `tools/check.mjs` `system-surface` fails on Playwright's fixed 30 s screenshot timeout in
-  SwiftShader (the frame takes ~17 s; the baseline before this track's changes timed out too).
-* No temporal reprojection yet for clouds (half-res + spatial jitter + depth-aware 9-tap upsample);
-  a little grain is visible in thin cloud edges.
-* Clouds from orbit still read a bit "cellular"; large swirling systems / fronts are future work.
-* Fallback star field is a stand-in until the space track renders stars (it switches itself off when
-  `world.get('space')` exists).
-* The orbit view camera currently never rotates (player track stub), so orbit framing is fixed.
-* Lightning bolts are drawn without a depth test (they can show through a near ridge).
-* Storm/overcast bases pick up a slightly warm tint on warm-graded worlds.
+* No temporal reprojection for clouds yet (half-res + spatial jitter + depth-aware upsample): thin cloud
+  edges show a little grain in stills.
+* Volumetric light is quarter res: very thin occluders (a single trunk) give soft shafts; the cloud shadow
+  map covers ~26 km × size around the camera, so shafts fade beyond it.
+* Inside the cloud layer the shaft visibility uses the sun-ward fraction of the column (approximation).
+* Crepuscular rays need broken clouds or a ridge near the sun; on clear-sky worlds only the (correct) Mie
+  aureole shows — use `&cover=` to stage them.
+* Lightning bolts are camera-facing ribbons (no volumetric glow halo; the cloud flash provides that).
 
 ## Requests
-* **core / tools**: `tools/shoot.mjs` uses Playwright's default 30 s `page.screenshot` timeout; with
-  SwiftShader frames of 15–20 s (under load) captures of terrain-heavy views fail. Please pass
-  `timeout: 180000` to `page.screenshot` (a private copy with that change works reliably).
-* **post**: MSAA on the HDR scene target roughly doubles the SwiftShader frame; consider `samples: 0`
-  in shot mode, or TAA. The atmosphere writes physically based HDR (sun ≈ 6, sky ≈ 0.3–1.0): auto
-  exposure keyed to `G.uSunIntensity` + `G.uAmbientSky` would help nights and storms.
-* **post**: art grades with `lift` (e.g. Stålenhag `[0.02,0.022,0.028]`) turn night skies into a grey
-  veil (AgX toe + lift). Please scale `lift` by `(1 - G.uNight)` (or apply lift before exposure) so
-  nights keep OLED blacks; the atmosphere already outputs ~0 radiance for a moonless night sky.
-* **space**: please render stars / sun disk / planets into the background (depth = far) — the
-  atmosphere pass multiplies them by the view transmittance and hides faint stars by day. Once
-  `world.get('space')` exists the fallback sun/stars are disabled automatically.
+* **post**: the atmosphere writes physically based HDR (sun ≈ 6, sky ≈ 0.3–1.2, moonless night sky
+  ≈ 0.005–0.02): keep auto-exposure's night drop moderate so the deep-blue night gradient stays visible;
+  lens rain droplets during storms look good — consider keying them to `G.uWetness` *and* camera altitude
+  below the cloud base (`world.atmosphere.clouds.Rc0`).
+* **space**: moons / the parent gas giant are the night key light (`world.lighting.moon`); their discs come
+  from the space track — when a moon is up at night please make sure it is drawn (the atmosphere adds the
+  moonlit sky glow around it).
 * **water / flora / civ**: include `rv_cloudshadow` in custom shaders (see API) and read `G.uWetness`
   (dark, glossy wet surfaces, puddles) and `G.uSnow` (snow cover on up-facing surfaces).
-* **player**: orbit view camera should look at the planet (currently identity rotation).
+* **terrain**: cloud shadows now use strength 0.72; very dark shadowed slopes at low sun suggest the terrain
+  shader under-weights `scene.environment` (sky ambient) relative to the direct sun.
+
+### Done this round (inbox)
+* vehicles/space: no rain/snow streaks above the cloud deck or outside the atmosphere.
+* water: deep-blue oceans from orbit (thinner veil from altitude), lava worlds get clearer low air and a
+  glowing lava-lit haze; `lighting.skyCube` exposes the raw planet-local sky cube (same as `cubeRT.texture`).
+* space: gas giants get no cumulus shell (`clouds.present = false` for gas bodies); daytime star hiding
+  applies only to the far-plane background (planets / rings with depth are untouched).
+* post: brighter clear-day sky dome (`uSkyViewGain` ≈ 1.28 from the ground, relaxes with altitude).

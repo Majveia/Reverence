@@ -106,6 +106,9 @@ export class AtmosphereModel {
 
     this.skyGain *= 1 - this.moody * 0.35;
     this.apScale = Math.min(0.9, (this.apScale ?? 0.4) + this.moody * 0.25);
+    // lava worlds: keep the air near the glowing surface clear enough to see the lava
+    this.lava = body.ocean?.present && body.ocean?.liquid === 'lava';
+    if (this.lava) this.apScale = Math.min(this.apScale, 0.42);
 
     // Ground albedo (average of the world palette, ocean-weighted) for multiple scattering
     const land = new THREE.Color(0, 0, 0);

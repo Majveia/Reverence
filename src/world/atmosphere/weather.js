@@ -55,7 +55,7 @@ void main(){
   vViewZ = -mv.z;
   vQ = position.xy;
   float d = length(rel);
-  vFade = smoothstep(0.3, 1.5, d) * (1.0 - smoothstep(uBox * 0.3, uBox * 0.5, d));
+  vFade = smoothstep(uKind < 0.5 ? 1.2 : 0.3, uKind < 0.5 ? 4.0 : 1.5, d) * (1.0 - smoothstep(uBox * 0.3, uBox * 0.5, d));
   gl_Position = projectionMatrix * mv;
 }`;
 
@@ -157,12 +157,24 @@ export class Weather {
     this._drift = new THREE.Vector3();
 
     // ---- lightning bolt ribbon (preallocated)
-    this.boltN = 28;
+    // main channel (65 points, fractal midpoint displacement) + 3 branches (17 points each)
+    this.boltMain = 65; this.boltBr = 17; this.boltBranches = 3;
+    this.boltN = this.boltMain + this.boltBr * this.boltBranches;
     const bg = new THREE.BufferGeometry();
     this.boltPos = new Float32Array(this.boltN * 2 * 3);
     const bt = new Float32Array(this.boltN * 2);
     const idx = [];
-    for (let i = 0; i < this.boltN; i++) { bt[i * 2] = bt[i * 2 + 1] = i / (this.boltN - 1); if (i < this.boltN - 1) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); } }
+    const strip = (start, n, t0, t1) => {
+      for (let i = 0; i < n; i++) {
+        const k = start + i;
+        bt[k * 2] = bt[k * 2 + 1] = t0 + (t1 - t0) * i / (n - 1);
+        if (i < n - 1) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      }
+    };
+    strip(0, this.boltMain, 0, 1);
+    for (let b = 0; b < this.boltBranches; b++) strip(this.boltMain + b * this.boltBr, this.boltBr, 0.35, 1);
+    this._bpts = Array.from({ length: this.boltMain }, () => new THREE.Vector3());
+    this._bbr = Array.from({ length: this.boltBr }, () => new THREE.Vector3());
     bg.setAttribute('position', new THREE.BufferAttribute(this.boltPos, 3));
     bg.setAttribute('aT', new THREE.BufferAttribute(bt, 1));
     bg.setIndex(idx);
@@ -235,7 +247,9 @@ export class Weather {
     st.storm += (tg.storm - st.storm) * k;
     st.aurora = tg.aurora;
     const precip = Math.max(st.rain, st.snow);
-    st.coverBoost = 0.5 * precip + 0.35 * st.storm + 0.15 * st.dust;
+    // clear / aurora overrides break the deck up (aurora nights need clear air)
+    const clearing = this.override === 'clear' ? 0.3 : this.override === 'aurora' ? 0.4 : 0;
+    st.coverBoost = 0.5 * precip + 0.35 * st.storm + 0.15 * st.dust - clearing;
     st.sunDim = Math.max(0.12, 1 - 0.7 * precip - 0.3 * st.storm - 0.45 * st.dust);
     // surface state
     if (shot) { this.wet = Math.max(st.rain, this.base.rain * 0.3); this.snowCover = Math.max(this.snowCover, st.snow * 0.8, this.cold ? 0.5 : 0); }
@@ -296,20 +310,46 @@ export class Weather {
     const top = this.atmo.clouds?.Rc0 ?? R + 2000;
     const gR = R + Math.max(gh, 0);
     this._boltLocal.copy(ground).multiplyScalar((gR + top) * 0.5);
-    // build the jagged ribbon in scene space (width 7 m)
-    const P = this.boltPos, n = this.boltN;
+    // fractal channel (midpoint displacement: big meanders + fine jaggedness), scene-space ribbon
     const o = w.origin;
-    let jx = 0, jz = 0;
+    const rs = { s: ((Math.floor(t * 1000) ^ Math.floor(sd * 1e6)) >>> 0) || 1 };
+    const rr = () => { rs.s ^= rs.s << 13; rs.s >>>= 0; rs.s ^= rs.s >>> 17; rs.s ^= rs.s << 5; rs.s >>>= 0; return rs.s / 4294967296 - 0.5; };
+    const pts = this._bpts, M = this.boltMain;
+    pts[0].copy(ground).multiplyScalar(top).addScaledVector(side, rr() * 400);
+    pts[M - 1].copy(ground).multiplyScalar(gR);
+    const H = top - gR;
+    const subdiv = (arr, i0, i1, amp) => {
+      if (i1 - i0 < 2) return;
+      const m = (i0 + i1) >> 1;
+      arr[m].copy(arr[i0]).add(arr[i1]).multiplyScalar(0.5).addScaledVector(side, rr() * amp).addScaledVector(fwd, rr() * amp);
+      subdiv(arr, i0, m, amp * 0.55); subdiv(arr, m, i1, amp * 0.55);
+    };
+    subdiv(pts, 0, M - 1, H * 0.35);
+    const P = this.boltPos;
     const toCam = _v6;
-    for (let i = 0; i < n; i++) {
-      const f = i / (n - 1);
-      jx += (r(13.1 + i * 3.7) - 0.5) * 140 * (1 - f * 0.3);
-      jz += (r(29.3 + i * 5.1) - 0.5) * 140 * (1 - f * 0.3);
-      const p = _v7.copy(ground).multiplyScalar(top + (gR - top) * f).addScaledVector(side, jx).addScaledVector(fwd, jz);
-      toCam.copy(camLocal).sub(p).normalize();
-      const wdir = _v8.crossVectors(toCam, ground).normalize().multiplyScalar(7 + 10 * (1 - f));
-      P[i * 6] = p.x - o.x - wdir.x; P[i * 6 + 1] = p.y - o.y - wdir.y; P[i * 6 + 2] = p.z - o.z - wdir.z;
-      P[i * 6 + 3] = p.x - o.x + wdir.x; P[i * 6 + 4] = p.y - o.y + wdir.y; P[i * 6 + 5] = p.z - o.z + wdir.z;
+    const writeStrip = (arr, n, start, w0, w1) => {
+      for (let i = 0; i < n; i++) {
+        const f = i / (n - 1);
+        const p = arr[i];
+        toCam.copy(camLocal).sub(p).normalize();
+        const tan = _v7.copy(arr[Math.min(i + 1, n - 1)]).sub(arr[Math.max(i - 1, 0)]).normalize();
+        const wdir = _v8.crossVectors(toCam, tan).normalize().multiplyScalar(w0 + (w1 - w0) * f);
+        const k = (start + i) * 6;
+        P[k] = p.x - o.x - wdir.x; P[k + 1] = p.y - o.y - wdir.y; P[k + 2] = p.z - o.z - wdir.z;
+        P[k + 3] = p.x - o.x + wdir.x; P[k + 4] = p.y - o.y + wdir.y; P[k + 5] = p.z - o.z + wdir.z;
+      }
+    };
+    writeStrip(pts, M, 0, 4.5, 2.5);
+    // branches fork off the upper half and die out
+    const br = this._bbr, NB = this.boltBr;
+    for (let b = 0; b < this.boltBranches; b++) {
+      const i0 = 6 + Math.floor((rr() + 0.5) * M * 0.45);
+      const len = H * (0.18 + (rr() + 0.5) * 0.22);
+      br[0].copy(pts[i0]);
+      const dirSide = rr() < 0 ? -1 : 1;
+      br[NB - 1].copy(pts[i0]).addScaledVector(ground, -len * 0.8).addScaledVector(side, dirSide * len * 0.6).addScaledVector(fwd, rr() * len * 0.4);
+      subdiv(br, 0, NB - 1, len * 0.3);
+      writeStrip(br, NB, M + b * NB, 2.2, 0.4);
     }
     this.bolt.geometry.attributes.position.needsUpdate = true;
     this.bolt.geometry.computeBoundingSphere();
@@ -347,10 +387,11 @@ export class Weather {
     let speed, box, width, alpha;
     const amb = G.uAmbientSky.value, sun = G.uSunColor.value;
     if (kind === 0) {
-      speed = 9; box = 26; width = 0.009; alpha = 0.45;
+      speed = 9; box = 26; width = 0.005; alpha = 0.3;
       _v2.copy(up).multiplyScalar(-speed).addScaledVector(wind, ws * 6 + 1);
-      u.uFall.value.copy(_v2).multiplyScalar(0.06); // shutter → streak length
-      u.uColor.value.setRGB(amb.r * 0.32 + sun.r * 0.03 + 0.02, amb.g * 0.32 + sun.g * 0.03 + 0.022, amb.b * 0.32 + sun.b * 0.03 + 0.026);
+      u.uFall.value.copy(_v2).multiplyScalar(0.045); // shutter → streak length
+      // drops are small lenses: they show the (dim, grey) sky, not a white line
+      u.uColor.value.setRGB(amb.r * 0.2 + sun.r * 0.015 + 0.012, amb.g * 0.2 + sun.g * 0.015 + 0.014, amb.b * 0.2 + sun.b * 0.015 + 0.018);
     } else if (kind === 1) {
       speed = 1.1; box = 22; width = 0.028; alpha = 1.0;
       _v2.copy(up).multiplyScalar(-speed).addScaledVector(wind, ws * 3 + 0.3);

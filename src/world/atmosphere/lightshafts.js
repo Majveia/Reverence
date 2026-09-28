@@ -44,9 +44,13 @@ uniform vec4 uHaze;        // extra haze: extinction at the base (1/m), 1/scale 
 uniform vec4 uMarch;       // steps, max distance (m), cloud base radius (m), shaft gain
 uniform vec4 uRain;        // amount 0..1, extinction (1/m), storm weight, -
 uniform vec3 uRainCol;     // in-scattered radiance of the rain curtains
+uniform sampler2D tCloudRT;  // clouds pass (rgb: light, a: transmittance), half res
+uniform float uHasCloudRT;
 uniform vec4 uFogV;        // effect height fog: density at base (1/m), scale height, base altitude, -
 uniform vec3 uFogSunV;     // sun illuminance used by the fog (already dimmed by weather)
 varying vec2 vUv;
+layout(location = 0) out vec4 outAdd;   // rgb: added light (lit haze, rain), a: transmittance
+layout(location = 1) out vec4 outSub;   // r: removed light (shadowed air), luminance (>= 0)
 
 float cloudVis(vec3 p){
   if (uShadowP.x < 0.5) return 1.0;
@@ -86,12 +90,13 @@ void main(){
   float camR = length(ro);
   float tEnd = min(tHit, uMarch.y);
   // only the air below the cloud deck (above it, the clouds pass owns the light)
-  if (camR > uMarch.z){ gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  outSub = vec4(0.0, 0.0, 0.0, 1.0);
+  if (camR > uMarch.z){ outAdd = vec4(0.0, 0.0, 0.0, 1.0); return; }
   vec2 cb = atmo_raySphere(ro, dir, uMarch.z);
   tEnd = min(tEnd, max(cb.y, 0.0));
   vec2 g = atmo_raySphere(ro, dir, uAtmoRb);
   if (g.x > 0.0) tEnd = min(tEnd, g.x);
-  if (tEnd <= 1.0){ gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  if (tEnd <= 1.0){ outAdd = vec4(0.0, 0.0, 0.0, 1.0); return; }
 
   float jit = rv_ign(gl_FragCoord.xy);
   float nu = dot(dir, uKeyDir);
@@ -107,9 +112,15 @@ void main(){
   if (uCsmP.x > 0.5){ tNear = min(tEnd, uCsmP.y / viewK); nNear = floor(uMarch.x * 0.4); }
 #endif
   float nFar = uMarch.x - nNear;
-  vec3 add = vec3(0.0);
+  vec3 add = vec3(0.0), addL = vec3(0.0);
+  float sub = 0.0, subL = 0.0;
   vec3 Tv = vec3(1.0);
   float Tr = 1.0, Th = 1.0;
+#ifdef HAS_CLOUDS
+  float rc0 = uLayer.x;
+#else
+  float rc0 = 1e30;
+#endif
   for (int i = 0; i < 64; i++){
     float fi = float(i);
     if (fi >= uMarch.x) break;
@@ -133,14 +144,19 @@ void main(){
     float muS = dot(p / r, uKeyDir);
     vec3 Ts = atmo_sunTransmittance(r, muS) * uKeyIll;
     float vis = cloudVis(p);
+#ifdef HAS_CLOUDS
+    // inside the layer only the sun-ward part of the column shadows this parcel
+    if (r > rc0) vis = pow(max(vis, 1e-4), 1.0 - clamp((r - rc0) / (uLayer.y - rc0), 0.0, 1.0));
+#endif
 #ifdef HAS_CSM
     if (fi < nNear) vis *= csmVis(p, t * viewK);
 #endif
     float hz = uHaze.x * exp(-max(h - uHaze.z, 0.0) * uHaze.y);
     float fogD = uFogV.x * exp(-clamp(h - uFogV.z, -2.0 * uFogV.y, 1e5) / uFogV.y);
     // shadowed air & fog lose the single scattering the atmosphere pass gave them; lit haze glows
-    vec3 dL = ((vis - 1.0) * (sR * phR + sM * phM) * uSkyGain + vis * hz * phH) * Ts * uMarch.w
-            + (vis - 1.0) * fogD * phF * uFogSunV;
+    vec3 dL = vis * hz * phH * Ts * uMarch.w;
+    vec3 dS = (1.0 - vis) * ((sR * phR + sM * phM) * uSkyGain * Ts * uMarch.w + fogD * phF * uFogSunV);
+    float dSl = dot(dS, vec3(0.2126, 0.7152, 0.0722));
     float sr = 0.0;
 #ifdef HAS_CLOUDS
     if (uRain.x > 0.0){
@@ -153,13 +169,20 @@ void main(){
       dL += sr * uRainCol;
     }
 #endif
-    add += Tv * Tr * dL * dt;
+    // air between the clouds (inside the layer): hidden behind the clouds in front of it
+    float w = dot(Tv, vec3(0.2126, 0.7152, 0.0722)) * Tr * dt;
+    if (r > rc0){ addL += Tv * Tr * dL * dt; subL += w * dSl; } else { add += Tv * Tr * dL * dt; sub += w * dSl; }
     Tr *= exp(-sr * dt);
     Th *= exp(-hz * dt);
     Tv *= exp(-(ext + hz + fogD) * dt);
   }
+  // clouds in front hide the air behind them; the clouds pass also replaced the sky's in-scatter
+  // behind a cloud by its own aerial perspective, so the darkening only applies to what is left
+  float Tc = uHasCloudRT > 0.5 ? texture(tCloudRT, vUv).a : 1.0;
+  addL *= Tc;
   // rain curtains and the extra haze also dim what lies behind them
-  gl_FragColor = vec4(add, Tr * Th);
+  outAdd = vec4(add + addL, Tr * Th);
+  outSub = vec4((sub + subL) * Tc, 0.0, 0.0, 1.0);
 }`;
 
 const MASK_FRAG = /* glsl */`
@@ -207,6 +230,7 @@ uniform sampler2D tColor;
 uniform sampler2D tDepth;
 uniform sampler2D tRays;
 uniform sampler2D tVol;
+uniform sampler2D tVolSub;
 uniform vec2 uLowRes;
 uniform vec3 uColor;
 uniform float uHasRays;
@@ -226,7 +250,7 @@ void main(){
     vec2 st = vUv * uLowRes - 0.5;
     vec2 i0 = floor(st), f = st - i0;
     vec4 acc = vec4(0.0);
-    float wsum = 0.0;
+    float sacc = 0.0, wsum = 0.0;
     for (int k = 0; k < 9; k++){
       vec2 o = vec2(float(k % 3) - 0.5, float(k / 3) - 0.5);
       vec2 uv = (i0 + o + 0.5) / uLowRes;
@@ -235,11 +259,16 @@ void main(){
       float z = linDist(uv);
       float w = wb / (1e-3 + abs(log(max(z, 1e-3)) - log(max(dz, 1e-3))) * 10.0);
       acc += texture(tVol, uv) * w;
+      sacc += texture(tVolSub, uv).r * w;
       wsum += w;
     }
     vec4 v = wsum > 0.0 ? acc / wsum : vec4(0.0, 0.0, 0.0, 1.0);
-    c = max(c * v.a + v.rgb, vec3(0.0));
-    if (uDebug > 4.5) c = vec3(max(v.r, 0.0), max(-v.r, 0.0), 1.0 - v.a) * 4.0;
+    float sub = wsum > 0.0 ? sacc / wsum : 0.0;
+    // shadow beams: remove the shadowed in-scatter, hue-preserving (never below 25 %)
+    float lc = max(rv_luma(c), 1e-5);
+    c *= clamp(1.0 - sub / lc, 0.25, 1.0);
+    c = c * v.a + v.rgb;
+    if (uDebug > 4.5) c = vec3(rv_luma(v.rgb), sub, 1.0 - v.a) * 4.0;
   }
   if (uHasRays > 0.5) c += uColor * texture(tRays, vUv).r;
   gl_FragColor = vec4(c, 1.0);
@@ -256,7 +285,7 @@ export class LightShafts {
     this.volOn = true;
     this.quad = new FSQuad();
     this.a = hdrTarget(4, 4); this.b = hdrTarget(4, 4);
-    this.vol = hdrTarget(4, 4);
+    this.vol = hdrTarget(4, 4, { count: 2 });
     const m = atmo.model;
     const cl = atmo.clouds?.present ? atmo.clouds : null;
     this.u = {
@@ -295,12 +324,13 @@ export class LightShafts {
       });
     }
     this.vu.uFogV = { value: new THREE.Vector4(0, 1, 0, 0) };
+    this.vu.tCloudRT = { value: null }; this.vu.uHasCloudRT = { value: 0 };
     this.vu.uFogSunV = { value: new THREE.Vector3() };
-    this.volMat = fsMaterial(VOL_FRAG, this.vu, { defines });
+    this.volMat = fsMaterial(VOL_FRAG, this.vu, { defines, glslVersion: THREE.GLSL3 });
     this.maskMat = fsMaterial(MASK_FRAG, this.u);
     this.blurMat = fsMaterial(BLUR_FRAG, { tSrc: { value: null }, uCenter: { value: new THREE.Vector2() }, uLen: { value: 1 } });
     this.cu = {
-      tColor: { value: null }, tDepth: this.u.tDepth, tRays: { value: null }, tVol: { value: null },
+      tColor: { value: null }, tDepth: this.u.tDepth, tRays: { value: null }, tVol: { value: null }, tVolSub: { value: null },
       uLowRes: { value: new THREE.Vector2(1, 1) }, uColor: { value: new THREE.Vector3() },
       uHasRays: { value: 0 }, uHasVol: { value: 0 }, uDebug: { value: +(Params.num?.('atmoDebug') ?? 0) },
       uCamWorld: this.u.uCamWorld, uProjParams: this.u.uProjParams, uNear: this.u.uNear, uFar: this.u.uFar,
@@ -341,11 +371,13 @@ export class LightShafts {
     // extra haze (weather / art): fog, dust, rain; a whisper on clear days
     const fog = W.fog || 0, dust = W.dust || 0, rain = Math.max(W.rain || 0, W.snow || 0);
     const upv = _up.copy(vu.uCamPlanet.value).normalize();
-    const lowSun = 1 + 1.2 * (1 - THREE.MathUtils.smoothstep(upv.dot(kd), 0.08, 0.45));
-    const hz = (0.6 + fog * 2.2 + dust * 3.5 + rain * 1.5 + (m.moody || 0) * 1.5) * lowSun * 1e-5 / this.sizeK;
+    const lowSun = 1 + 1.8 * (1 - THREE.MathUtils.smoothstep(upv.dot(kd), 0.08, 0.45));
+    // shafts need something lit to contrast with: more haze when the deck is broken (many shadows)
+    const broken = cl ? THREE.MathUtils.clamp(cl.meanCover + (W.coverBoost || 0), 0, 1) : 0;
+    const hz = (0.8 + fog * 2.4 + dust * 3.5 + rain * 1.5 + (m.moody || 0) * 1.5 + broken * 1.2) * lowSun * 1e-5 / this.sizeK;
     const sea = Math.max(0, atmo.world.surface?.seaLevel ?? 0);
     const Hh = THREE.MathUtils.lerp(900, 2200, THREE.MathUtils.clamp(dust + rain * 0.5, 0, 1)) * this.sizeK;
-    vu.uHaze.value.set(hz, 1 / Hh, sea, 0.55 + 0.15 * (1 - dust));
+    vu.uHaze.value.set(hz, 1 / Hh, sea, 0.45 + 0.15 * (1 - dust));
     // height fog of the atmosphere pass (weather) — its sunlit part is gated by the shadows too
     const ef = atmo.effect?.u;
     if (ef) { vu.uFogV.value.copy(ef.uFog.value); vu.uFogSunV.value.copy(ef.uFogSun.value).multiplyScalar(ef.uFogAlbedo.value.y); }
@@ -362,7 +394,10 @@ export class LightShafts {
       }
     }
     if (this.csm) { vu.uCsmP.value.x = csmOn ? 1 : 0; vu.uOrigin.value = atmo.world.origin; }
-    const base = cl ? cl.Rc0 : m.Rb + m.height * 0.6;
+    // march up to the cloud tops (shafts between the puffs), clouds in front hide what is behind
+    const base = cl ? cl.Rc1 : m.Rb + m.height * 0.6;
+    vu.uHasCloudRT.value = cl && cl.lowRT ? 1 : 0;
+    vu.tCloudRT.value = cl ? cl.lowRT.texture : null;
     vu.uMarch.value.y = (cl ? 26000 : 18000) * this.sizeK;
     vu.uMarch.value.z = base;
     vu.uMarch.value.w = 1.0;
@@ -432,10 +467,11 @@ export class LightShafts {
     const cu = this.cu;
     cu.tColor.value = io.input.texture;
     cu.tRays.value = this.a.texture;
-    cu.tVol.value = this.vol.texture;
+    cu.tVol.value = this.vol.textures[0];
+    cu.tVolSub.value = this.vol.textures[1];
     cu.uHasRays.value = hasRays ? 1 : 0;
     cu.uHasVol.value = hasVol ? 1 : 0;
-    cu.uColor.value.set(kc.r, kc.g, kc.b).multiplyScalar(strength * 0.18);
+    cu.uColor.value.set(kc.r, kc.g, kc.b).multiplyScalar(strength * 0.24);
     this.quad.render(renderer, this.compMat, io.output);
   }
 

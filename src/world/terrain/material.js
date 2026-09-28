@@ -10,8 +10,11 @@
 //    two scales up close (micro normals), faded with distance
 //  • altitude-locked sedimentary strata on cliffs (mesas, canyons), macro color variation,
 //    wet shoreline darkening, cavity/AO, snow sparkle, volcanic crack glow
-//  • all detail coordinates are periodic in P = 4096 m and anchored with a float64-derived origin
-//    offset → millimetre precision anywhere on a 100 km planet (floating origin safe)
+//  • detail coordinates live in a LOCAL frame per cube face (face u, v in metres + altitude, from the
+//    float64 CPU build, per-chunk multiples of P = 4096 m removed) → aligned with the surface at every
+//    latitude, millimetre precision anywhere on a 100 km planet, floating-origin safe
+//  • skirts shaded at their edge vertex (cracks filled invisibly), drainage/varnish streaks and
+//    sedimentary strata on the vertical planes of the local frame
 import * as THREE from 'three';
 import { G } from '../../core/Uniforms.js';
 
