@@ -51,7 +51,7 @@ export class GalaxyVolume {
     this.gu = gu;
 
     // --- analytic spheroid parameters
-    let bulgeA, bulgeW, bulgeS, bulgeL;
+    let bulgeA, bulgeW, bulgeS, bulgeL, bulgeH = new THREE.Vector2(1, 0);
     if (type === 'elliptical') {
       const a = S.ellA * K;
       bulgeA = new THREE.Vector4(a * 0.12, a * 0.45, a * 1.5, a * 4.5);
@@ -62,10 +62,11 @@ export class GalaxyVolume {
       // Sérsic-like: nucleus + three Plummer spheres with extended wings (steeper than one Plummer)
       const bc = S.bulgeComp;
       bulgeA = new THREE.Vector4(S.nucA * K, bc[0].a * K * 1.2, bc[1].a * K * 1.1, bc[2].a * K * 2.2);
-      bulgeW = new THREE.Vector4(0.02, 0.2, 0.42, 0.36);
+      bulgeW = new THREE.Vector4(0.03, 0.26, 0.5, 0.0);
+      bulgeH = S.dustRing ? new THREE.Vector2(R * 0.11, 1.1) : new THREE.Vector2(bc[2].a * K * 0.9, type === 'lenticular' ? 0.7 : 0.4);
       bulgeS = new THREE.Vector3(1, S.bulgeQ, 1);
       const fb = galaxy.bulgeFrac;
-      bulgeL = (type === 'lenticular' ? (S.dustRing ? 50 : 20) : 24) * (fb / 0.14) * (S.barA > 0 ? 0.6 : 1);
+      bulgeL = (type === 'lenticular' ? (S.dustRing ? 60 : 20) : 24) * (fb / 0.14) * (S.barA > 0 ? 0.6 : 1);
     }
     this.uniforms = {
       ...gu,
@@ -81,12 +82,12 @@ export class GalaxyVolume {
       uColBar: { value: new THREE.Vector3(...pal.bulge).lerp(new THREE.Vector3(...pal.old), 0.4) },
       uColHalo: { value: new THREE.Vector3(1.0, 0.86, 0.72) },
       uExt: { value: new THREE.Vector3(0.58, 0.76, 1.0) },
-      uOldL: { value: type === 'lenticular' ? (S.dustRing ? 0.35 : 0.6) : type === 'irregular' ? 0.3 : 0.35 },
+      uOldL: { value: type === 'lenticular' ? (S.dustRing ? 0.08 : 0.4) : type === 'irregular' ? 0.3 : 0.35 },
       uYoungL: { value: type === 'irregular' ? 0.9 : 0.8 },
       uHiiL: { value: type === 'irregular' ? 2.2 : 2.0 },
       uDustL: { value: 8.0 }, uScreen: { value: 0.9 },
-      uBulgeA: { value: bulgeA }, uBulgeW: { value: bulgeW }, uBulgeS: { value: bulgeS }, uBulgeL: { value: bulgeL },
-      uBar: { value: new THREE.Vector4(S.barA * K || 1, S.barB * K || 1, S.barC * K || 1, S.barA > 0 ? 30 * (galaxy.bulgeFrac / 0.14) : 0) },
+      uBulgeA: { value: bulgeA }, uBulgeH: { value: new THREE.Vector2(bulgeH.x, bulgeH.y * bulgeL) }, uBulgeW: { value: bulgeW }, uBulgeS: { value: bulgeS }, uBulgeL: { value: bulgeL },
+      uBar: { value: new THREE.Vector4(S.barA * K || 1, S.barB * K || 1, S.barC * K || 1, S.barA > 0 ? 110 * (galaxy.bulgeFrac / 0.14) : 0) },
       uBarAng: { value: S.phi0 },
       uHalo: { value: new THREE.Vector2(S.haloA * K, type === 'elliptical' ? 0.6 : 0.35) },
       uDsMin: { value: S.hDust * K * 0.25 }, uDsMax: { value: R / 36 }, uDsNear: { value: 0.02 },

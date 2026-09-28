@@ -88,6 +88,7 @@ export default class GalaxyMode extends Mode {
         if (un && typeof un.value === 'number' && Number.isFinite(+v)) un.value = +v;
         else if (k === 'exp') this.look.exposure = +v;
         else if (k === 'stars') this.starGainMul = +v;
+        else if (k === 'HaloL') this.volume.uniforms.uHalo.value.y = +v;
       }
     }
     this._startGlobalGeneration(n);
@@ -102,7 +103,7 @@ export default class GalaxyMode extends Mode {
     const R = this.R;
     const yaw = params.yaw !== undefined ? parseFloat(params.yaw) * DEG : 0.55;
     const pitch = params.pitch !== undefined ? parseFloat(params.pitch) * DEG : 44 * DEG;
-    const dist = params.dist !== undefined ? parseFloat(params.dist) : R * 2.45;
+    const dist = params.dist !== undefined ? parseFloat(params.dist) : R * (gal.type === 'elliptical' ? 1.5 : gal.type === 'lenticular' ? 2.3 : 2.45);
     const minD = this.blackHole ? this.blackHole.rs * 2.2 : 1e-10;
     this.rig = new GalaxyCamera(this.camera, { distance: dist, yaw, pitch, minDistance: minD, maxDistance: R * 12, maxTarget: R * 1.6 });
     this._applyFocus(params);
@@ -128,8 +129,9 @@ export default class GalaxyMode extends Mode {
       const k = parseInt(f.split(':')[1] ?? '0', 10) || 0;
       const nb = this.nebulae.list[k % this.nebulae.list.length];
       if (nb) {
-        this.rig.setView({ target: new THREE.Vector3(nb.x, nb.y, nb.z).multiplyScalar(1 / 1000) });
-        setD(nb.radius / 1000 * 3.2, 18);
+        this.rig.setView({ target: new THREE.Vector3(nb.x, nb.y + (nb.kind === 'pillars' ? nb.radius * 0.1 : 0), nb.z).multiplyScalar(1 / 1000) });
+        if (nb.kind === 'pillars' && params.yaw === undefined) this.rig.setView({ yaw: nb.tilt[0] });
+        setD(nb.radius / 1000 * (nb.kind === 'pillars' ? 2.5 : nb.kind === 'emission' ? 2.7 : 3.0), nb.kind === 'pillars' ? 4 : 18);
         if (params.dist !== undefined) this.rig.setView({ distance: parseFloat(params.dist) * nb.radius / 1000 });
       }
     } else if (f.startsWith('star') || f === 'local' || params.star !== undefined) {
@@ -408,9 +410,9 @@ export default class GalaxyMode extends Mode {
 
       // eye adaptation: close to the disk the individual stars set the exposure, the diffuse glow recedes
       {
-        const l = (Math.log10(Math.max(this.rig.distance, 1e-12)) - Math.log10(0.02)) / (Math.log10(5) - Math.log10(0.02));
+        const l = (Math.log10(Math.max(this.rig.distance, 1e-12)) - Math.log10(0.3)) / (Math.log10(12) - Math.log10(0.3));
         const k = clamp(l, 0, 1);
-        this.volume.compositeMat.uniforms.uGain.value = 0.05 + 0.95 * k * k * (3 - 2 * k);
+        this.volume.compositeMat.uniforms.uGain.value = 0.02 + 0.98 * k * k * (3 - 2 * k);
       }
       this.volume.update(this.camera, this.pat);
       rotTheta(this.camera.position, -this.pat, this._camPat);

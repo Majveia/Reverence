@@ -21,7 +21,7 @@ export const SURF = {
   darkMetal: { r: 0.46, m: 0.85, p: 0.7, cc: 0, w: 0.7, d: 0.9, e: 0, ru: 0.7 },
   gunmetal: { r: 0.38, m: 0.9, p: 0.9, cc: 0.3, w: 0.8, d: 0.8, e: 0, ru: 0.5 },
   chrome: { r: 0.07, m: 1.0, p: 0.0, cc: 0, w: 0.0, d: 0.35, e: 0, ru: 0.0 },
-  rubber: { r: 0.9, m: 0.0, p: 0.0, cc: 0, w: 0.0, d: 1.0, e: 0, ru: 0.0 },
+  rubber: { r: 0.9, m: 0.0, p: 0.0, cc: 0, w: 0.0, d: 0.45, e: 0, ru: 0.0 },
   plastic: { r: 0.55, m: 0.0, p: 0.35, cc: 0, w: 0.25, d: 0.8, e: 0, ru: 0.0 },
   gloss: { r: 0.18, m: 0.0, p: 0.0, cc: 1.0, w: 0.2, d: 0.6, e: 0, ru: 0.0 },
   fabric: { r: 0.88, m: 0.0, p: 0.0, cc: 0, w: 0.0, d: 0.6, e: 0, ru: 0.0 },
@@ -497,7 +497,7 @@ export const LIVERIES = {
 
 const ART_LIVERY = {
   ghibli: ['retro', 'arctic', 'racer'], moebius: ['retro', 'arctic', 'pulp'], villeneuve: ['expedition', 'frontier', 'nasapunk'],
-  bladerunner: ['stealth', 'hauler', 'stealth'], stalenhag: ['expedition', 'hauler', 'arctic'], rogerdean: ['jade', 'pulp', 'retro'],
+  bladerunner: ['hauler', 'stealth', 'hauler'], stalenhag: ['expedition', 'hauler', 'arctic'], rogerdean: ['jade', 'pulp', 'retro'],
   tarkovsky: ['arctic', 'expedition', 'nasapunk'], friedrich: ['arctic', 'nasapunk', 'expedition'], bierstadt: ['racer', 'nasapunk', 'retro'],
   beksinski: ['frontier', 'stealth', 'expedition'], nausicaa: ['jade', 'expedition', 'retro'], bebop: ['frontier', 'racer', 'hauler'],
   rickmorty: ['pulp', 'jade', 'racer'], kubrick: ['nasapunk', 'arctic', 'nasapunk'], turner: ['racer', 'retro', 'expedition'],

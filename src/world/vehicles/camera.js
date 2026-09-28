@@ -7,6 +7,7 @@ import { clamp, damp, dampF, fbm1, lookQuat, orthoForward, projectOnPlane, smoot
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _u = new THREE.Vector3(), _f = new THREE.Vector3();
 const _r = new THREE.Vector3(), _t = new THREE.Vector3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 const _e = new THREE.Euler();
+const _o = new THREE.Vector3(), _o2 = new THREE.Vector3();
 
 export const CAM_MODES = ['chase', 'cockpit'];
 
@@ -27,6 +28,7 @@ export class VehicleCamera {
     this.heading = new THREE.Vector3(0, 0, 1);
     this.camUp = new THREE.Vector3(0, 1, 0);
     this.quat = new THREE.Quaternion();
+    this.fq = new THREE.Quaternion();       // lagged vehicle frame (orbit/ship follow)
     this.lookYaw = 0; this.lookPitch = 0; this.idle = 0;
     this.zoom = 1;
     this.fov = cfg.fovBase ?? 62;
@@ -107,11 +109,11 @@ export class VehicleCamera {
     const cine = this.cine;
     if (c.orbit) {
       // ship: follow full orientation with lag (rolls with the ship)
-      if (!this.snapped) this.quat.copy(v.quat);
+      if (!this.snapped) this.fq.copy(v.quat);
       const rate = c.rotLag ?? 4.5;
-      this.quat.slerp(v.quat, dampF(rate, dt));
-      _f.set(0, 0, 1).applyQuaternion(this.quat);
-      _w.set(0, 1, 0).applyQuaternion(this.quat);
+      this.fq.slerp(v.quat, dampF(rate, dt));
+      _f.set(0, 0, 1).applyQuaternion(this.fq);
+      _w.set(0, 1, 0).applyQuaternion(this.fq);
       // blend camera up toward radial up in atmosphere / near ground for a stable horizon
       const hb = c.horizonBlend ? c.horizonBlend() : 0;
       if (hb > 0) { _w.lerp(up, hb).normalize(); }
@@ -160,11 +162,37 @@ export class VehicleCamera {
       const h = ground.supportAt(this.pos);
       const r = this.world.body.radius + h + (c.clearance ?? 0.6);
       const l = this.pos.length();
+      this._lift = l < r ? r - l : 0;
       if (l < r) this.pos.multiplyScalar(r / l);
     }
 
+    // occlusion: pull in when trunks / rocks / buildings sit between the vehicle and the camera
+    const cg = v.mgr?.colliders;
+    if (cg && cg.cells.size) {
+      _o.copy(this.pos).sub(pivot);
+      const L = _o.length();
+      let hit = L;
+      if (L > 1) {
+        _o.divideScalar(L);
+        for (let i = 2; i <= 6; i++) {
+          const d = (L * i) / 6;
+          _o2.copy(pivot).addScaledVector(_o, d);
+          if (cg.sphere(_o2, 0.7)) { hit = Math.max(2.5, d - 1.2); break; }
+        }
+      }
+      this.occl = damp(this.occl ?? L, hit, hit < (this.occl ?? L) ? 10 : 1.5, dt);
+      if (!this.snapped) this.occl = hit;
+      if (this.occl < L - 0.01) {
+        // pull in, but never closer than minDist: past that, crane up over the obstacle instead
+        const minD = c.minDist ?? (c.dist ?? 6) * 0.6;
+        const d = Math.max(this.occl, Math.min(minD, L));
+        this.pos.copy(pivot).addScaledVector(_o, d).addScaledVector(U, (L - this.occl) * 0.55);
+        this.craned = clamp((L - this.occl) / L, 0, 1);
+      } else this.craned = 0;
+    }
+
     // aim: look at pivot + ahead
-    const ahead = (c.lookAhead ?? 3) * (0.5 + 0.5 * Math.min(1, sp01)) * (cine ? cine.ahead ?? 1 : 1);
+    const ahead = (c.lookAhead ?? 3) * (0.5 + 0.5 * Math.min(1, sp01)) * (cine ? cine.ahead ?? 1 : 1) * (1 - 0.8 * Math.max(this.craned || 0, clamp((this._lift || 0) / Math.max(1, dist) * 2, 0, 1)));
     this.focus.copy(pivot).addScaledVector(H, ahead * Math.cos(yaw)).addScaledVector(_r, ahead * Math.sin(yaw) * 0.5);
     if (c.aimHeight) this.focus.addScaledVector(U, c.aimHeight);
     _v.copy(this.focus).sub(this.pos);
@@ -197,6 +225,8 @@ export const CINE = {
   top: { yaw: 0.0, pitch: -1.2, dist: 1.7, height: 0.2, ahead: 0.2 },
   quarter: { yaw: Math.PI * 0.72, pitch: -0.12, dist: 1.05, height: 0.6, ahead: 0.3 },
   rear: { yaw: Math.PI * 0.08, pitch: -0.05, dist: 0.8, height: 0.3, ahead: 1.2 },
+  hero: { yaw: Math.PI * 0.8, pitch: 0.02, dist: 0.95, height: 0.2, ahead: 0.0, side: 0 },
+  chase3q: { yaw: Math.PI * 0.2, pitch: -0.02, dist: 0.95, height: 0.45, ahead: 0.8 },
 };
 
 export { smoothstep };

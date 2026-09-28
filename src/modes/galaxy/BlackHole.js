@@ -193,7 +193,7 @@ export class BlackHole {
     // exposure adapts to the accretion disk: the nucleus' starlight is dimmed close to the hole
     const lr = Math.log10(Math.max(1, this.distanceRs(cam)));
     const k = Math.min(1, Math.max(0, (lr - 2.2) / (4.3 - 2.2)));
-    u.uBgGain.value = 0.04 + 0.96 * k * k * (3 - 2 * k);
+    u.uBgGain.value = 0.018 + 0.982 * k * k * (3 - 2 * k);
     this.quad.render(renderer, io.output);
   }
 

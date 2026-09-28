@@ -19,6 +19,7 @@ import { SpeedBlur } from './fx/speedblur.js';
 import { Streaks } from './fx/streaks.js';
 import { Hoverbike } from './Hoverbike.js';
 import { Rover } from './Rover.js';
+import { Starship } from './Starship.js';
 import { clamp, damp, headingDir, orthoForward, fmtSpeed, FastRand } from './util.js';
 import { latLonToDir } from '../../core/math.js';
 import { G } from '../../core/Uniforms.js';
@@ -26,7 +27,7 @@ import { G } from '../../core/Uniforms.js';
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _u = new THREE.Vector3(), _n = new THREE.Vector3();
 const _e = new THREE.Vector3(), _no = new THREE.Vector3();
 
-const KINDS = { bike: Hoverbike, rover: Rover };
+const KINDS = { bike: Hoverbike, rover: Rover, ship: Starship };
 
 class VehicleManager {
   constructor(world) {
@@ -48,6 +49,8 @@ class VehicleManager {
     this._envState = 'none';
     this.rand = new FastRand(1337);
     this.errors = 0;
+    this.placed = false;
+    this._t0 = performance.now();
 
     // shared FX pools (few draw calls for every vehicle)
     const ps = clamp(this.quality.particleScale ?? 1, 0.25, 2);
@@ -89,7 +92,7 @@ class VehicleManager {
 
   // ------------------------------------------------------------------ spawning
   /** Find a flat, dry spot near `center` (planet-local) at ~dist m in direction `dir` (tangent). */
-  findSpot(center, dir, dist, { maxSlope = 0.18, footprint = 2, dry = true, tries = 48, avoid = [] } = {}) {
+  findSpot(center, dir, dist, { maxSlope = 0.18, footprint = 2, dry = true, tries = 48, avoid = [], clear = 0 } = {}) {
     const g = this.ground, R = this.world.body.radius;
     const up = _u.copy(center).normalize();
     const base = orthoForward(up, dir, new THREE.Vector3());
@@ -116,14 +119,127 @@ class VehicleManager {
       let score = -slope * 10 - i * 0.02;
       if (slope > maxSlope) score -= 5;
       for (const o of avoid) { const d = o.distanceTo(_w.copy(p).multiplyScalar(R + h)); if (d < footprint * 2 + 3) score -= 8; }
+      const blocked = clear > 0 && this.blocked(_w.copy(p).multiplyScalar(R + h), clear);
+      if (blocked) score -= 20;
       if (score > bestScore) { bestScore = score; best = { dir: p.clone(), h, slope }; }
-      if (slope < maxSlope * 0.35 && i > 2) break;
+      if (slope < maxSlope * 0.35 && i > 2 && !blocked) break;
     }
     if (!best) {
       const d = _v.copy(center).addScaledVector(base, dist).normalize();
       best = { dir: d.clone(), h: g.terrainAt(d.clone().multiplyScalar(R)), slope: 1 };
     }
     return best;
+  }
+
+  /** True when static colliders (trees, rocks, buildings) crowd a disc of radius r around pos. */
+  blocked(pos, r) {
+    const cg = this.colliders;
+    if (!cg.cells.size) return false;
+    const up = _n.copy(pos).normalize();
+    const e = _e, no = _no;
+    if (Math.abs(up.y) > 0.99) e.set(1, 0, 0); else e.set(up.z, 0, -up.x).normalize();
+    no.crossVectors(up, e);
+    for (let k = 0; k < 9; k++) {
+      const a = k * 0.785, rr = k === 0 ? 0 : r * 0.62;
+      _v.copy(pos).addScaledVector(up, 2.2).addScaledVector(e, Math.cos(a) * rr).addScaledVector(no, Math.sin(a) * rr);
+      if (cg.sphere(_v, r * 0.5 + 1.2)) return true;
+    }
+    return false;
+  }
+
+  /** Park a starship + hoverbike at the edge of the nearest settlements (deterministic: sorted by distance). */
+  spawnAtSettlements() {
+    const sp = this.spawn;
+    if (!sp || this.params.view === 'orbit') return;
+    const pois = (this.world.pois || []).filter((p) => (p.kind === 'city' || p.kind === 'village') && p.pos?.isVector3);
+    if (!pois.length) return;
+    const R = this.world.body.radius;
+    pois.sort((a, b) => a.pos.distanceTo(sp.pos) - b.pos.distanceTo(sp.pos));
+    const max = this.quality.mobile || this.quality.tier === 'low' ? 1 : 2;
+    let n = 0;
+    for (const poi of pois) {
+      if (n >= max) break;
+      const d = poi.pos.distanceTo(sp.pos);
+      if (d > 12000) break;
+      const up = _u.copy(poi.pos).normalize();
+      // the side of the settlement that faces the player spawn
+      const toward = _w.copy(sp.pos).sub(poi.pos).addScaledVector(up, -_w.copy(sp.pos).sub(poi.pos).dot(up));
+      const dir = toward.lengthSq() > 1 ? toward.normalize().clone() : headingDir(up, 90, new THREE.Vector3());
+      const edge = poi.pos.clone().addScaledVector(dir, (poi.radius || 120) + 45);
+      edge.normalize().multiplyScalar(R + this.ground.terrainAt(edge));
+      if (d < (poi.radius || 120) + 80) continue;          // the player already starts in town: skip
+      const others = this.vehicles.map((o) => o.pos);
+      const ship = this.add('ship', { id: `ship-${poi.name || n}` });
+      if (ship) {
+        const spot = this.findClearing(edge, dir, 160, { footprint: 7, maxSlope: 0.16, clear: ship.clearRadius, avoid: others });
+        this.placeOnGround(ship, spot.dir, dir.clone().negate().applyAxisAngle(up, 0.9));
+        ship.pristine = true;
+      }
+      const bike = this.add('bike', { id: `bike-${poi.name || n}` });
+      if (bike) {
+        const spot = this.findClearing(edge.clone().addScaledVector(dir, -22), dir, 40, { footprint: 1.2, maxSlope: 0.35, dry: false, clear: bike.clearRadius, avoid: this.vehicles.map((o) => o.pos) });
+        this.placeOnGround(bike, spot.dir, dir.clone().applyAxisAngle(up, -0.5));
+        bike.pristine = true;
+      }
+      n++;
+    }
+  }
+
+  /** Once neighbours have registered their colliders, move pristine parked vehicles out of trees/buildings. */
+  finalizePlacement() {
+    try { this.spawnAtSettlements(); } catch (e) { console.error('[vehicles] settlement spawn failed', e); }
+    const list = this.world.colliders || [];
+    for (let guard = 0; guard < 50 && this.colliders.count < list.length; guard++) this.colliders.sync(0);
+    const sp = this.spawn;
+    if (!sp) return;
+    for (const v of this.vehicles) {
+      if (!v.pristine) continue;
+      const r = v.clearRadius ?? 2;
+      if (!this.blocked(v.pos, r)) continue;
+      const up = _u.copy(v.pos).normalize();
+      const f = _w.copy(v.pos).sub(sp.pos).addScaledVector(up, -_w.copy(v.pos).sub(sp.pos).dot(up));
+      const dir = f.lengthSq() > 1 ? f.normalize().clone() : v.fwdVec.clone();
+      const spot = this.findClearing(v.pos, dir, v.type === 'ship' ? 220 : 60, { footprint: v.type === 'ship' ? 7 : 2, maxSlope: v.type === 'ship' ? 0.16 : 0.3, dry: v.type !== 'bike', clear: r, avoid: this.vehicles.filter((o) => o !== v).map((o) => o.pos) });
+      this.placeOnGround(v, spot.dir, v.fwdVec.clone());
+      v.startFromParams?.(v.occupied ? this.params : {});
+      if (v.camera) v.camera.snapped = false;
+    }
+  }
+
+  /** Spiral search for an open, flat, dry spot (no trees/buildings, low canopy cover) within maxDist. */
+  findClearing(center, dir, maxDist, { maxSlope = 0.2, footprint = 3, dry = true, clear = 3, avoid = [] } = {}) {
+    const g = this.ground, R = this.world.body.radius, fl = this.world.get?.('flora');
+    const up = _u.copy(center).normalize();
+    const base = orthoForward(up, dir, new THREE.Vector3());
+    const side = new THREE.Vector3().crossVectors(base, up).normalize();
+    const p = new THREE.Vector3(), q = new THREE.Vector3();
+    let best = null, bestScore = -1e9;
+    const rings = 9;
+    for (let k = 0; k <= rings; k++) {
+      const rad = (k / rings) * maxDist, n = k === 0 ? 1 : 6 + k * 3;
+      for (let j = 0; j < n; j++) {
+        const a = (j / n) * Math.PI * 2 + k * 0.7;
+        p.copy(center).addScaledVector(base, Math.cos(a) * rad).addScaledVector(side, Math.sin(a) * rad).normalize();
+        const h = g.terrainAt(q.copy(p).multiplyScalar(R));
+        if (dry && g.hasOcean && h < g.sea + 0.6) continue;
+        let hmin = h, hmax = h;
+        for (let m = 0; m < 4; m++) {
+          const ang = m * Math.PI / 2 + 0.4;
+          _w.copy(p).multiplyScalar(R).addScaledVector(base, Math.cos(ang) * footprint).addScaledVector(side, Math.sin(ang) * footprint);
+          const hh = g.terrainAt(_w); hmin = Math.min(hmin, hh); hmax = Math.max(hmax, hh);
+        }
+        const slope = (hmax - hmin) / (footprint * 2);
+        let dens = 0;
+        try { dens = fl?.densityAt ? fl.densityAt(p) : 0; } catch (_) { dens = 0; }
+        q.copy(p).multiplyScalar(R + h);
+        const blocked = this.blocked(q, clear);
+        let score = -slope * 12 - dens * 5 - (blocked ? 25 : 0) - rad / maxDist * 2 - (slope > maxSlope ? 6 : 0);
+        for (const o of avoid) if (o.distanceTo(q) < clear * 2 + 3) score -= 10;
+        if (score > bestScore) { bestScore = score; best = { dir: p.clone(), h, slope }; }
+      }
+      if (best && bestScore > -2.5) break;
+    }
+    return best || { dir: center.clone().normalize(), h: g.terrainAt(center), slope: 1 };
   }
 
   spawnPoint() {
@@ -185,6 +301,7 @@ class VehicleManager {
       }
       const heading = view === kind ? fwd.clone() : fwd.clone().applyAxisAngle(up, (opts?.turn ?? 0) * Math.PI / 180);
       this.placeOnGround(v, spot.dir, heading);
+      v.pristine = true;
       taken.push(v.pos.clone());
       return v;
     };
@@ -271,6 +388,7 @@ class VehicleManager {
     const dist = kind === 'ship' ? 26 : kind === 'rover' ? 6 : 4;
     const spot = this.findSpot(pl.pos, f, dist, { footprint: kind === 'ship' ? 7 : 2, maxSlope: kind === 'ship' ? 0.14 : 0.3, dry: kind !== 'bike' });
     this.placeOnGround(v, spot.dir, f.clone().applyAxisAngle(up, 0.6));
+    v.pristine = false;
     v.materialize?.();
     this.audio('play', 'warp', { intensity: 0.4 });
     this.world.events?.emit?.('discovery', { kind: 'Summoned', name: v.displayName ?? v.type });
@@ -317,6 +435,15 @@ class VehicleManager {
     const w = this.world, input = w.input;
     this.cool = Math.max(0, this.cool - dt);
     this.colliders.sync(dt);
+    if (!this.placed) {
+      const fl = w.get?.('flora'), cv = w.get?.('civ');
+      let ready = true;
+      try { if (fl?.isReady && !fl.isReady()) ready = false; if (cv?.isReady && !cv.isReady()) ready = false; } catch (_) { /* ignore */ }
+      if (ready || performance.now() - this._t0 > 45000) {
+        this.placed = true;
+        try { this.finalizePlacement(); } catch (e) { console.error('[vehicles] placement failed', e); }
+      }
+    }
     this._updateEnv(dt);
 
     const cam = w.camera.position;
@@ -351,7 +478,8 @@ class VehicleManager {
     for (const v of this.vehicles) {
       try {
         v.distToCam = v.pos.distanceTo(cam);
-        const vis = v.occupied || v.distToCam < (v.cullDist ?? 1600);
+        if (v.occupied && v.speed > 1.5 && this.placed) v.pristine = false;
+        const vis = v.occupied || v.distToCam < (v.parkCull ?? v.cullDist ?? 1600);
         if (vis !== v.visible) { v.visible = vis; v.group.visible = vis; }
         if ((v.occupied || v.awake) && dt > 0) {
           const steps = v.substeps ?? 1;
@@ -436,10 +564,10 @@ class VehicleManager {
     }
   }
 
-  isReady() { return true; }
+  isReady() { return this.placed; }
 
   getState() {
-    const st = { active: this.active ? this.active.type : null, count: this.vehicles.length, env: this._envState };
+    const st = { active: this.active ? this.active.type : null, count: this.vehicles.length, env: this._envState, placed: this.placed, colliders: this.colliders.count };
     for (const v of this.vehicles) { try { st[v.id] = v.getState(); } catch (_) { /* ignore */ } }
     if (this.active?.camera) st.cam = { mode: this.active.camera.mode, fov: +this.active.camera.fov.toFixed(1) };
     return st;

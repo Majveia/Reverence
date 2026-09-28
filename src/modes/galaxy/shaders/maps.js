@@ -85,8 +85,8 @@ void main(){
     float spurEnv = exp(-0.5 * dS * dS) * win;
     young += uSpur * 0.6 * spurPat * spurEnv * smoothstep(-0.1, 0.5, n2 + 0.3 * n3);
     // flocculent interarm patches (isotropic, not stripes)
-    float fl = smoothstep(0.2, 0.7, n2 + 0.45 * n1) * smoothstep(gR0 * 0.8, gR0 * 1.6, r) * (1.0 - smoothstep(0.75 * R, 1.05 * R, r));
-    young += uFloc * 0.35 * fl * exp(-r / uRdY) * 2.2 * (1.0 - armY);
+    float fl = smoothstep(0.25, 0.75, n3 + 0.4 * n2) * smoothstep(gR0 * 0.8, gR0 * 1.6, r) * (1.0 - smoothstep(0.75 * R, 1.05 * R, r));
+    young += uFloc * 0.2 * fl * exp(-r / uRdY) * 2.2 * (1.0 - armY);
     // --- dust: main lane on the concave (upstream) edge, braided filaments
     float sD = sig * mix(0.4, 0.62, smoothstep(gR0 * 0.3, gR0 * 1.5, r));
     float dD = (dN - 1.35 * sig) / sD;
@@ -120,6 +120,10 @@ void main(){
     float dl = (b.y - off + uBar.y * 0.25 * (n2 - 0.0)) / (uBar.x * 0.03 * (0.7 + 0.9 * ax));
     float barLane = exp(-0.5 * dl * dl) * smoothstep(0.06, 0.25, ax) * (1.0 - smoothstep(0.85, 1.15, ax));
     dust += 1.5 * barLane * (0.45 + 0.8 * smoothstep(0.1, 0.7, rid));
+    // star-formation desert swept by the bar: the disk inside the bar radius is dimmer
+    float me = (b.x * b.x) / (uBar.x * uBar.x) + (b.y * b.y) / (uBar.y * uBar.y * 2.5);
+    old *= 1.0 - 0.55 * (1.0 - smoothstep(0.75, 1.15, r / uBar.x)) * smoothstep(0.6, 1.4, me);
+    young *= 1.0 - 0.8 * (1.0 - smoothstep(0.8, 1.2, r / uBar.x)) * smoothstep(0.6, 1.4, me);
     // nuclear ring of star formation (NGC 1300 core)
     float nr = (r - uBar.x * 0.1) / (uBar.x * 0.022);
     float nring = exp(-0.5 * nr * nr);
@@ -148,14 +152,22 @@ void main(){
     float web = smoothstep(0.15, 0.65, n2 * 0.8 + n3 * 0.5 + n1 * 0.3) * exp(-r / (0.55 * R)) * smoothstep(gR0 * 0.25, gR0 * 1.1, r);
     dust += web * 0.35 + 0.1 * exp(-r / uRdY) * cut * smoothstep(gR0 * 0.2, gR0, r);
   }
+  // fine dust filaments across the whole star-forming disk (Hubble-like texture)
+  if (gType != 4 && gType != 3) {
+    float fd = rv_ridged(vec3(P * 40.0, 13.3) + so, 4);
+    float fd2 = rv_ridged(vec3(P * 85.0, 17.9) + so, 2);
+    float envD = exp(-r / (0.7 * R)) * smoothstep(gR0 * 0.05, gR0 * 0.5, r) * cut;
+    dust += (0.9 * smoothstep(0.55, 0.9, fd) + 0.4 * smoothstep(0.6, 0.92, fd2)) * envD * smoothstep(0.35, 0.75, n1 * 0.6 + n2 * 0.6 + 0.5);
+  }
   // Sombrero-like dust ring
   if (uDustRing.z > 0.0) {
     float dr = (r - uDustRing.x) / uDustRing.y;
     float th = atan(p.y, p.x + 1e-9);
     float rn = rv_fbm(vec3(cos(th) * 6.0, sin(th) * 6.0, r / R * 10.0) + so + 3.0, 5);
-    dust += uDustRing.z * exp(-0.5 * dr * dr) * (0.45 + 0.8 * smoothstep(-0.4, 0.5, rn));
-    float dr2 = (r - uDustRing.x * 0.8) / (uDustRing.y * 0.5);
-    dust += 0.35 * uDustRing.z * exp(-0.5 * dr2 * dr2) * smoothstep(0.0, 0.6, rn);
+    dust += 1.3 * uDustRing.z * exp(-0.5 * dr * dr) * (0.45 + 0.8 * smoothstep(-0.4, 0.5, rn));
+    float dr2 = (r - uDustRing.x * 0.86) / (uDustRing.y * 0.35);
+    dust += 0.8 * uDustRing.z * exp(-0.5 * dr2 * dr2) * smoothstep(0.0, 0.6, rn);
+    old *= 0.35 + 1.6 * exp(-0.5 * pow((r - uDustRing.x * 1.02) / (uDustRing.y * 1.6), 2.0));
     young += 0.25 * exp(-0.5 * dr * dr) * smoothstep(0.1, 0.7, rn + n3 * 0.4);
   }
 
@@ -178,7 +190,7 @@ void main(){
     // many small knots along the young ridge (HII complexes + OB associations)
     float kA = knots(vec3(P * 95.0, 1.0 + uSeedF), 0.62, 0.2);
     float kB = knots(vec3(P * 45.0, 4.0 + uSeedF), 0.75, 0.2);
-    float kC = knots(vec3(P * 160.0, 7.0 + uSeedF), 0.25, 0.25);
+    float kC = knots(vec3(P * 120.0, 7.0 + uSeedF), 0.25, 0.3);
     float ridgeK = smoothstep(0.08, 0.6, armRidge);
     hk += ridgeK * (2.4 * kA + 3.0 * kB) * smoothstep(-0.2, 0.3, n2);
     yk += ridgeK * (0.8 * kC + 0.5 * kA);

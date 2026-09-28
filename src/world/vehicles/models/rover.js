@@ -159,7 +159,6 @@ export function buildRover(mats, liv) {
   b.add(rbox(1.8, 0.04, 1.4, 0.01, 1), 'rubber', '#1c1c1c', T([0, 0.58, 0.28]));                           // floor mat
   b.add(rbox(1.78, 0.22, 0.3, 0.06, 2), 'plastic', '#2a2b2c', T([0, 0.89, 0.84]));                         // dashboard
   b.add(rbox(0.5, 0.16, 0.05, 0.02, 1), 'darkMetal', '#141414', T([0.45, 1.04, 0.74], [-0.4, 0, 0]));       // gauge hood
-  b.glow(rbox(0.38, 0.1, 0.004, 0.002, 1), [0.3, 1.1, 1.4], 6, T([0.45, 1.02, 0.712], [-0.4, 0, 0]));    // gauge screen
   b.glow(rbox(0.28, 0.16, 0.004, 0.002, 1), [1.4, 0.8, 0.3], 6, T([0, 0.99, 0.69], [-0.5, 0, 0]));        // center map screen
   b.add(new THREE.TorusGeometry(0.17, 0.022, 8, 28), 'rubber', '#1b1b1b', T([0.45, 1.0, 0.6], [-0.42, 0, 0]));
   b.add(tube([[0.45, 1.0, 0.6], [0.45, 0.95, 0.7], [0.45, 0.92, 0.78]], 0.03, 6, 8), 'darkMetal', '#222');
@@ -336,7 +335,7 @@ export function buildRover(mats, liv) {
   return {
     root, body: out.body, glow: out.glow, decals: out.decals, glass, sprites, rider, wheels, shocks, beams, spare, tris: b.tris,
     anchors: {
-      exhaust: V(-0.55, -0.2, -2.45), head: V(0, 0.34, 2.45), eye: V(0.45, 1.5, 0.42),
+      exhaust: V(-0.55, -0.2, -2.45), head: V(0, 0.34, 2.45), eye: V(0.45, 1.5, 0.42), screen: { pos: V(0.45, 1.02, 0.705), ax: 0.75, w: 0.42, h: 0.13 },
       tail: [V(0.84, 0.4, -2.36), V(-0.84, 0.4, -2.36)],
     },
   };

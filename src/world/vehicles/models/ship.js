@@ -74,22 +74,21 @@ export function buildShip(mats, liv) {
     glassGeos.push(g.index ? g.toNonIndexed() : g);
   }
   // canopy frame: arches + spine rail
-  for (const tz of [0.18, 0.5, 0.78]) {
+  for (const tz of [0.14, 0.9]) {
     const pts = [];
-    for (let i = 0; i <= 12; i++) { const P0 = new THREE.Vector3(), N0 = new THREE.Vector3(); can.evaluate(tz, -0.02 + (i / 12) * 0.54, P0, N0); P0.addScaledVector(N0, 0.02); pts.push(P0.toArray()); }
-    b.add(tube(pts, 0.035, 24, 6), 'paint', S);
+    for (let i = 0; i <= 12; i++) { const P0 = new THREE.Vector3(), N0 = new THREE.Vector3(); can.evaluate(tz, -0.02 + (i / 12) * 0.54, P0, N0); P0.addScaledVector(N0, 0.015); pts.push(P0.toArray()); }
+    b.add(tube(pts, 0.03, 24, 6), 'gunmetal', TR);
   }
-  { const pts = []; for (let i = 0; i <= 10; i++) { const P0 = new THREE.Vector3(), N0 = new THREE.Vector3(); can.evaluate(0.05 + (i / 10) * 0.9, 0.25, P0, N0); P0.addScaledVector(N0, 0.02); pts.push(P0.toArray()); } b.add(tube(pts, 0.03, 20, 6), 'paint', S); }
+  { const pts = []; for (let i = 0; i <= 6; i++) { const P0 = new THREE.Vector3(), N0 = new THREE.Vector3(); can.evaluate(0.02 + (i / 6) * 0.26, 0.25, P0, N0); P0.addScaledVector(N0, 0.015); pts.push(P0.toArray()); } b.add(tube(pts, 0.028, 12, 6), 'gunmetal', TR); }
   // canopy sill
   for (const s of [-1, 1]) b.add(tube([[0.72 * s, 1.08, 1.35], [0.8 * s, 1.02, 2.6], [0.6 * s, 0.82, 3.9], [0.2 * s, 0.72, 4.6]], 0.05, 20, 8), 'gunmetal', TR);
   // cockpit interior: seat, dash with screens, control sticks
   b.add(rbox(0.62, 0.16, 0.6, 0.06, 2), 'leather', '#2f2620', T([0, 0.86, 2.1]));
   b.add(rbox(0.6, 0.85, 0.16, 0.08, 3), 'leather', '#2f2620', T([0, 1.3, 1.78], [-0.28, 0, 0]));
   b.add(rbox(0.36, 0.22, 0.12, 0.05, 2), 'leather', '#2a221c', T([0, 1.8, 1.66], [-0.28, 0, 0]));
-  b.add(rbox(1.1, 0.22, 0.5, 0.06, 2), 'plastic', '#232426', T([0, 1.25, 3.35], [0.35, 0, 0]));
-  b.glow(rbox(0.36, 0.2, 0.004, 0.002, 1), [0.25, 1.0, 1.5], 6, T([-0.25, 1.36, 3.13], [0.95 - Math.PI / 2 + 0.3, 0, 0]));
-  b.glow(rbox(0.36, 0.2, 0.004, 0.002, 1), [1.5, 0.7, 0.2], 6, T([0.25, 1.36, 3.13], [0.95 - Math.PI / 2 + 0.3, 0, 0]));
-  b.glow(rbox(0.2, 0.12, 0.004, 0.002, 1), [0.3, 1.4, 0.6], 6, T([0, 1.3, 3.15], [0.95 - Math.PI / 2 + 0.3, 0, 0]));
+  b.add(rbox(1.02, 0.36, 0.07, 0.03, 2), 'plastic', '#16181a', T([0, 1.2, 3.3], [0.6, 0, 0]));
+  b.add(rbox(1.08, 0.05, 0.3, 0.02, 1), 'plastic', '#1d1f21', T([0, 1.35, 3.42], [0.12, 0, 0]));
+  for (const s of [-1, 1]) b.glow(rbox(0.012, 0.3, 0.012, 0.004, 1), [0.3, 1.1, 1.6], 6, T([0.49 * s, 1.21, 3.27], [0.6, 0, 0]));
   for (const s of [-1, 1]) b.add(tube([[0.24 * s, 0.95, 2.55], [0.24 * s, 1.13, 2.62]], 0.022, 3, 6), 'rubber', '#161616');
 
   // ---------------------------------------------------------------- nacelles on pylons
@@ -248,7 +247,7 @@ export function buildShip(mats, liv) {
       nozzleR: [0.62, 0.62, 0.26, 0.26, 0.4],
       vtol: [V(NX, NY - 1.02, -1.9), V(-NX, NY - 1.02, -1.9)],
       tips: [V(7.35, NY - 0.45, -4.0), V(-7.35, NY - 0.45, -4.0)],
-      nose: V(0, -0.1, 7.5), eye: V(0, 1.72, 2.25),
+      nose: V(0, -0.1, 7.5), eye: V(0, 1.72, 2.25), screen: { pos: V(0, 1.2235, 3.267), ax: 0.6, w: 0.92, h: 0.29 },
       ladder: V(1.9, -1.2, 1.5),
     },
   };

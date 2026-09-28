@@ -62,6 +62,7 @@ export class Vehicle {
     quatFromFrame(this.radialUp, this.fwdVec, this.quat);
     this.vel.set(0, 0, 0);
     this._syncFrame();
+    if (this.heading?.isVector3) this.heading.copy(this.fwdVec);
     this.syncTransform();
     this.wake();
   }

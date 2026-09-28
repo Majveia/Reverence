@@ -119,7 +119,7 @@ export class Streaks {
     u.uVel.value.copy(vel);
     u.uLen.value = pulse ? Math.min(0.2, 400 / speed) : Math.min(0.12, 12 / speed);
     u.uWidth.value = pulse ? 0.0022 : 0.0014;
-    u.uPower.value = power * (pulse ? 2.5 : 0.5);
+    u.uPower.value = power * (pulse ? 1.4 : 0.5);
     if (pulse) u.uColor.value.setRGB(0.7, 0.85, 1.6); else u.uColor.value.setRGB(0.9, 0.95, 1.0);
   }
 

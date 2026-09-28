@@ -25,6 +25,7 @@ uniform float uOldL, uYoungL, uHiiL, uDustL, uScreen;
 uniform vec4 uBulgeA, uBulgeW;
 uniform vec3 uBulgeS;
 uniform float uBulgeL;
+uniform vec2 uBulgeH;          // extended bulge envelope ρ ∝ (1 + r²/a²)^-2: a, total L
 uniform vec4 uBar;             // a, b, c, L
 uniform float uBarAng;
 uniform vec2 uHalo;            // a, L
@@ -45,6 +46,8 @@ float plumG(float t, float sqA, float h, float c2){
   float q = c2 + s * s;
   return s * (2.0 * s * s + 3.0 * c2) / (3.0 * c2 * c2 * q * sqrt(q));
 }
+// ρ ∝ (1 + r²/a²)^-2: projected Σ ∝ (1 + R²/a²)^-3/2 — finite light, much longer wings than Plummer
+float hubG(float t, float sqA, float h, float c2){ float s = sqA * (t + h); float rc = sqrt(c2); return s / (2.0 * c2 * (c2 + s * s)) + atan(s / rc) / (2.0 * c2 * rc); }
 float ferrF(float u, float E, float A){ float u2 = u * u; return u * (E * E - (2.0 / 3.0) * E * A * u2 + 0.2 * A * A * u2 * u2); }
 
 float vint(float y0, float y1, float dt, float h){
@@ -53,11 +56,20 @@ float vint(float y0, float y1, float dt, float h){
   return h * dt / dy * (tanh(clamp(y1 / h, -15.0, 15.0)) - tanh(clamp(y0 / h, -15.0, 15.0)));
 }
 
+// Gaussian vertical profile exp(-y²/h²)/(√π h), integrated exactly along the segment (erf)
+float gx_erf(float x){ float s = sign(x); x = abs(x); float t = 1.0 / (1.0 + 0.3275911 * x);
+  return s * (1.0 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * exp(-x * x)); }
+float gint(float y0, float y1, float dt, float h){
+  float dy = y1 - y0;
+  if (abs(dy) < 2e-3 * h) { float ym = 0.5 * (y0 + y1) / h; return dt * exp(-ym * ym) / (1.7724539 * h); }
+  return dt / dy * 0.5 * (gx_erf(clamp(y1 / h, -6.0, 6.0)) - gx_erf(clamp(y0 / h, -6.0, 6.0)));
+}
+
 void main(){
   vec3 ro = uCamPos;
   vec4 vv = uInvProj * vec4(vUv * 2.0 - 1.0, 0.5, 1.0);
   vec3 rd = normalize(uRayMat * normalize(vv.xyz / vv.w));
-  float jit = rv_ign(gl_FragCoord.xy + vec2(mod(uFrame, 64.0) * 5.3));
+  float jit = rv_hash12(gl_FragCoord.xy + vec2(mod(uFrame, 64.0) * 17.31, 5.1));
 
   // ---------------- analytic components (bulge, halo, bar)
   vec3 ob = ro / uBulgeS, db = rd / uBulgeS;
@@ -68,6 +80,9 @@ void main(){
   vec4 c2b = uBulgeA * uBulgeA + Db;
   vec4 Kb = uBulgeW * 3.0 * uBulgeA * uBulgeA / (4.0 * RV_PI * uBulgeS.x * uBulgeS.y * uBulgeS.z * sqAb) * uBulgeL;
   vec4 Gbinf = 2.0 / (3.0 * c2b * c2b);
+  float c2H = uBulgeH.x * uBulgeH.x + Db;
+  float KH = uBulgeH.y * uBulgeH.x / 9.8696044 / (uBulgeS.x * uBulgeS.y * uBulgeS.z * sqAb);
+  float GHinf = 3.14159265 / (4.0 * c2H * sqrt(c2H));
   float hh = dot(ro, rd);
   vec3 wh = ro - rd * hh;
   float c2h = uHalo.x * uHalo.x + dot(wh, wh);
@@ -88,6 +103,7 @@ void main(){
 
   // running antiderivatives
   vec4 Gb0 = bulgeG(0.0, sqAb, hb, c2b);
+  float GH0 = hubG(0.0, sqAb, hb, c2H);
   float Gh0 = plumG(0.0, 1.0, hh, c2h);
   float Fb0 = Ebar > 0.0 ? ferrF(clamp(hbar, -umBar, umBar), Ebar, Abar) : 0.0;
 
@@ -109,7 +125,7 @@ void main(){
   if (t1 <= t0) hit = false;
 
   if (!hit) {
-    vec3 E = uColBulge * dot(Kb, Gbinf - Gb0) + uColHalo * Kh * (Ghinf - Gh0);
+    vec3 E = uColBulge * (dot(Kb, Gbinf - Gb0) + KH * (GHinf - GH0)) + uColHalo * Kh * (Ghinf - Gh0);
     if (Ebar > 0.0) E += uColBar * Kbar * (ferrF(umBar, Ebar, Abar) - Fb0);
     gl_FragColor = vec4(E, 1.0);
     return;
@@ -120,8 +136,9 @@ void main(){
     vec4 G1 = bulgeG(t0, sqAb, hb, c2b);
     float G1h = plumG(t0, 1.0, hh, c2h);
     float F1 = Ebar > 0.0 ? ferrF(clamp(t0 + hbar, -umBar, umBar), Ebar, Abar) : 0.0;
-    L += uColBulge * dot(Kb, G1 - Gb0) + uColHalo * Kh * (G1h - Gh0) + uColBar * Kbar * (F1 - Fb0);
-    Gb0 = G1; Gh0 = G1h; Fb0 = F1;
+    float GH1 = hubG(t0, sqAb, hb, c2H);
+    L += uColBulge * (dot(Kb, G1 - Gb0) + KH * (GH1 - GH0)) + uColHalo * Kh * (G1h - Gh0) + uColBar * Kbar * (F1 - Fb0);
+    Gb0 = G1; Gh0 = G1h; Fb0 = F1; GH0 = GH1;
   }
 
   // ---------------- march
@@ -138,15 +155,19 @@ void main(){
     if (i == uSteps - 1) ds = t1 - t;           // swallow the remainder in the last step
     float tb = min(t + ds, t1);
     float dt = tb - t;
-    vec3 pa = ro + rd * t, pb = ro + rd * tb, pm = 0.5 * (pa + pb);
+    vec3 pa = ro + rd * t, pb = ro + rd * tb;
+    // sample the maps where the thin layers weigh most: the point of the segment closest to the midplane
+    float tcr = abs(rd.y) > 1e-7 ? clamp(-ro.y / rd.y, t, tb) : 0.5 * (t + tb);
+    vec3 pm = ro + rd * tcr;
     vec2 uv = pm.xz / (2.0 * uMapR) + 0.5;
     vec4 M = (abs(uv.x - 0.5) < 0.5 && abs(uv.y - 0.5) < 0.5) ? textureLod(tMap, uv, 0.0) : vec4(0.0);
     float rm = length(pm.xz);
     float fl = 1.0 + uFlare * (rm / uR) * (rm / uR);
-    float hO = uHOld * fl, hY = uHYoung * fl, hD = uHDust * fl;
+    float flT = 1.0 + 0.35 * (fl - 1.0);               // young stars and dust stay thin (little flare)
+    float hO = uHOld * fl, hY = uHYoung * flT, hD = uHDust * flT;
     float IO = vint(pa.y, pb.y, dt, hO) / (2.0 * hO);
-    float IY = vint(pa.y, pb.y, dt, hY) / (2.0 * hY);
-    float ID = vint(pa.y, pb.y, dt, hD) / (2.0 * hD);
+    float IY = gint(pa.y, pb.y, dt, hY);
+    float ID = gint(pa.y, pb.y, dt, hD);
     // multi-scale 3-D detail, faded by pixel footprint to avoid aliasing
     float foot = pixA * max(t, 1e-4);
     vec4 N1 = texture(tNoise, pm * f1);
@@ -161,12 +182,14 @@ void main(){
     float gm = mix(1.0, clamp(0.55 + 0.9 * N1.a + 0.5 * w2 * (N2.b - 0.5), 0.2, 2.0), uDustNoise);
     vec3 E = uColOld * (M.r * uOldL * IO) + (uColYoung * (M.g * uYoungL) + uColHII * (M.a * uHiiL)) * (IY * gm);
     // clumpy dust mixed with the stars: local obscuration of this sample's own light
-    E *= exp(-uExt * (M.b * uScreen * dm));
+    float yl = pm.y / (1.6 * hD);
+    E *= exp(-uExt * (M.b * uScreen * dm * exp(-yl * yl)));
     // analytic components over the segment
     vec4 G1 = bulgeG(tb, sqAb, hb, c2b);
     float G1h = plumG(tb, 1.0, hh, c2h);
-    E += uColBulge * dot(Kb, G1 - Gb0) + uColHalo * Kh * (G1h - Gh0);
-    Gb0 = G1; Gh0 = G1h;
+    float GH1 = hubG(tb, sqAb, hb, c2H);
+    E += uColBulge * (dot(Kb, G1 - Gb0) + KH * (GH1 - GH0)) + uColHalo * Kh * (G1h - Gh0);
+    Gb0 = G1; Gh0 = G1h; GH0 = GH1;
     if (Ebar > 0.0) { float F1 = ferrF(clamp(tb + hbar, -umBar, umBar), Ebar, Abar); E += uColBar * Kbar * (F1 - Fb0); Fb0 = F1; }
     vec3 tau = uExt * (M.b * uDustL * ID * dm);
     vec3 att = exp(-tau);
@@ -180,7 +203,7 @@ void main(){
   }
   // back analytic part
   if (max(T.r, max(T.g, T.b)) > 0.0) {
-    vec3 E = uColBulge * dot(Kb, Gbinf - Gb0) + uColHalo * Kh * (Ghinf - Gh0);
+    vec3 E = uColBulge * (dot(Kb, Gbinf - Gb0) + KH * (GHinf - GH0)) + uColHalo * Kh * (Ghinf - Gh0);
     if (Ebar > 0.0) E += uColBar * Kbar * (ferrF(umBar, Ebar, Abar) - Fb0);
     L += T * E;
   }

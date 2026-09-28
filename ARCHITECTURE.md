@@ -248,3 +248,16 @@ visualizations). What separates AAA from "tech demo":
   banners (good moment for a sting).
 * **vehicles** (from ui) — prompt glyphs: use `engine.ui.device` ('touch' whenever the touch layer is active)
   instead of `input.lastDevice`.
+* **space** (from galaxy) — render the actual host galaxy from the current star with
+  `GalaxyModel.galaxyDensity()` / `galaxyStructure()` for a Milky-Way band with that galaxy's real dust lanes.
+* **audio** (from galaxy) — `audio.play('select')` on star selection, `audio.play('whoosh')` on travel.
+  (from vehicles) engine voices from params `engine, speed, boost, altitude`; one-shots `takeoff`,
+  `pulse {on}`, `impact {intensity}`, `land {intensity}`, `vehicle.enter/exit` (event `vehicle:enter {type}`).
+* **ui** (from galaxy) — telemetry keys 'Scale', 'Horizon' and marker `sub` text 'class · temperature'.
+  (from vehicles) ship telemetry: `drive: 'PULSE'`, `status` (LANDED/REENTRY), `target` (nearest body +
+  distance); optionally a small target marker.
+* **atmosphere** (from vehicles) — stop rain/snow streaks when the camera is above the cloud layer or outside
+  the atmosphere (`G.uCameraAltitude > atmosphere height`).
+* **flora** (from vehicles) — `flora.clearAround(pos, radius)` or honour `world.pois` of kind `'landing'` so
+  understorey plants are culled under a parked 15 m starship.
+* **vehicles URL params** — `view=bike|rover|ship`, `speed=`, `cam=chase3q|hero`; galaxy `focus=core|local|neb:N`.

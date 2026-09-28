@@ -19,11 +19,14 @@ import { Ribbon } from './fx/trails.js';
 import { clamp, damp, dampF, smoothstep, orthoForward, quatFromFrame, FastRand, noise1, fmtSpeed, fmtDist } from './util.js';
 import { Celestial } from '../Celestial.js';
 import { G } from '../../core/Uniforms.js';
+import { CockpitScreen } from './fx/screen.js';
+import { tangentBasis } from './util.js';
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3();
 const _up = new THREE.Vector3(), _f = new THREE.Vector3(), _u = new THREE.Vector3(), _r = new THREE.Vector3();
 const _p = new THREE.Vector3(), _n = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
 const _col = new THREE.Color();
+const _se = new THREE.Vector3(), _sn = new THREE.Vector3();
 
 // hull probes (object space) for terrain contact; gear pads handled separately
 const HULL = [[0, -0.1, 7.3], [0, 0.3, -6.3], [7.2, -0.4, -3.5], [-7.2, -0.4, -3.5], [2.75, -0.9, -1.9], [-2.75, -0.9, -1.9],
@@ -34,6 +37,7 @@ export class Starship extends Vehicle {
   constructor(mgr, opts) {
     super(mgr, 'ship', opts);
     this.promptText = 'Board';
+    this.clearRadius = 8.5;
     this.displayName = 'Starship';
     this.inputScheme = 'flight';
     this.colliderRadius = 5.5;
@@ -41,6 +45,7 @@ export class Starship extends Vehicle {
     this.enterRadius = 7.5;
     this.substeps = 2;
     this.cullDist = 60000;
+    this.parkCull = 5000;
     this.restHeight = -SHIP.gearY;
     this.state = 'landed';
     this.gearT = 1;
@@ -83,7 +88,7 @@ export class Starship extends Vehicle {
     this.vtolFlames = m.anchors.vtol.map((p, i) => {
       const f = makeFlame({ core: [g[0] * 1.5 + 1, g[1] * 1.5 + 1, g[2] * 1.5 + 1], outer: [g[0] * 0.5, g[1] * 0.5, g[2] * 0.6], diamonds: 0.6, seed: i * 5.1 + 3 }, G.uTime);
       f.position.copy(p);
-      f.rotation.x = Math.PI / 2;           // -Z → -Y
+      f.rotation.x = -Math.PI / 2;          // -Z → -Y
       f.scale.set(0.45, 0.45, 1.6);
       m.root.add(f);
       return f;
@@ -109,9 +114,14 @@ export class Starship extends Vehicle {
       new Ribbon(this.world, { max: n, color: [g[0] * 1.2, g[1] * 1.2, g[2] * 1.2], additive: true, life: 1.6, minDist: 5, name: 'ship-engine-trail-l' }),
       new Ribbon(this.world, { max: n, color: [g[0] * 1.2, g[1] * 1.2, g[2] * 1.2], additive: true, life: 1.6, minDist: 5, name: 'ship-engine-trail-r' }),
     ];
+    const sa = m.anchors.screen;
+    this.screen = new CockpitScreen({ tint: [0.35, 0.9, 1.0], width: sa.w, height: sa.h, kind: 'ship' });
+    this.screen.mesh.position.copy(sa.pos);
+    this.screen.mesh.rotation.set(sa.ax, Math.PI, 0);
+    m.root.add(this.screen.mesh);
     this.initCamera({
       orbit: true, dist: 17.5, height: 4.4, pivot: 1.6, lookAhead: 10, pitch: -0.07, fovBase: 60, fovSpeed: 14, fovBoost: 12,
-      speedRef: 220, rotLag: 4.2, distSpeed: 0.3, distBoost: 0.2, heightSpeed: 0.05, roll: 0, shake: 0.8, clearance: 1.5, posLag: 10,
+      speedRef: 220, rotLag: 4.2, distSpeed: 0.16, distBoost: 0.08, heightSpeed: 0.05, roll: 0, shake: 0.8, clearance: 1.5, posLag: 10,
       horizonBlend: () => this.horizon, aimHeight: 0.8, recenter: 1.6,
       cockpitEye: m.anchors.eye.toArray(), cockpitFov: 72, cockpitPitch: 0.05,
     });
@@ -301,13 +311,13 @@ export class Starship extends Vehicle {
         }
       } else {
         if (!boostHeld) this._pulseArm = true;
-        if ((this._pulseArm && boostHeld) || thrIn < -0.5 || desc) this._dropPulse(false);
+        if ((this._pulseArm && input.down('boost')) || thrIn < -0.5 || desc) this._dropPulse(false);
       }
     }
     if (this.pulseOn) {
       const distAtm = Math.max(0, this.alt - this.atmoH);
-      const lim = Math.min(Math.max(distAtm, 1000) * 0.8, this.nearestD * 0.35, 6e6);
-      const target = clamp(lim, 1500, 6e6);
+      const lim = Math.min(Math.max(distAtm, 2000) * 1.5, this.nearestD * 0.35, 6e6);
+      const target = clamp(lim, 3000, 6e6);
       this.pulseSpeed += (target - this.pulseSpeed) * dampF(this.pulseSpeed < target ? 0.7 : 3, dt);
       vel.copy(fwd).multiplyScalar(this.pulseSpeed);
       if (!space || (this.alt < this.atmoH * 1.25 && fwd.dot(up) < -0.05)) this._dropPulse(true);
@@ -327,7 +337,8 @@ export class Starship extends Vehicle {
       // energy trade in atmosphere (climb bleeds speed, dive gains it)
       if (!space && vF > 30) vel.addScaledVector(fwd, -g * fwd.dot(up) * 0.6 * dt);
       // aerodynamic grip: the velocity turns toward the nose (lift); flight assist in space
-      const grip = space ? 0.8 : 0.35 + 3.4 * clamp(rho, 0, 1.2);
+      const airless = this.atmoH <= 0;
+      const grip = space || airless ? 0.8 : 0.35 + 3.4 * clamp(rho, 0, 1.2);
       const vf2 = vel.dot(fwd);
       _a.copy(vel).addScaledVector(fwd, -vf2);                 // lateral / vertical slip
       if (!space) _a.addScaledVector(up, -_a.dot(up) * slow);  // keep hover vertical motion for VTOL
@@ -335,7 +346,7 @@ export class Starship extends Vehicle {
       // gravity vs. support (VTOL engines at low speed, wing lift at speed)
       const lift = smoothstep(35, 130, vf2) * clamp(upright * 1.25, 0, 1) * clamp(rho * 3, 0, 1);
       this.hover = damp(this.hover, space ? 0 : slow, 3, dt);
-      const support = space ? 0.985 : clamp(0.3 + this.hover * 0.7 + lift * 0.7, 0, 1);
+      const support = space ? 0.985 : clamp(0.3 + this.hover * 0.7 + lift * 0.7 + (airless ? 0.62 : 0), 0, 1);
       vel.addScaledVector(up, -g * (1 - support) * dt);
       // vertical thrusters
       const vIn = asc - desc;
@@ -365,7 +376,7 @@ export class Starship extends Vehicle {
     const heatT = smoothstep(450, 1100, this.speed) * smoothstep(1.5e3, 6e4, q) * (space ? 0 : 1);
     this.heat = damp(this.heat, heatT, heatT > this.heat ? 2.5 : 0.8, dt);
     this.engine = clamp(0.2 + this.throttle * 0.55 + this.boost * 0.3 + this.vtol * 0.2 + this.pulse * 0.4, 0, 1);
-    this.horizon = space ? 0 : clamp(1 - (this.speed - 40) / 160, 0.25, 1) * atmoK;
+    this.horizon = space ? 0 : this.atmoH <= 0 ? clamp(1 - this.agl / 1500, 0, 1) * 0.8 : clamp(1 - (this.speed - 40) / 160, 0.25, 1) * atmoK;
     this._syncFrame();
 
     // ---- travel: scan for other bodies (arrive by switching worlds)
@@ -481,7 +492,7 @@ export class Starship extends Vehicle {
     });
   }
 
-  blurAmount() { return clamp((this.speed - 150) / 300, 0, 1) * 0.35 * (this.rho > 0.02 ? 1 : 0.3) + this.pulse * 0.55 + this.heat * 0.25; }
+  blurAmount() { return clamp((this.speed - 150) / 300, 0, 1) * 0.35 * (this.rho > 0.02 ? 1 : 0.3) + this.pulse * 0.28 + this.heat * 0.25; }
   streakAmount() {
     if (this.pulse > 0.05) return { power: this.pulse, mode: 'pulse' };
     return { power: clamp((this.speed - 110) / 220, 0, 1) * clamp(this.rho * 3, 0, 1) * 0.8, mode: 'wind' };
@@ -492,7 +503,7 @@ export class Starship extends Vehicle {
     const occ = this.occupied, night = G.uNight.value;
     const flying = this.state !== 'landed';
     const blink = (Math.sin(t * 2.3) > 0.85 ? 1 : 0);
-    const fp = occ ? clamp((flying ? 0.25 : 0.08) + this.throttle * 0.7 + this.boost * 1.1 + this.pulse * 1.4, 0, 2.4) : 0;
+    const fp = occ ? clamp((flying ? 0.25 : 0.08) + this.throttle * 0.7 + this.boost * 1.1 + this.pulse * 0.6, 0, 1.8) : 0;
     const flick = 0.92 + 0.08 * noise1(t * 24, 4);
     ch[0] = (occ ? 0.6 + fp * 0.8 : 0.25) * flick;   // nozzles
     ch[1] = occ || night > 0.3 ? 1.1 : 0.5;          // nav
@@ -506,7 +517,7 @@ export class Starship extends Vehicle {
       const f = this.flames[i], r = f.userData.r;
       f.visible = fp > 0.04 && this.visible;
       f.material.uniforms.uPower.value = Math.min(1.6, fp);
-      f.scale.set(r * 0.9, r * 0.9, r * (1.6 + fp * 4.5 + this.pulse * 6 + noise1(t * 28 + i, 2) * 0.3));
+      f.scale.set(r * 0.9, r * 0.9, r * (1.6 + fp * 4.5 + this.pulse * 3 + noise1(t * 28 + i, 2) * 0.3));
     }
     const vp = occ ? this.vtol * (flying ? 1 : 0) : 0;
     for (const f of this.vtolFlames) {
@@ -536,6 +547,7 @@ export class Starship extends Vehicle {
       this.plasma.quaternion.setFromUnitVectors(_b.set(0, 0, -1), _a.negate());
       this.plasma.position.copy(_a).multiplyScalar(-3).add(_c.set(0, 0.2, 0));
     }
+    this.screen?.update(dt, occ && this.distToCam < 40, this._screenData());
     this._pools(night);
     this._trails(dt);
     this._fx(dt);
@@ -640,12 +652,28 @@ export class Starship extends Vehicle {
   getState() {
     return {
       ...super.getState(), state: this.state, alt: Math.round(this.alt), agl: Math.round(this.agl), throttle: +this.throttle.toFixed(2),
-      gear: +this.gearT.toFixed(2), pulse: this.pulseOn, heat: +this.heat.toFixed(2), rho: +this.rho.toFixed(3),
+      gear: +this.gearT.toFixed(2), pulse: this.pulseOn, pitch: Math.round(Math.asin(clamp(this.fwdVec.dot(this.radialUp), -1, 1)) * 57.3),
+      bank: Math.round(Math.asin(clamp(-this.rightVec.dot(this.radialUp), -1, 1)) * 57.3), vUp: +this.vel.dot(this.radialUp).toFixed(1), heat: +this.heat.toFixed(2), rho: +this.rho.toFixed(3),
       nearest: this.nearest?.name ?? null, nearestKm: Number.isFinite(this.nearestD) ? Math.round(this.nearestD / 1000) : null,
     };
   }
 
+  _screenData() {
+    const up = this.radialUp, f = this.fwdVec;
+    tangentBasis(up, _se, _sn);
+    const d = this._sd ||= {};
+    d.speed = this.speed; d.throttle = this.pulseOn ? 1 : this.throttle; d.boost = Math.max(this.boost, this.pulse); d.engine = this.engine;
+    d.heading = Math.atan2(f.dot(_se), f.dot(_sn));
+    d.pitch = Math.asin(clamp(f.dot(up), -1, 1));
+    d.bank = Math.asin(clamp(-this.rightVec.dot(up), -1, 1));
+    d.alt = this.alt; d.gear = this.gearT;
+    d.status = this.pulseOn ? 'PULSE' : this.heat > 0.2 ? 'REENTRY' : this.state === 'landed' ? 'LANDED' : this.boost > 0.3 ? 'BOOST' : '';
+    d.target = this.nearest && this.alt > this.atmoH ? `${this.nearest.name} ${fmtDist(this.nearestD)}` : '';
+    return d;
+  }
+
   dispose() {
+    this.screen?.dispose();
     for (const p of [this.pool, this.landPool]) { p?.removeFromParent(); p?.geometry.dispose(); p?.material.dispose(); }
     for (const t of this.trails || []) t.dispose();
     for (const f of [...(this.flames || []), ...(this.vtolFlames || []), this.plasma]) { f?.geometry.dispose(); f?.material.dispose(); }

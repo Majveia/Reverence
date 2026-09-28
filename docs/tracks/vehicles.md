@@ -1,0 +1,94 @@
+# Vehicles track — hoverbike, rover, starship
+
+Owner paths: `src/world/vehicles/**`, this file. Subsystem `vehicles` (order 55).
+
+## What was built
+
+| file | role |
+|---|---|
+| `index.js` | `VehicleManager`: spawning (player spawn + settlements), collider-aware placement (clearings), enter/exit/summon, prompts, audio params, telemetry, speed blur + streaks, env probe, vehicle↔vehicle contacts |
+| `Vehicle.js` | base class = controller contract (`pos vel forward up view inputScheme onControlGained/Lost`) |
+| `Hoverbike.js` | flow-state speeder: 5-point predictive repulsor probe over terrain **and** water, anti-grav spring, hop, boost, carve/power-slide, banking, dust rooster tails, water spray, tail-light ribbons |
+| `Rover.js` | 6-DOF rigid body at 4× substeps: raycast suspension per wheel against `surface.height` (spring/damper/bump stop/anti-roll bars), tire model with friction circle, surface grip (sand/snow/rock/wet), AWD rear-biased, handbrake drifts + counter-steer assist, roll-over assist + airborne self-levelling, chassis contact probes, self-righting, wading buoyancy, per-wheel dust/splash, tire tracks that fade (one draw call), exhaust puffs, headlights + beams + ground pool (E toggles), live dashboard screen |
+| `Starship.js` | NMS-style flight: landed → VTOL take-off → atmospheric flight (ρ(alt) grip/lift/energy trade/over-speed drag) → space (flight assist) → pulse drive; auto gear, landing anywhere (aligns to ground), hull terrain contacts, reentry heat + plasma sheath + embers, contrails, engine trails, VTOL wash, interplanetary arrival (switches world to the approached planet/moon) |
+| `camera.js` | chase rig (spring + heading lag, speed FOV, boost kick, shake, free look re-centre, terrain clearance, collider occlusion → pull-in/crane-up), ship follow-frame rig with horizon blend, cockpit views, cine presets |
+| `models/bike.js` `models/rover.js` `models/ship.js` `models/rider.js` | procedural hard-surface models (lofts, bevelled extrusions, lathes, tubes), per-part PBR presets, conformal decals, emissive channels, animated parts (vanes, wheels, coil-overs, landing gear) |
+| `materials.js` | uber PBR shader (panel seams, edge wear, dirt in the planet's soil colour, rust, wetness, reentry blackbody heat, dissolve), glow (8 animated channels), glass, decal atlas, sky env probe, liveries per art preset |
+| `fx/*` | particles (lit dust, spray, sparks), flames/beams/pools/sprite halos, ribbons, speed streaks, radial speed blur (pipeline effect order 145), diegetic cockpit screens |
+
+Budgets: bike ≈ 30k tris / 6 draw calls, rover ≈ 70k / 14, ship ≈ 90k / 16 (+ FX pools ≈ 6).
+All three scale particle counts with `quality.particleScale`; ribbons are skipped on mobile.
+
+## Controls
+
+| | Hoverbike (`vehicle`) | Rover (`vehicle`) | Starship (`flight`) |
+|---|---|---|---|
+| move stick / WASD | throttle · steer | throttle/brake/reverse · steer | W/S throttle · A/D roll |
+| look (mouse / RS / drag) | free look (re-centres) | free look | steer (virtual stick: pitch/yaw) |
+| Space / A | hop | handbrake (drift) | vertical thrust up / take off |
+| C / B | — | — | vertical thrust down / land |
+| Shift / RT | boost | boost | afterburner · in space hold = pulse drive (press again, S or C drops out) |
+| E | — | lights on/off | — |
+| V | chase ⇄ cockpit | chase ⇄ cockpit | chase ⇄ cockpit |
+| F / Y / touch exit | ride / get off; hold on foot = summon last vehicle | drive / get out (< 22 km/h) | board / disembark (landed) |
+
+Landing: fly low and slow (< 70 m/s, < 45 m) → gear deploys; touch down gently with C.
+
+## URL / capture
+
+`view=bike|rover|ship` starts inside that vehicle at the player spawn (moved to the nearest
+clearing once flora/civ colliders exist). Extra params: `cam=chase|cockpit|side|front|low|high|top|quarter|rear|hero|chase3q`,
+`speed=<m/s>`, `alt=<m>` (ship: start airborne; above the atmosphere = orbit), `pitch=<deg>` (ship nose),
+`pulse=<m/s>` (ship in space: start in pulse), `liv=<livery>` (nasapunk, expedition, racer, hauler,
+retro, stealth, pulp, frontier, arctic, jade).
+
+| view | URL | steps |
+|---|---|---|
+| W1 hoverbike racing through the meadow (3/4 chase) | `/?mode=system&galaxy=0&star=6&planet=1&view=bike&lat=16.122&lon=5.848&yaw=0&tod=0.27&speed=30&cam=chase3q` | `[{"advance":0.3},{"hold":"KeyW","sec":6},{"advance":2},{"move":[0.6,1],"sec":1.2},{"hold":"KeyW","sec":2},{"advance":1.2}]` |
+| W3 rover jumping a crest by the Moebius spire town (tire tracks) | `/?mode=system&galaxy=0&star=9&planet=2&view=rover&tod=0.33&speed=12` | `[{"advance":0.5},{"hold":"KeyW","sec":6},{"advance":2.5},{"move":[1,1],"sec":1.6},{"hold":"Space","sec":1.0},{"advance":1.6}]` |
+| W3 rover parked (livery, detail) | `/?mode=system&galaxy=0&star=9&planet=2&view=rover&tod=0.33&cam=quarter` | `[{"advance":1}]` |
+| W8 rover, misty industrial (3/4) | `/?mode=system&galaxy=0&star=2&planet=1&view=rover&lat=12.1822&lon=28.5721&yaw=135&tod=0.3&cam=chase3q` | `[{"advance":0.5},{"hold":"KeyW","sec":4},{"advance":2.5}]` |
+| W4 ship over the neon megacity at night | `/?mode=system&galaxy=0&star=2&planet=0&view=ship&alt=70&lat=1.4004&lon=32.79&yaw=45&tod=0.95&speed=90&cam=chase3q` | `[{"advance":1.2}]` |
+| W4 ship take-off (VTOL jets, gear down) | `/?mode=system&galaxy=0&star=2&planet=0&view=ship&tod=0.4&cam=hero` | `[{"advance":0.5},{"hold":"Space","sec":0.9},{"advance":0.9}]` |
+| W4 ship climbing out | `/?mode=system&galaxy=0&star=2&planet=0&view=ship&tod=0.4` | `[{"advance":0.5},{"hold":"Space","sec":2.5},{"advance":2.5},{"hold":"KeyW","sec":3},{"advance":3}]` |
+| W4 low orbit (planet curvature below) | `/?mode=system&galaxy=0&star=2&planet=0&view=ship&tod=0.42&alt=25000&pitch=-10&cam=high` | `[{"advance":1}]` |
+| pulse drive | `/?mode=system&galaxy=0&star=2&planet=0&view=ship&tod=0.45&alt=14000&speed=300` | `[{"advance":0.5},{"hold":"ShiftLeft","sec":1.2},{"advance":1.5},{"advance":3}]` |
+| ship cockpit over the W1 fjord | `/?mode=system&galaxy=0&star=6&planet=1&view=ship&alt=250&lat=3.96&lon=-29.58&yaw=315&tod=0.3&cam=cockpit` | `[{"advance":1.5}]` |
+
+`__rv.state().vehicles` → `{ active, count, placed, colliders, <id>: {pos, speed, …}, cam }`; the ship
+reports `state, alt, agl, throttle, gear, pulse, pitch, bank, heat, rho, nearest, nearestKm`, the rover
+`contacts, gear, steer, comp[4], tilt, surface`.
+
+## API
+
+* `world.vehicles` (= `world.get('vehicles')`): `vehicles[]`, `active`, `enter(v)`, `exit(v)`, `summon()`,
+  `add(kind)`, `findClearing(center, dir, maxDist, opts)`, `blocked(pos, r)`.
+* Every vehicle: `type` ('bike'|'rover'|'ship'), `pos vel quat fwdVec upVec rightVec speed boost engine`,
+  `occupied`, `camera` (`mode`, `toggle()`), `telemetry()`, `getState()`.
+* Events: `vehicle:enter|exit {type, vehicle}`, `discovery {kind:'landing', name}` on touchdown / arrival.
+* Audio params every frame while driving: `engine` 0..1, `speed` m/s, `boost` 0..1, `altitude` (ship).
+  One-shots: `vehicle.enter`, `vehicle.exit`, `jump`, `land {intensity}`, `impact {intensity}`, `takeoff`,
+  `pulse {on}`, `warp` (summon), `whoosh` (self-righting).
+* UI: `prompt('vehicle', 'Ride'|'Drive'|'Board', 'vehicle')`, `hint(...)` on enter, `setTelemetry({speed, altitude?, drive?, status?, target?, gear?, grip?})` at 5 Hz.
+* Colliders: each vehicle registers a sphere collider `{tag: 'vehicle:<type>', vehicle: true}` that follows it.
+
+## Known issues
+
+* Ship arrival at another planet is a world switch (white flash) rather than a continuous approach;
+  gas giants cannot be landed on (pulse drops out near them).
+* Parked vehicles avoid collider-registered trees/rocks/buildings, but understorey plants without
+  colliders (e.g. W4 balloon plants) can still occlude a landed-ship chase camera.
+* No damage model; hard impacts only bounce, spark and shake.
+* Rover wheels use a single ray per wheel (no wheel-width sweep), so it can clip small ledges.
+* Rain from the weather system continues to fall past the camera in orbit (see Requests).
+
+## Requests
+
+* **atmosphere / weather** — stop rain/snow streaks when the camera is above the cloud layer / outside
+  the atmosphere (`G.uCameraAltitude > atmosphere height`): visible in the W4 orbit capture.
+* **flora** — an optional `flora.clearAround(pos, radius)` (or honour `world.pois` of kind `'landing'`)
+  so understorey/alien plants are culled under a parked 15 m starship.
+* **audio** — engine voices keyed by `engine`/`speed`/`boost`/`altitude` plus the one-shots above
+  (`takeoff`, `pulse {on}`, `impact`, `land`) for the three vehicles (`vehicle:enter {type}` tells which).
+* **ui** — telemetry keys `drive: 'PULSE'`, `status`, `target` (nearest body · distance) are sent by the
+  ship; a small pitch-ladder/target marker would be welcome but is optional (cockpit screens exist).

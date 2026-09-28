@@ -152,14 +152,14 @@ function buildStructure(g) {
   S.rd = R * (type === 'lenticular' ? r.range(0.2, 0.25) : r.range(0.25, 0.3)); // scale length (old disk)
   S.rdY = R * r.range(0.3, 0.38);                                             // young disk
   S.hOld = R * r.range(0.011, 0.015) * (0.75 + 0.25 * (g.thickness / 1100));  // sech² scale height
-  S.hYoung = S.hOld * 0.38;
-  S.hDust = S.hOld * 0.42;
+  S.hYoung = S.hOld * 0.22;
+  S.hDust = S.hOld * 0.32;
   S.flare = r.range(0.5, 1.1);
 
   // spiral arms
   S.warpAmp = S.m ? r.range(0.14, 0.32) : 0;
   S.warpF = 1 / (R * r.range(0.22, 0.4));
-  S.armW = R * r.range(0.013, 0.02);                 // young arm σ (perpendicular)
+  S.armW = R * r.range(0.013, 0.02) * (S.m <= 2 ? 1.45 : S.m === 3 ? 1.2 : 1);                 // young arm σ (perpendicular)
   S.fragAmp = S.m <= 2 ? r.range(0.1, 0.35) : r.range(0.35, 0.7);
   S.fragF = r.range(2.2, 4.2);
   S.armAmp = []; S.armEnd = [];

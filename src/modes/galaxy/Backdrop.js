@@ -77,14 +77,14 @@ export class Backdrop {
       dir.set([s * Math.cos(a), z, s * Math.sin(a)], i * 4);
       if (i < nGal) {
         const u = r.next();
-        const size = 0.0009 * Math.pow(r.next(), 3.2) * 9 + 0.0012 * r.next();        // rad: mostly tiny, a few large
+        const size = 0.0016 * Math.pow(r.next(), 4.0) * 14 + 0.0015 + 0.0015 * r.next();        // rad: mostly tiny, a few large
         dir[i * 4 + 3] = size;
         const spiral = u < 0.62;
         shape.set([spiral ? 1 : 0, spiral ? r.range(0.12, 1) : r.range(0.55, 1), r.range(0, Math.PI), r.range(0, 1000)], i * 4);
         const zred = Math.pow(r.next(), 0.6);                       // farther → redder, fainter
-        const b = (0.05 + 0.25 * Math.pow(r.next(), 3)) * (1.2 - zred) * (spiral ? 0.9 : 1.1);
+        const b = (0.06 + 0.7 * Math.pow(r.next(), 4)) * (1.2 - zred) * (spiral ? 0.9 : 1.1);
         const cr = spiral ? [0.75, 0.82, 1.0] : [1.0, 0.8, 0.58];
-        const red = [1.0, 0.7 - 0.25 * zred, 0.55 - 0.35 * zred];
+        const red = [1.0, 0.92 - 0.2 * zred, 0.85 - 0.3 * zred];
         color.set([cr[0] * red[0] * b, cr[1] * red[1] * b, cr[2] * red[2] * b], i * 3);
       } else {
         dir[i * 4 + 3] = 0;

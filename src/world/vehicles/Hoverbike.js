@@ -41,6 +41,7 @@ export class Hoverbike extends Vehicle {
     this.rough = 0;
     this.bobT = opts?.seed ?? 0;
     this.restHeight = HOVER_H;
+    this.clearRadius = 1.4;
     this.displayName = 'Hoverbike';
   }
 
@@ -58,6 +59,7 @@ export class Hoverbike extends Vehicle {
     this.model = m;
     this.group.add(m.root);
     this.tris = m.tris;
+    m.rider.visible = false;
     // exhaust flames (boost)
     this.flames = m.anchors.exhaust.map((p, i) => {
       const f = makeFlame({ core: [liv.glow[0] * 2 + 1, liv.glow[1] * 2 + 1, liv.glow[2] * 2 + 1], outer: [liv.glow[0] * 0.5, liv.glow[1] * 0.5, liv.glow[2] * 0.6], seed: i * 3.1 + 1 }, G.uTime);
@@ -79,7 +81,7 @@ export class Hoverbike extends Vehicle {
       ];
     } else this.ribbons = [];
     this.initCamera({
-      dist: 4.3, height: 1.5, pivot: 0.75, lookAhead: 5.5, pitch: -0.1, fovBase: 62, fovSpeed: 11, fovBoost: 8,
+      dist: 3.9, height: 1.2, pivot: 0.8, lookAhead: 7, pitch: -0.06, fovBase: 62, fovSpeed: 11, fovBoost: 8, minDist: 2.8,
       speedRef: 44, yawLag: 5.5, distSpeed: 0.22, heightSpeed: 0.18, roll: 0.28, shake: 1.0, clearance: 0.5,
       cockpitEye: [0, 0.98, -0.12], cockpitFov: 78, cockpitPitch: 0.08, posLag: 16,
     });

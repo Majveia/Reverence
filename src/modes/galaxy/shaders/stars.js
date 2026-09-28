@@ -11,10 +11,12 @@ uniform float uMapR, uHDust, uFlare, uR, uDustL, uDustNoise, uYmaxD;
 uniform vec4 uNoiseF;
 uniform vec3 uExt;
 uniform int uDustSteps;
-float gxd_vint(float y0, float y1, float dt, float h){
+float gxd_erf(float x){ float s = sign(x); x = abs(x); float t = 1.0 / (1.0 + 0.3275911 * x);
+  return s * (1.0 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * exp(-x * x)); }
+float gxd_gint(float y0, float y1, float dt, float h){
   float dy = y1 - y0;
-  if (abs(dy) < 1e-3 * h) { float c = cosh(clamp(0.5 * (y0 + y1) / h, -15.0, 15.0)); return dt / (c * c); }
-  return h * dt / dy * (tanh(clamp(y1 / h, -15.0, 15.0)) - tanh(clamp(y0 / h, -15.0, 15.0)));
+  if (abs(dy) < 2e-3 * h) { float ym = 0.5 * (y0 + y1) / h; return dt * exp(-ym * ym) / (1.7724539 * h); }
+  return dt / dy * 0.5 * (gxd_erf(clamp(y1 / h, -6.0, 6.0)) - gxd_erf(clamp(y0 / h, -6.0, 6.0)));
 }
 // optical depth (rgb) between two pattern-frame points
 vec3 gx_dustTau(vec3 a, vec3 b, float jit){
@@ -33,13 +35,15 @@ vec3 gx_dustTau(vec3 a, vec3 b, float jit){
   for (int i = 0; i < 12; i++) {
     if (i >= uDustSteps) break;
     float ta = t0 + dt * float(i), tb = ta + dt;
-    vec3 pa = a + dir * ta, pb = a + dir * tb, pm = a + dir * (ta + dt * jit);
+    vec3 pa = a + dir * ta, pb = a + dir * tb;
+    float tcr = abs(dir.y) > 1e-7 ? -a.y / dir.y : -1.0;
+    vec3 pm = a + dir * ((tcr >= ta && tcr <= tb) ? tcr : ta + dt * jit);
     vec2 uv = pm.xz / (2.0 * uMapR) + 0.5;
     if (abs(uv.x - 0.5) >= 0.5 || abs(uv.y - 0.5) >= 0.5) continue;
     float Mb = textureLod(tMap, uv, 0.0).b;
     float rm = length(pm.xz);
-    float hD = uHDust * (1.0 + uFlare * (rm / uR) * (rm / uR));
-    float ID = gxd_vint(pa.y, pb.y, dt, hD) / (2.0 * hD);
+    float hD = uHDust * (1.0 + 0.35 * uFlare * (rm / uR) * (rm / uR));
+    float ID = gxd_gint(pa.y, pb.y, dt, hD);
     float n = textureLod(tNoise, pm * uNoiseF.x, 0.0).r * 1.3 - 0.15;
     tau += Mb * ID * mix(1.0, clamp(n, 0.0, 3.0), uDustNoise);
   }
