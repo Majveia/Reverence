@@ -30,7 +30,7 @@ export class WaveSet {
     // character: calm lakes (Tarkovsky, low wind) … rolling swell (monsoon oceans)
     const visc = liquid === 'lava' ? 0.22 : liquid === 'acid' ? 0.8 : liquid === 'ice' ? 0 : 1;
     const L0 = THREE.MathUtils.lerp(16, 46, windy) * (liquid === 'lava' ? 1.6 : 1);
-    const slope = (liquid === 'lava' ? 0.035 : THREE.MathUtils.lerp(0.05, 0.11, windy)) * (liquid === 'ice' ? 0 : 1);
+    const slope = (liquid === 'lava' ? 0.035 : THREE.MathUtils.lerp(0.03, 0.075, windy)) * (liquid === 'ice' ? 0 : 1);
     this.windy = windy;
     this.L0 = L0;
     this.k = new Float64Array(MAX_WAVES);
@@ -54,7 +54,7 @@ export class WaveSet {
       const spread = 0.25 + 0.75 * t;
       let ang = rng.range(-spread, spread);
       if (i === 2) ang += 0.55; if (i === 3) ang -= 0.5;
-      const s = slope * (1.0 - 0.35 * t) * rng.range(0.8, 1.15);
+      const s = slope * (1.0 - 0.5 * t) * rng.range(0.8, 1.15);
       const A = s / k;
       this.k[i] = k; this.A[i] = A; this.lambda[i] = L;
       this.dx[i] = Math.cos(ang); this.dy[i] = Math.sin(ang);

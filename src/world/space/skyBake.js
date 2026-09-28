@@ -13,6 +13,16 @@ import {
 
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
+/** Latitude of a panorama row coordinate t ∈ [-1, 1] (t = +1 top). Inverse in GLSL (sky.js). */
+export const LAT_A = 0.35, LAT_B = 0.65;
+export function tOfLat(lat) {
+  const y = lat / (Math.PI / 2);
+  let t = y;
+  for (let k = 0; k < 8; k++) t -= (LAT_A * t + LAT_B * t * t * t - y) / (LAT_A + 3 * LAT_B * t * t);
+  return Math.max(-1, Math.min(1, t));
+}
+export function latOfT(t) { return (Math.PI / 2) * (LAT_A * t + LAT_B * t * t * t); }
+
 /** Approximate linear-sRGB colour of a blackbody (normalised to max channel 1). */
 export function bbColor(T, out = [0, 0, 0]) {
   const t = Math.min(40000, Math.max(1000, T)) / 100;
@@ -34,7 +44,10 @@ export function bbColor(T, out = [0, 0, 0]) {
 export function bakeSky(p) {
   const g = p.galaxy;
   const S = galaxyStructure(g);
-  const [px, py, pz] = p.pos;
+  const [px, py0, pz] = p.pos;
+  // art direction: observe the diffuse band from near the mid-plane (stars far above/below the disk
+  // would otherwise see a half-sky glow with a hard edge instead of a Milky-Way band)
+  const py = Math.max(-S.hOld * 0.35, Math.min(S.hOld * 0.35, py0));
   const W = p.W, H = p.H, N = p.steps || 40;
   const band = new Float32Array(W * H * 4);
   const R = S.R;
@@ -47,9 +60,11 @@ export function bakeSky(p) {
   // step table
   const sArr = new Float32Array(N + 1);
   for (let i = 0; i <= N; i++) sArr[i] = s0 * Math.exp(lr * i / N);
-  const nearFade = p.localRadius ? p.localRadius * 0.7 : 600;
+  const hCut = Math.max(2500, S.hOld * 6, R * 0.22);
   for (let j = 0; j < H; j++) {
-    const lat = (0.5 - (j + 0.5) / H) * Math.PI; // +90 top row
+    // non-linear latitude rows: fine near the galactic equator (dust lanes), coarse at the poles
+    const tt = 1 - 2 * (j + 0.5) / H;
+    const lat = latOfT(tt);
     const cl = Math.cos(lat), sl = Math.sin(lat);
     for (let i = 0; i < W; i++) {
       const lon = ((i + 0.5) / W - 0.5) * Math.PI * 2;
@@ -60,22 +75,27 @@ export function bakeSky(p) {
         const s = (sa + sb) * 0.5, ds = sb - sa;
         galaxyDensity(g, px + dx * s, py + dy * s, pz + dz * s, d);
         const rho = d.stars * ds;
-        const w = smooth(nearFade * 0.4, nearFade * 1.6, s);           // resolved stars take over nearby
+        const w = smooth(40, 350, s);           // resolved stars take over very close by
         const tD = d.dust * ds * kDust;
         // emission colour: bulge warm, old disk neutral-warm, young blue-white + HII pink
         const yb = d.young, bu = d.bulge, od = Math.max(0, 1 - yb - bu);
-        const er = bu * 1.0 + od * 1.0 + yb * 0.72;
-        const eg = bu * 0.74 + od * 0.88 + yb * 0.82;
-        const eb = bu * 0.48 + od * 0.72 + yb * 1.0;
+        const er = bu * 1.0 + od * 0.97 + yb * 0.74;
+        const eg = bu * 0.82 + od * 0.93 + yb * 0.86;
+        const eb = bu * 0.62 + od * 0.86 + yb * 1.0;
         // HII / reflection-nebula glow rides on the young population
         const hii = yb * yb * 0.55;
-        const tr = Math.exp(-tauR - tD * 0.5 * 0.72), tg = Math.exp(-tauG - tD * 0.5), tb = Math.exp(-tauB - tD * 0.5 * 1.35);
+        const tr = Math.exp(-tauR - tD * 0.5 * 0.8), tg = Math.exp(-tauG - tD * 0.5), tb = Math.exp(-tauB - tD * 0.5 * 1.2);
         const e = rho * w;
         r += e * (er + hii * 1.0) * tr;
         gg += e * (eg + hii * 0.32) * tg;
         b += e * (eb + hii * 0.55) * tb;
-        tauR += tD * 0.72; tauG += tD; tauB += tD * 1.35;
+        tauR += tD * 0.8; tauG += tD; tauB += tD * 1.2;
         if (s < 4000) tauNear += tD;
+        // early out: far above/below the disk, moving away, outside the bulge
+        const yy = py + dy * s;
+        if (Math.abs(yy) > hCut && yy * dy > 0) {
+          if (s > 3000) break;
+        }
       }
       const o = (j * W + i) * 4;
       band[o] = r; band[o + 1] = gg; band[o + 2] = b; band[o + 3] = Math.min(12, tauG * 0.35 + tauNear * 0.65);
@@ -85,7 +105,7 @@ export function bakeSky(p) {
   const lum = new Float32Array(W * H);
   for (let k = 0; k < W * H; k++) lum[k] = band[k * 4] * 0.2126 + band[k * 4 + 1] * 0.7152 + band[k * 4 + 2] * 0.0722;
   const sorted = Float32Array.from(lum).sort();
-  const ref = Math.max(1e-30, sorted[Math.floor(sorted.length * 0.997)]);
+  const ref = Math.max(1e-30, sorted[Math.floor(sorted.length * 0.98)]);
   const med = sorted[Math.floor(sorted.length * 0.5)] / ref;
   for (let k = 0; k < W * H; k++) { band[k * 4] /= ref; band[k * 4 + 1] /= ref; band[k * 4 + 2] /= ref; }
 
@@ -93,7 +113,7 @@ export function bakeSky(p) {
   const maxStars = p.maxStars || 30000;
   const Rl = p.localRadius || 1200;
   const list = []; // [flux, dx, dy, dz, T]
-  const c = localCellOf(px, py, pz, {});
+  const c = localCellOf(px, py0, pz, {});
   if (c) {
     const n = Math.ceil(Rl / 200) + 1;
     const sc = {};
@@ -101,7 +121,7 @@ export function bakeSky(p) {
       const cx = c.cx + dxc, cz = c.cz + dzc;
       if (cx < 0 || cz < 0 || cx >= LOCAL_GRID || cz >= LOCAL_GRID) continue;
       forEachLocalStar(g, cx, cy, cz, (idx, st) => {
-        const ex = st.x - px, ey = st.y - py, ez = st.z - pz;
+        const ex = st.x - px, ey = st.y - py0, ez = st.z - pz;
         const dd = Math.hypot(ex, ey, ez);
         if (dd < 0.3 || dd > Rl) return;
         list.push([st.luminosity / (dd * dd), ex / dd, ey / dd, ez / dd, st.temperature, dd]);
@@ -114,7 +134,7 @@ export function bakeSky(p) {
   for (let i = 0; i < gN; i++) {
     galaxyStar(g, i, gs);
     if (gs.luminosity < 30) continue;
-    const ex = gs.x - px, ey = gs.y - py, ez = gs.z - pz;
+    const ex = gs.x - px, ey = gs.y - py0, ez = gs.z - pz;
     const dd = Math.hypot(ex, ey, ez);
     if (dd < Rl) continue;
     list.push([gs.luminosity * 0.35 / (dd * dd), ex / dd, ey / dd, ez / dd, gs.temperature, dd]);
@@ -131,7 +151,7 @@ export function bakeSky(p) {
     // interstellar reddening along the band for distant stars
     const lon = Math.atan2(L[1], L[3]), lat = Math.asin(Math.max(-1, Math.min(1, L[2])));
     const bi = Math.min(W - 1, Math.max(0, Math.floor((lon / (Math.PI * 2) + 0.5) * W)));
-    const bj = Math.min(H - 1, Math.max(0, Math.floor((0.5 - lat / Math.PI) * H)));
+    const bj = Math.min(H - 1, Math.max(0, Math.floor((1 - tOfLat(lat)) * 0.5 * H)));
     const tau = band[(bj * W + bi) * 4 + 3] * Math.min(1, L[5] / 6000);
     const ext = Math.exp(-tau * 0.8);
     col[k * 3] = bc[0] * Math.exp(-tau * 0.55); col[k * 3 + 1] = bc[1] * Math.exp(-tau * 0.8); col[k * 3 + 2] = bc[2] * Math.exp(-tau * 1.1);
@@ -140,6 +160,46 @@ export function bakeSky(p) {
   const refRank = Math.min(ns - 1, p.refRank || 1200);
   const fluxRef = ns ? Math.max(1e-30, [...flux].sort((a, b) => b - a)[Math.max(0, refRank)]) : 1;
 
+  // unresolved Milky-Way stars: faint points distributed like the band's light (the band sparkles)
+  const nx = Math.round(p.extraStars ?? maxStars * 0.8);
+  const cdf = new Float64Array(W * H);
+  let acc = 0;
+  for (let j = 0; j < H; j++) {
+    const t0 = 1 - 2 * j / H, t1 = 1 - 2 * (j + 1) / H;
+    const la0 = latOfT(t0), la1 = latOfT(t1);
+    const w = Math.abs(Math.sin(la0) - Math.sin(la1));          // solid angle of the row
+    for (let i = 0; i < W; i++) {
+      const k = j * W + i;
+      const l = band[k * 4] * 0.3 + band[k * 4 + 1] * 0.6 + band[k * 4 + 2] * 0.1;
+      acc += Math.pow(Math.max(l - med * 0.6, 0), 1.15) * w;
+      cdf[k] = acc;
+    }
+  }
+  const dir2 = new Float32Array((ns + nx) * 3), col2 = new Float32Array((ns + nx) * 3), flux2 = new Float32Array(ns + nx);
+  dir2.set(dir); col2.set(col); flux2.set(flux);
+  let seed = 0x9e3779b9 ^ (Math.floor(px * 7 + pz * 13) | 0);
+  const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
+  let m = 0;
+  if (acc > 0) {
+    for (let e = 0; e < nx; e++) {
+      const u = rnd() * acc;
+      let lo = 0, hi = W * H - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (cdf[mid] < u) lo = mid + 1; else hi = mid; }
+      const j = Math.floor(lo / W), i = lo - j * W;
+      const lon = ((i + rnd()) / W - 0.5) * Math.PI * 2;
+      const lat = latOfT(1 - 2 * (j + rnd()) / H);
+      const cl = Math.cos(lat);
+      const o = (ns + m) * 3;
+      dir2[o] = cl * Math.sin(lon); dir2[o + 1] = Math.sin(lat); dir2[o + 2] = cl * Math.cos(lon);
+      const k = lo * 4;
+      const bl = Math.max(band[k], band[k + 1], band[k + 2], 1e-9);
+      bbColor(3000 + Math.pow(rnd(), 1.5) * 9000, bc);
+      col2[o] = bc[0] * 0.5 + 0.5 * band[k] / bl; col2[o + 1] = bc[1] * 0.5 + 0.5 * band[k + 1] / bl; col2[o + 2] = bc[2] * 0.5 + 0.5 * band[k + 2] / bl;
+      flux2[ns + m] = fluxRef * (0.04 + Math.pow(rnd(), 4) * 0.9);
+      m++;
+    }
+  }
+  const nAll = ns + m;
   // notable nebulae (direction + angular size) for sprite rendering
   const nebulae = [];
   try {
@@ -151,5 +211,5 @@ export function bakeSky(p) {
     }
   } catch (_) { /* optional */ }
 
-  return { W, H, band, median: med, stars: { n: ns, dir, col, flux }, fluxRef, nebulae };
+  return { W, H, band, median: med, stars: { n: nAll, dir: dir2, col: col2, flux: flux2 }, fluxRef, nebulae };
 }
