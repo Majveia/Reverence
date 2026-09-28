@@ -96,7 +96,7 @@ void main() {
   ivec3 Ls = ivec3(s % uM, (s / uM) % uM, s / (uM * uM));
   ivec3 L = Ls * uStride;
   ivec2 tc = cwAtlas(L);
-  vec3 x = cwQ(L) + uD1 * texelFetch(tPsiA, tc, 0).xyz + uD2 * texelFetch(tPsiB, tc, 0).xyz + texelFetch(tX, tc, 0).xyz;
+  vec3 x = cwQ(L) + uD1 * texelFetch(tPsiA, tc, 0).xyz + uD2 * texelFetch(tPsiB, tc, 0).xyz + uDS * texelFetch(tPsiS, tc, 0).xyz + texelFetch(tX, tc, 0).xyz;
   x = fract(x);
   vec3 g = x * float(uM) - 0.5;
   vec3 i0 = floor(g); vec3 f = g - i0;
@@ -193,6 +193,28 @@ void main() {
   vec2 G1 = vec2(gx.x - gy.y, gx.y + gy.x);
   vec2 G2 = vec2(gz.x - phi.y, gz.y + phi.x);
   o = vec4(G1, G2) / (Mf * Mf * Mf);
+}
+`;
+
+// Fold a padded deposit straight into a padded, filterable density field (ρ, 0, 0, 0) — used for the
+// particle-resolution render field (uM = lattice size here), which drives adaptive smoothing and heat.
+export const FOLDPAD_FRAG = /* glsl */`
+uniform sampler2D tDep;
+layout(location = 0) out vec4 o;
+void main() {
+  ivec2 t = ivec2(gl_FragCoord.xy);
+  int P = uM + 2;
+  int tx = t.x / P, ty = t.y / P;
+  ivec2 org = ivec2(tx * P, ty * P);
+  ivec2 l = t - org - 1;
+  ivec2 c = ivec2((l.x + uM) % uM, (l.y + uM) % uM);
+  float rho = texelFetch(tDep, org + c + 1, 0).r;
+  int wx = c.x == 0 ? uM + 1 : (c.x == uM - 1 ? 0 : -1);
+  int wy = c.y == 0 ? uM + 1 : (c.y == uM - 1 ? 0 : -1);
+  if (wx >= 0) rho += texelFetch(tDep, org + ivec2(wx, c.y + 1), 0).r;
+  if (wy >= 0) rho += texelFetch(tDep, org + ivec2(c.x + 1, wy), 0).r;
+  if (wx >= 0 && wy >= 0) rho += texelFetch(tDep, org + ivec2(wx, wy), 0).r;
+  o = vec4(rho, 0.0, 0.0, 0.0);
 }
 `;
 

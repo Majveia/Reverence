@@ -69,9 +69,9 @@ function computeStyle(cfg) {
   const ms = cfg.mountainScale;
   const st = {
     warp: 0.26 + r() * 0.12,
-    mountains: 1, mtnHeight: 0.8 + 0.3 * ms, mtnWl: A * (6.5 + r() * 2) / Math.sqrt(ms),
-    mtnGain: 0.44, mtnDamp: 2.0, rangeLo: 0.26 + r() * 0.1, rangeHi: 0.92, massifs: 0.5,
-    erosion: 1, gullyWl: 0, gullyAmp: 0.035,
+    mountains: 1, mtnHeight: 0.8 + 0.3 * ms, mtnWl: A * (3.6 + r() * 1.4) / Math.sqrt(ms),
+    mtnGain: 0.5, mtnDamp: 0.5, rangeLo: 0.26 + r() * 0.1, rangeHi: 0.92, massifs: 0.5,
+    erosion: 1, gullyWl: 0, gullyAmp: 0.08,
     hills: 1, hillAmp: 0.02, hillWl: 1600 + r() * 900, uplands: 1,
     rough: 0.6 + cfg.roughness, outcrops: 0.6,
     beach: 0.75, beachH: 5 + r() * 4, cliffs: 0.15,
@@ -120,7 +120,7 @@ function computeStyle(cfg) {
   if (F.has('waterfalls')) st.cliffs = Math.max(st.cliffs, 0.5);
   // art direction: each preset nudges the landforms toward its painter's / director's world
   const artMods = {
-    bierstadt: () => { st.mtnHeight *= 1.2; st.mountains *= 1.2; st.rangeLo -= 0.04; st.erosion = 1.25; st.glaciers = Math.max(st.glaciers, 0.4); },
+    bierstadt: () => { st.terraces = 0; st.canyons *= 0.5; st.mtnHeight *= 1.2; st.mountains *= 1.2; st.rangeLo -= 0.04; st.erosion = 1.25; st.glaciers = Math.max(st.glaciers, 0.4); },
     botw: () => { st.hills *= 1.25; st.plateaus = Math.max(st.plateaus, 0.6); st.outcrops = 1; st.rivers = Math.max(st.rivers, 0.7); },
     ghibli: () => { st.hills *= 1.35; st.outcrops = 0.9; st.rivers = Math.max(st.rivers, 0.6); },
     moebius: () => { st.mesas = Math.max(st.mesas, 1); st.spires = Math.max(st.spires, 0.6); st.hills *= 0.7; },
@@ -143,7 +143,7 @@ function computeStyle(cfg) {
   artMods[art]?.();
   // sizes relative to the planet so small moons stay walkable and big worlds stay epic
   const scale = Math.max(0.45, Math.min(1.25, R / 70000));
-  st.gullyWl = Math.min(2400, st.mtnWl * 0.1);
+  st.gullyWl = Math.min(3000, st.mtnWl * 0.16);
   st.plateauWl = 9000 * scale * (0.8 + r() * 0.5);
   st.plateauH = A * (0.07 + r() * 0.05);
   st.mesaWl = 3200 * scale * (0.8 + r() * 0.5);
@@ -250,6 +250,13 @@ export class SurfaceGen {
     const st = this.st, n = this.nM, d = this._d;
     let wl = st.mtnWl, f = this.R / wl;
     let qx = x * f, qy = y * f, qz = z * f;
+    {
+      // two-scale domain warp: bends ridgelines so ranges branch and curve instead of running straight
+      const w1 = 0.55, w2 = 0.22;
+      const ax0 = n.n3(qx * 0.45 + 11.3, qy * 0.45 + 2.9, qz * 0.45 + 7.7), ay0 = n.n3(qx * 0.45 + 4.2, qy * 0.45 + 9.4, qz * 0.45 + 1.3), az0 = n.n3(qx * 0.45 + 8.8, qy * 0.45 + 5.5, qz * 0.45 + 3.1);
+      const bx0 = n.n3(qx * 1.7 + 1.9, qy * 1.7 + 6.1, qz * 1.7 + 2.4), by0 = n.n3(qx * 1.7 + 7.3, qy * 1.7 + 3.8, qz * 1.7 + 9.6), bz0 = n.n3(qx * 1.7 + 5.6, qy * 1.7 + 0.7, qz * 1.7 + 6.9);
+      qx += w1 * ax0 + w2 * bx0; qy += w1 * ay0 + w2 * by0; qz += w1 * az0 + w2 * bz0;
+    }
     let sum = 0, a = 0.5, wgt = 1, gx = 0, gy = 0, gz = 0, ax = 0, ay = 0, az = 0;
     const damp = st.mtnDamp;
     const gMin = st.gullyWl * 1.9;
@@ -497,11 +504,11 @@ export class SurfaceGen {
     if (st.mountains > 0) {
       const rf = this.cf * 1.9;
       const rn = this.nM.n3(px * rf + 5.3, py * rf + 2.1, pz * rf + 8.8) + 0.45 * this.nM.n3(px * rf * 2.3 + 1.1, py * rf * 2.3 + 4.4, pz * rf * 2.3 + 2.2);
-      const spine = 1 - Math.abs(rn) * 0.9;
+      const spine = 1 - Math.sqrt(rn * rn + 0.004) * 0.9;
       let mm = sstep(st.rangeLo, st.rangeHi, spine);
       const massif = sstep(0.3, 0.9, this.nM.n3(px * this.cf * 0.9 + 21, py * this.cf * 0.9 + 4, pz * this.cf * 0.9 + 13)) * st.massifs;
       if (massif > mm) mm = massif;
-      mm *= sstep(0.0, 0.16, c) * st.mountains;
+      mm *= sstep(0.0, 0.1, c) * st.mountains;
       if (mm > 1) mm = 1;
       const mp0 = Math.pow(mm, 1.35);
       if (A * st.mtnHeight * mp0 > 0.02) {
@@ -563,7 +570,8 @@ export class SurfaceGen {
     if (st.canyons > 0 && c > 0.01) {
       const f = R / st.canyonWl;
       const wv = nF.n3(px * f * 0.6 + 8, py * f * 0.6 + 1, pz * f * 0.6 + 3);
-      const cn = nF.n3(px * f + 0.9 * wv, py * f + 2 - 0.5 * wv, pz * f + 5) + 0.15 * nF.n3(px * f * 4, py * f * 4 + 1, pz * f * 4 + 2);
+      const wm = nF.n3(px * f * 2.6 + 4.4, py * f * 2.6 + 1.2, pz * f * 2.6 + 8.1);
+      const cn = nF.n3(px * f + 0.9 * wv + 0.28 * wm, py * f + 2 - 0.5 * wv - 0.2 * wm, pz * f + 5 + 0.25 * wm) + 0.15 * nF.n3(px * f * 4, py * f * 4 + 1, pz * f * 4 + 2);
       const reg = sstep(-0.25, 0.25, nF.n3(px * 1.9 + 90, py * 1.9 + 3, pz * 1.9)) * st.canyons * sstep(0.02, 0.12, c);
       const v = Math.abs(cn) / 0.11;
       if (v < 1 && reg > 0) {
@@ -585,8 +593,8 @@ export class SurfaceGen {
       const reg = sstep(0.0, 0.4, nF.n3(px * 2.4 + 17, py * 2.4 + 9, pz * 2.4 + 4)) * st.terraces * sstep(20, 80, h);
       if (reg > 0) {
         const step = 42 + 30 * (0.5 + 0.5 * nF.n3(px * 6, py * 6 + 4, pz * 6 + 2));
-        const t = SurfaceGen.terrace(h / step, 1, 0.35) * step;
-        h = h + (t - h) * reg * 0.85;
+        const t = SurfaceGen.terrace(h / step, 1, 0.28) * step;
+        h = h + (t - h) * reg * 0.55;
       }
     }
 
@@ -846,7 +854,7 @@ export class SurfaceGen {
     // ---- fractal detail: meso bumps → decimetre relief (rougher on rock)
     {
       const rk = rock > mtn ? rock : mtn;
-      const roughK = st.rough * (0.35 + 1.9 * rk) * (1 - 0.6 * dune) * (1 - 0.5 * lake);
+      const roughK = st.rough * (0.35 + 2.6 * rk) * (1 - 0.6 * dune) * (1 - 0.5 * lake);
       const rr = sstep(0.15, 0.5, rk);
       let wl = 180, f = R / wl, qx = px * f, qy = py * f, qz = pz * f, a = wl * 0.0065 * roughK, sum = 0;
       for (let o = 0; o < 12; o++) {

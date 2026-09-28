@@ -1,238 +1,399 @@
 // Terrain subsystem (order 10). OWNED BY THE TERRAIN TRACK.
-// Baseline: quadtree cube-sphere LOD, chunks built on the main thread under a time budget,
-// horizon culling, skirts to hide cracks, vertex-colored biomes. The terrain track should
-// upgrade this (web workers, geomorphing, triplanar detail materials, erosion, etc.).
+//
+// Quadtree cube-sphere CDLOD renderer:
+//  • 6 cube faces (tangent-warped) → quadtree down to ~0.35 m vertex spacing (65x65 vertex chunks)
+//  • selection by distance to each node's bounding sphere (CDLOD ranges: D = K · chunk side),
+//    horizon culling (+ mountain margin), three's per-mesh frustum culling for drawing
+//  • chunks generated in a pool of Web Workers (they import the same SurfaceGen as physics),
+//    uploads time-sliced on the main thread, coarse levels first so there is never a hole
+//  • per-vertex geomorphing toward the parent level (position + normal) → no popping;
+//    closed skirts as a crack safety net
+//  • one shared index buffer, one shared material (see material.js), near chunks cast shadows
 import * as THREE from 'three';
+import { surfaceConfig } from '../planet/SurfaceGen.js';
+import { buildChunk, buildIndices, cubeDir } from './chunkBuild.js';
+import { bakeDetail, DETAIL_SIZE, DETAIL_LAYERS } from './detailTex.js';
+import { createTerrainMaterial, updateOriginMod } from './material.js';
 
-const FACES = [
-  { n: new THREE.Vector3(1, 0, 0), u: new THREE.Vector3(0, 0, -1), v: new THREE.Vector3(0, 1, 0) },
-  { n: new THREE.Vector3(-1, 0, 0), u: new THREE.Vector3(0, 0, 1), v: new THREE.Vector3(0, 1, 0) },
-  { n: new THREE.Vector3(0, 1, 0), u: new THREE.Vector3(1, 0, 0), v: new THREE.Vector3(0, 0, -1) },
-  { n: new THREE.Vector3(0, -1, 0), u: new THREE.Vector3(1, 0, 0), v: new THREE.Vector3(0, 0, 1) },
-  { n: new THREE.Vector3(0, 0, 1), u: new THREE.Vector3(1, 0, 0), v: new THREE.Vector3(0, 1, 0) },
-  { n: new THREE.Vector3(0, 0, -1), u: new THREE.Vector3(-1, 0, 0), v: new THREE.Vector3(0, 1, 0) },
-];
-const RES = 32;          // quads per chunk side
-const _d = new THREE.Vector3();
-
-// Cube → sphere with tangent warp (more uniform cell size than naive normalize)
-function cubeToDir(face, u, v, out) {
-  const tu = Math.tan(u * Math.PI / 4), tv = Math.tan(v * Math.PI / 4);
-  return out.copy(face.n).addScaledVector(face.u, tu).addScaledVector(face.v, tv).normalize();
-}
+const RES = 64;
+const _dir = new Float64Array(3), _dir2 = new Float64Array(3);
+const _v = new THREE.Vector3();
+const _sphere = new THREE.Sphere();
+const _frustum = new THREE.Frustum();
+const _pm = new THREE.Matrix4();
 
 class Node {
-  constructor(face, level, u0, v0, size, parent = null) {
+  constructor(t, face, level, u0, v0, size, parent) {
     this.face = face; this.level = level; this.u0 = u0; this.v0 = v0; this.size = size; this.parent = parent;
-    this.children = null; this.mesh = null; this.building = false;
-    this.center = cubeToDir(FACES[face], u0 + size / 2, v0 + size / 2, new THREE.Vector3());
-    this.key = `${face}:${level}:${u0.toFixed(6)}:${v0.toFixed(6)}`;
+    this.children = null; this.mesh = null; this.state = 0; this.dead = false;
+    this.used = 0; this.drawn = 0; this.prio = 0; this.closest = 0; this.inView = true;
+    cubeDir(face, u0 + size / 2, v0 + size / 2, _dir);
+    this.dx = _dir[0]; this.dy = _dir[1]; this.dz = _dir[2];
+    cubeDir(face, u0, v0, _dir2);
+    const c1 = Math.min(1, this.dx * _dir2[0] + this.dy * _dir2[1] + this.dz * _dir2[2]);
+    this.ang = Math.acos(c1);                    // centre → corner angle
+    cubeDir(face, u0, v0 + size / 2, _dir); cubeDir(face, u0 + size, v0 + size / 2, _dir2);
+    this.side = t.R * Math.acos(Math.min(1, _dir[0] * _dir2[0] + _dir[1] * _dir2[1] + _dir[2] * _dir2[2]));
+    this.D = t.K * this.side;
+    this.hMin = parent ? parent.hMin : t.hMin0;
+    this.hMax = parent ? parent.hMax : t.hMax0;
   }
 }
 
 class Terrain {
   constructor(world) {
     this.world = world;
+    this.engine = world.engine;
     this.surface = world.surface;
+    this.body = world.body;
     this.R = world.body.radius;
+    const q = world.quality || {};
+    this.q = q;
     this.group = new THREE.Group();
     this.group.name = 'terrain';
     world.root.add(this.group);
-    this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0.0 });
-    this.roots = FACES.map((_, f) => new Node(f, 0, -1, -1, 2));
-    this.queue = [];
-    this.maxLevel = Math.ceil(Math.log2(this.R / 12));  // leaf chunk ~ 12-25 m
-    this.splitFactor = 2.2 * (world.quality.terrainDetail ?? 1);
-    this.budgetMs = world.engine.shot ? 60 : 6;
-    this.meshCount = 0;
-    this._camLocal = new THREE.Vector3();
+    this.material = createTerrainMaterial(world.body, q);
+    this.index = new THREE.BufferAttribute(buildIndices(RES), 1);
+    // CDLOD range factor from a screen-space error target: a chunk quad should cover ~ppq pixels
+    // at the closest distance it is drawn (D = K · side). Fixed per world (baked into morph data).
+    const eng = world.engine || {};
+    const hPx = Math.max(360, (eng.height || 720) * (q.pixelRatio || 1));
+    const fov = ((world.camera?.fov) || 60) * Math.PI / 180;
+    const ppq = { low: 14, med: 10, high: 7, ultra: 5 }[q.tier] ?? 7;
+    this.K = Math.max(1.3, Math.min(2.6, hPx / (fov * RES * ppq) * Math.sqrt(q.terrainDetail ?? 1)));
+    const leaf = q.tier === 'low' ? 0.8 : q.tier === 'med' ? 0.5 : 0.35;   // metres between vertices at max depth
+    this.maxLevel = Math.max(4, Math.ceil(Math.log2((this.R * Math.PI / 2) / (RES * leaf))));
+    this.hMin0 = this.surface.minHeight ?? -this.surface.amp;
+    this.hMax0 = this.surface.maxHeight ?? this.surface.amp;
+    this.shadowDist = q.tier === 'ultra' ? 2800 : q.tier === 'med' ? 300 : 900;
+    this.shot = !!world.engine?.shot;
+    this.uploadBudgetMs = this.shot ? 1e9 : 3;
+    this.frame = 0;
+    this.roots = [];
+    for (let f = 0; f < 6; f++) this.roots.push(new Node(this, f, 0, -1, -1, 2, null));
+    this.desired = [];
+    this.pending = [];        // nodes needing a build (rebuilt every frame)
+    this.uploads = [];        // finished builds waiting for GPU upload
+    this.inflight = 0;
+    this.jobs = new Map();    // id → node
+    this.jobId = 1;
+    this.meshCount = 0; this.triCount = 0;
+    this.texReady = false;
+    this._cam = new THREE.Vector3();
+    this._initWorkers();
+    this._first = true;
+    this.ms = 0; this.msMax = 0;
   }
 
-  nodeRadiusMeters(node) { return this.R * node.size * (Math.PI / 4) * 0.75; }
-
-  lateUpdate() {
-    if (!this.surface) return;
-    this.frame = (this.frame || 0) + 1;
-    const cam = this._camLocal.copy(this.world.camera.position);
-    const camDist = Math.max(cam.length(), this.R + 1);
-    const camDir = _d.copy(cam).normalize();
-    // horizon angle from camera + margin for mountains beyond the geometric horizon
-    this.horizonAngle = Math.acos(Math.min(1, this.R / camDist)) + Math.acos(Math.min(1, this.R / (this.R + this.surface.maxHeight))) + 0.03;
-    // 1. ideal node set by distance
-    const desired = [];
-    for (const r of this.roots) this._collect(r, cam, camDir, desired);
-    // 2. queue missing meshes, find nearest built ancestor as fallback
-    const fallback = new Set();
-    for (const n of desired) {
-      n.lastUsed = this.frame;
-      if (!n.mesh) {
-        if (!n.building) { n.building = true; this.queue.push(n); }
-        let p = n.parent;
-        while (p && !p.mesh) p = p.parent;
-        if (p) fallback.add(p);
+  // ------------------------------------------------------------------ workers
+  _initWorkers() {
+    this.workers = [];
+    const hc = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
+    const n = Math.max(1, Math.min(this.q.mobile ? 2 : 4, hc - 1));
+    const cfg = surfaceConfig(this.body);
+    try {
+      for (let i = 0; i < n; i++) {
+        const w = new Worker(new URL('./terrain.worker.js', import.meta.url), { type: 'module' });
+        w.busy = 0;
+        w.onmessage = (ev) => this._onMessage(w, ev.data);
+        w.onerror = (e) => { console.warn('[terrain] worker error', e.message || e); this._workerFailed = true; };
+        w.postMessage({ type: 'init', cfg });
+        this.workers.push(w);
       }
+      this.workers[0].postMessage({ type: 'bake', size: DETAIL_SIZE });
+    } catch (e) {
+      console.warn('[terrain] workers unavailable, building on the main thread', e);
+      for (const w of this.workers) w.terminate();
+      this.workers = [];
     }
-    const draw = new Set(fallback);
-    for (const n of desired) if (n.mesh) draw.add(n);
-    // 3. never draw a node together with one of its ancestors (overlap)
-    for (const n of [...draw]) { for (let p = n.parent; p; p = p.parent) if (draw.has(p)) { draw.delete(n); break; } }
-    for (const n of draw) n.lastUsed = this.frame;
-    this.desiredSet = new Set(desired);
-    this._build();
-    this._apply(draw);
+    if (!this.workers.length) this._setDetail(bakeDetail(DETAIL_SIZE), DETAIL_SIZE);
   }
 
-  _collect(node, cam, camDir, out) {
-    const angR = node.size * (Math.PI / 4) * 0.75;
-    const ang = Math.acos(Math.min(1, Math.max(-1, node.center.dot(camDir))));
-    if (node.level > 1 && ang - angR > this.horizonAngle) return; // beyond horizon
-    const p = node.center.clone().multiplyScalar(this.R + (node.h ?? 0));
-    const dist = p.distanceTo(cam);
-    node.prio = dist;
-    if (node.level < this.maxLevel && dist < this.nodeRadiusMeters(node) * this.splitFactor) {
-      if (!node.children) {
-        const s = node.size / 2;
-        node.children = [
-          new Node(node.face, node.level + 1, node.u0, node.v0, s, node),
-          new Node(node.face, node.level + 1, node.u0 + s, node.v0, s, node),
-          new Node(node.face, node.level + 1, node.u0, node.v0 + s, s, node),
-          new Node(node.face, node.level + 1, node.u0 + s, node.v0 + s, s, node),
+  _onMessage(w, m) {
+    if (m.type === 'bake') { this._setDetail(m.data, m.size); return; }
+    if (m.type === 'build' || m.type === 'error') {
+      w.busy = Math.max(0, w.busy - 1);
+      this.inflight = Math.max(0, this.inflight - 1);
+      const node = this.jobs.get(m.id);
+      this.jobs.delete(m.id);
+      if (!node) return;
+      if (m.type === 'error') { console.warn('[terrain] build failed', m.message); node.state = 0; node.fail = (node.fail || 0) + 1; return; }
+      if (node.dead) return;
+      this.uploads.push([node, m]);
+    }
+  }
+
+  _setDetail(data, size) {
+    try {
+      const tex = new THREE.DataArrayTexture(data, size, size, DETAIL_LAYERS);
+      tex.format = THREE.RGBAFormat;
+      tex.type = THREE.UnsignedByteType;
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.generateMipmaps = true;
+      tex.anisotropy = this.q.tier === 'low' ? 1 : 4;
+      tex.colorSpace = THREE.NoColorSpace;
+      tex.needsUpdate = true;
+      this.detailTex = tex;
+      const U = this.material.userData.uniforms;
+      U.uRvDetail.value = tex;
+      U.uRvP.value.w = this.q.tier === 'low' ? 0.6 : 1;
+      this.texReady = true;
+    } catch (e) { console.warn('[terrain] detail texture failed', e); this.texReady = true; }
+  }
+
+  // ------------------------------------------------------------------ per frame
+  lateUpdate() {
+    const t0 = performance.now();
+    try { this._frame(); } catch (e) {
+      if (!this._warned) { console.warn('[terrain] update error', e); this._warned = true; }
+    }
+    const dt = performance.now() - t0;
+    this.ms = this.ms * 0.9 + dt * 0.1;
+    if (dt > this.msMax) this.msMax = dt;
+  }
+
+  _frame() {
+    const S = this.surface;
+    if (!S) return;
+    this.frame++;
+    const world = this.world;
+    const cam = this._cam.copy(world.camera.position);
+    const R = this.R;
+    const camDist = Math.max(cam.length(), 1);
+    this.cdx = cam.x / camDist; this.cdy = cam.y / camDist; this.cdz = cam.z / camDist;
+    const rLow = R + Math.min(0, this.hMin0 * 0.3);
+    this.horizon = Math.acos(Math.min(1, rLow / Math.max(camDist, rLow))) + Math.acos(Math.min(1, rLow / (R + this.hMax0))) + 0.02;
+    // frustum in scene space (priorities only; three culls meshes itself)
+    const c = world.camera;
+    c.updateMatrixWorld();
+    _pm.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse);
+    _frustum.setFromProjectionMatrix(_pm);
+    this.origin = world.origin;
+    updateOriginMod(this.material, world.origin);
+
+    // 1. select
+    this.desired.length = 0;
+    for (const r of this.roots) this._select(r, cam);
+    // 2. requests (missing desired nodes + the always-present coarse levels)
+    const pend = this.pending; pend.length = 0;
+    for (const r of this.roots) { this._want(r); r.used = this.frame; }
+    for (const n of this.desired) { n.used = this.frame; this._want(n); }
+    this._dispatch();
+    // 3. uploads
+    this._upload();
+    // 4. draw set
+    this._draw(cam);
+    // shot mode: skip drawing the terrain while it streams (software GL renders of the partial
+    // terrain only slow the capture down); it appears complete once ready
+    if (this.shot) this.group.visible = this.isReady() || this._shown === true;
+    if (this.group.visible) this._shown = true;
+    // 5. housekeeping
+    if ((this.frame & 31) === 0) this._gc();
+  }
+
+  _want(n) {
+    if (n.state !== 0 || n.mesh || (n.fail || 0) > 3) return;
+    // priority: in view first, coarse before fine, near before far
+    n.prio = (n.inView ? 0 : 1e9) + n.level * 1e7 + n.closest;
+    this.pending.push(n);
+  }
+
+  _bound(n) {
+    const hm = (n.hMin + n.hMax) * 0.5;
+    const rr = this.R + hm;
+    const ext = (this.R + n.hMax) * Math.sin(Math.min(n.ang, 1.5)) + (n.hMax - n.hMin) * 0.5 + (this.R + n.hMax) * (1 - Math.cos(Math.min(n.ang, 1.5)));
+    _sphere.center.set(n.dx * rr, n.dy * rr, n.dz * rr);
+    _sphere.radius = ext;
+    return _sphere;
+  }
+
+  _select(n, cam) {
+    // horizon culling
+    if (n.level > 0) {
+      const a = Math.acos(Math.max(-1, Math.min(1, n.dx * this.cdx + n.dy * this.cdy + n.dz * this.cdz)));
+      if (a - n.ang > this.horizon) return;
+    }
+    const s = this._bound(n);
+    const d = s.center.distanceTo(cam) - s.radius;
+    n.closest = d > 0 ? d : 0;
+    s.center.sub(this.origin);
+    n.inView = _frustum.intersectsSphere(s);
+    // only refine built nodes: their real height range bounds the children (progressive refinement)
+    // shot mode: nodes outside the view stay coarse (captures only need what is on screen)
+    const lim = this.shot && !n.inView ? 0.3 : 1;
+    if (n.level < this.maxLevel && n.closest < n.D * lim && n.mesh) {
+      if (!n.children) {
+        const h = n.size / 2;
+        n.children = [
+          new Node(this, n.face, n.level + 1, n.u0, n.v0, h, n),
+          new Node(this, n.face, n.level + 1, n.u0 + h, n.v0, h, n),
+          new Node(this, n.face, n.level + 1, n.u0, n.v0 + h, h, n),
+          new Node(this, n.face, n.level + 1, n.u0 + h, n.v0 + h, h, n),
         ];
       }
-      for (const c of node.children) this._collect(c, cam, camDir, out);
+      n.used = this.frame;
+      for (let i = 0; i < 4; i++) this._select(n.children[i], cam);
     } else {
-      out.push(node);
+      this.desired.push(n);
     }
   }
 
-  _build() {
+  _job(n) {
+    return { face: n.face, u0: n.u0, v0: n.v0, size: n.size, RES, Dp: n.parent ? n.parent.D : 0 };
+  }
+
+  _dispatch() {
+    const pend = this.pending;
+    if (!pend.length) return;
+    pend.sort((a, b) => a.prio - b.prio);
+    if (this.workers.length && !this._workerFailed) {
+      const cap = this.workers.length * (this.shot ? 6 : 2);
+      let i = 0;
+      while (this.inflight < cap && i < pend.length) {
+        let w = this.workers[0];
+        for (const x of this.workers) if (x.busy < w.busy) w = x;
+        const n = pend[i++];
+        const id = this.jobId++;
+        n.state = 1;
+        this.jobs.set(id, n);
+        w.busy++; this.inflight++;
+        w.postMessage({ type: 'build', id, job: this._job(n) });
+      }
+    } else {
+      // main-thread fallback (time-sliced)
+      const t0 = performance.now();
+      const budget = this.shot ? 400 : 6;
+      let i = 0;
+      while (i < pend.length && performance.now() - t0 < budget) {
+        const n = pend[i++];
+        try { this.uploads.push([n, buildChunk(this.surface, this._job(n))]); n.state = 1; } catch (e) { n.fail = 9; console.warn('[terrain] build', e); }
+      }
+    }
+  }
+
+  _upload() {
+    const ups = this.uploads;
+    this.changed = ups.length > 0;
+    if (!ups.length) return;
     const t0 = performance.now();
-    this.queue = this.queue.filter((n) => { if (this.desiredSet.has(n)) return true; n.building = false; return false; });
-    this.queue.sort((a, b) => a.level - b.level || a.prio - b.prio);
-    while (this.queue.length && performance.now() - t0 < this.budgetMs) {
-      const node = this.queue.shift();
-      node.mesh = this._makeMesh(node);
-      node.building = false;
-      this.group.add(node.mesh);
+    // coarse first so fallbacks exist
+    if (ups.length > 1) ups.sort((a, b) => a[0].level - b[0].level || a[0].closest - b[0].closest);
+    let k = 0;
+    while (k < ups.length && (k < 2 || performance.now() - t0 < this.uploadBudgetMs)) {
+      const [n, m] = ups[k++];
+      if (n.dead) continue;
+      this._makeMesh(n, m);
     }
+    ups.splice(0, k);
   }
 
-  _apply(draw) {
-    let count = 0;
-    const keepFrames = 180;
-    const walk = (n) => {
-      if (n.mesh) {
-        const vis = draw.has(n);
-        n.mesh.visible = vis;
-        if (vis) count++;
-        else if (n.level > 2 && this.frame - (n.lastUsed || 0) > keepFrames) {
-          n.mesh.geometry.dispose(); this.group.remove(n.mesh); n.mesh = null;
-        }
-      }
-      if (n.children) {
-        for (const c of n.children) walk(c);
-        if (n.level > 2 && n.children.every((c) => !c.mesh && !c.children && !c.building && this.frame - (c.lastUsed || 0) > keepFrames)) n.children = null;
-      }
-    };
-    for (const r of this.roots) walk(r);
-    this.meshCount = count;
-  }
-
-  _makeMesh(node) {
-    const S = this.surface, R = this.R, face = FACES[node.face];
-    const N = RES + 1;
-    const skirt = this.nodeRadiusMeters(node) * 0.08;
-    const vCount = N * N + N * 4;
-    const pos = new Float32Array(vCount * 3), nor = new Float32Array(vCount * 3), col = new Float32Array(vCount * 3);
-    const centerDir = node.center;
-    const ch = S.height(centerDir.x, centerDir.y, centerDir.z);
-    node.h = ch;
-    const center = centerDir.clone().multiplyScalar(R + ch);
-    // sample grid with 1-cell border for normals
-    const G = N + 2;
-    const P = new Float64Array(G * G * 3);
-    const H = new Float64Array(G * G);
-    const d = new THREE.Vector3();
-    const step = node.size / RES;
-    for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
-      cubeToDir(face, node.u0 + (i - 1) * step, node.v0 + (j - 1) * step, d);
-      const h = S.height(d.x, d.y, d.z);
-      const k = j * G + i;
-      H[k] = h;
-      P[k * 3] = d.x * (R + h); P[k * 3 + 1] = d.y * (R + h); P[k * 3 + 2] = d.z * (R + h);
-    }
-    const c = new THREE.Color(), cRock = new THREE.Color(), tmp = {};
-    S.biomeColor(10, cRock);
-    const idx = (i, j) => (j + 1) * G + (i + 1);
-    const nrm = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
-    let v = 0;
-    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-      const k = idx(i, j);
-      pos[v * 3] = P[k * 3] - center.x; pos[v * 3 + 1] = P[k * 3 + 1] - center.y; pos[v * 3 + 2] = P[k * 3 + 2] - center.z;
-      const kl = idx(i - 1, j), kr = idx(i + 1, j), kd = idx(i, j - 1), ku = idx(i, j + 1);
-      a.set(P[kr * 3] - P[kl * 3], P[kr * 3 + 1] - P[kl * 3 + 1], P[kr * 3 + 2] - P[kl * 3 + 2]);
-      b.set(P[ku * 3] - P[kd * 3], P[ku * 3 + 1] - P[kd * 3 + 1], P[ku * 3 + 2] - P[kd * 3 + 2]);
-      nrm.crossVectors(a, b).normalize();
-      nor[v * 3] = nrm.x; nor[v * 3 + 1] = nrm.y; nor[v * 3 + 2] = nrm.z;
-      // biome color, rock on steep slopes
-      const px = P[k * 3], py = P[k * 3 + 1], pz = P[k * 3 + 2];
-      const rl = Math.hypot(px, py, pz);
-      S.sample(px / rl, py / rl, pz / rl, tmp);
-      S.biomeColor(tmp.biome, c);
-      const up = (px * nrm.x + py * nrm.y + pz * nrm.z) / rl;
-      const steep = Math.min(1, Math.max(0, (0.86 - up) / 0.18));
-      c.lerp(cRock, steep);
-      col[v * 3] = c.r; col[v * 3 + 1] = c.g; col[v * 3 + 2] = c.b;
-      v++;
-    }
-    // skirts: duplicate edge vertices pushed down
-    const edges = [];
-    for (let i = 0; i < N; i++) edges.push([i, 0]);
-    for (let i = 0; i < N; i++) edges.push([N - 1, i]);
-    for (let i = N - 1; i >= 0; i--) edges.push([i, N - 1]);
-    for (let i = N - 1; i >= 0; i--) edges.push([0, i]);
-    const skirtStart = v;
-    for (const [i, j] of edges) {
-      const src = j * N + i;
-      const k = idx(i, j);
-      const px = P[k * 3], py = P[k * 3 + 1], pz = P[k * 3 + 2];
-      const rl = Math.hypot(px, py, pz);
-      pos[v * 3] = px - (px / rl) * skirt - center.x; pos[v * 3 + 1] = py - (py / rl) * skirt - center.y; pos[v * 3 + 2] = pz - (pz / rl) * skirt - center.z;
-      nor[v * 3] = nor[src * 3]; nor[v * 3 + 1] = nor[src * 3 + 1]; nor[v * 3 + 2] = nor[src * 3 + 2];
-      col[v * 3] = col[src * 3]; col[v * 3 + 1] = col[src * 3 + 1]; col[v * 3 + 2] = col[src * 3 + 2];
-      v++;
-    }
-    const indices = [];
-    for (let j = 0; j < RES; j++) for (let i = 0; i < RES; i++) {
-      const a0 = j * N + i, b0 = a0 + 1, c0 = a0 + N, d0 = c0 + 1;
-      indices.push(a0, b0, d0, a0, d0, c0);
-    }
-    const E = edges.length;
-    for (let e = 0; e < E - 1; e++) {
-      const [i0, j0] = edges[e], [i1, j1] = edges[e + 1];
-      const t0 = j0 * N + i0, t1 = j1 * N + i1, s0 = skirtStart + e, s1 = skirtStart + e + 1;
-      indices.push(t0, s0, t1, t1, s0, s1);
-    }
+  _makeMesh(n, m) {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    g.setIndex(indices);
-    g.computeBoundingSphere();
+    g.setAttribute('position', new THREE.BufferAttribute(m.pos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(m.nrm, 4, true));
+    g.setAttribute('aMorph', new THREE.BufferAttribute(m.morph, 4));
+    g.setAttribute('aMorphN', new THREE.BufferAttribute(m.nrmP, 4, true));
+    g.setAttribute('aMat', new THREE.BufferAttribute(m.mat, 4, true));
+    g.setAttribute('aMat2', new THREE.BufferAttribute(m.mat2, 4, true));
+    g.setIndex(this.index);
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), m.radius);
+    g.boundingBox = new THREE.Box3(new THREE.Vector3(-m.radius, -m.radius, -m.radius), new THREE.Vector3(m.radius, m.radius, m.radius));
     const mesh = new THREE.Mesh(g, this.material);
-    mesh.position.copy(center);
-    mesh.receiveShadow = true;
-    mesh.castShadow = node.level >= this.maxLevel - 3;
+    mesh.name = 'terrain-chunk';
+    mesh.position.set(m.center[0], m.center[1], m.center[2]);
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
-    return mesh;
+    mesh.receiveShadow = true;
+    mesh.castShadow = false;
+    mesh.visible = false;
+    mesh.userData.terrain = true;
+    this.group.add(mesh);
+    n.mesh = mesh; n.state = 2;
+    // refine height bounds for this node and its future children
+    n.hMin = m.hMin; n.hMax = m.hMax;
+    if (n.children) for (const c of n.children) { if (!c.mesh) { c.hMin = m.hMin; c.hMax = m.hMax; } }
   }
 
-  isReady() { return this.queue.length === 0 && this.desiredSet !== undefined; }
-  getState() { return { chunks: this.meshCount, queue: this.queue.length, maxLevel: this.maxLevel }; }
+  _draw() {
+    const f = this.frame;
+    // mark fallbacks: nearest built ancestor of every missing desired node
+    for (const n of this.desired) {
+      if (n.mesh) continue;
+      let p = n.parent;
+      while (p && !p.mesh) p = p.parent;
+      if (p) p.drawn = f;
+    }
+    let count = 0, casters = 0;
+    for (const n of this.desired) {
+      if (!n.mesh) continue;
+      let covered = false;
+      for (let p = n.parent; p; p = p.parent) if (p.drawn === f) { covered = true; break; }
+      if (!covered) n.drawn = f;
+    }
+    // apply visibility (walk all nodes with meshes)
+    const walk = (n) => {
+      if (n.mesh) {
+        const vis = n.drawn === f;
+        n.mesh.visible = vis;
+        if (vis) {
+          count++;
+          n.used = f;
+          // only chunks that are both near and small enough cast into the (<= ~1 km) sun cascades
+          const cast = this.q.shadows !== false && n.closest < this.shadowDist && n.side < this.shadowDist * 0.75;
+          n.mesh.castShadow = cast;
+          if (cast) casters++;
+        }
+      }
+      if (n.children) for (let i = 0; i < 4; i++) walk(n.children[i]);
+    };
+    for (const r of this.roots) walk(r);
+    this.meshCount = count; this.casters = casters;
+  }
+
+  _gc() {
+    const f = this.frame, keep = this.shot ? 1e9 : 300;
+    const visit = (n) => {
+      const fresh = f - n.used <= keep;
+      let alive = fresh || n.state === 1;
+      if (n.children) {
+        let ch = false;
+        for (let i = 0; i < 4; i++) if (visit(n.children[i])) ch = true;
+        if (!ch && !fresh) { for (const c of n.children) c.dead = true; n.children = null; }
+        else if (ch) alive = true;
+      }
+      if (n.mesh && n.level > 1 && !fresh) {
+        n.mesh.geometry.dispose(); this.group.remove(n.mesh); n.mesh = null; n.state = 0;
+      }
+      return alive || !!n.mesh;
+    };
+    for (const r of this.roots) visit(r);
+  }
+
+  // ------------------------------------------------------------------ public
+  isReady() {
+    if (!this.texReady || this.desired.length === 0) return false;
+    if (this.uploads.length || this.changed || this.inflight) return false;
+    for (const n of this.desired) if (!n.mesh && (n.fail || 0) <= 3) return false;
+    return true;
+  }
+
+  getState() {
+    const hist = {}; let iv = 0;
+    for (const n of this.desired) { hist[n.level] = (hist[n.level] || 0) + 1; if (n.inView) iv++; }
+    return { chunks: this.meshCount, casters: this.casters, desired: this.desired.length, inflight: this.inflight, uploads: this.uploads.length, maxLevel: this.maxLevel, K: +this.K.toFixed(2), workers: this.workers.length, tex: this.texReady, inView: iv, levels: hist, ms: +this.ms.toFixed(2), msMax: +this.msMax.toFixed(1) };
+  }
+
+  onOriginShift() { /* chunk transforms are planet-local under world.root: nothing to do */ }
+
   dispose() {
-    this.group.traverse((o) => o.geometry?.dispose());
+    for (const w of this.workers) { try { w.terminate(); } catch (_) { /* */ } }
+    this.workers = [];
+    const walk = (n) => { if (n.mesh) { n.mesh.geometry.dispose(); n.mesh = null; } n.dead = true; if (n.children) n.children.forEach(walk); };
+    this.roots.forEach(walk);
     this.material.dispose();
+    this.detailTex?.dispose();
     this.group.removeFromParent();
   }
 }
