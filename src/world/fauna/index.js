@@ -291,7 +291,7 @@ class Fauna {
       const l = Math.hypot(home[0], home[1], home[2]);
       for (let i = 0; i < n; i++) {
         const a = i * 2.39996, r = g.L * 1.6 * Math.sqrt(i + 0.5);
-        const depthT = rng.range(0.5, 1.8);
+        const depthT = Math.min(rng.range(0.5, 1.8), Math.max(0.25, opts.maxDepth ?? 9));
         P[0] = home[0] + (_e[0] * Math.cos(a) + _n[0] * Math.sin(a)) * r; P[1] = home[1] + (_e[1] * Math.cos(a) + _n[1] * Math.sin(a)) * r; P[2] = home[2] + (_e[2] * Math.cos(a) + _n[2] * Math.sin(a)) * r;
         const pl = Math.hypot(P[0], P[1], P[2]);
         const rr = this.R + this.sea - depthT;
@@ -303,7 +303,7 @@ class Fauna {
         members.push(c);
       }
       void l;
-      grp = new School(sp, members, home, rng.fork('school'), this.env, { speed: g.speed, range: opts.range ?? 22, seek: 2.5, sep: g.L * 1.1 });
+      grp = new School(sp, members, home, rng.fork('school'), this.env, { speed: g.speed, range: opts.range ?? 22, seek: 2.5, sep: g.L * 1.1, minDepth: opts.minDepth });
     }
     if (!grp) return null;
     for (const m of members) { m.group = grp; this.creatures.push(m); }
@@ -583,16 +583,16 @@ class Fauna {
       const sp = pick('fish');
       if (sp) {
         // nearest water in front of the camera
-        for (let dist = 10; dist < 400; dist *= 1.15) {
+        for (let dist = 9; dist < 400; dist *= 1.12) {
           let done = false;
-          for (const ang of [0, 0.35, -0.35, 0.7, -0.7, 1.2, -1.2]) {
+          for (const ang of [0.3, -0.3, 0.55, -0.55, 0, 0.9, -0.9]) {
             const p = at(dirAt(ang), dist);
             const pl = Math.hypot(...p);
             const h = this.surface.height(p[0] / pl, p[1] / pl, p[2] / pl);
-            if (h < this.sea - 1.3) {
+            if (h < this.sea - 0.7) {
               const r = this.R + this.sea;
-              const g = mark(this._spawnAir(sp, [p[0] / pl * r, p[1] / pl * r, p[2] / pl * r], rng.fork('wf'), 28, { range: 8 }));
-              if (g) g.showy = true;          // showcase school: frequent leaps so it reads above the surface
+              const g = mark(this._spawnAir(sp, [p[0] / pl * r, p[1] / pl * r, p[2] / pl * r], rng.fork('wf'), 28, { range: 7, minDepth: 0.55, maxDepth: (this.sea - h) * 0.55 }));
+              if (g) { g.showy = true; g.jumpT = 0.2; }   // showcase school: frequent leaps so it reads above the surface
               done = true; break;
             }
           }

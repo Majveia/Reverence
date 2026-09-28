@@ -81,6 +81,9 @@ Debug: `window.__rvPost.stats`, `__rvPost.meter()` (adapted luminance), `__rvPos
   `[{"advance":0.5},{"eval":"__rv.world.space.orbitSunShot(23, 35)"},{"advance":0.5}]`
 * Sunset toward the sun: `/?mode=system&galaxy=0&star=6&planet=1&tod=0.72` steps
   `[{"advance":0.5},{"eval":"__rv.world.space.look('sun', 22, 4)"},{"advance":0.5}]`
+* Night, emissive glow + OLED sky: `/?mode=system&galaxy=0&star=2&planet=0&tod=0.9` steps `[{"advance":1}]`
+* Photo-mode depth of field: `/?mode=system&galaxy=0&star=6&planet=1&tod=0.3` steps
+  `[{"eval":"(__rvPost.pipeline.settings.dof.enabled=true,1)"},{"advance":1}]`
 * AO only: add `{"eval":"(__rvPost.pipeline.settings.ssao.debug=true,__rv.render(),1)"}`.
 
 ## Known issues

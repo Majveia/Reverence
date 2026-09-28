@@ -290,7 +290,7 @@ export class School {
     this.t0 = rng.range(0, 60);
     this.jumpT = rng.range(3, 9);
   }
-  _depthOK(env, x, y, z) { const l = Math.hypot(x, y, z); return env.height(x / l, y / l, z / l) < env.sea - 1.2; }
+  _depthOK(env, x, y, z) { const l = Math.hypot(x, y, z); return env.height(x / l, y / l, z / l) < env.sea - (this.o.minDepth ?? 1.2); }
   update(dt, env) {
     if (dt <= 0) return;
     const o = this.o, M = this.members, n = M.length;
@@ -312,9 +312,15 @@ export class School {
     // leaping
     this.jumpT -= dt;
     if (this.jumpT <= 0) {
-      this.jumpT = this.showy ? this.rng.range(0.15, 0.7) : this.rng.range(2.5, 8);
+      this.jumpT = this.showy ? this.rng.range(0.12, 0.4) : this.rng.range(2.5, 8);
+      for (let q = this.showy ? 3 : 1; q > 0; q--) {
       const j = M[Math.floor(this.rng.next() * n)];
-      if (j && !j.leap) { j.leap = true; const up = j.up; const k = (this.showy ? 4.2 : 3.2) + this.rng.next() * 2; j.vel[0] += up[0] * k; j.vel[1] += up[1] * k; j.vel[2] += up[2] * k; }
+      if (j && !j.leap) {
+        j.leap = true; const up = j.up;
+        // launch speed to clear the surface by an apex of 0.6–1.8 m from the current depth
+        const dep = Math.max(0, env.R + env.sea - Math.hypot(j.pos[0], j.pos[1], j.pos[2]));
+        const k = Math.sqrt(2 * 9.8 * (dep + 0.6 + this.rng.next() * 1.2)); j.vel[0] += up[0] * k; j.vel[1] += up[1] * k; j.vel[2] += up[2] * k; }
+      }
     }
     for (let i = 0; i < n; i++) {
       const m = M[i];

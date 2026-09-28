@@ -278,3 +278,17 @@ visualizations). What separates AAA from "tech demo":
   `visibility`, `color`, `angularRadius`).
 * **core (done)** — gas-giant moons now orbit at 3.6–5 R (first) with 1.35–1.7× spacing: W9's giant spans
   ~15° of sky (was ~10°).
+* **space** (from post) — when seen from orbit, draw the star disc into the HDR target at far-plane depth so the
+  lens-flare occlusion probe sees a real bright disc.
+* **flora** (from post) — dithered alpha on leaf cards (noise keyed to `G.uFrame`) so TAA resolves soft canopy
+  edges; `engine.pipeline.stats.taa` says whether TAA is on.
+* **atmosphere** (from post) — clear-day sky radiance is dim vs sunlit ground (sky highlights ~0.7 after
+  tonemapping): raise it so grading reaches reference-level highlights without over-exposing ground.
+* **ui/core** (from post) — depth of field for transitions/photo mode:
+  `engine.pipeline.setLook({ dof: { enabled: true, focus: 0, aperture: 1 } })` (focus 0 = auto-focus centre).
+* **player** (from fauna) — `world.player.lookAt(pos)` to face a target at spawn (creature showcases via `&fauna=`).
+* **vehicles** (from fauna) — `props=0` URL param (or skip when `&fauna=` is set) to not spawn the parked
+  bike/rover/ship, so creature captures aren't cluttered.
+* **audio** (from fauna) — creature ambience from `fauna.creatures` / `nearest()`: bird calls near flocks, whale
+  song under pods, night insect chorus; creature `discovery` events carry an `archetype`.
+* **ui** (from fauna) — show an icon from the `archetype` field on creature discovery events.

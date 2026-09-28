@@ -67,13 +67,15 @@ night) are framed anyway.
 
 ## Best capture URLs
 
-(`post=legacy` only while the post track's new pipeline is in flux; drop it once that settles.)
+All verified at 1280×720 with the default post pipeline (`post=legacy` also works).
 
 * Herd close-up, W1 savanna: `/?mode=system&galaxy=0&star=6&planet=1&view=fp&tod=0.3&fauna=grazer&lat=9.08&lon=30.92&yaw=200&faunadist=0.7` steps `[{"advance":3}]`
 * Bird flock at sunset, W1: `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.74&fauna=birds&lat=9.08&lon=30.92&yaw=270` steps `[{"advance":3}]`
+* Sky rays, W1: `/?mode=system&galaxy=0&star=6&planet=1&view=fp&tod=0.4&fauna=rays&lat=9.08&lon=30.92&yaw=270` steps `[{"advance":3}]`
 * Sky whale over the hills, W9: `/?mode=system&galaxy=0&star=2&planet=2.1&view=fp&tod=0.35&fauna=whales&lat=4&lon=33.33&faunadist=0.45` steps `[{"advance":3}]`
-* Bioluminescent night, W6 jellies + fireflies: `/?mode=system&galaxy=0&star=1&planet=3&view=surface&tod=0.93&fauna=jellies&lat=6.67&lon=34.67` steps `[{"advance":3}]`
-* Leaping fish on a W1 beach: `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.4&fauna=fish&lat=9.2&lon=31&yaw=22.5` steps `[{"advance":3}]`
+* Bioluminescent night, W6 jellies + fireflies: `/?mode=system&galaxy=0&star=1&planet=3&view=fp&tod=0.95&fauna=jellies&lat=6.67&lon=34.67&yaw=270` steps `[{"advance":3}]`
+* Glowing sky-whale pod at night, W6: `/?mode=system&galaxy=0&star=1&planet=3&view=fp&tod=0.95&fauna=whales&faunadist=0.6&lat=6.67&lon=34.67&yaw=270` steps `[{"advance":3}]`
+* Leaping fish on a W1 beach: `/?mode=system&galaxy=0&star=6&planet=1&view=fp&tod=0.4&fauna=fish&lat=9.2&lon=31&yaw=22.5` steps `[{"advance":3}]`
 
 Roster per showcase world (glowing = *): W1 grazer×2 hopper critter bird×2 ray fish · W3 + whale ·
 W5 everything incl. giant, whale, jelly* · W6 grazer* hopper* critter* bird* whale* jelly* fish ·
@@ -82,7 +84,9 @@ W9 hexapod whale* · W10 giant* ray* jelly* · W11 whale*.
 ## Known issues
 
 * Fish are only readable when they leap (the water surface hides them at grazing angles); showcase
-  schools leap every ~0.5 s, ambient ones every 2.5–8 s.
+  schools leap in bursts every ~0.25 s, ambient ones every 2.5–8 s. No splash particles yet.
+* Grazers are stylised (lofted, 8–11 k tris hero LOD) — clean silhouettes, but no fur cards/shells.
+* Whales/jellies do not avoid terrain peaks sideways, only climb over them (look-ahead altitude).
 * Creatures do not collide with `world.colliders` (trees/buildings): herds steer only around water
   and steep slopes; flocks keep a minimum AGL above terrain, not above canopies.
 * Showcase framing uses the player's spawn camera: vehicles parked at spawn (vehicles track) often
