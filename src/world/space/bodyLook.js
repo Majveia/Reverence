@@ -31,7 +31,7 @@ export function rockyLook(b) {
   const oceanFrac = b.ocean?.present ? (b.terrain?.oceanFraction ?? 0.5) : 0;
   L.ocean = oceanFrac > 0.01 ? 1 : 0;
   // fbm(6) of simplex ≈ N(0, 0.2)
-  L.seaT = oceanFrac > 0.01 ? probit(oceanFrac) * 0.2 : -9;
+  L.seaT = oceanFrac > 0.01 ? probit(oceanFrac) * 0.2 : -0.05;   // no ocean: heights relative to the median
   const liquid = b.ocean?.liquid || 'water';
   L.liquid = liquid === 'lava' ? 1 : liquid === 'acid' ? 2 : liquid === 'ice' ? 3 : 0;
   L.deep = v3(lin(P.deep || '#0c2a44'));
@@ -66,6 +66,11 @@ export function rockyLook(b) {
   L.cloudSoft = ct === 'haze' || ct === 'fogsea' ? 1 : 0;
   L.cloudCol = v3(ct === 'storm' ? lin('#aeb4c0') : ct === 'haze' ? lin(P.fog || '#e8dcc8') : lin('#ffffff'));
   L.storm = ct === 'storm' ? 1 : (b.weather?.storms ?? 0) * 0.6;
+  L.cyclones = [];
+  for (let k = 0; k < 4; k++) {
+    const hemi = r.chance(0.5) ? 1 : -1;
+    L.cyclones.push(new THREE.Vector4(hemi * r.range(0.35, 1.0), r.range(0, Math.PI * 2), r.range(0.12, 0.3), hemi * r.range(2.5, 5.0) * (0.6 + L.storm * 0.6)));
+  }
   // atmosphere
   L.atmo = atm;
   L.atmoCol = v3(lin(P.sky || '#7ab8ff'));
@@ -205,7 +210,9 @@ export function ringTexture(b) {
     data[i * 4 + 3] = Math.round(op * 255);
   }
   const tex = new THREE.DataTexture(data, N, 1, THREE.RGBAFormat);
-  tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = true;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.anisotropy = 4;
   tex.needsUpdate = true;
   return tex;
 }

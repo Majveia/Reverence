@@ -45,7 +45,7 @@ float sunVisibility(vec3 w){
         float rr = length(hp);
         float tt = (rr - uRingP.x) / (uRingP.y - uRingP.x);
         if (tt > 0.0 && tt < 1.0){
-          float op = texture2D(uRingTex, vec2(tt, 0.5)).a * uRingP.w;
+          float op = textureLod(uRingTex, vec2(tt, 0.5), 2.0).a * uRingP.w;
           float tau = -log(max(1.0 - op, 0.02));
           v *= exp(-tau / max(abs(dn), 0.05));
         }
@@ -65,6 +65,7 @@ uniform vec3 uDeep, uShallow, uSand, uGrass, uGrass2, uRock, uSnow, uVeg, uAccen
 uniform float uVegAmt, uIce, uCraters, uLava, uCrystal, uDesert;
 uniform float uCloudCov, uCloudStreak, uCloudSoft, uStorm;
 uniform vec3 uCloudCol;
+uniform vec4 uCyclone[4];
 uniform float uCity;
 uniform vec3 uCityCol, uCityCol2;
 uniform float uAtmo;
@@ -83,7 +84,8 @@ void main(){
   vec3 q = p * uFreq + uSeedOff;
   vec3 wq = vec3(rv_fbm(q * 0.8, 3), rv_fbm(q * 0.8 + 4.7, 3), rv_fbm(q * 0.8 + 9.3, 3));
   float h = rv_fbm(q + wq * 0.6, OCT);
-  float mount = rv_ridged(q * 2.7 + wq * 1.3, OCT - 1);
+  float ranges = smoothstep(0.45, 0.75, rv_fbm(q * 0.6 + 21.0, 3) * 0.5 + 0.5);   // mountain chains, not everywhere
+  float mount = rv_ridged(q * 2.4 + wq * 1.1, OCT - 1) * (0.25 + 0.75 * ranges);
   float e = h - uSeaT;
   float moist = rv_fbm(q * 1.4 + 11.0 + wq, 4) * 0.5 + 0.5;
   float fine = rv_fbm(q * 9.0 + wq * 2.0, 4);
@@ -126,27 +128,46 @@ void main(){
     float m2 = rv_ridged((p + T * 0.004) * uFreq * 2.7 + uSeedOff * 2.7 + wq * 1.3, 4);
     float m3 = rv_ridged((p + B * 0.004) * uFreq * 2.7 + uSeedOff * 2.7 + wq * 1.3, 4);
     float m1 = rv_ridged(p * uFreq * 2.7 + uSeedOff * 2.7 + wq * 1.3, 4);
-    N = normalize(N - (T * (m2 - m1) + B * (m3 - m1)) * bumpAmt * 18.0);
+    N = normalize(N - (T * (m2 - m1) + B * (m3 - m1)) * bumpAmt * 4.5 * (0.3 + 0.7 * ranges));
   }
   float NL = dot(N, L);
   float NLs = dot(normalize(vN), L);
   float vis = sunVisibility(vW);
-  float wrap = uAtmo > 0.05 ? 0.06 : 0.0;
+  float wrap = uAtmo > 0.05 ? 0.14 : 0.03;
   float diff = max((NL + wrap) / (1.0 + wrap), 0.0) * smoothstep(-0.12, 0.05, NLs);
   vec3 sunLit = uSunIll * vis;
   // cloud layer (drifts over the surface)
   float cloud = 0.0, cloudShadow = 0.0;
   if (uCloudCov > 0.01){
     vec3 cp = rotY(p, uTime * 0.0035);
-    vec3 cq = vec3(cp.x, cp.y * uCloudStreak, cp.z) * 3.1 + uSeedOff * 1.3;
-    vec3 cw = vec3(rv_fbm(cq * 0.6, 3), rv_fbm(cq * 0.6 + 3.3, 3), 0.0);
-    // cyclones: swirl around a few centres at mid latitudes
-    float cn = rv_fbm(cq + cw * (1.3 + uStorm), OCT - 1) * 0.5 + 0.5;
-    float th = 1.0 - uCloudCov;
-    cloud = smoothstep(th - 0.08, th + (uCloudSoft > 0.5 ? 0.45 : 0.22), cn + 0.08 * (1.0 - lat));
-    vec3 sp = rotY(p + L * 0.012, uTime * 0.0035);
-    vec3 sq = vec3(sp.x, sp.y * uCloudStreak, sp.z) * 3.1 + uSeedOff * 1.3;
-    cloudShadow = smoothstep(th - 0.08, th + 0.3, rv_fbm(sq + cw * (1.3 + uStorm), 4) * 0.5 + 0.5);
+    // cyclones: swirl the cloud field around a few storm centres
+    for (int k = 0; k < 4; k++){
+      vec4 cy = uCyclone[k];
+      vec3 c = vec3(cos(cy.x) * sin(cy.y), sin(cy.x), cos(cy.x) * cos(cy.y));
+      float dd = length(cp - c);
+      if (dd < cy.z){
+        float a = cy.w * pow(1.0 - dd / cy.z, 2.0);
+        float ca = cos(a), sa = sin(a);
+        vec3 v = cp - c * dot(cp, c);
+        vec3 bx = normalize(cross(c, vec3(0.0, 1.0, 0.0)) + 1e-5);
+        vec3 by = cross(c, bx);
+        vec2 l = vec2(dot(v, bx), dot(v, by));
+        l = mat2(ca, -sa, sa, ca) * l;
+        cp = normalize(c * dot(cp, c) + bx * l.x + by * l.y);
+      }
+    }
+    // general circulation: cloudy ITCZ & storm belts, clear subtropics / poles
+    float sl = cp.y;
+    float band = 0.55 + 0.3 * cos(sl * RV_PI * 3.0);
+    vec3 cq = vec3(cp.x, cp.y * uCloudStreak * 1.5, cp.z) * 3.4 + uSeedOff * 1.3;
+    vec3 cw = vec3(rv_fbm(cq * 0.5, 3), rv_fbm(cq * 0.5 + 3.3, 3), 0.0);
+    float cn = rv_fbm(cq + cw * (1.2 + uStorm), OCT - 1) * 0.5 + 0.5;
+    float cf = rv_fbm(cq * 4.2 + cw * 2.0, 3) * 0.5 + 0.5;
+    cn = cn * 0.78 + cf * 0.22;
+    float cov = clamp(uCloudCov * (0.55 + band * 0.75), 0.0, 0.95);
+    float th = 0.5 + (0.5 - cov) * 0.38;             // coverage → threshold on the fbm distribution
+    cloud = smoothstep(th - 0.025, th + (uCloudSoft > 0.5 ? 0.2 : 0.07), cn);
+    cloudShadow = cloud * smoothstep(-0.1, 0.4, NLs) * 0.8;
   }
   vec3 col = albedo / RV_PI * sunLit * diff * (1.0 - cloudShadow * 0.45);
   // ocean glint (sun specular)
@@ -162,7 +183,7 @@ void main(){
   vec3 cloudC = uCloudCol * sunLit * cdiff / RV_PI * 0.95;
   // warm terminator light on clouds
   cloudC *= mix(vec3(1.0, 0.55, 0.35), vec3(1.0), smoothstep(0.0, 0.25, NLs));
-  col = mix(col, cloudC, cloud * 0.95);
+  col = mix(col, cloudC, cloud * (uCloudSoft > 0.5 ? 0.45 : 0.95));
   // ---- emission: lava, city lights
   float night = smoothstep(0.08, -0.12, NLs);
   if (uLiquid > 0.5 && uLiquid < 1.5){
@@ -171,8 +192,13 @@ void main(){
     col = mix(col, col * 0.3 + lava * (0.25 + night * 0.75), (1.0 - isLand) * (1.0 - cloud * 0.6));
   }
   if (uLava > 0.0){
-    float cracks = pow(1.0 - abs(rv_snoise(p * 16.0 + uSeedOff)), 18.0) + pow(1.0 - abs(rv_snoise(p * 41.0 + uSeedOff)), 24.0) * 0.6;
-    col += vec3(1.0, 0.3, 0.05) * cracks * uLava * isLand * (0.5 + 2.5 * night) * (1.0 - cloud * 0.7) * smoothstep(0.1, 0.3, 1.0 - snow);
+    float cr1 = pow(1.0 - abs(rv_snoise(p * 7.0 + uSeedOff)), 14.0);
+    float cr2 = pow(1.0 - abs(rv_snoise(p * 19.0 + uSeedOff * 1.3)), 18.0) * 0.6;
+    float lakes = smoothstep(-0.24, -0.34, h);
+    float glow = ((cr1 + cr2) * (1.0 - smoothstep(0.1, 0.5, mount)) + lakes * 1.2) * 0.8;
+    vec3 lavaC = mix(vec3(1.0, 0.18, 0.02), vec3(1.0, 0.55, 0.12), clamp(glow - 0.4, 0.0, 1.0));
+    col *= 1.0 - 0.35 * uLava * smoothstep(0.0, 0.4, glow);            // dark basalt around the flows
+    col += lavaC * glow * uLava * isLand * (0.12 + 1.6 * night) * (1.0 - cloud * 0.6) * (1.0 - snow);
   }
   if (uCity > 0.0){
     float c1 = rv_fbm(p * 18.0 + uSeedOff * 3.0, 3);
@@ -218,22 +244,23 @@ vec3 gasColor(vec3 p, float shift, float phaseSeed, out float stormMask){
     float de = dot(q - c, east), dn = (q - c).y;
     float de2 = length(vec2(de / 1.6, dn)) / s.z;
     if (de2 < 2.2){
-      float a = s.w * exp(-de2 * de2 * 1.2);
+      float a = s.w * 0.45 * exp(-de2 * de2 * 1.6);
       float ca = cos(a), sa = sin(a);
       vec3 north = cross(c, east);
       vec2 l = vec2(dot(q - c, east), dot(q - c, north));
       l = mat2(ca, -sa, sa, ca) * l;
       q = normalize(c + east * l.x + north * l.y);
-      float m = smoothstep(1.0, 0.35, de2);
+      float m = smoothstep(1.0, 0.45, de2) + exp(-pow((de2 - 0.95) * 5.0, 2.0)) * 0.35;
       stormMask = max(stormMask, m * (i == 0 ? 1.0 : 0.7));
     }
   }
   vec3 s3 = vec3(q.x * 2.2, q.y * 11.0, q.z * 2.2) + uSeedOff + phaseSeed;
   float n1 = rv_fbm(s3 * 0.9, 5);
   float n2 = rv_fbm(vec3(q.x * 7.0, q.y * 26.0, q.z * 7.0) + n1 * 1.8 + uSeedOff, uDetail > 0.4 ? 5 : 3);
-  float y = q.y + (n1 * 0.045 + n2 * 0.014) * uTurb;
+  float n3 = uDetail > 0.3 ? rv_fbm(vec3(q.x * 22.0, q.y * 70.0, q.z * 22.0) + n2 * 2.5 + uSeedOff, 3) : 0.0;
+  float y = q.y + (n1 * 0.045 + n2 * 0.016 + n3 * 0.005) * uTurb;
   vec3 col = texture2D(uBands, vec2(clamp(y * 0.5 + 0.5, 0.0, 1.0), 0.5)).rgb;
-  col *= 0.9 + 0.22 * n2;
+  col *= 0.88 + 0.2 * n2 + 0.1 * n3;
   // festoons / white ovals along belt edges
   float edge = abs(texture2D(uBands, vec2(clamp(y * 0.5 + 0.5 + 0.004, 0.0, 1.0), 0.5)).g - texture2D(uBands, vec2(clamp(y * 0.5 + 0.5 - 0.004, 0.0, 1.0), 0.5)).g);
   col = mix(col, col * 1.18 + 0.05, smoothstep(0.02, 0.08, edge) * smoothstep(0.2, 0.6, n2 * 0.5 + 0.5) * 0.5);
@@ -257,7 +284,8 @@ void main(){
   float NV = max(dot(N, V), 0.0);
   // Minnaert limb darkening
   float k = 0.82;
-  float diff = pow(max(NL, 0.0), k) * pow(max(NV, 0.02), k - 1.0) * smoothstep(-0.05, 0.08, NL);
+  float NLw = (NL + 0.08) / 1.08;
+  float diff = pow(max(NLw, 0.0), k) * pow(max(NV, 0.02), k - 1.0) * smoothstep(-0.08, 0.2, NL);
   diff = min(diff, 1.6);
   float vis = sunVisibility(vW);
   vec3 col = albedo / RV_PI * uSunIll * vis * diff;
@@ -389,6 +417,7 @@ void main(){
   vec3 Lr = alb * uSunIll * P / (4.0 * RV_PI) * S;
   // multiple scattering fill on the lit face
   if (litSide) Lr += alb * alb * uSunIll * 0.05 * a;
+  else Lr += alb * alb * uSunIll * 0.07 * (1.0 - exp(-tau / mu0)) * exp(-tau * 0.6);   // diffuse transmission
   // planet shadow on the rings
   float sh = sp_occlude(vW, L, uSunAng, uCenter, uPR);
   Lr *= sh;

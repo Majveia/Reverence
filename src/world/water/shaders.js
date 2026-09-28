@@ -42,7 +42,7 @@ vec2 bathy(vec2 q){
 
 export const OCEAN_VERT = /* glsl */ `
 #include <rv_water_common>
-uniform sampler2D tWaves;
+uniform sampler2D tWaves, tCrust;
 attribute vec2 grid;                // ring index, azimuth (rad)
 varying vec3 vPos;                  // scene-space position (displaced)
 varying vec2 vQ;                    // wave-frame coordinate relative to the nadir (undisplaced)
@@ -88,6 +88,19 @@ void main(){
     hor += sd * (A * 0.8 * pr);
     fold -= A * pr * 0.6;
   }
+#ifdef LIQUID_ICE
+  // frozen sea: pressure ridges along the big plate boundaries + wind-packed snow drifts
+  {
+    float fr = 1.0 - smoothstep(1.5, 5.0, spacing);
+    if (fr > 0.0){
+      vec4 cr = textureLod(tCrust, lay(q, 83.0, vec2(0.0)), 0.0);
+      float nz = textureLod(tWaves, lay(q, 29.0, vec2(0.0)), 0.0).a;
+      float ridge = (1.0 - smoothstep(0.0, 0.07, cr.r)) * (0.35 + 1.3 * nz * nz);
+      float drift = smoothstep(0.45, 0.7, textureLod(tWaves, lay(q, 170.0, vec2(0.0)), 1.0).a) * 0.25;
+      hs += (ridge * 0.9 + drift) * fr;
+    }
+  }
+#endif
   vec3 t1 = normalize(uT1 - n * dot(uT1, n));
   vec3 t2 = cross(n, t1);
   vec3 P = (cameraPosition - uUp * uCamH) + rel + n * hs + t1 * hor.x + t2 * hor.y;
@@ -169,7 +182,8 @@ vec4 ssr(vec3 posV, vec3 dirV, vec3 posW, vec3 dirW){
     float sd = sceneDistAt(uv, -normalize(p).z);
     float rd = length(p);
     if (sd < rd){
-      if (rd - sd > (tj - tPrev) * 1.6 + 2.0) break;                   // passed behind a thin object
+      // passed behind an object between two steps: still its colour (big landforms), a bit less confident
+      float conf = rd - sd > (tj - tPrev) * 1.6 + 2.0 ? 0.75 : 1.0;
       // refine between tPrev and tj
       float a = tPrev, b = tj;
       for (int r = 0; r < 5; r++){
@@ -181,7 +195,7 @@ vec4 ssr(vec3 posV, vec3 dirV, vec3 posW, vec3 dirW){
       }
       vec2 e = min(uv, 1.0 - uv);
       float fade = smoothstep(0.0, 0.06, min(e.x, e.y)) * (1.0 - smoothstep(0.75, 1.0, float(s) / 22.0));
-      return vec4(texture2D(tSceneColor, uv).rgb, fade);
+      return vec4(texture2D(tSceneColor, uv).rgb, fade * conf);
     }
     tPrev = tj;
     t *= 1.38;
@@ -190,6 +204,7 @@ vec4 ssr(vec3 posV, vec3 dirV, vec3 posW, vec3 dirW){
 }
 
 void main(){
+  if (uDebug > 4.5){ gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }
   vec3 camV = cameraPosition - vPos;
   float wDist = length(camV);
   vec3 V = camV / wDist;
@@ -217,7 +232,7 @@ void main(){
     varS += 0.5 * wa * wa * (1.0 - f);
   }
   // shore swell slopes (same function as the vertex stage, per pixel)
-  float swellPr = 0.0, swellA = 0.0;
+  float swellPr = 0.0, swellA = 0.0, swellVar = 0.5;
   float band = (1.0 - smoothstep(uShore.w * 0.45, uShore.w, bd.x)) * smoothstep(-0.4, 0.6, bd.x) * bd.y;
   if (band > 0.001){
     float e = uBathyE;
@@ -227,6 +242,7 @@ void main(){
     float sn = 0.5 + 0.5 * sin(ph);
     swellPr = sn * sn * sn;
     swellA = uShore.x * band * (0.45 + 0.9 * var);
+    swellVar = var;
     vec2 dh = g * (swellA * 3.0 * sn * sn * 0.5 * cos(ph) * uShore.y);
     sx += dh.x; sy += dh.y;
   }
@@ -254,6 +270,7 @@ void main(){
   float farF = smoothstep(4000.0, 60000.0, wDist);
   N = normalize(mix(N, nS, farF));
   float alpha = clamp(sqrt(uLook.x * uLook.x + 2.0 * varS), 0.02, 0.6);
+  alpha = mix(alpha, 0.14, farF);                                // orbit: broad but bright sun glint
 
   // ------------------------------------------------ scene behind the surface
   vec2 suv = gl_FragCoord.xy * uInvRes;
@@ -278,16 +295,20 @@ void main(){
   vec2 warp = (texture2D(tWaves, lay(vQ, 90.0, vec2(0.35, 0.1))).rg - 0.5) * 0.25;
   vec4 c0 = texture2D(tCrust, lay(vQ, 55.0, vec2(0.22, 0.07)) + warp);
   vec4 c1 = texture2D(tCrust, layR(ROT1, vQ, 16.4, vec2(0.1, 0.0)) + warp * 0.5);
-  float crack = 1.0 - smoothstep(0.012, 0.075, c0.r);                // big plate borders
-  float crackF = (1.0 - smoothstep(0.015, 0.06, c1.b)) * 0.55;        // fine fissures
+  float crack = 1.0 - smoothstep(0.02, 0.11, c0.r);                  // big plate borders
+  float crackF = (1.0 - smoothstep(0.01, 0.035, c1.b)) * 0.35;       // fine fissures
   float heatN = texture2D(tWaves, lay(vQ, 130.0, vec2(0.3, 0.2))).a;
-  float molten = smoothstep(0.64, 0.8, heatN + (c0.g - 0.45) * 0.18 - crackF * 0.04) * (0.55 + 0.45 * c1.g);  // molten pools, skin
-  float hot = clamp(max(crack, crackF * (0.4 + heatN)) + molten * 0.7 + (1.0 - fold) * 0.2, 0.0, 1.0);
+  float pool = smoothstep(0.86, 0.95, heatN);                             // rare open pools
+  float frag = 1.0 - smoothstep(0.35, 0.6, c0.g);                        // crust plates drifting in them
+  float hn2 = texture2D(tWaves, lay(vQ + warp * 30.0, 70.0, vec2(0.18, 0.05))).a;
+  float channel = 1.0 - smoothstep(0.0, 0.03, abs(hn2 - 0.5));           // sinuous glowing flow veins
+  float molten = max(pool * (1.0 - 0.9 * frag), channel * 0.75);
+  float hot = clamp(max(crack, crackF * (0.3 + heatN)) + molten * 0.7 + max(0.6 - fold, 0.0) * 0.3, 0.0, 1.0);
   // shore: lava pooled against rock is hotter and bright
   float shoreHot = uHasScene > 0.5 ? 1.0 - smoothstep(0.0, 1.2, thick) : 0.0;
   hot = max(hot, shoreHot * 0.55);
-  float T = mix(900.0, 1400.0, hot * hot);
-  vec3 emis = rv_blackbody(T) * pow(hot, 2.0) * 3.2 + rv_blackbody(1000.0) * 0.04 * (0.5 + c0.g);
+  float T = mix(1000.0, 1350.0, hot * hot);
+  vec3 emis = rv_blackbody(T) * pow(hot, 2.0) * 4.5 * vec3(1.0, 0.62, 0.38) + rv_blackbody(1000.0) * 0.03 * (0.5 + c0.g) * (1.0 - pool);
   vec3 crustC = vec3(0.045, 0.036, 0.034) * (0.6 + 0.8 * c0.g);
   vec3 Nl = normalize(nS - t1 * (w0.r - 0.5) * 0.6 - t2 * (w0.g - 0.5) * 0.6);
   float NdL = max(dot(Nl, L), 0.0);
@@ -313,6 +334,12 @@ void main(){
   float drift = texture2D(tWaves, layR(ROT1, vQ, 37.0, vec2(0.0))).a;
   float snowM = smoothstep(0.5, 0.64, snowN + (drift - 0.5) * 0.35 + (c0.g - 0.5) * 0.12);
   vec3 Ni = normalize(nS - t1 * (w0.r - 0.5) * 0.08 * (1.0 - snowM) - t2 * (w0.g - 0.5) * 0.08 * (1.0 - snowM) - t1 * (c0.g - 0.5) * 0.06 - t2 * (drift - 0.5) * 0.3 * snowM);
+  // ridge relief (vertex heights) → geometric normal from screen derivatives
+  vec3 gN = normalize(cross(dFdx(vPos), dFdy(vPos)));
+  if (dot(gN, nS) < 0.0) gN = -gN;
+  float ridgeM = smoothstep(0.08, 0.5, vH);
+  Ni = normalize(Ni + (gN - nS) * 1.0);
+  snowM = max(snowM, ridgeM * 0.8);
   float NdL = max(dot(Ni, L), 0.0), NdV = max(dot(Ni, V), 1e-3);
   // clear black-blue ice (Baikal) with frozen bubbles, white frost-filled cracks, wind-blown snow
   vec3 clearIce = mix(vec3(0.012, 0.04, 0.055), uShallow * 0.3, 0.25 + 0.5 * c1.g);
@@ -351,13 +378,14 @@ void main(){
     } else {
       float cost = max(dot(Tt, nS), 0.0);
       float F = 0.02 + 0.98 * pow(1.0 - cost, 5.0);
-      vec3 sky = envSky(Tt);
+      vec3 sky = envSky(Tt) * 0.85;
       float sunD = pow(max(dot(Tt, L), 0.0), 900.0) * 60.0 + pow(max(dot(Tt, L), 0.0), 40.0) * 0.6;
-      c = mix(sky + uKeyColor * sunVis * sunD, under, F);
+      c = mix(sky * 0.6 + uKeyColor * sunVis * sunD, under, F);
     }
-    // foam seen from underneath
-    float fm = smoothstep(0.45, 0.1, fold) * texture2D(tFoam, lay(vQ, 9.0, vec2(0.4, 0.0))).a;
-    c = mix(c, (Esun * 0.2 + Eamb) * 0.5 / RV_PI, fm * uLook.y);
+    // foam seen from underneath: lacy, dim silhouettes against the window
+    float fwb = texture2D(tFoam, lay(vQ, 11.0, vec2(0.5, 0.0))).a;
+    float fm = smoothstep(0.5, 0.15, fold) * smoothstep(0.25, 0.75, fwb) * 0.7;
+    c = mix(c, (Esun * 0.15 + Eamb) * 0.35 / RV_PI, fm * uLook.y);
     gl_FragColor = vec4(c, 1.0);
     return;
   }
@@ -417,27 +445,6 @@ void main(){
     vec3 Rv = normalize((viewMatrix * vec4(R, 0.0)).xyz);
     vec4 hit = ssr(posV, Rv, vPos, R);
     refl = mix(refl, hit.rgb, hit.a * (1.0 - smoothstep(3500.0, 6000.0, wDist)));
-    if (uDebug > 3.5){
-      vec2 u2 = suv + vec2(0.0, 0.2);
-      float sd2 = sceneDistAt(u2, cosF);
-      gl_FragColor = vec4(texture2D(tSceneColor, u2).rgb * 0.5 + vec3(0.0, 0.0, sd2 < 2000.0 ? 1.0 : 0.0), 1.0); return;
-    }
-    if (uDebug > 2.5){
-      float t = 0.4 + 0.02 * length(posV); float anyHit = 0.0, first = 1.0, thickOK = 0.0, maxUp = 0.0;
-      for (int s = 0; s < 20; s++){
-        vec3 p = posV + Rv * t; vec4 c = uProj * vec4(p, 1.0); vec2 uv = c.xy / c.w * 0.5 + 0.5;
-        if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) { maxUp = 1.0; break; }
-        float sd = sceneDistAt(uv, -normalize(p).z); float rd = length(p);
-        if (sd < rd && anyHit < 0.5){ anyHit = 1.0; first = float(s) / 20.0; thickOK = (rd - sd) / (t * 0.6); }
-        t *= 1.32;
-      }
-      gl_FragColor = vec4(anyHit, first, clamp(thickOK * 0.5, 0.0, 1.0), 1.0); return;
-    }
-    if (uDebug > 1.5){
-      vec4 c0 = uProj * vec4(posV, 1.0); vec2 uvp = c0.xy / c0.w * 0.5 + 0.5;
-      float sd0 = sceneDistAt(uvp, cosF);
-      gl_FragColor = vec4(abs(uvp - suv) * 50.0, clamp((sd0 - wDist) / 20.0, 0.0, 1.0), 1.0); return;
-    }
     if (uDebug > 0.5){ gl_FragColor = vec4(hit.a, uHasScene, F, 1.0); return; }
   }
   // sun / moon glint (GGX)
@@ -460,7 +467,8 @@ void main(){
   // ------------------------------------------------ foam: crests + shore + surf lines
   float web = texture2D(tFoam, lay(vQ, 11.0, vec2(0.5, 0.0))).a;
   float web2 = texture2D(tFoam, layR(ROT2, vQ, 3.7, vec2(0.25, 0.0))).a;
-  float crestF = smoothstep(0.62 - 0.25 * uLook2.w, 0.12, fold) * uLook.y;
+  float patchN = texture2D(tWaves, layR(ROT1, vQ, 150.0, vec2(1.2, 0.0))).a;
+  float crestF = smoothstep(0.62 - 0.25 * uLook2.w, 0.12, fold) * uLook.y * smoothstep(0.38, 0.62, patchN + web * 0.25);
   float foam = crestF * smoothstep(0.15, 0.6, web * 0.8 + web2 * 0.5);
   if (uHasScene > 0.5 && uLook2.y > 0.0){
     float n1 = texture2D(tWaves, lay(vQ, 57.0, vec2(0.3, 0.0))).a;
@@ -475,7 +483,8 @@ void main(){
   }
   // breaking shore swell: white water on the crest front, trailing lace behind
   if (swellA > 0.0){
-    float brk = smoothstep(0.45, 0.85, swellPr) * (1.0 - smoothstep(0.5, uShore.w * 0.55, bd.x)) * smoothstep(-0.2, 0.3, bd.x);
+    float brk = smoothstep(0.45, 0.85, swellPr) * (1.0 - smoothstep(0.4, uShore.w * 0.38, bd.x)) * smoothstep(-0.2, 0.3, bd.x)
+              * smoothstep(0.25, 0.65, swellVar + (web - 0.5) * 0.5);
     float lace = smoothstep(0.15, 0.4, swellPr) * (1.0 - smoothstep(0.3, 1.6, bd.x)) * 0.6;
     foam = max(foam, clamp(brk + lace, 0.0, 1.0) * smoothstep(0.12, 0.6, web * 0.75 + web2 * 0.55 + brk * 0.35) * min(swellA * 3.0, 1.0));
   }
@@ -599,5 +608,30 @@ void main(){
     o = (w + w2 * 0.6) * 0.006 * m;
   }
   gl_FragColor = vec4(texture2D(tColor, vUv + o).rgb, 1.0);
+}
+`;
+
+// ---------------------------------------------------------------- marine snow (suspended particles underwater)
+export const SNOW_VERT = /* glsl */ `
+uniform float uTime, uBox, uPx;
+attribute vec4 seed;
+varying float vA;
+void main(){
+  vec3 drift = vec3(sin(uTime * 0.13 + seed.w * 6.0), -0.35, cos(uTime * 0.11 + seed.w * 5.0)) * 0.12 * uTime;
+  vec3 p = cameraPosition + (fract((seed.xyz * uBox - cameraPosition + drift) / uBox) - 0.5) * uBox;
+  vec4 mv = viewMatrix * vec4(p, 1.0);
+  float d = -mv.z;
+  vA = (1.0 - smoothstep(uBox * 0.25, uBox * 0.5, d)) * smoothstep(0.2, 0.8, d) * (0.4 + 0.6 * seed.w);
+  gl_PointSize = clamp(uPx * (0.6 + seed.w) * 6.0 / max(d, 0.1), 1.5, 9.0);
+  gl_Position = projectionMatrix * mv;
+}
+`;
+export const SNOW_FRAG = /* glsl */ `
+uniform vec3 uCol;
+varying float vA;
+void main(){
+  vec2 c = gl_PointCoord - 0.5;
+  float a = smoothstep(0.5, 0.1, length(c)) * vA;
+  gl_FragColor = vec4(uCol * a, a);
 }
 `;

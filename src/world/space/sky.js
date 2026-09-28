@@ -17,7 +17,7 @@ const _q = new THREE.Quaternion();
 const BAKE_FRAG = /* glsl */ `
 #include <rv_space>
 uniform sampler2D uBand;
-uniform float uFloor, uGain, uSat, uContrast;
+uniform float uFloor, uGain, uSat, uContrast, uSyn;
 uniform vec3 uNebDir[10];
 uniform vec4 uNebP[10];      // x: angular radius (rad), y: kind, z: seed, w: palette (0 natural, 1 hubble)
 uniform int uNebN;
@@ -75,22 +75,32 @@ void main(){
   vec4 b = mix(texture2D(uBand, bandUV(d)), bandSoft(d), 0.65);
   vec3 e = b.rgb;
   float tau = b.a;
-  vec3 q = d * 9.0 + uSeed;
-  vec3 w = vec3(rv_fbm(q * 0.5, 4), rv_fbm(q * 0.5 + 7.3, 4), rv_fbm(q * 0.5 + 13.1, 4));
-  float clouds = rv_fbm(q * 1.2 + w * 1.2, 6) * 0.5 + 0.5;          // star clouds (large, soft)
-  float fine = rv_fbm(q * 8.0 + w * 2.0, 4) * 0.5 + 0.5;
-  // dust: multi-scale filaments (thin, branching) + soft patches
-  float lanes = rv_ridged(q * 3.0 + w * 2.0, 6);
-  float lanes2 = rv_ridged(q * 9.0 + w * 3.5, 5);
-  float patches = smoothstep(0.45, 0.8, rv_fbm(q * 1.6 + w * 2.2 + 3.0, 5) * 0.5 + 0.5);
-  float dmask = smoothstep(0.2, 2.2, tau);
-  float extra = dmask * (pow(lanes, 3.0) * 1.1 + pow(lanes2, 4.0) * 0.6 + patches * 0.7);
-  e *= mix(0.45, 1.55, clouds) * mix(0.94, 1.06, fine);
-  e *= exp(-extra * vec3(0.9, 1.0, 1.1));
+  vec3 q = d * 14.0 + uSeed;
+  vec3 w = vec3(rv_fbm(q * 0.35, 4), rv_fbm(q * 0.35 + 7.3, 4), rv_fbm(q * 0.35 + 13.1, 4));
+  float clouds = rv_fbm(q * 0.9 + w * 1.1, 6) * 0.5 + 0.5;          // star clouds
+  float fine = rv_fbm(q * 7.0 + w * 2.0, 3) * 0.5 + 0.5;
+  // dust: thin branching filaments (ridged, sharpened) + a few soft dark patches
+  float lanes = pow(rv_ridged(q * 1.6 + w * 1.6, 6), 4.0);
+  float lanes2 = pow(rv_ridged(q * 4.5 + w * 2.5, 5), 5.0);
+  float patches = smoothstep(0.55, 0.85, rv_fbm(q * 0.8 + w * 1.5 + 3.0, 5) * 0.5 + 0.5);
+  float dmask = smoothstep(0.3, 2.5, tau);
+  float extra = dmask * (lanes * 1.6 + lanes2 * 0.9 + patches * 0.9);
+  float det = smoothstep(0.15, 1.2, rv_luma(e));            // structure only inside the bright band
+  e *= mix(1.0, mix(0.6, 1.4, clouds) * mix(0.95, 1.05, fine), det);
+  e *= exp(-extra * det * vec3(0.92, 1.0, 1.08));
   // contrast / black floor (true black between the band and the stars)
   e = max(e - uFloor, 0.0);
-  e = e / (1.0 + 0.8 * e);
-  e = pow(e, vec3(uContrast));
+  // log response: the faint anticentre band stays visible while the core does not blow out
+  float lin = max(rv_luma(e), 1e-6);
+  float lg = log(1.0 + 12.0 * lin) / log(13.0);
+  e *= pow(lg, uContrast) / lin;
+  // continuous disk band all around the sky (the local disk seen edge-on), with a dusty mid-plane rift
+  float glat = asin(clamp(d.y, -1.0, 1.0));
+  float wig = rv_fbm(vec3(d.x, d.z, 0.0) * 3.0 + uSeed, 3) * 0.035;
+  float prof = exp(-pow((glat + wig) / 0.13, 2.0)) * 0.7 + exp(-pow((glat + wig) / 0.3, 2.0)) * 0.3;
+  float rift = 1.0 - 0.75 * exp(-pow((glat + wig * 0.6) / 0.022, 2.0)) * smoothstep(0.35, 0.75, clouds + lanes * 0.6);
+  vec3 syn = vec3(1.0, 0.94, 0.86) * prof * mix(0.55, 1.35, clouds) * rift * exp(-lanes2 * 0.8 * prof);
+  e += syn * uSyn;
   float l = rv_luma(e);
   e = mix(vec3(l), e, uSat * smoothstep(0.0, 0.35, l));   // dim haze is neutral, bright star clouds keep colour
   e *= uGain;
@@ -290,6 +300,7 @@ export class Sky {
     tex.generateMipmaps = false; tex.needsUpdate = true;
     this.bandTex = tex;
     this.bandMedian = res.median;
+    this.bandLow = res.lowRef ?? res.median * 0.5;
     this.nebulae = res.nebulae || [];
     this._buildStars(res.stars, res.fluxRef);
     this.pendingCube = true;
@@ -312,10 +323,11 @@ export class Sky {
     const mat = new THREE.ShaderMaterial({
       uniforms: {
         uBand: { value: this.bandTex },
-        uFloor: { value: (this.bandMedian || 0.05) * 0.5 },
-        uGain: { value: 0.26 },
+        uFloor: { value: (this.bandLow || 0.02) * 1.15 },
+        uGain: { value: 0.1 },
         uSat: { value: 0.85 },
-        uContrast: { value: 1.15 },
+        uContrast: { value: 1.6 },
+        uSyn: { value: 0.32 },
         uNebDir: { value: nebDir }, uNebP: { value: nebP }, uNebN: { value: Math.min(10, this.nebulae.length) },
         uSeed: { value: (this.world.star.seed % 1000) * 0.137 },
       },

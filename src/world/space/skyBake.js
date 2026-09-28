@@ -83,7 +83,7 @@ export function bakeSky(p) {
         const eg = bu * 0.82 + od * 0.93 + yb * 0.86;
         const eb = bu * 0.62 + od * 0.86 + yb * 1.0;
         // HII / reflection-nebula glow rides on the young population
-        const hii = yb * yb * 0.55;
+        const hii = yb * yb * 0.25;
         const tr = Math.exp(-tauR - tD * 0.5 * 0.8), tg = Math.exp(-tauG - tD * 0.5), tb = Math.exp(-tauB - tD * 0.5 * 1.2);
         const e = rho * w;
         r += e * (er + hii * 1.0) * tr;
@@ -107,6 +107,7 @@ export function bakeSky(p) {
   const sorted = Float32Array.from(lum).sort();
   const ref = Math.max(1e-30, sorted[Math.floor(sorted.length * 0.98)]);
   const med = sorted[Math.floor(sorted.length * 0.5)] / ref;
+  const lowRef = sorted[Math.floor(sorted.length * 0.3)] / ref;   // high-latitude sky level (black floor)
   for (let k = 0; k < W * H; k++) { band[k * 4] /= ref; band[k * 4 + 1] /= ref; band[k * 4 + 2] /= ref; }
 
   // ---------------------------------------------------------------- resolved stars
@@ -211,5 +212,5 @@ export function bakeSky(p) {
     }
   } catch (_) { /* optional */ }
 
-  return { W, H, band, median: med, stars: { n: nAll, dir: dir2, col: col2, flux: flux2 }, fluxRef, nebulae };
+  return { W, H, band, median: med, lowRef, stars: { n: nAll, dir: dir2, col: col2, flux: flux2 }, fluxRef, nebulae };
 }

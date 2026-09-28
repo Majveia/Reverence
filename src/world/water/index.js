@@ -29,7 +29,7 @@ import { G } from '../../core/Uniforms.js';
 import { WaveSet, MAX_WAVES } from './waves.js';
 import { dataTexture, makeTexturesSync, placeholderTexture } from './textures.js';
 import { surfaceConfig } from '../planet/SurfaceGen.js';
-import { OCEAN_VERT, OCEAN_FRAG, UNDERWATER_FRAG, SHIMMER_FRAG } from './shaders.js';
+import { OCEAN_VERT, OCEAN_FRAG, UNDERWATER_FRAG, SHIMMER_FRAG, SNOW_VERT, SNOW_FRAG } from './shaders.js';
 import { makeFullscreenMaterial, FullscreenQuad } from '../../post/Pipeline.js';
 import { registerChunk } from '../../shaders/chunks.js';
 
@@ -123,6 +123,7 @@ class Water {
       this.underFx = this._makeUnderwaterEffect();
       this._removers.push(pipe.addEffect(this.underFx));
     }
+    if (this.liquid === 'water' || this.liquid === 'acid') this._makeMarineSnow();
     if (pipe && this.liquid === 'lava' && tier !== 'low') {
       this.shimmerFx = this._makeShimmerEffect();
       this._removers.push(pipe.addEffect(this.shimmerFx));
@@ -222,7 +223,9 @@ class Water {
     sig.x = Math.max(sig.x, 0.03); sig.y = Math.max(sig.y, 0.02); sig.z = Math.max(sig.z, 0.015);
     this.sigma = sig;
     // scattering albedo of the water body: deep palette colour, lifted so it reads under the sky
-    const scatter = new THREE.Vector3(deep.r, deep.g, deep.b).multiplyScalar(1.25);
+    // (saturated a little: the sky reflection and aerial perspective wash it out otherwise)
+    const dl = deep.r * 0.2126 + deep.g * 0.7152 + deep.b * 0.0722;
+    const scatter = new THREE.Vector3(deep.r, deep.g, deep.b).addScaledVector(new THREE.Vector3(deep.r - dl, deep.g - dl, deep.b - dl), 0.35).max(new THREE.Vector3(0.0005, 0.0005, 0.0005)).multiplyScalar(1.15);
     const sss = new THREE.Vector3(shallow.r, shallow.g, shallow.b).lerp(new THREE.Vector3(0.1, 0.9, 0.7), 0.35).multiplyScalar(1.4);
     const glow = new THREE.Vector3(0, 0, 0);
     if (liquid === 'acid') {
@@ -233,6 +236,7 @@ class Water {
       glow.copy(g).multiplyScalar(0.05);
       sig.set(0.9, 0.12, 0.7);
     }
+    if (liquid === 'lava') { glow.set(5, 1.1, 0.12); sig.set(3, 3, 3); }
     this.shallow = shallow; this.deep = deep;
     this.scatter = scatter; this.sss = sss; this.glow = glow;
     const windy = this.waves.windy;
@@ -483,6 +487,16 @@ class Water {
     const hw = this.liquid === 'ice' ? 0 : W.heightQ(qx, qy, t);
     this.waveHCam = hw;
     this.under = this.liquid !== 'ice' && camH < hw - 0.05 && camH > -5000;
+    if (this.snow) {
+      this.snow.visible = this.under;
+      if (this.under) {
+        const su = this.snowU, kc = this.u.uKeyColor.value, a = G.uAmbientSky.value;
+        su.uTime.value = t % 3600;
+        su.uPx.value = (this.engine.height || 720) / 720 * 2.2;
+        const dep = Math.exp(-Math.max(0, hw - camH) * 0.06);
+        su.uCol.value.setRGB(kc.r * 0.06 + a.r * 0.1 + 0.02, kc.g * 0.07 + a.g * 0.1 + 0.03, kc.b * 0.07 + a.b * 0.1 + 0.03).multiplyScalar(dep);
+      }
+    }
   }
 
   // ======================================================================== CPU queries
@@ -612,6 +626,29 @@ class Water {
     };
   }
 
+  _makeMarineSnow() {
+    const n = Math.round(700 * Math.max(0.25, this.world.quality?.particleScale ?? 1));
+    const seed = new Float32Array(n * 4);
+    let h = 0x9e3779b9 ^ this.seed;
+    const rnd = () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 100000) / 100000; };
+    for (let i = 0; i < n * 4; i++) seed[i] = rnd();
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('seed', new THREE.BufferAttribute(seed, 4));
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e12);
+    this.snowU = { uTime: { value: 0 }, uBox: { value: 14 }, uPx: { value: 1 }, uCol: { value: new THREE.Color() } };
+    const m = new THREE.ShaderMaterial({
+      name: 'rv-water-snow', vertexShader: SNOW_VERT, fragmentShader: SNOW_FRAG, uniforms: this.snowU,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    this.snow = new THREE.Points(g, m);
+    this.snow.frustumCulled = false;
+    this.snow.visible = false;
+    this.snow.renderOrder = 1e6 + 1;
+    this.snow.userData.noCSM = true;
+    this.world.scene.add(this.snow);
+  }
+
   // ======================================================================== misc
   isReady() {
     if (!this.texReady) return false;
@@ -643,6 +680,7 @@ class Water {
     this.bathyTex.dispose();
     for (const r of this._removers) try { r(); } catch (_) { /* ignore */ }
     this.underFx?.dispose(); this.shimmerFx?.dispose();
+    if (this.snow) { this.world.scene.remove(this.snow); this.snow.geometry.dispose(); this.snow.material.dispose(); }
     this.world.scene.remove(this.mesh);
     this.geometry.dispose(); this.material.dispose();
     this.texWaves.dispose(); this.texFoam.dispose();

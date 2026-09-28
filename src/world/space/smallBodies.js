@@ -33,7 +33,7 @@ void main(){
   vec3 toStar = uQInv * normalize(-pi);
   float ph = 0.5 + 0.5 * dot(toStar, toCam / d);
   float cover = (aOrb.w / d) / uPixAng;
-  float I = 0.12 / 3.14159 * ph * ph * 3.14159 * cover * cover * uBoost + 0.0025 * uBoost * ph;
+  float I = 0.12 / 3.14159 * ph * ph * 3.14159 * cover * cover * uBoost + 0.0008 * uBoost * ph;
   vCol = uCol * uSunIll * I;
   gl_PointSize = clamp(1.6 + cover * 1.5, 1.6, 6.0) * uPR;
   if (I < 0.0004) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
@@ -61,7 +61,7 @@ void main(){
   vec3 tang = normalize(uAxis + uBend * (2.0 * t * uCurv));
   vec3 view = normalize(P - uCamLocal);
   vec3 side = normalize(cross(tang, view));
-  float w = mix(uW0, uW1, pow(t, 0.8));
+  float w = mix(uW0, uW1, pow(t, 0.65));
   P += side * aTS.y * w;
   vTS = aTS;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(P, 1.0);
@@ -75,16 +75,17 @@ void main(){
   float t = vTS.x, s = vTS.y;
   float I;
   if (uKind < 0.5){
-    // ion tail: narrow, streamers, disconnection knots
-    float str = rv_fbm(vec3(s * 5.0, t * 3.0 - uTime * 0.05, uSeed), 4) * 0.5 + 0.5;
-    float core = exp(-s * s * 10.0);
-    float rays = pow(str, 2.0) * exp(-s * s * 2.5);
-    I = (core * 0.7 + rays * 0.9) * pow(1.0 - t, 1.3) * smoothstep(0.0, 0.03, t);
+    // ion tail: narrow, straight, streamers and knots drifting outward
+    float str = rv_fbm(vec3(s * 3.5, t * 2.5 - uTime * 0.04, uSeed), 4) * 0.5 + 0.5;
+    float core = exp(-s * s * 14.0);
+    float rays = pow(str, 2.5) * exp(-s * s * 3.0);
+    I = (core * 0.55 + rays * 0.8) * pow(1.0 - t, 0.9) * smoothstep(0.0, 0.02, t);
   } else {
-    // dust tail: broad, smooth fan with striae
-    float stri = 0.8 + 0.2 * sin(s * 9.0 + t * 14.0 + uSeed) * sin(s * 3.1 - t * 5.0);
-    float prof = exp(-pow(s - 0.25 * t, 2.0) * 3.0);
-    I = prof * stri * pow(1.0 - t, 1.8) * smoothstep(0.0, 0.04, t);
+    // dust tail: broad curved fan, brightest on the leading (sunward-curving) edge, fine striae
+    float stri = 0.85 + 0.15 * sin(s * 11.0 + t * 17.0 + uSeed) * sin(s * 3.7 - t * 6.0);
+    float edge = exp(-pow(s + 0.55, 2.0) * 5.0) * 0.6;
+    float prof = exp(-s * s * 2.2) * 0.6 + edge;
+    I = prof * stri * pow(1.0 - t, 1.4) * smoothstep(0.0, 0.03, t);
   }
   gl_FragColor = vec4(uCol * I * uI, 1.0);
 }`;
@@ -146,7 +147,7 @@ export class SmallBodies {
       const mat = new THREE.ShaderMaterial({
         uniforms: {
           uMu: { value: sys.mu }, uTime: this.uTime, uQInv: this.uQInv, uBodyPos: this.uBodyPos, uCamLocal: this.uCamLocal,
-          uSunIll: this.uSunIll, uCol: { value: col }, uPixAng: this.uPixAng, uPR: this.uPR, uBoost: { value: 3.0 * (b.density ?? 1) },
+          uSunIll: this.uSunIll, uCol: { value: col }, uPixAng: this.uPixAng, uPR: this.uPR, uBoost: { value: 1.2 * (b.density ?? 1) },
         },
         vertexShader: BELT_VERT, fragmentShader: BELT_FRAG,
         depthTest: true, depthWrite: false, transparent: true, blending: THREE.AdditiveBlending,
@@ -227,7 +228,7 @@ export class SmallBodies {
       // dust tail curves back along the orbit (trailing the motion)
       const bend = k.dust.u.uBend.value.copy(vdir).multiplyScalar(-1).addScaledVector(axis, -_v.dot(axis) * -1).normalize();
       k.dust.u.uAxis.value.copy(axis);
-      const len = Math.min(r * 0.4, 7e7) * Math.sqrt(act);
+      const len = 1.2e7 * Math.sqrt(act);
       const dist = Math.max(k.head.distanceTo(ctx.camLocal), 1);
       const angSize = len / dist;
       const vis = angSize > 0.002 ? 1 : 0;
@@ -236,8 +237,8 @@ export class SmallBodies {
         tl.u.uHead.value.copy(k.head);
         tl.u.uLen.value = tl === k.ion ? len * 1.25 : len * 0.8;
         tl.u.uW0.value = Math.max(len * 0.004, 2000);
-        tl.u.uW1.value = len * (tl === k.ion ? 0.035 : 0.12);
-        tl.u.uI.value = (tl === k.ion ? 0.22 : 0.3) * bright;
+        tl.u.uW1.value = len * (tl === k.ion ? 0.035 : 0.13);
+        tl.u.uI.value = (tl === k.ion ? 0.55 : 0.45) * bright;
         tl.mesh.visible = !!vis;
       }
       k.coma.position.copy(k.head);

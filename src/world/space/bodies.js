@@ -134,7 +134,7 @@ export class Bodies {
           uDeep: { value: L.deep }, uShallow: { value: L.shallow }, uSand: { value: L.sand }, uGrass: { value: L.grass }, uGrass2: { value: L.grass2 },
           uRock: { value: L.rock }, uSnow: { value: L.snow }, uVeg: { value: L.veg }, uAccent: { value: L.accent },
           uVegAmt: { value: L.vegAmt }, uIce: { value: L.ice }, uCraters: { value: L.craters }, uLava: { value: L.lava }, uCrystal: { value: L.crystal }, uDesert: { value: L.desert },
-          uCloudCov: { value: L.cloudCov }, uCloudStreak: { value: L.cloudStreak }, uCloudSoft: { value: L.cloudSoft }, uStorm: { value: L.storm }, uCloudCol: { value: L.cloudCol },
+          uCloudCov: { value: L.cloudCov }, uCloudStreak: { value: L.cloudStreak }, uCloudSoft: { value: L.cloudSoft }, uStorm: { value: L.storm }, uCloudCol: { value: L.cloudCol }, uCyclone: { value: L.cyclones },
           uCity: { value: L.city }, uCityCol: { value: L.cityCol }, uCityCol2: { value: L.cityCol2 },
           uAtmo: { value: L.atmo }, uAtmoCol: { value: L.atmoCol },
         });
@@ -144,26 +144,32 @@ export class Bodies {
       mat.userData.noCSM = true;
       e.mat = mat;
       e.mesh = new THREE.Mesh(this.sphereGeo, mat);
-      e.mesh.scale.setScalar(b.radius);
+      // the current body as a gas giant has no ground: its visible "surface" is the cloud-top deck, drawn
+      // just above the air shell so the rocky-planet cloud/aerial passes of the atmosphere track don't
+      // cover the bands (unless that track declares it renders gas giants itself)
+      e.visR = b.radius;
+      if (isCurrent && b.isGas && !this.world.atmosphere?.gasGiantSurface) e.visR = b.radius + (b.atmosphere?.height || 0) * 1.02 + b.radius * 0.002;
+      U.uRadius.value = e.visR;
+      e.mesh.scale.setScalar(e.visR);
       e.mesh.frustumCulled = false;
       e.mesh.userData.noCSM = true;
       e.mesh.name = 'space-surface-' + b.id;
       e.spin.add(e.mesh);
       // ---- atmosphere limb shell (not for the current body: the atmosphere track owns that)
       const atm = b.atmosphere;
-      if (!isCurrent && atm?.present) {
+      if ((!isCurrent || e.visR > b.radius) && atm?.present) {
         const top = b.isGas ? 1.035 : 1.045;
         const tint = new THREE.Color(b.isGas ? (e.look.haze ? new THREE.Color(e.look.haze.x, e.look.haze.y, e.look.haze.z) : 0xa0c8ff) : (b.art?.palette?.sky || '#7ab8ff'));
         const m = Math.max(tint.r, tint.g, tint.b, 1e-3);
         const hScale = 0.28;
         const H = (top - 1) * hScale;
         const dens = THREE.MathUtils.clamp(atm.density ?? 1, 0.1, 2);
-        const tauV = (b.isGas ? 0.12 : 0.22) * dens;
+        const tauV = (b.isGas ? 0.1 : 0.13) * dens;
         // scattering colour = art sky tint with a physical blue bias
         const br = new THREE.Vector3(tint.r / m * 0.55 + 0.08, tint.g / m * 0.75 + 0.1, tint.b / m + 0.12).multiplyScalar(tauV / H);
         e.shellU = {
           uSunDir: U.uSunDir, uSunIll: U.uSunIll, uCenter: U.uCenter, uRadius: U.uRadius, uOcc: U.uOcc, uOccN: U.uOccN, uSunAng: U.uSunAng,
-          uTop: { value: top }, uBetaR: { value: br }, uBetaM: { value: (0.02 + (atm.haze ?? 0) * 0.06 + (b.isGas ? 0.03 : 0)) * dens / H },
+          uTop: { value: top }, uBetaR: { value: br }, uBetaM: { value: (0.008 + (atm.haze ?? 0) * 0.04 + (b.isGas ? 0.02 : 0)) * dens / H },
           uMieG: { value: atm.mieG ?? 0.76 }, uHScale: { value: hScale },
         };
         const sm = new THREE.ShaderMaterial({
@@ -175,7 +181,7 @@ export class Bodies {
         sm.userData.noCSM = true;
         e.shellMat = sm;
         e.shell = new THREE.Mesh(this.shellGeo, sm);
-        e.shell.scale.setScalar(b.radius * top);
+        e.shell.scale.setScalar(e.visR * top);
         e.shell.frustumCulled = false;
         e.shell.renderOrder = 2;
         e.shell.name = 'space-atmo-' + b.id;
@@ -226,9 +232,15 @@ export class Bodies {
     let nd = 0;
     const pixAng = ctx.pixAng;
     // positions first (occluders need them)
+    const focus = w.params?.spacefocus;
     for (const e of this.entries) {
       if (e.isCurrent) e.local.set(0, 0, 0);
       else cel.bodyLocal(e.b, e.local);
+      // debug/inspection: ?spacefocus=<bodyId>&focusdist=3 puts that body in front of the camera
+      if (focus && e.b.id === focus && !e.isCurrent) {
+        w.camera.getWorldDirection(_v2);
+        e.local.copy(camLocal).addScaledVector(_v2, e.b.radius * (+w.params.focusdist || 3));
+      }
       e.scene.copy(e.local).sub(origin);
     }
     for (const e of this.entries) {

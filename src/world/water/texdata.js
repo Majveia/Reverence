@@ -125,14 +125,15 @@ export function waveData(seed, N = 256) {
 }
 
 /** Worley F1/F2 on a periodic grid of `cells`² jittered points. */
-function worleyTile(rng, N, cells) {
+function worleyTile(rng, N, cells, warpX = null, warpY = null, warpAmp = 0) {
   const pts = new Float32Array(cells * cells * 2);
   for (let i = 0; i < cells * cells; i++) { pts[i * 2] = rng.next(); pts[i * 2 + 1] = rng.next(); }
   const F1 = new Float32Array(N * N), F2 = new Float32Array(N * N);
   const cs = N / cells;
   for (let y = 0; y < N; y++) {
     for (let x = 0; x < N; x++) {
-      const gx = x / cs, gy = y / cs;
+      let gx = x / cs, gy = y / cs;
+      if (warpX) { gx += warpX[y * N + x] * warpAmp; gy += warpY[y * N + x] * warpAmp; }
       const cx = Math.floor(gx), cy = Math.floor(gy);
       let d1 = 1e9, d2 = 1e9;
       for (let oy = -1; oy <= 1; oy++) {
@@ -195,17 +196,24 @@ export function foamData(seed, N = 256) {
   // caustics from a smaller-scale spectrum so the pattern is fine-grained
   const f = oceanSpectrumField(seed + 17, 128, 8, 3.2, 1.0, { dirPow: 0, damp: 8 / 128 * 2.5 });
   const cR = causticTile(f, N, 0.060), cG = causticTile(f, N, 0.066), cB = causticTile(f, N, 0.072);
-  const w1 = worleyTile(rng, N, 12), w2 = worleyTile(rng, N, 28);
+  // organic foam: domain-warped Worley borders at two scales + a density field that fills cells with bubbles
+  const wx = oceanSpectrumField(seed + 3, N, 8, 2.4, 1.0, { dirPow: 0, damp: (8 / N) * 7 }).h;
+  const wy = oceanSpectrumField(seed + 4, N, 8, 2.4, 1.0, { dirPow: 0, damp: (8 / N) * 7 }).h;
+  const dn = oceanSpectrumField(seed + 5, N, 8, 3.0, 1.0, { dirPow: 0, damp: (8 / N) * 5 }).h;
+  const w1 = worleyTile(rng, N, 10, wx, wy, 0.22), w2 = worleyTile(rng, N, 26, wy, wx, 0.35), w3 = worleyTile(rng, N, 52);
   const out = new Uint8Array(N * N * 4);
+  const cc = (x) => Math.pow(Math.max(0, x - 0.35) / 3.2, 0.8);
   for (let i = 0; i < N * N; i++) {
     // caustic contrast curve: brightest filaments → 1, average light → ~0.25
-    const cc = (x) => Math.pow(Math.max(0, x - 0.35) / 3.2, 0.8);
     out[i * 4] = c8(cc(cR[i]));
     out[i * 4 + 1] = c8(cc(cG[i]));
     out[i * 4 + 2] = c8(cc(cB[i]));
-    // foam webs: thin bright borders between big cells + finer bubble cells
-    const e1 = w1.F2[i] - w1.F1[i], e2 = w2.F2[i] - w2.F1[i];
-    const web = Math.max(0, 1 - e1 / 0.22) ** 1.6 * 0.75 + Math.max(0, 1 - e2 / 0.3) ** 2 * 0.45 + (1 - Math.min(1, w2.F1[i] * 2.2)) * 0.12;
+    const dens = Math.min(1, Math.max(0, (dn[i] + 0.4) / 1.6));
+    const e1 = w1.F2[i] - w1.F1[i], e2 = w2.F2[i] - w2.F1[i], e3 = w3.F2[i] - w3.F1[i];
+    const b1 = Math.max(0, 1 - e1 / (0.12 + 0.2 * dens)) ** 1.5;
+    const b2 = Math.max(0, 1 - e2 / (0.18 + 0.25 * dens)) ** 1.8;
+    const bub = Math.max(0, 1 - w3.F1[i] * 2.4) * Math.min(1, e3 * 6);   // small round bubbles
+    const web = b1 * 0.7 + b2 * 0.5 * (0.4 + 0.6 * dens) + bub * 0.35 * dens + dens * dens * 0.25;
     out[i * 4 + 3] = c8(Math.min(1, web));
   }
   return out;

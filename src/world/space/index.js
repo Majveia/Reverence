@@ -121,6 +121,8 @@ class Space {
   aim(ref, fromLocal = this.ctx.camLocal) {
     const e = this.bodies.find((x) => x.b.id === ref || x.b.id.endsWith('-' + ref) || x.b.name === ref);
     let target = ref === 'sun' ? _v2.copy(this.world.celestial.sunDir).multiplyScalar(1e12) : e ? e.local : null;
+    const cm = /^comet(\d+)$/.exec(ref);
+    if (cm && this.small?.comets[+cm[1]]) target = this.small.comets[+cm[1]].head;
     if (ref === 'galcenter' && this.sky) {
       const p = this.world.star.position;
       target = _v2.set(-p.x, -p.y, -p.z).normalize().applyMatrix3(this.sky.uG2L.value).multiplyScalar(1e12);
@@ -133,6 +135,22 @@ class Space {
     const pitch = Math.asin(THREE.MathUtils.clamp(d.dot(up), -1, 1)) * 180 / Math.PI;
     const yaw = Math.atan2(d.dot(east), d.dot(north)) * 180 / Math.PI;
     return { yaw: +yaw.toFixed(1), pitch: +pitch.toFixed(1) };
+  }
+
+  /** Capture helper (view=orbit): put the orbit camera so the star sits `deg` degrees from the planet
+   *  centre, behind it (deg < planet angular radius → eclipse / backlit rim; a bit more → sun at the limb).
+   *  Usage in shoot steps: {"eval":"__rv.world.space.orbitSunShot(21, 10)"}, then {"advance":0.5}. */
+  orbitSunShot(deg = 21, rollDeg = 0) {
+    const o = this.world.player?.cam?.orbit;
+    if (!o) return false;
+    const s = this.world.celestial.sunDir;
+    const axis = new THREE.Vector3(0, 1, 0).cross(s);
+    if (axis.lengthSq() < 1e-6) axis.set(1, 0, 0);
+    axis.normalize().applyAxisAngle(s, rollDeg * Math.PI / 180);
+    const c = s.clone().negate().applyAxisAngle(axis, deg * Math.PI / 180);
+    o.yaw = Math.atan2(c.x, c.z);
+    o.pitch = Math.asin(THREE.MathUtils.clamp(c.y, -1, 1));
+    return true;
   }
 
   isReady() { return this.sky ? this.sky.isReady() : true; }
