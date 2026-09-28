@@ -18,6 +18,7 @@ import { G } from '../../core/Uniforms.js';
 export const DETAIL_PERIOD = 4096;
 
 const VERT_PARS = /* glsl */`
+uniform vec3 uRvCam;   // main camera (scene space) — also used by the shadow pass so casters morph identically
 attribute vec4 aMorph;
 attribute vec3 aMorphN;
 attribute vec4 aMat;
@@ -30,7 +31,7 @@ varying vec4 vRvMat2;
 
 const VERT_NORMAL = /* glsl */`
 vec4 rvW0 = modelMatrix * vec4( position, 1.0 );
-float rvK = smoothstep( 0.66, 0.93, distance( rvW0.xyz, cameraPosition ) / aMorph.w );
+float rvK = smoothstep( 0.66, 0.93, distance( rvW0.xyz, uRvCam ) / aMorph.w );
 vec3 objectNormal = normalize( mix( normal, aMorphN, rvK ) );
 vRvN = objectNormal;
 vRvMat = aMat;
@@ -53,6 +54,7 @@ uniform vec4 uRvP;   // radius, seaLevel, amp, detail quality (0..1)
 uniform vec4 uRvS;   // strata, snow bias, volcanic glow, crystal sheen
 uniform vec4 uRvS2;  // lushness, forest darkening, global wetness, global snow
 uniform float uRvTime;
+uniform float uRvDebug;
 varying vec3 vRvW;
 varying vec3 vRvN;
 varying vec4 vRvMat;
@@ -106,14 +108,16 @@ void rvTerrain( inout vec3 albedo ) {
 
   // ---- macro noise (periodic, up-projected): 512 m and 64 m
   vec4 mA = vec4( 0.0 ), mC = vec4( 0.0 );
+  // up-projection on flat ground, geometric triplanar on steep faces (no vertical stretching on cliffs)
+  vec3 wm = mix( wu, wg, smoothstep( 0.12, 0.35, slope ) );
   for ( int a = 0; a < 3; a++ ) {
-    float wa = rvWa( a, wu );
+    float wa = rvWa( a, wm );
     if ( wa <= 0.0 ) continue;
     vec2 uv = rvAx( a, C ), gx = rvAx( a, dCx ), gy = rvAx( a, dCy );
     mA += wa * textureGrad( uRvDetail, vec3( uv * ( 1.0 / 512.0 ), 5.0 ), gx * ( 1.0 / 512.0 ), gy * ( 1.0 / 512.0 ) );
-    mC += wa * textureGrad( uRvDetail, vec3( uv * ( 1.0 / 64.0 ), 5.0 ), gx * ( 1.0 / 64.0 ), gy * ( 1.0 / 64.0 ) );
+    if ( dist < 2500.0 ) mC += wa * textureGrad( uRvDetail, vec3( uv * ( 1.0 / 64.0 ), 5.0 ), gx * ( 1.0 / 64.0 ), gy * ( 1.0 / 64.0 ) );
   }
-  { float ws = dot( step( vec3( 0.06 ), wu ), wu ); mA /= ws; mC /= ws; }
+  { float ws = dot( step( vec3( 0.06 ), wm ), wm ); mA /= ws; mC = dist < 2500.0 ? mC / ws : vec4( 0.5 ); }
   float n1 = mA.r - 0.5, n2 = mA.g - 0.5, n3 = mA.b - 0.5, n4 = mC.a - 0.5;
   float kS = mA.a;
 
@@ -127,7 +131,7 @@ void rvTerrain( inout vec3 albedo ) {
   float hs = alt - sea;
   float rockS = smoothstep( 0.13 + 0.07 * n2 + 0.05 * n4, 0.29 + 0.07 * n2, slope );
   float wRock = clamp( max( rockS, rockA * 0.95 ), 0.0, 1.0 );
-  float dryness = smoothstep( 0.42, 0.12, moist + 0.18 * n1 );
+  float dryness = smoothstep( 0.3, 0.08, moist + 0.12 * n1 ) * ( 1.0 - 0.6 * uRvS2.x );
   float wSand = clamp( max( sandA, dryness * 0.9 ) * ( 1.0 - rockS ), 0.0, 1.0 );
   float coldness = smoothstep( 0.12, -0.08, temp + 0.10 * n2 + 0.05 * n4 );
   float snowPot = clamp( coldness + glac * 0.7 + uRvS.y + uRvS2.w, 0.0, 1.0 );
@@ -162,7 +166,7 @@ void rvTerrain( inout vec3 albedo ) {
     }
     float iw = 1.0 / ws;
     accM *= iw; accA *= iw; accN *= iw;
-    gradT += ( gM * iw * fFar * 1.1 + gA * iw * fMid * 0.8 + gN * iw * fNear * 0.45 ) * wRock;
+    gradT += ( gM * iw * fFar * 1.1 + gA * iw * fMid * 1.0 + gN * iw * fNear * 0.6 ) * wRock;
     hRock = mix( 0.5, accM.b, fFar );
     hRock = mix( hRock, hRock * 0.4 + accA.b * 0.6, fMid );
     hRock = mix( hRock, hRock * 0.7 + accN.b * 0.3, fNear );
@@ -202,7 +206,7 @@ void rvTerrain( inout vec3 albedo ) {
   float streak = 0.5;
   if ( rockS > 0.05 && fFar > 0.0 ) {
     float hx = ( wg.x > wg.z ? C.z : C.x );
-    vec2 uvS = vec2( hx / 24.0, alt / 400.0 );
+    vec2 uvS = vec2( hx / 16.0, alt / 160.0 );
     streak = mix( 0.5, textureGrad( uRvDetail, vec3( uvS, 5.0 ), dFdx( uvS ), dFdy( uvS ) ).g, fFar );
     // ledge: a small step at each band boundary, facing up
     float ledge = smoothstep( 0.0, 0.08, bf ) * ( 1.0 - smoothstep( 0.08, 0.3, bf ) );
@@ -215,8 +219,8 @@ void rvTerrain( inout vec3 albedo ) {
   float ndu = dot( rvN, up );
 
   // ---- final blend weights (snow on up-facing micro facets, rock peeks through)
-  float bRock = rvHB( wRock, hRock, 0.12 );
-  float bSand = rvHB( wSand, 1.0 - hGround, 0.18 );
+  float bRock = rvHB( wRock, 0.6 * hRock + 0.4 * mC.g, 0.12 );
+  float bSand = rvHB( wSand, 0.35 * ( 1.0 - hGround ) + 0.65 * mC.r, 0.2 );
   float snowFacing = smoothstep( 0.52 + 0.12 * n1, 0.82, ndu + 0.12 * ( hSnow - 0.5 ) + 0.25 * clamp( curv, 0.0, 1.0 ) );
   float bSnow = smoothstep( 0.3, 0.7, snowPot * snowFacing + ( hSnow - 0.5 ) * 0.15 );
 
@@ -241,7 +245,7 @@ void rvTerrain( inout vec3 albedo ) {
   rockC = mix( rockC, uRvSand * 0.8, smoothstep( 0.8, 0.97, bh ) * 0.35 * uRvS.x * uRvS.x );
   rockC = mix( rockC, rockBase * 0.55, smoothstep( 0.35, 0.65, mC.g + 0.3 * n2 ) * 0.35 );
   rockC *= 0.55 + 0.9 * aRock;
-  rockC *= mix( 1.0, 0.72 + 0.56 * streak, rockS );
+  rockC *= mix( 1.0, 0.86 + 0.28 * streak, rockS );
   rockC *= 0.88 + 0.24 * mA.g;
   // lichen / moss on moderately steep, moist rock
   rockC = mix( rockC, grassC * 0.75, ( 1.0 - rockS ) * smoothstep( 0.4, 0.8, moist ) * 0.45 * uRvS2.x );
@@ -273,8 +277,8 @@ void rvTerrain( inout vec3 albedo ) {
   float cav = clamp( curv, 0.0, 1.0 );
   float hD = mix( mix( hGround, hSand, bSand ), hRock, bRock );
   hD = mix( hD, hSnow, bSnow * 0.7 );
-  rvAO = clamp( ( 1.0 - 0.5 * cav ) * mix( 0.55, 1.05, hD ), 0.25, 1.0 );
-  col *= mix( 1.0, 0.74 + 0.4 * hD, bRock ) * ( 1.0 - 0.18 * cav * ( 1.0 - bSnow ) );
+  rvAO = clamp( ( 1.0 - 0.5 * cav ) * mix( mix( 0.55, 0.38, bRock ), 1.08, hD ), 0.2, 1.0 );
+  col *= mix( 1.0, 0.62 + 0.6 * hD, bRock ) * ( 1.0 - 0.18 * cav * ( 1.0 - bSnow ) );
   col *= 1.0 + 0.12 * clamp( -curv, 0.0, 1.0 );
 
   // ---- emissive extras
@@ -292,6 +296,7 @@ void rvTerrain( inout vec3 albedo ) {
   }
   rvRough = clamp( rough, 0.05, 1.0 );
   albedo = clamp( col, 0.0, 1.0 );
+  if ( uRvDebug > 0.5 ) albedo = uRvDebug < 1.5 ? vec3( bRock, ( 1.0 - bRock ) * ( 1.0 - bSand ) * ( 1.0 - bSnow ), bSand ) + bSnow : vec3( rockA, sandA, wetA );
 }
 `;
 
@@ -341,7 +346,9 @@ export function createTerrainMaterial(body, quality) {
     uRvOriginMod: { value: new THREE.Vector3() },
     uRvPlanetCenter: G.uPlanetCenter,
     uRvSun: G.uSunDir,
+    uRvCam: G.uCameraPos,
     uRvTime: G.uTime,
+    uRvDebug: { value: (() => { try { return +(new URLSearchParams(globalThis.location?.search || '').get('tdebug') || 0); } catch (_) { return 0; } })() },
     uRvGrass: { value: grass }, uRvGrass2: { value: grass2 }, uRvRock: { value: rock }, uRvRock2: { value: rock2 },
     uRvSand: { value: sand }, uRvSnow: { value: col(p.snow, '#f4f6fa') }, uRvForest: { value: forest },
     uRvSoil: { value: soil }, uRvAccent: { value: accent }, uRvDry: { value: dry }, uRvSeabed: { value: seabed },
@@ -353,6 +360,7 @@ export function createTerrainMaterial(body, quality) {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.0 });
   mat.name = 'rv-terrain';
   mat.userData.rvTerrain = true;
+  try { if (new URLSearchParams(globalThis.location?.search || '').get('tnoatmo')) mat.userData.noCSM = true; } catch (_) { /* */ }
   mat.userData.uniforms = uniforms;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -373,8 +381,24 @@ export function createTerrainMaterial(body, quality) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v7';
+  mat.customProgramCacheKey = () => 'rv-terrain-v10';
   return mat;
+}
+
+/** Shadow-pass material with the same geomorph as the visible surface (no self-shadow streaks). */
+export function createTerrainDepthMaterial() {
+  const m = new THREE.MeshDepthMaterial();
+  m.name = 'rv-terrain-depth';
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uRvCam = G.uCameraPos;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uRvCam;\nattribute vec4 aMorph;')
+      .replace('#include <begin_vertex>', `vec4 rvW0 = modelMatrix * vec4( position, 1.0 );
+float rvK = smoothstep( 0.66, 0.93, distance( rvW0.xyz, uRvCam ) / aMorph.w );
+vec3 transformed = position + aMorph.xyz * rvK;`);
+  };
+  m.customProgramCacheKey = () => 'rv-terrain-depth-v1';
+  return m;
 }
 
 /** Keep the periodic detail anchor in sync with the floating origin (float64 on the CPU). */

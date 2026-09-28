@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { surfaceConfig } from '../planet/SurfaceGen.js';
 import { buildChunk, buildIndices, cubeDir } from './chunkBuild.js';
 import { bakeDetail, DETAIL_SIZE, DETAIL_LAYERS } from './detailTex.js';
-import { createTerrainMaterial, updateOriginMod } from './material.js';
+import { createTerrainMaterial, createTerrainDepthMaterial, updateOriginMod } from './material.js';
 
 const RES = 64;
 const _dir = new Float64Array(3), _dir2 = new Float64Array(3);
@@ -53,6 +53,7 @@ class Terrain {
     this.group.name = 'terrain';
     world.root.add(this.group);
     this.material = createTerrainMaterial(world.body, q);
+    this.depthMaterial = createTerrainDepthMaterial();
     this.index = new THREE.BufferAttribute(buildIndices(RES), 1);
     // CDLOD range factor from a screen-space error target: a chunk quad should cover ~ppq pixels
     // at the closest distance it is drawn (D = K · side). Fixed per world (baked into morph data).
@@ -313,6 +314,7 @@ class Terrain {
     g.boundingBox = new THREE.Box3(new THREE.Vector3(-m.radius, -m.radius, -m.radius), new THREE.Vector3(m.radius, m.radius, m.radius));
     const mesh = new THREE.Mesh(g, this.material);
     mesh.name = 'terrain-chunk';
+    mesh.customDepthMaterial = this.depthMaterial;
     mesh.position.set(m.center[0], m.center[1], m.center[2]);
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
@@ -352,8 +354,10 @@ class Terrain {
           count++;
           n.used = f;
           // only chunks that are both near and small enough cast into the (<= ~1 km) sun cascades
-          const cast = this.q.shadows !== false && n.closest < (n.inView ? this.shadowDist : this.shadowDist * 0.25) && n.side < this.shadowDist * 0.75;
+          const cast = this.q.shadows !== false && n.closest < (n.inView ? this.shadowDist * 0.6 : this.shadowDist * 0.2) && n.side < this.shadowDist * 0.75;
           n.mesh.castShadow = cast;
+          // chunks beyond the last cascade skip the (expensive) shadow lookups entirely
+          n.mesh.receiveShadow = n.closest < this.shadowDist * 1.15;
           if (cast) casters++;
         }
       }
@@ -404,6 +408,7 @@ class Terrain {
     const walk = (n) => { if (n.mesh) { n.mesh.geometry.dispose(); n.mesh = null; } n.dead = true; if (n.children) n.children.forEach(walk); };
     this.roots.forEach(walk);
     this.material.dispose();
+    this.depthMaterial.dispose();
     this.detailTex?.dispose();
     this.group.removeFromParent();
   }

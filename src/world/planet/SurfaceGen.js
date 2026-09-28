@@ -70,8 +70,8 @@ function computeStyle(cfg) {
   const st = {
     warp: 0.26 + r() * 0.12,
     mountains: 1, mtnHeight: 0.8 + 0.3 * ms, mtnWl: A * (3.6 + r() * 1.4) / Math.sqrt(ms),
-    mtnGain: 0.5, mtnDamp: 0.5, rangeLo: 0.26 + r() * 0.1, rangeHi: 0.92, massifs: 0.5,
-    erosion: 1, gullyWl: 0, gullyAmp: 0.08,
+    mtnGain: 0.47, mtnDamp: 0.6, rangeLo: 0.26 + r() * 0.1, rangeHi: 0.92, massifs: 0.5,
+    erosion: 1, gullyWl: 0, gullyAmp: 0.07,
     hills: 1, hillAmp: 0.02, hillWl: 1600 + r() * 900, uplands: 1,
     rough: 0.6 + cfg.roughness, outcrops: 0.6,
     beach: 0.75, beachH: 5 + r() * 4, cliffs: 0.15,
@@ -278,7 +278,11 @@ export class SurfaceGen {
       const k = -2 * r1 * v / av;
       let rx = k * d[0], ry = k * d[1], rz = k * d[2];
       const rd = rx * x + ry * y + rz * z; rx -= rd * x; ry -= rd * y; rz -= rd * z;
-      ax += rx * a; ay += ry * a; az += rz * a;
+      // damping follows the slope of the underlying (smooth) noise, NOT of the ridged value: the ridge
+      // derivative flips across every crest, which made the damping jump and grew needle walls there
+      let nx = d[0], ny = d[1], nz = d[2];
+      const nd = nx * x + ny * y + nz * z; nx -= nd * x; ny -= nd * y; nz -= nd * z;
+      ax += nx * a * 0.5; ay += ny * a * 0.5; az += nz * a * 0.5;
       dm = 1 / (1 + damp * (ax * ax + ay * ay + az * az));
       const s = a * wgt * dm * lw;
       sum += s * r + a * wgt * dm * (1 - lw) * 0.499;
@@ -317,7 +321,9 @@ export class SurfaceGen {
         }
       }
     }
-    const inv = 1 / (wt + 1e-3);
+    // generous regularizer: where few kernels overlap the value fades out smoothly instead of
+    // snapping from cos() to 0 over a few metres (that snap made needle walls on steep faces)
+    const inv = 1 / (wt + 0.08);
     out[0] = gs * inv * TAU;
     return va * inv;
   }
@@ -329,13 +335,21 @@ export class SurfaceGen {
    */
   _gullies(x, y, z, lod, Gx, Gy, Gz, strength) {
     const st = this.st, R = this.R, e = this._e;
-    const SLOPE = 2.6, BRANCH = 2.2;
+    const SLOPE = 1.8, BRANCH = 0.5;
     let wl = st.gullyWl, a = st.gullyAmp * wl * strength;
     let h = 0, ex = 0, ey = 0, ez = 0;
+    const gMag = Math.hypot(Gx, Gy, Gz);
     for (let o = 0; o < 5; o++) {
       const lw = lodW(wl * 0.33, lod);
       if (lw <= 0) break;
-      const sx = Gx + ex * BRANCH, sy = Gy + ey * BRANCH, sz = Gz + ez * BRANCH;
+      // branching is scaled by the base slope: at ridge crests (G → 0, direction flipping) the
+      // accumulated octave derivatives must not steer the stripes, or they turn chaotic
+      const bk = BRANCH * Math.min(1, gMag / 0.35);
+      let sx = Gx + ex * bk, sy = Gy + ey * bk, sz = Gz + ez * bk;
+      // clamp the slope magnitude: stripe frequency must stay ~1-3 per cell or steep faces alias
+      // into needles (the filter only needs the downhill DIRECTION + a soft strength)
+      const sl = Math.hypot(sx, sy, sz);
+      if (sl > 1.1) { const k = 1.1 / sl; sx *= k; sy *= k; sz *= k; }
       // perpendicular to the slope within the tangent plane: up × S
       const dx = (y * sz - z * sy) * SLOPE, dy = (z * sx - x * sz) * SLOPE, dz = (x * sy - y * sx) * SLOPE;
       const f = R / wl;

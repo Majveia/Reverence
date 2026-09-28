@@ -45,10 +45,13 @@ uniform sampler2D tPsiS;   // ψ1 sub-mesh .xyz
 uniform sampler2D tX;      // residual position (COLA)
 uniform sampler2D tP;      // residual momentum (COLA)  .w = potential at particle
 uniform float uD1, uD2, uDS, uG;
+// IC textures that are not uploaded yet (or not needed, M = N) are 1×1 placeholders: never fetch them
+vec3 cwS(ivec2 tc) { return uDS != 0.0 ? texelFetch(tPsiS, tc, 0).xyz : vec3(0.0); }
+vec4 cwB(ivec2 tc) { return uD2 != 0.0 ? texelFetch(tPsiB, tc, 0) : vec4(0.0); }
 vec3 cwPosition(ivec2 tc, ivec3 L, out vec4 A, out vec4 B) {
   A = texelFetch(tPsiA, tc, 0);
-  B = texelFetch(tPsiB, tc, 0);
-  vec3 S = texelFetch(tPsiS, tc, 0).xyz;
+  B = cwB(tc);
+  vec3 S = cwS(tc);
   vec4 X = texelFetch(tX, tc, 0);
   vec4 P = texelFetch(tP, tc, 0);
   return cwQ(L) + uD1 * A.xyz + uD2 * B.xyz + uDS * S + X.xyz - uG * P.xyz;
@@ -96,7 +99,7 @@ void main() {
   ivec3 Ls = ivec3(s % uM, (s / uM) % uM, s / (uM * uM));
   ivec3 L = Ls * uStride;
   ivec2 tc = cwAtlas(L);
-  vec3 x = cwQ(L) + uD1 * texelFetch(tPsiA, tc, 0).xyz + uD2 * texelFetch(tPsiB, tc, 0).xyz + uDS * texelFetch(tPsiS, tc, 0).xyz + texelFetch(tX, tc, 0).xyz;
+  vec3 x = cwQ(L) + uD1 * texelFetch(tPsiA, tc, 0).xyz + uD2 * cwB(tc).xyz + uDS * cwS(tc) + texelFetch(tX, tc, 0).xyz;
   x = fract(x);
   vec3 g = x * float(uM) - 0.5;
   vec3 i0 = floor(g); vec3 f = g - i0;
@@ -246,8 +249,8 @@ void main() {
   ivec2 tc = ivec2(gl_FragCoord.xy);
   ivec3 L = cwLatticeFromTexel(tc);
   vec4 A = texelFetch(tPsiA, tc, 0);
-  vec4 B = texelFetch(tPsiB, tc, 0);
-  vec3 S = texelFetch(tPsiS, tc, 0).xyz;
+  vec4 B = cwB(tc);
+  vec3 S = cwS(tc);
   vec4 X = texelFetch(tX, tc, 0);
   vec4 Pm = texelFetch(tP, tc, 0);
   vec3 x = fract(cwQ(L) + uD1 * A.xyz + uD2 * B.xyz + uDS * S + X.xyz);

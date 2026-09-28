@@ -24,7 +24,7 @@ import { CosmicSim, atlasTiles } from './sim.js';
 import { CosmicRenderer } from './render.js';
 import { clusterNames } from './names.js';
 
-const BOX = 256;            // Mpc/h
+let BOX = 256;              // Mpc/h (192 on the 64³ lattice: keeps ~3 Mpc/h resolution on phones)
 const A_START = 1 / 50;     // z = 49
 const T_OPEN = 32;          // s, opening sequence length (z = 49 → 0)
 const A_PM0 = 0.05;         // COLA starts at z = 19 (2LPT is exact enough before)
@@ -92,10 +92,11 @@ export default class CosmicMode extends Mode {
     // 128³ lattice ≈ 400 MB of float textures: desktop only; phones and 'low' run 64³ (≈ 50 MB)
     const N = num('n') ?? (tier === 'low' || q.mobile ? 64 : 128);
     const M = num('mesh') ?? N;             // PM mesh = particle lattice (COLA needs force resolution ≥ lattice)
-    const K = num('k') ?? (N === 64 ? (tier === 'low' ? 2 : 3) : tier === 'med' ? 2 : tier === 'ultra' ? 4 : 3);
+    BOX = N === 64 ? 192 : 256;
+    const K = num('k') ?? (N === 64 ? 3 : tier === 'med' ? 2 : tier === 'ultra' ? 4 : 3);
     this.cfg = {
       N, M, K, drawCount: N * N * N,
-      h0: (BOX / N) * 0.8,
+      h0: (BOX / N) * (N === 64 ? 0.62 : 0.8),
       maxPx: tier === 'low' ? 12 : tier === 'med' ? 20 : tier === 'ultra' ? 40 : 32,
       accumScale: tier === 'low' ? 0.6 : 1,
       galaxyMax: tier === 'low' ? 9000 : tier === 'med' ? 18000 : tier === 'ultra' ? 48000 : 30000,
@@ -112,11 +113,11 @@ export default class CosmicMode extends Mode {
     // look tuning (URL overrides are for art-direction iteration)
     const cu0 = this.view.compMat.uniforms, au0 = this.view.accMat.uniforms;
     this.sigma0 = cu0.uSigma0.value = num('s0') ?? cu0.uSigma0.value;
-    this.toe = num('toe') ?? cu0.uToe.value;
+    this.toe = num('toe') ?? (N === 64 ? 0.45 : cu0.uToe.value);
     this.bright = num('bright') ?? cu0.uBright.value;
     cu0.uGain.value = num('gain') ?? cu0.uGain.value;
     cu0.uHeatGain.value = num('heat') ?? cu0.uHeatGain.value;
-    this.view.U.uFog.value = num('fog') ?? this.view.U.uFog.value;
+    this.fog = this.view.U.uFog.value = num('fog') ?? this.view.U.uFog.value;
     au0.uH0.value *= num('h0') ?? 1;
     const ru0 = this.view.resolveMat.uniforms;
     ru0.uHeatLo.value = num('hlo') ?? ru0.uHeatLo.value; ru0.uHeatHi.value = num('hhi') ?? ru0.uHeatHi.value;
@@ -129,7 +130,7 @@ export default class CosmicMode extends Mode {
     this.camera.fov = 55; this.camera.near = 0.01; this.camera.far = 2000; this.camera.updateProjectionMatrix();
     this.rigCam = new THREE.PerspectiveCamera(55, e.aspect, 0.01, 2000);
     const r0 = new OrbitRig(this.rigCam, {
-      distance: num('dist') ?? 140, minDistance: 1.5, maxDistance: 420,
+      distance: num('dist') ?? 140 * BOX / 256, minDistance: 1.5, maxDistance: 420,
       yaw: (num('yaw') ?? 38) * DEG, pitch: (num('pitch') ?? 16) * DEG, idleDrift: 0.012, smooth: 4, panSpeed: 0.6,
     });
     this.rig = r0;
@@ -255,7 +256,7 @@ export default class CosmicMode extends Mode {
     if (this.focusGalaxy !== undefined && this.gal?.count) {
       const gi = this.galGather?.[Math.min(this.galGather.length - 1, Math.max(0, Math.floor(this.focusGalaxy)))] ?? 0;
       this._lptPos(this.gal.host[gi], p);
-      this.rig.distance = this.rig._dist = Math.min(this.rig.distance, 10);
+      if (this.engine.params.raw?.get?.('dist') == null) this.rig.distance = this.rig._dist = 12;
     } else if (cl?.count) this._lptPos(cl.center[Math.min(cl.count - 1, this.focusCluster)], p);
     p.multiplyScalar(BOX);
     this.rig.target.copy(p); this.rig._target.copy(p);
@@ -350,7 +351,7 @@ export default class CosmicMode extends Mode {
 
     // ---- render uniforms
     const U = this.view.U, s = this.sim;
-    U.uD1.value = D1(a); U.uD2.value = D2(a); U.uDS.value = subGrowth(a);
+    U.uD1.value = D1(a); U.uD2.value = s.hasB ? D2(a) : 0; U.uDS.value = s.hasS ? subGrowth(a) : 0;
     U.uG.value = s.aState !== null && a < s.aState ? Math.max(0, driftTo(a, s.aState)) : 0;
     U.uTime.value += dt;
     const nf = (s.field.a[0] !== null) + (s.field.a[1] !== null);
@@ -373,12 +374,14 @@ export default class CosmicMode extends Mode {
     this.view.accMat.uniforms.uCoc.value = this.cocK * (this.view.accH / 720);
     // early universe: the fog glows faintly warm until the first structures form
     const cu = this.view.compMat.uniforms;
-    cu.uDawn.value = 0.35 * smooth(0.07, 0.025, a);
+    cu.uDawn.value = 0.6 * smooth(0.07, 0.025, a);
+    U.uFog.value = this.fog * (0.45 + 0.55 * smooth(0.1, 0.5, U.uD1.value));
     // exposure follows structure growth: the young, nearly uniform fog is lifted out of the toe, the
     // mature web gets a deep black point so voids read as true OLED black
     const g = smooth(0.08, 0.55, U.uD1.value);
-    cu.uToe.value = this.toe * g;
-    cu.uBright.value = this.bright * (0.5 + 0.5 * g);
+    const young = Math.min(1, Math.max(0, 1 - U.uD1.value));
+    cu.uToe.value = this.toe * g * (1 - 0.45 * young);
+    cu.uBright.value = this.bright * (0.7 + 0.3 * g) * (1 + 1.1 * young);
     cu.uSigma0.value = this.sigma0 * (0.8 + 0.2 * g);
     U.uSeedD.value = 0.6 * (1 - g);
     U.uSeedMix.value = 1 - smooth(0.1, 0.35, U.uD1.value);
@@ -450,8 +453,8 @@ export default class CosmicMode extends Mode {
     const ptr = input.pointer;
     const px = (ptr.nx * 0.5 + 0.5) * e.width, py = (-ptr.ny * 0.5 + 0.5) * e.height;
     const tanH = Math.tan(this.camera.fov * DEG / 2), pxs = e.height / (2 * tanH);
-    const sc = { x: 0, y: 0, d: 0 };
-    const wp = new THREE.Vector3();
+    const sc = this._sc ||= { x: 0, y: 0, d: 0 };
+    const wp = this._wp ||= new THREE.Vector3();
     let best = null;
     const canHover = ptr.onCanvas || ptr.clicked;
     if (canHover && !this.pending && this.clusterPos) {

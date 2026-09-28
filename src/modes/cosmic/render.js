@@ -15,6 +15,7 @@
 // infinite universe and float precision never degrades however far the player drifts.
 import * as THREE from 'three';
 import * as S from './shaders.js';
+const _cc = new THREE.Color();
 
 const ADD = { blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor, transparent: true, depthTest: false, depthWrite: false };
 
@@ -98,6 +99,7 @@ uniform sampler2D tPos;   // resolved positions (xyz) + density (w)
 uniform sampler2D tAux;   // heat, speed
 uniform float uH0;        // base smoothing length, Mpc/h (mean interparticle spacing scale)
 uniform float uMaxPx;
+uniform float uMass;      // particle mass relative to the reference 2 Mpc/h lattice
 uniform float uFog;       // attenuation length, Mpc/h
 uniform float uFocus;     // focus distance for the depth-of-field look, Mpc/h
 uniform float uCoc;       // circle of confusion strength, px
@@ -131,17 +133,23 @@ void main() {
   gl_Position = projectionMatrix * v;
   // adaptive (SPH-like) smoothing: h ∝ ρ^(-1/3)
   float h = uH0 * clamp(pow(rho, -0.3333), 0.14, 1.8) * pow(float(uK), -0.3333);
+  // close to the camera the lattice resolution shows: widen kernels so matter reads as smooth gas
+  h *= mix(1.7, 1.0, smoothstep(6.0, 40.0, d));
+  // the primordial fog is silky; the universe comes into focus as structure forms
+  h *= 1.0 + 1.3 * uSeedMix;
   float px = h * uPxScale / d;
   float coc = uCoc * abs(1.0 - uFocus / d);
   float px2 = sqrt(px * px + coc * coc);
   float sz = clamp(px2, 1.0, uMaxPx);
   gl_PointSize = sz;
   // per-pixel column density: flux (∝ px²/h²) spread over the sprite area (sz²)
-  float w = min(px * px, sz * sz) / (h * h * sz * sz) / float(uK);
+  float w = uMass * min(px * px, sz * sz) / (h * h * sz * sz) / float(uK);
   // fade: distance attenuation, the wrap sphere edge, and foreground matter in front of the focus
   w *= exp(-max(0.0, d - 0.75 * uFocus) / uFog) * smoothstep(uFade, uFade * 0.72, wv.w) * smoothstep(0.3, 3.0, d) * smoothstep(0.08, 0.4, d / uFocus);
   // voids are nearly empty in reality; tracer particles left there are dimmed further (OLED black)
   w *= mix(0.3, 1.0, smoothstep(0.12, 1.2, rho));
+  // opening: the primordial fog carries its seed ripples visibly (weight ∝ ρ_seed^1.5)
+  w *= mix(1.0, pow(max(rho, 0.05), 1.5), uSeedMix);
   // colour channel: mass-weighted local density (Springel-style), 0 at ρ = 0.3 … 1 at ρ ≈ 3000
   float hue = clamp((log2(rho) + 1.7) / 13.2, 0.0, 1.0);
   float heat = texelFetch(tAux, tc, 0).x;
@@ -183,7 +191,7 @@ varying vec2 vUv;
 // t low (voids, sheets): ink → blue-violet;  t mid (filaments): violet → magenta;
 // t high (halos, shock-heated cluster gas): ember → orange → white-gold.
 vec3 hueRamp(float t) {
-  vec3 c = mix(vec3(0.16, 0.20, 0.95), vec3(0.42, 0.22, 1.00), smoothstep(0.10, 0.30, t));
+  vec3 c = mix(vec3(0.24, 0.20, 0.95), vec3(0.46, 0.24, 1.00), smoothstep(0.10, 0.30, t));
   c = mix(c, vec3(0.95, 0.28, 0.85), smoothstep(0.28, 0.48, t));
   c = mix(c, vec3(1.00, 0.36, 0.22), smoothstep(0.46, 0.62, t));
   c = mix(c, vec3(1.00, 0.72, 0.36), smoothstep(0.60, 0.78, t));
@@ -196,6 +204,13 @@ void main() {
   // tiny 5-tap reconstruction softens single-pixel sprite aliasing without blurring filaments
   vec4 n = tap(vec2(1.0, 0.0)) + tap(vec2(-1.0, 0.0)) + tap(vec2(0.0, 1.0)) + tap(vec2(0.0, -1.0));
   a = a * 0.6 + n * 0.1;
+  // density-adaptive smoothing: sparse regions (sheets, void tracers, close-ups) are resolved with a
+  // wider kernel, dense filaments and nodes stay pin sharp — like an adaptive-kernel SPH projection
+  vec4 wide = tap(vec2(2.5, 1.0)) + tap(vec2(-1.0, 2.5)) + tap(vec2(-2.5, -1.0)) + tap(vec2(1.0, -2.5))
+            + tap(vec2(4.5, -2.0)) + tap(vec2(2.0, 4.5)) + tap(vec2(-4.5, 2.0)) + tap(vec2(-2.0, -4.5));
+  wide = wide * 0.1 + a * 0.2;
+  float la = log2(1.0 + max(a.r, 0.0) / uSigma0);
+  a = mix(wide, a, smoothstep(uToe + 0.8, uToe + 3.2, la));
   float S = max(a.r, 0.0);
   float l = log2(1.0 + S / uSigma0) * uGain;
   float t = clamp(a.g / max(S, 1e-6), 0.0, 1.0);
@@ -209,7 +224,7 @@ void main() {
   float hb = uStream * smoothstep(0.0, 0.5, heat) * smoothstep(uToe - 0.5, uToe + 2.5, l) * uBright * exp2(0.92 * l + 0.6);
   col = mix(col, hot * max(b, hb), smoothstep(0.02, 0.55, heat) * 0.85);
   // cosmic dawn: before the first stars the whole fog glows a faint ember
-  col = mix(col, vec3(0.60, 0.26, 0.10) * smoothstep(0.2, 3.0, l) * (0.35 + 0.1 * l), uDawn);
+  col *= mix(vec3(1.0), vec3(1.9, 0.95, 0.55), uDawn);
   col += (rv_ign(gl_FragCoord.xy) - 0.5) * 0.0025;
   gl_FragColor = vec4(max(col, 0.0), 1.0);
 }
@@ -247,7 +262,10 @@ void main() {
   // physical size: ~15-45 kpc discs, bigger for giants
   float rPhys = (0.012 + 0.03 * sqrt(aG.y)) * (aG.w > 2.5 ? 1.8 : 1.0);
   float pxPhys = rPhys * uPxScale / d;
-  float sz = clamp(max(2.5 + 2.2 * sqrt(I), pxPhys * 2.6), 2.5, uMaxPx);
+  float szp = 2.5 + 2.2 * sqrt(min(I, 6.0));
+  float sz = clamp(max(szp, pxPhys * 2.6), 2.5, uMaxPx);
+  // resolved galaxies spread their light over their disc (surface brightness is conserved)
+  I = min(I, 6.0) * min(1.0, (szp * szp) / (sz * sz) * 3.0);
   gl_PointSize = sz;
   vSize = pxPhys / sz;
   // colour: red-sequence gold in clusters, blue cloud in the field, bluer still when young
@@ -373,6 +391,9 @@ export class CosmicRenderer {
     this.sim = sim;
     this.opt = opt;
     const accType = sim.floatBlend ? THREE.FloatType : THREE.HalfFloatType;
+    let maxPt = 64;
+    try { const gl = this.r.getContext(); maxPt = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)?.[1] || 64; } catch (_) { /* keep default */ }
+    this.maxPoint = maxPt;
     this.accScale = opt.accumScale ?? 1;
     this.accum = new THREE.WebGLRenderTarget(4, 4, {
       type: accType, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false,
@@ -404,7 +425,7 @@ export class CosmicRenderer {
     this.accMat = new THREE.RawShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader: ACC_VERT, fragmentShader: ACC_FRAG, ...ADD,
       uniforms: {
-        ...U, uPxScale: { value: 500 }, uK: { value: opt.K }, uH0: { value: opt.h0 }, uMaxPx: { value: opt.maxPx },
+        ...U, uPxScale: { value: 500 }, uK: { value: opt.K }, uMass: { value: Math.pow(opt.L / sim.N / 2, 3) }, uH0: { value: opt.h0 }, uMaxPx: { value: Math.min(opt.maxPx, maxPt) },
         uFocus: { value: 80 }, uCoc: { value: 0 },
       },
     });
@@ -431,7 +452,7 @@ export class CosmicRenderer {
     this.galaxies = null;
     this.galMat = new THREE.RawShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader: GAL_VERT, fragmentShader: GAL_FRAG, ...ADD,
-      uniforms: { ...U, uPxScale: { value: 500 }, uFocus: { value: 80 }, uGalGain: { value: 1.0 }, uMaxPx: { value: 40 }, uHover: { value: -1 } },
+      uniforms: { ...U, uPxScale: { value: 500 }, uFocus: { value: 80 }, uGalGain: { value: 1.0 }, uMaxPx: { value: Math.min(160, maxPt) }, uHover: { value: -1 } },
     });
 
     // hover ring
@@ -494,7 +515,7 @@ export class CosmicRenderer {
   renderAccum(camera) {
     const r = this.r;
     const prev = r.getRenderTarget(), autoClear = r.autoClear;
-    const cc = r.getClearColor(new THREE.Color()), ca = r.getClearAlpha();
+    const cc = r.getClearColor(_cc), ca = r.getClearAlpha();
     try {
       r.autoClear = false;
       this.sim.quad.material = this.resolveMat;

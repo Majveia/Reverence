@@ -11,6 +11,7 @@
 // falls back to pure 2LPT trajectories (still physically grounded, just no nonlinear collapse).
 import * as THREE from 'three';
 import * as S from './shaders.js';
+const _cc0 = new THREE.Color(), _cc1 = new THREE.Color(), _cc2 = new THREE.Color();
 import { D1, D2, driftFactor, kickFactor } from './cosmology.js';
 
 const RAW = (vs, fs, uniforms, extra = {}) => new THREE.RawShaderMaterial({
@@ -122,13 +123,13 @@ export class CosmicSim {
 
   setIC({ psiA, psiB, psiS }) {
     if (psiA) this.U.tPsiA.value = psiA;
-    if (psiB) this.U.tPsiB.value = psiB;
-    if (psiS) this.U.tPsiS.value = psiS;
+    if (psiB) { this.U.tPsiB.value = psiB; this.hasB = true; }
+    if (psiS) { this.U.tPsiS.value = psiS; this.hasS = true; }
   }
 
   _clearAll() {
     const r = this.r, prev = r.getRenderTarget();
-    const cc = r.getClearColor(new THREE.Color()), ca = r.getClearAlpha();
+    const cc = r.getClearColor(_cc0), ca = r.getClearAlpha();
     r.setClearColor(0x000000, 0);
     for (const t of this.targets) { r.setRenderTarget(t); r.clear(true, false, false); }
     r.setClearColor(cc, ca); r.setRenderTarget(prev);
@@ -173,13 +174,13 @@ export class CosmicSim {
     const r = this.r;
     const prevRT = r.getRenderTarget();
     const autoClear = r.autoClear;
-    const cc = r.getClearColor(new THREE.Color()), ca = r.getClearAlpha();
+    const cc = r.getClearColor(_cc1), ca = r.getClearAlpha();
     r.autoClear = false;
     try {
       const aHalf = 0.5 * (aFrom + aTo);
       const aKick0 = this.aPrevHalf ?? aFrom;
       const su = this.SU;
-      su.uD1.value = D1(aFrom); su.uD2.value = D2(aFrom); su.uDS.value = this.dsOf(aFrom); su.uG.value = 0;
+      su.uD1.value = D1(aFrom); su.uD2.value = this.hasB ? D2(aFrom) : 0; su.uDS.value = this.hasS ? this.dsOf(aFrom) : 0; su.uG.value = 0;
       this.U.tX.value = this.X; this.U.tP.value = this.P;
 
       // 1. CIC deposit of the M³ source lattice
@@ -218,12 +219,12 @@ export class CosmicSim {
   renderField(a, standalone = true) {
     const r = this.r;
     const prevRT = r.getRenderTarget(), autoClear = r.autoClear;
-    const cc = r.getClearColor(new THREE.Color()), ca = r.getClearAlpha();
+    const cc = r.getClearColor(_cc2), ca = r.getClearAlpha();
     try {
       r.autoClear = false;
       const su = this.SU;
       if (standalone) {
-        su.uD1.value = D1(a); su.uD2.value = D2(a); su.uDS.value = this.dsOf(a); su.uG.value = 0;
+        su.uD1.value = D1(a); su.uD2.value = this.hasB ? D2(a) : 0; su.uDS.value = this.hasS ? this.dsOf(a) : 0; su.uG.value = 0;
         this.U.tX.value = this.X; this.U.tP.value = this.P;
       }
       r.setClearColor(0x000000, 0);
