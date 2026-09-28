@@ -373,6 +373,7 @@ export class AtmosphereModel {
       uTopFade: { value: new THREE.Vector2(this.topFade0, this.H) },
       uSunsetK: { value: this.sunsetK },
       uSkyGain: { value: this.skyGain },
+      uSkyViewGain: { value: 1 },
       uGroundAlbedo: { value: new THREE.Vector3(this.groundAlbedo.r, this.groundAlbedo.g, this.groundAlbedo.b) },
       uSunAngR: { value: 0.005 },
       uTransLUT: { value: null },

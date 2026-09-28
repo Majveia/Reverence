@@ -11,11 +11,13 @@
 //   surface.amp                      terrain amplitude (m)
 //   surface.biomeColor(biome, out)   THREE.Color (linear) from the art-direction palette
 //   surface.BIOMES / BIOMES export   biome ids
+//   surface.addFlatten({dir, radius, height, falloff}) → id   grade terrain flat (plazas, pads);
+//   surface.removeFlatten(id), surface.flats, surface.onFlattenChange(cb)
 //
 // The actual landform generator lives in SurfaceGen.js (THREE-free, worker-safe) — terrain
 // workers import it directly and produce bit-identical heights.
 import * as THREE from 'three';
-import { SurfaceGen, BIOMES, BIOME_NAMES, LOD_MIN, surfaceConfig } from './SurfaceGen.js';
+import { SurfaceGen, BIOMES, BIOME_NAMES, LOD_MIN, surfaceConfig, registerLiveSurface } from './SurfaceGen.js';
 
 export { BIOMES, BIOME_NAMES, LOD_MIN, surfaceConfig };
 
@@ -29,6 +31,7 @@ export class PlanetSurface extends SurfaceGen {
     this.body = body;
     this.BIOMES = BIOMES;
     this._colCache = new Map();
+    registerLiveSurface(body, this);
   }
 
   /** Geometric surface normal at a direction (finite differences over `eps` meters). */

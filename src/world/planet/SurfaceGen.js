@@ -37,6 +37,11 @@ function rng(seed) {
   return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
 }
 
+// live surfaces per body (so surfaceConfig(body) can include runtime flatten stamps for workers
+// created after civ graded its plazas)
+const LIVE = new WeakMap();
+export function registerLiveSurface(body, surface) { try { LIVE.set(body, surface); } catch (_) { /* non-object */ } }
+
 /** Plain, structured-cloneable config (what workers receive). */
 export function surfaceConfig(body) {
   const T = body.terrain || {};
@@ -57,6 +62,7 @@ export function surfaceConfig(body) {
     art: body.art?.key || 'default',
     palette: { ...pal, flora: [...(pal.flora || [])] },
     life: body.life?.flora ?? 0,
+    flats: (LIVE.get(body)?.flats || []).map((f) => ({ ...f })),
   };
 }
 
@@ -194,7 +200,51 @@ export class SurfaceGen {
     this._calibrate();
     this.maxHeight = this.A * 1.25 + (this.st.spires ? this.st.spireH : 0) + (this.st.karst ? this.st.karstH : 0);
     this.minHeight = -this.A * 0.62;
+    this.flats = [];
+    this._flatId = 1;
+    this._flatListeners = [];
+    if (cfg.flats?.length) this.setFlattens(cfg.flats);
   }
+
+  // ------------------------------------------------------------------ flatten stamps (civ plazas, pads)
+  /**
+   * Grade the terrain toward a constant height inside a disc (plazas, building pads, landing pads).
+   * { dir: unit vector (Vector3 or [x,y,z]), radius (m, fully flat), height (m rel. radius; default:
+   * current height at dir), falloff (m, smooth blend ring; default 0.6·radius) } → id.
+   * Physics (height/sample) updates immediately; the terrain rebuilds the affected chunks.
+   */
+  addFlatten(o) {
+    if (!o || !o.dir) return 0;
+    const d = Array.isArray(o.dir) ? o.dir : [o.dir.x, o.dir.y, o.dir.z];
+    const l = Math.hypot(d[0], d[1], d[2]) || 1;
+    const x = d[0] / l, y = d[1] / l, z = d[2] / l;
+    const radius = Math.max(0.5, +o.radius || 10);
+    const falloff = Math.max(0.5, o.falloff !== undefined ? +o.falloff : radius * 0.6);
+    const height = Number.isFinite(+o.height) && o.height !== null && o.height !== undefined ? +o.height : this._eval(x, y, z, LOD_MIN, null);
+    const f = { id: this._flatId++, x, y, z, radius, falloff, height };
+    this._prepFlat(f);
+    this.flats.push(f);
+    this._flatChanged(f);
+    return f.id;
+  }
+  removeFlatten(id) {
+    const i = this.flats.findIndex((f) => f.id === id);
+    if (i < 0) return false;
+    const [f] = this.flats.splice(i, 1);
+    this._flatChanged(f);
+    return true;
+  }
+  /** Replace all stamps (workers receive them this way). */
+  setFlattens(list) {
+    this.flats = (list || []).map((f) => { const g = { ...f }; this._prepFlat(g); return g; });
+    this._flatId = this.flats.reduce((m, f) => Math.max(m, f.id || 0), 0) + 1;
+  }
+  /** cb(stamp) whenever a stamp is added/removed (terrain rebuilds chunks, other workers resync). */
+  onFlattenChange(cb) { this._flatListeners.push(cb); return () => { this._flatListeners = this._flatListeners.filter((c) => c !== cb); }; }
+  _prepFlat(f) {
+    f.cosOuter = Math.cos(Math.min(Math.PI, (f.radius + f.falloff) / this.R));
+  }
+  _flatChanged(f) { for (const cb of this._flatListeners) { try { cb(f, this.flats); } catch (_) { /* listener errors never break physics */ } } }
 
   // ------------------------------------------------------------------ continents
   _warp(x, y, z, out) {
@@ -469,7 +519,29 @@ export class SurfaceGen {
    * Full evaluation. lod = finest wavelength to synthesize (m). info (optional) receives
    * { c, land, mtn, rock, sand, river, lake, snow, cliff, dune, strata } material hints (0..1).
    */
+  /** Height (m) at unit direction with octaves finer than `lod` removed; fills `info` hints. */
   evaluate(x, y, z, lod = LOD_MIN, info = null) {
+    const h = this._eval(x, y, z, lod, info);
+    const F = this.flats;
+    if (!F.length) return h;
+    let out = h, k = 0;
+    for (let i = 0; i < F.length; i++) {
+      const f = F[i];
+      const c = x * f.x + y * f.y + z * f.z;
+      if (c <= f.cosOuter) continue;
+      const d = Math.acos(c < 1 ? c : 1) * this.R;
+      const t = d <= f.radius ? 1 : 1 - sstep(0, 1, (d - f.radius) / f.falloff);
+      out += (f.height - out) * t;
+      if (t > k) k = t;
+    }
+    if (info && k > 0) {
+      const kk = 1 - k;
+      info.rock *= kk; info.cliff *= kk; info.river *= kk; info.lake *= kk; info.dune *= kk; info.sand *= kk;
+    }
+    return out;
+  }
+
+  _eval(x, y, z, lod = LOD_MIN, info = null) {
     const st = this.st, R = this.R, A = this.A, g = this._g;
     this._warp(x, y, z, g);
     const px = g[0], py = g[1], pz = g[2];
@@ -877,7 +949,9 @@ export class SurfaceGen {
         const lw = lodW(wl, lod);
         if (lw <= 0) break;
         const v = nH.n3(qx, qy, qz);
-        const big = wl > 200 ? rr * (o === 0 ? 1.4 : 1.1) : 1;
+        // crags & buttresses: the big octaves are much stronger on rock (cliff faces get real
+        // plan-view relief — chutes, ribs, buttresses — instead of reading as smooth clay walls)
+        const big = wl > 200 ? rr * (o === 0 ? 2.4 : 2.0) : wl > 120 ? 1 + 0.6 * rr : wl > 60 ? 1 + 0.25 * rr : 1;
         // rock gets sharper (ridged, zero-mean) micro relief, soil stays rounded
         sum += a * lw * big * (v + ((0.342 - (v < 0 ? -v : v)) * 1.6 - v) * rr);
         a *= 0.49; wl *= ILAC;

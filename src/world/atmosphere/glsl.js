@@ -39,6 +39,7 @@ uniform vec3  uOzoneAbs;        // ozone absorption at peak (1/m)
 uniform float uOzoneCenter;     // ozone layer center altitude (m)
 uniform float uOzoneInvHalfW;   // 1 / ozone half width
 uniform float uSkyGain;         // art gain on in-scattered light (sky brighter than sunlit ground, as in games)
+uniform float uSkyViewGain;     // extra gain for the sky dome seen from inside the atmosphere (sky-view LUT)
 uniform vec2  uTopFade;
 uniform float uSunsetK;         // sun-path reddening power for low suns (see atmo_sunTransmittance)         // density fades to 0 between x and y (altitude, m)
 uniform vec3  uGroundAlbedo;
@@ -241,7 +242,7 @@ vec3 atmo_skyLUT(vec3 dir, vec3 up, float viewR, vec3 sunDir, float nu){
   vec3 Lr = texture(uSkyR, uv).rgb;
   vec3 Lm = texture(uSkyM, uv).rgb;
   vec3 Lms = texture(uSkyMS, uv).rgb;
-  return (Lr * atmo_phaseRayleigh(nu) + Lm * atmo_phaseMie(nu, uMieG) + Lms) * uSkyGain;
+  return (Lr * atmo_phaseRayleigh(nu) + Lm * atmo_phaseMie(nu, uMieG) + Lms) * uSkyGain * uSkyViewGain;
 }
 #endif
 `);

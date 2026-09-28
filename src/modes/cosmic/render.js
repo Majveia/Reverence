@@ -106,6 +106,7 @@ uniform float uFocus;     // focus distance for the depth-of-field look, Mpc/h
 uniform float uCoc;       // circle of confusion strength, px
 uniform float uSpacing;   // lattice spacing (mean particle spacing at ρ = 1), Mpc/h
 uniform float uSph;       // kernel diameter / sample spacing once the lattice is resolved on screen
+uniform float uDpr;       // accumulation px per CSS px
 uniform float uKt;        // 1: sheet tracers hand their mass back to the particle in close-ups (fill rate)
 out vec3 vW;
 out vec2 vK;              // sprite half-size / kernel radius (px), 1 / kernel radius (px)
@@ -147,7 +148,7 @@ void main() {
   // must overlap like a proper SPH projection (diameter ≈ 2.6 spacings), or the gas breaks into discs
   float kc = pow(float(uK), 0.3333);
   float sp = uSpacing * clamp(rq, 0.1, 2.5) / kc;
-  float spPx = sp * uPxScale / d;
+  float spPx = sp * uPxScale / (d * uDpr);           // CSS px: the same look on 1× and 3× screens
   // (only collapsed matter — filaments, halos: void and sheet tracers stay fine dust, their haze comes
   // from the composite's sparse-region kernel and never lifts above black)
   // (kernels about one spacing wide are the worst of both worlds — Poisson blotches — so the switch from
@@ -481,7 +482,7 @@ export class CosmicRenderer {
       glslVersion: THREE.GLSL3, vertexShader: ACC_VERT, fragmentShader: ACC_FRAG, ...ADD,
       uniforms: {
         ...U, uPxScale: { value: 500 }, uK: { value: opt.K }, uMass: { value: Math.pow(opt.L / sim.N / 2, 3) }, uH0: { value: opt.h0 }, uMaxPx: { value: Math.min(opt.maxPx, maxPt) },
-        uFocus: { value: 80 }, uCoc: { value: 0 }, uSpacing: { value: opt.L / sim.N }, uSph: { value: opt.sph ?? 2.6 }, uKt: { value: opt.kt ?? 1 },
+        uFocus: { value: 80 }, uCoc: { value: 0 }, uSpacing: { value: opt.L / sim.N }, uSph: { value: opt.sph ?? 2.6 }, uKt: { value: opt.kt ?? 1 }, uDpr: { value: 1 },
       },
     });
     const g = new THREE.BufferGeometry();

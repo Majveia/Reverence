@@ -9,6 +9,8 @@
 //   aMorphN   i8x4    surface normal of the parent level
 //   aMat      u8x4    rock/cliff · sand · temperature · moisture
 //   aMat2     u8x4    wet (river/lake) · glacier · curvature (0.5 flat, >0.5 concave) · mountain
+//   aUV       f32x3   local texture frame: cube-face u, v in metres (minus a per-chunk multiple of
+//                     DETAIL_PERIOD, float64 on the CPU → mm precision) and altitude (m)
 import { sstep } from '../planet/noise.js';
 
 export const FACES = [
@@ -64,6 +66,8 @@ export function buildIndices(RES) {
   return idx;
 }
 
+/** detail texture period (m) — must equal material.js DETAIL_PERIOD */
+export const UV_PERIOD = 4096;
 const q8 = (v) => { const x = Math.round(v * 127); return x < -127 ? -127 : x > 127 ? 127 : x; };
 const u8 = (v) => { const x = Math.round(v * 255); return x < 0 ? 0 : x > 255 ? 255 : x; };
 
@@ -136,6 +140,10 @@ export function buildChunk(gen, job) {
   const nrmP = new Int8Array(VN * 4);
   const mat = new Uint8Array(VN * 4);
   const mat2 = new Uint8Array(VN * 4);
+  const uvw = new Float32Array(VN * 3);
+  // cube-face coordinates in metres (arc length along the face's central great circles)
+  const UM = R * Math.PI / 4;
+  const baseU = Math.floor((u0 * UM) / UV_PERIOD) * UV_PERIOD, baseV = Math.floor((v0 * UM) / UV_PERIOD) * UV_PERIOD;
 
   const PX = (k) => D[k * 3] * (R + Hh[k]), PY = (k) => D[k * 3 + 1] * (R + Hh[k]), PZ = (k) => D[k * 3 + 2] * (R + Hh[k]);
   // parent positions & normals at the parent grid (interior NP x NP)
@@ -188,6 +196,9 @@ export function buildChunk(gen, job) {
       mx = PNx[pA] + PNx[pB]; my = PNy[pA] + PNy[pB]; mz = PNz[pA] + PNz[pB];
       l = 1 / (Math.hypot(mx, my, mz) || 1); mx *= l; my *= l; mz *= l;
     }
+    uvw[v * 3] = (u0 + i * step) * UM - baseU;
+    uvw[v * 3 + 1] = (v0 + j * step) * UM - baseV;
+    uvw[v * 3 + 2] = h;
     const mdx = tx - px, mdy = ty - py, mdz = tz - pz;
     morph[v * 4] = mdx; morph[v * 4 + 1] = mdy; morph[v * 4 + 2] = mdz; morph[v * 4 + 3] = Dp;
     const mm = mdx * mdx + mdy * mdy + mdz * mdz; if (mm > mmax) mmax = mm;
@@ -206,25 +217,31 @@ export function buildChunk(gen, job) {
     mat2[v * 4 + 2] = u8(0.5 + 0.5 * curv);
     mat2[v * 4 + 3] = u8(sstep(0, 1, infoArr[o + 5]));
   }
-  // ---- skirt ring: copies of the edge vertices pushed down along the local up
+  // ---- skirt ring: copies of the edge vertices. They keep the EDGE position (so shading, shadow
+  //      lookups, altitude tints are exactly those of the edge — a crack filled by a skirt is then
+  //      invisible instead of a dark shadowed line); the vertex shader lowers them along -up by the
+  //      length encoded (log2) in aMorphN.w, only for rasterization.
   const loop = edgeLoop(RES), E = loop.length / 2;
   const skirt = Math.max(1.5, spacing * 2.5) + Math.sqrt(mmax);
+  const skirtCode = Math.max(1, Math.min(127, Math.ceil(Math.log2(1 + skirt) / 16 * 127)));
   for (let e = 0; e < E; e++) {
     const i = loop[e * 2], j = loop[e * 2 + 1];
-    const src = j * N + i, v = N * N + e, k = (j + 1) * G + (i + 1);
-    pos[v * 3] = pos[src * 3] - D[k * 3] * skirt;
-    pos[v * 3 + 1] = pos[src * 3 + 1] - D[k * 3 + 1] * skirt;
-    pos[v * 3 + 2] = pos[src * 3 + 2] - D[k * 3 + 2] * skirt;
+    const src = j * N + i, v = N * N + e;
+    pos[v * 3] = pos[src * 3];
+    pos[v * 3 + 1] = pos[src * 3 + 1];
+    pos[v * 3 + 2] = pos[src * 3 + 2];
     for (let c = 0; c < 4; c++) {
       morph[v * 4 + c] = morph[src * 4 + c];
       nrm[v * 4 + c] = nrm[src * 4 + c]; nrmP[v * 4 + c] = nrmP[src * 4 + c];
       mat[v * 4 + c] = mat[src * 4 + c]; mat2[v * 4 + c] = mat2[src * 4 + c];
     }
+    nrmP[v * 4 + 3] = skirtCode;
+    uvw[v * 3] = uvw[src * 3]; uvw[v * 3 + 1] = uvw[src * 3 + 1]; uvw[v * 3 + 2] = uvw[src * 3 + 2];
   }
   const radius = Math.sqrt(r2max) + Math.sqrt(mmax) + skirt;
-  return { center: [cx, cy, cz], radius, hMin, hMax, spacing, pos, morph, nrm, nrmP, mat, mat2 };
+  return { center: [cx, cy, cz], radius, hMin, hMax, spacing, pos, morph, nrm, nrmP, mat, mat2, uvw };
 }
 
 export function transferList(r) {
-  return [r.pos.buffer, r.morph.buffer, r.nrm.buffer, r.nrmP.buffer, r.mat.buffer, r.mat2.buffer];
+  return [r.pos.buffer, r.morph.buffer, r.nrm.buffer, r.nrmP.buffer, r.mat.buffer, r.mat2.buffer, r.uvw.buffer];
 }

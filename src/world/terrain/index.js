@@ -63,11 +63,12 @@ class Terrain {
     const eng = world.engine || {};
     const hPx = Math.max(360, (eng.height || 720) * (q.pixelRatio || 1));
     const fov = ((world.camera?.fov) || 60) * Math.PI / 180;
-    const ppq = { low: 14, med: 10, high: 7, ultra: 5 }[q.tier] ?? 7;
+    // (triangle budget, lead PERF request: ≈1.1–1.3 M terrain triangles at 1080p high)
+    const ppq = { low: 15, med: 11, high: 8.5, ultra: 6 }[q.tier] ?? 8.5;
     // (deterministic captures run on software GL: slightly coarser target so frames stay renderable)
     const shotMode = !!world.engine?.shot;
     const ppqEff = ppq * (shotMode ? 1.3 : 1);
-    this.K = Math.max(shotMode ? 1.05 : 1.3, Math.min(2.6, hPx / (fov * RES * ppqEff) * Math.sqrt(q.terrainDetail ?? 1)));
+    this.K = Math.max(shotMode ? 1.05 : 1.3, Math.min(2.2, hPx / (fov * RES * ppqEff) * Math.sqrt(q.terrainDetail ?? 1)));
     try { const tk = parseFloat(new URLSearchParams(globalThis.location?.search || '').get('tk')); if (tk > 0.9 && tk < 4) this.K = tk; } catch (_) { /* no url */ }
     const leaf = q.tier === 'low' ? 0.8 : q.tier === 'med' ? 0.5 : 0.35;   // metres between vertices at max depth
     this.maxLevel = Math.max(4, Math.ceil(Math.log2((this.R * Math.PI / 2) / (RES * leaf))));
@@ -94,6 +95,8 @@ class Terrain {
     this._cam = new THREE.Vector3();
     this._initWorkers();
     this._first = true;
+    // flatten stamps (civ plazas / pads): resync workers and rebuild the chunks they touch
+    this._offFlat = this.surface.onFlattenChange?.((f, all) => this._onFlatten(f, all));
     this.ms = 0; this.msMax = 0;
   }
 
@@ -126,6 +129,20 @@ class Terrain {
       this.workers = [];
     }
     if (!this.workers.length) this._setDetail(bakeDetail(DETAIL_SIZE), DETAIL_SIZE);
+  }
+
+  _onFlatten(f, all) {
+    const flats = (all || []).map((x) => ({ id: x.id, x: x.x, y: x.y, z: x.z, radius: x.radius, falloff: x.falloff, height: x.height }));
+    for (const w of this.workers) { try { w.postMessage({ type: 'flats', flats }); } catch (_) { /* */ } }
+    const ang = (f.radius + f.falloff) / this.R + 1e-4;
+    const walk = (n) => {
+      const c = Math.min(1, Math.max(-1, n.dx * f.x + n.dy * f.y + n.dz * f.z));
+      if (Math.acos(c) > n.ang * 1.05 + ang) return;
+      if (n.mesh) { n.stale = true; if (n.state === 2) n.state = 0; }
+      else if (n.state === 1) n.restale = true;          // in flight with the old stamps
+      if (n.children) for (let i = 0; i < 4; i++) walk(n.children[i]);
+    };
+    for (const r of this.roots) walk(r);
   }
 
   _onMessage(w, m) {
@@ -230,7 +247,7 @@ class Terrain {
   }
 
   _want(n) {
-    if (n.state !== 0 || n.mesh || (n.fail || 0) > 3) return;
+    if (n.state !== 0 || (n.mesh && !n.stale) || (n.fail || 0) > 3) return;
     // priority: in view first, coarse before fine, near before far
     n.prio = (n.inView ? 0 : 1e9) + n.level * 1e7 + n.closest;
     this.pending.push(n);
@@ -292,7 +309,7 @@ class Terrain {
         for (const x of this.workers) if (x.busy < w.busy) w = x;
         const n = pend[i++];
         const id = this.jobId++;
-        n.state = 1;
+        n.state = 1; n.restale = false;
         this.jobs.set(id, n);
         w.busy++; this.inflight++;
         w.postMessage({ type: 'build', id, job: this._job(n) });
@@ -326,6 +343,9 @@ class Terrain {
   }
 
   _makeMesh(n, m) {
+    if (n.mesh) { n.mesh.geometry.dispose(); this.group.remove(n.mesh); n.mesh = null; }
+    n.stale = false;
+    if (n.restale) { n.restale = false; n.stale = true; }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(m.pos, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(m.nrm, 4, true));
@@ -333,6 +353,7 @@ class Terrain {
     g.setAttribute('aMorphN', new THREE.BufferAttribute(m.nrmP, 4, true));
     g.setAttribute('aMat', new THREE.BufferAttribute(m.mat, 4, true));
     g.setAttribute('aMat2', new THREE.BufferAttribute(m.mat2, 4, true));
+    g.setAttribute('aUV', new THREE.BufferAttribute(m.uvw, 3));
     g.setIndex(this.index);
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), m.radius);
     g.boundingBox = new THREE.Box3(new THREE.Vector3(-m.radius, -m.radius, -m.radius), new THREE.Vector3(m.radius, m.radius, m.radius));
@@ -378,7 +399,8 @@ class Terrain {
           count++;
           n.used = f;
           // only chunks that are both near and small enough cast into the (<= ~1 km) sun cascades
-          const cast = this.q.shadows !== false && n.closest < (n.inView ? this.shadowDist * 0.6 : this.shadowDist * 0.2) && n.side < this.shadowDist * 0.75;
+          // (caster budget: ≲ 25–35 chunks ≈ 0.3 M triangles per cascade)
+          const cast = this.q.shadows !== false && n.closest < (n.inView ? this.shadowDist * 0.45 : this.shadowDist * 0.15) && n.side < this.shadowDist * 0.5;
           n.mesh.castShadow = cast;
           // chunks beyond the last cascade skip the (expensive) shadow lookups entirely
           n.mesh.receiveShadow = n.closest < this.receiveDist;
@@ -414,7 +436,7 @@ class Terrain {
   isReady() {
     if (!this.texReady || this.desired.length === 0) return false;
     if (this.uploads.length || this.changed || this.inflight) return false;
-    for (const n of this.desired) if (!n.mesh && (n.fail || 0) <= 3) return false;
+    for (const n of this.desired) if ((!n.mesh || n.stale) && (n.fail || 0) <= 3) return false;
     return true;
   }
 
@@ -429,6 +451,7 @@ class Terrain {
   dispose() {
     for (const w of this.workers) { try { w.terminate(); } catch (_) { /* */ } }
     this.workers = [];
+    try { this._offFlat?.(); } catch (_) { /* */ }
     const walk = (n) => { if (n.mesh) { n.mesh.geometry.dispose(); n.mesh = null; } n.dead = true; if (n.children) n.children.forEach(walk); };
     this.roots.forEach(walk);
     this.material.dispose();

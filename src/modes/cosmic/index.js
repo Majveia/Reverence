@@ -96,7 +96,8 @@ export default class CosmicMode extends Mode {
     const K = num('k') ?? (N === 64 ? 3 : tier === 'med' ? 2 : tier === 'ultra' ? 4 : 3);
     this.cfg = {
       N, M, K, drawCount: N * N * N,
-      h0: (BOX / N) * (N === 64 ? 0.62 : 0.8),
+      // 64³: kernels ~0.93 spacings (smaller ones fall into the Poisson-blotch regime on the coarse lattice)
+      h0: (BOX / N) * (N === 64 ? 0.93 : 0.8),
       // big sprites only occur for the few samples near the camera (close-ups): SPH overlap needs room
       maxPx: tier === 'low' ? 24 : tier === 'med' ? 48 : tier === 'ultra' ? 112 : 72,
       accumScale: tier === 'low' ? 0.75 : 1,
@@ -369,6 +370,7 @@ export default class CosmicMode extends Mode {
     U.uWrapC.value.set(c.x - Math.floor(c.x), c.y - Math.floor(c.y), c.z - Math.floor(c.z));
     const tanH = Math.tan(this.camera.fov * DEG / 2);
     this.view.accMat.uniforms.uPxScale.value = this.view.accH / (2 * tanH);
+    this.view.accMat.uniforms.uDpr.value = Math.max(0.5, this.view.accH / Math.max(1, e.height));
     this.view.galMat.uniforms.uPxScale.value = (this._ph || e.height) / (2 * tanH);
     const focus = Math.min(dC, 0.42 * BOX);
     this.view.accMat.uniforms.uFocus.value = focus;
@@ -422,13 +424,17 @@ export default class CosmicMode extends Mode {
       // today: ~40 % of the screen (the voids)
       const qb = this.qBlack ?? (0.06 + 0.18 * smooth(0.04, 0.3, d1) + 0.2 * smooth(0.3, 0.85, d1) + (this.cfg.N === 64 ? 0.05 : 0));
       toe = lq(qb) - 0.1 * (1 - smooth(0.04, 0.2, d1));
-      w = Math.min(1.9, Math.max(1.0, lq(0.999) - toe));
+      w = Math.min(1.9, Math.max(1.0 + 0.6 * (1 - smooth(0.05, 0.2, d1)), lq(0.999) - toe));   // soft fog edges
       // highlights: a knee above the brightest ~3 % of the screen, and a highlight exposure that keeps the
       // brightest 0.5 % near 2 (HDR) — a cluster core filling the view keeps its gradient under the bloom
       knee = Math.max(toe + w + 1.2, lq(0.97) + 0.5);
       // (hot cluster gas is drawn ~1.5× the base ramp)
       const l995 = lq(0.995), lk = Math.min(l995, knee) + Math.max(0, l995 - knee) * 0.35;
       expo = Math.min(1, Math.max(0.3, 1.0 / (cu.uBright.value * Math.pow(2, 0.92 * lk))));
+      // never let a bad readback (NaN/Inf) reach the shader: fall back to the schedule
+      if (!(Number.isFinite(toe) && Number.isFinite(w) && Number.isFinite(knee) && Number.isFinite(expo))) {
+        toe = this.toe * g * (1 - 0.45 * young); w = 1.9; knee = 99; expo = 1;
+      }
     }
     const lv = this.lev;
     if (!lv || (L && !this._levSnapped)) {

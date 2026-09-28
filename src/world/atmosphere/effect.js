@@ -10,6 +10,7 @@
 //     aurora curtains (weather.aurora)
 import * as THREE from 'three';
 import { fsMaterial, FSQuad } from './fs.js';
+import { Params } from '../../core/Params.js';
 
 const FRAG = /* glsl */ `
 #include <rv_common>
@@ -48,6 +49,7 @@ uniform vec3 uFogAmb;         // ambient radiance for the fog
 uniform vec3 uFogSun;         // sun illuminance at the camera
 uniform vec2 uFogWind;
 uniform float uPixAng;        // angular size of a pixel (rad)
+uniform float uGeoGain;       // in-scatter gain over geometry (the sky gain relaxes from altitude/space)
 varying vec2 vUv;
 
 // Fallback night sky (only when the space track is absent): hashed stars + faint galactic band.
@@ -179,7 +181,7 @@ void main(){
     // more steps for long paths (from altitude / space)
     float steps = clamp(uGeoSteps * (0.5 + len / 6000.0), 4.0, uGeoSteps * 2.0);
     AtmoInscatter a = atmo_marchS(ro, dir, t0, t1, uSunDir, steps, 0.5, uAPScale);
-    vec3 L = atmo_combine(a, nu) * uSunIll;
+    vec3 L = atmo_combine(a, nu) * uSunIll * uGeoGain;
     // moonlit / starlit air (tiny, keeps night silhouettes readable)
     float airT = 1.0 - dot(a.T, vec3(0.3333));
     L += (uNightSky * 0.5 + uMoonSky * atmo_phaseRayleigh(dot(dir, uMoonDir)) * 2.0) * airT;
@@ -252,7 +254,8 @@ void main(){
     bg *= T;
     float bl = rv_luma(bg);
     float sl = rv_luma(L);
-    float vis = clamp((bl - uStarVis * sl) / max(bl, 1e-6), 0.0, 1.0);
+    // daytime star hiding only for the far-plane background (planets / rings with real depth stay)
+    float vis = far ? clamp((bl - uStarVis * sl) / max(bl, 1e-6), 0.0, 1.0) : 1.0;
     outc = bg * vis + L;
     if (camR < uAtmoRt) outc = applyFog(outc, ro, dir, far ? 40000.0 : tHit, up, nu);
   }
@@ -296,7 +299,7 @@ export class AtmosphereEffect {
       uAuroraCol2: { value: new THREE.Vector3(0.9, 0.15, 0.55) },
       uTime: atmo.shared.uTime,
       uHasAtmo: { value: atmo.model.present ? 1 : 0 },
-      uDebug: { value: +(atmo.world.params?.atmoDebug ?? 0) },
+      uDebug: { value: +(Params.num?.('atmoDebug') ?? 0) },
       uAPScale: { value: atmo.model.apScale ?? 1 },
       uStarRot: { value: new THREE.Matrix3() },
       uFog: { value: new THREE.Vector4(0, 1, 0, 0) },
@@ -305,6 +308,7 @@ export class AtmosphereEffect {
       uFogSun: { value: new THREE.Vector3() },
       uFogWind: { value: new THREE.Vector2() },
       uPixAng: { value: 0.001 },
+      uGeoGain: { value: 1 },
       ...atmo.atmoUniforms,
     };
     this.mat = fsMaterial(FRAG, this.u);
@@ -323,6 +327,8 @@ export class AtmosphereEffect {
     const m = this.atmo.model;
     const h = (u.uCamPlanet.value.length() - m.Rb) / m.height;
     u.uAPScale.value = THREE.MathUtils.lerp(m.apScale ?? 1, 1, THREE.MathUtils.smoothstep(h, 0.3, 1.0));
+    // from high altitude / orbit the veil over land & oceans is physical (no art sky gain): deep blue oceans
+    u.uGeoGain.value = THREE.MathUtils.lerp(1, 1.15 / Math.max(m.skyGain, 1), THREE.MathUtils.smoothstep(h, 0.4, 1.4));
   }
 
   render(renderer, io) {

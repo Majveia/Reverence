@@ -300,6 +300,8 @@ export class Lighting {
   get csm() { return this.key.shadow; }
   get sun() { return this.key; }
   get envMap() { return this.envRT?.texture ?? null; }
+  /** Raw sky cube (planet-local directions, HDR, not prefiltered) — e.g. for water reflections. */
+  get skyCube() { return this.cubeRT.texture; }
 
   _moonCandidates() {
     const w = this.world, b = w.body, sys = w.system;
@@ -358,6 +360,21 @@ export class Lighting {
     if (model.present) model.skyIrradiance(Math.min(camR, model.Rt - 1), muS, sky, gr);
     else { sky[0] = sky[1] = sky[2] = 0; const g = model.groundAlbedo; const c = Math.max(muS, 0) / Math.PI; gr[0] = g.r * c; gr[1] = g.g * c; gr[2] = g.b * c; }
     for (let c = 0; c < 3; c++) { sky[c] *= E * [starCol.r, starCol.g, starCol.b][c]; gr[c] *= E * [starCol.r, starCol.g, starCol.b][c]; }
+    // overcast: the deck turns the blue sky dome into a grey, dimmer one; part of the blocked direct sun
+    // comes back as diffuse light through the clouds
+    const oc = weather?.overcast || 0;
+    this.overcast = oc;
+    if (oc > 0) {
+      const sl = sky[0] * 0.2126 + sky[1] * 0.7152 + sky[2] * 0.0722;
+      const blocked = Math.max(0, 1 - cloudDim) * Math.max(muS, 0) * 0.3;
+      const sc0 = [starCol.r * T[0] * E, starCol.g * T[1] * E, starCol.b * T[2] * E];
+      const neutral = [0.96, 0.99, 1.04];
+      for (let c = 0; c < 3; c++) {
+        const grey = sl * neutral[c] * 0.75 + sc0[c] * blocked;
+        sky[c] += (grey - sky[c]) * oc * 0.85;
+        gr[c] *= 1 - 0.45 * oc * (1 - cloudDim);
+      }
+    }
 
     // --- night: moon / starlight
     const moon = this._updateMoon(camLocal, up);
@@ -402,6 +419,15 @@ export class Lighting {
     this.envU.uGroundIrr.value.set(sky[0] / E, sky[1] / E, sky[2] / E).multiplyScalar(1);
     this.envU.uCamPlanet.value.copy(camLocal);
     this.envU.uNightAmb.value.set(nightAmb.r, nightAmb.g, nightAmb.b).multiplyScalar(0.55 / Math.PI);
+    // cloud deck seen from below (env map / reflections): shaded bases, silver toward the sun
+    const cl = this.atmo.clouds;
+    const cover = cl?.present ? THREE.MathUtils.clamp(cl.meanCover * 0.55 + (weather?.coverBoost || 0) * 0.9, 0, 0.95) : 0;
+    this.envU.uCloudCover.value = cover;
+    const skyL = (sky[0] * 0.2126 + sky[1] * 0.7152 + sky[2] * 0.0722) / Math.PI;
+    const shade = this.envU.uCloudShade.value, light = this.envU.uCloudLight.value;
+    const na = nightAmb, nk = 0.05 / Math.PI;
+    shade.set(skyL * 0.85 + na.r * nk, skyL * 0.88 + na.g * nk, skyL * 0.92 + na.b * nk).multiplyScalar(1 - 0.4 * oc);
+    light.set(this.sunColor.r, this.sunColor.g, this.sunColor.b).multiplyScalar(0.3 * (1 - 0.7 * oc) / Math.PI).add(shade);
 
     // periodic material auto-setup
     // (frame-based too: sim time is frozen while a capture streams in)
@@ -417,11 +443,13 @@ export class Lighting {
     const r = u.uCamPlanet.value.length();
     const dSun = 1 - (key.x * sd.x + key.y * sd.y + key.z * sd.z);
     const dR = Math.abs(r - key.w) / Math.max(1, this.world.body.radius * 0.01);
+    const dC = Math.abs(u.uCloudCover.value - (this._envCover ?? -1));
     this._envTimer += 1;
     const shot = this.world.engine.shot;
-    if (!force && !shot && dSun < 2e-5 && dR < 1 && this._envTimer < 90) return;
-    if (!force && shot && dSun < 1e-7 && dR < 0.05 && this.envRT) return;
+    if (!force && !shot && dSun < 2e-5 && dR < 1 && dC < 0.03 && this._envTimer < 90) return;
+    if (!force && shot && dSun < 1e-7 && dR < 0.05 && dC < 0.005 && this.envRT) return;
     key.set(sd.x, sd.y, sd.z, r);
+    this._envCover = u.uCloudCover.value;
     this._envTimer = 0;
     this.cubeCam.update(renderer, this.envScene);
     if (!this.envRT) this.envRT = this.pmrem.fromCubemap(this.cubeRT.texture);

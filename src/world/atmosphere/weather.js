@@ -114,7 +114,8 @@ export class Weather {
       wind: bw.wind ?? aw.wind ?? 0.3,
       aurora: bw.aurora ?? 0,
     };
-    if (body.clouds?.type === 'storm') this.base.storms = Math.max(this.base.storms, 0.5);
+    this.stormType = body.clouds?.type === 'storm' || (Params.str?.('clouds') || '') === 'storm';
+    if (this.stormType) this.base.storms = Math.max(this.base.storms, 0.5);
     this.cold = cold;
     this.present = atmo.model.present;
     this.override = (Params.str?.('weather') || '').toLowerCase();
@@ -167,12 +168,19 @@ export class Weather {
     bg.setIndex(idx);
     this.boltMat = new THREE.ShaderMaterial({
       vertexShader: /* glsl */`
-        attribute float aT; varying float vT; varying float vS;
-        void main(){ vT = aT; vS = float(gl_VertexID % 2) * 2.0 - 1.0; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        attribute float aT; varying float vT; varying float vS; varying float vViewZ;
+        void main(){ vT = aT; vS = float(gl_VertexID % 2) * 2.0 - 1.0; vec4 mv = modelViewMatrix * vec4(position, 1.0); vViewZ = -mv.z; gl_Position = projectionMatrix * mv; }`,
       fragmentShader: /* glsl */`
-        uniform float uI; varying float vT; varying float vS;
-        void main(){ float c = 1.0 - vS * vS; gl_FragColor = vec4(vec3(0.75, 0.82, 1.0) * uI * (c * c * 3.0 + 0.2), 1.0); }`,
-      uniforms: { uI: { value: 0 } },
+        #include <rv_common>
+        uniform float uI; uniform sampler2D tDepth; uniform vec2 uRes; uniform float uNear; uniform float uFar;
+        varying float vT; varying float vS; varying float vViewZ;
+        void main(){
+          // occluded by terrain / trees / buildings in front of it
+          float sceneZ = rv_viewZFromDepth(texture2D(tDepth, gl_FragCoord.xy / uRes).r, uNear, uFar);
+          if (vViewZ > sceneZ + 20.0) discard;
+          float c = 1.0 - vS * vS; gl_FragColor = vec4(vec3(0.75, 0.82, 1.0) * uI * (c * c * 3.0 + 0.2), 1.0);
+        }`,
+      uniforms: { uI: { value: 0 }, tDepth: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uNear: { value: 0.05 }, uFar: { value: 2e10 } },
       transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
     });
     this.bolt = new THREE.Mesh(bg, this.boltMat);
@@ -243,11 +251,13 @@ export class Weather {
     st.wind = clamp(this.base.wind * (0.75 + 0.5 * gust) + st.storm * 0.45 + st.dust * 0.35 + st.rain * 0.1, 0, 1);
     G.uWindStrength.value = this.present ? st.wind : 0;
 
-    // lightning
+    // lightning (deterministic from sim time, so captures of stormy worlds see strikes too)
     st.flash = 0;
-    if (st.storm > 0.3 && this.present) {
+    const stormy = Math.max(st.storm, this.stormType ? st.rain * 0.6 : 0);
+    if (this._firstT === undefined) { this._firstT = t; this._nextStrike = t + (shot ? 0.3 + this.seed * 0.12 : 2 + this.seed * 5); }
+    if (stormy > 0.25 && this.present) {
       if (this.forceBolt && shot && this._boltT < 0) this._strike(t, true);
-      else if (!shot && t > this._nextStrike) this._strike(t, false);
+      else if (!this.forceBolt && t > this._nextStrike) this._strike(t, false, stormy);
     }
     if (this._boltT >= 0) {
       const age = t - this._boltT;
@@ -258,15 +268,16 @@ export class Weather {
       this.bolt.visible = st.flash > 0.02;
       if (!this.forceBolt && age > 1.2) { this._boltT = -1; this.bolt.visible = false; }
     }
-    // environment flash (all PBR materials)
+    // environment flash (all PBR materials): striking at night, subtle under a daylit storm
     const scene = this.world.scene;
-    scene.environmentIntensity = 1 + st.flash * 2.5;
+    const dayness = this.atmo.lighting?.dayness ?? 0;
+    scene.environmentIntensity = 1 + st.flash * 2.5 * (1 - 0.75 * dayness);
   }
 
-  _strike(t, force) {
+  _strike(t, force, stormy = 1) {
     this._boltT = t;
     const sd = this.seed;
-    this._nextStrike = t + 3 + ((Math.sin(t * 12.9898 + sd * 78.233) * 43758.5453) % 1 + 1) % 1 * 9;
+    this._nextStrike = t + (3 + ((Math.sin(t * 12.9898 + sd * 78.233) * 43758.5453) % 1 + 1) % 1 * 9) / Math.max(0.35, stormy);
     // strike point 2–7 km away in front-ish of the camera, from the cloud base to the ground
     const w = this.world;
     const cam = w.camera;
@@ -312,7 +323,13 @@ export class Weather {
   render(renderer, io) {
     const st = this.state;
     const kind = st.rain >= Math.max(st.snow, st.dust) ? 0 : st.snow >= st.dust ? 1 : 2;
-    const amount = kind === 0 ? st.rain : kind === 1 ? st.snow : st.dust;
+    let amount = kind === 0 ? st.rain : kind === 1 ? st.snow : st.dust;
+    // no precipitation above the cloud deck / dust layer, nor outside the atmosphere
+    const camR = _v1.setFromMatrixPosition(io.camera.matrixWorld).add(this.world.origin).length();
+    const m = this.atmo.model;
+    const ceil = kind === 2 ? m.Rb + Math.max(1500, (this.world.surface?.maxHeight ?? 0) + 800)
+      : (this.atmo.clouds?.present ? this.atmo.clouds.Rc0 + (this.atmo.clouds.Rc1 - this.atmo.clouds.Rc0) * 0.3 : m.Rb + m.height * 0.35);
+    amount *= 1 - smooth(camR, ceil - 150, ceil + 150);
     const hasBolt = this.bolt.visible;
     if ((amount < 0.02 || !this.present) && !hasBolt) { io.skip = true; return; }
     const u = this.pu, cam = io.camera;
@@ -356,6 +373,8 @@ export class Weather {
     renderer.autoClear = false;
     renderer.setRenderTarget(io.output);
     this.points.visible = amount >= 0.02;
+    const bu = this.boltMat.uniforms;
+    bu.tDepth.value = io.depth; bu.uRes.value.copy(u.uRes.value); bu.uNear.value = cam.near; bu.uFar.value = cam.far;
     renderer.render(this.pscene, cam);
     renderer.autoClear = prev;
   }

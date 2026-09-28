@@ -74,7 +74,6 @@ class Atmosphere {
     try {
       this.clouds = new Clouds(this);
       if (this.clouds.present) this._removers.push(world.engine.pipeline.addEffect(this.clouds));
-      this.lighting.envU.uCloudCover.value = this.clouds.meanCover * 0.6;
     } catch (e) { console.error('[atmosphere] clouds init failed', e); this.clouds = null; }
     try {
       this.shafts = new LightShafts(this);
@@ -120,10 +119,16 @@ class Atmosphere {
     const tint = this.model.tint;
     this.nightAmbient.setRGB(0.020 + tint.r * 0.006, 0.026 + tint.g * 0.008, 0.052 + tint.b * 0.012).multiplyScalar(night * E * 0.55);
     const present = this.model.present;
-    const ns = present ? night * E * 0.00022 : 0;
-    S.uNightSky.value.set(0.30 * ns, 0.42 * ns, 0.85 * ns);
-    S.uAirglow.value.set(0.10, 0.55, 0.30).multiplyScalar(present ? night * E * 0.00003 * (0.6 + this.model.density * 0.4) : 0);
+    // night sky: scattered starlight + airglow continuum, art-lifted so a moonless sky reads deep blue
+    // (not a void) after eye adaptation; airglow emission layer = faint green band along the horizon
+    const ns = present ? night * E * 0.0032 * (0.55 + 0.45 * Math.min(this.model.density, 1.4)) : 0;
+    S.uNightSky.value.set(0.26 * ns + tint.r * 0.05 * ns, 0.40 * ns + tint.g * 0.05 * ns, 0.85 * ns);
+    S.uAirglow.value.set(0.12, 0.62, 0.30).multiplyScalar(present ? night * E * 0.00025 * (0.6 + this.model.density * 0.4) : 0);
 
+    // overcast fraction of the sky (cloud type coverage + weather): greys & dims the ambient, feeds the env deck
+    const W = this.weather;
+    const mc = this.clouds?.present ? this.clouds.meanCover : 0;
+    W.overcast = THREE.MathUtils.clamp(mc * mc * 0.8 + (W.coverBoost || 0) * 1.25 * (this.clouds?.present ? 1 : 0.4), 0, 1);
     this.lighting.update(dt, { model: this.model, camLocal, up, sunDir, camR, starColor: this.starColor, sunAngR: this.sunAngR, nightAmbient: this.nightAmbient, weather: this.weather });
 
     const moon = this.lighting.moon;
@@ -209,6 +214,8 @@ class Atmosphere {
         }
         // blend LUT sky ↔ per-pixel march near the top of the atmosphere
         const h = (camR - this.model.Rb) / this.model.height;
+        // brighter sky dome from the ground (game-like sky vs sunlit ground), relaxed toward the LUT→march blend
+        this.atmoUniforms.uSkyViewGain.value = THREE.MathUtils.lerp(1.28 - 0.2 * (this.model.moody || 0), 1, THREE.MathUtils.smoothstep(h, 0.3, 0.8));
         this.effect.u.uSpaceBlend.value = THREE.MathUtils.smoothstep(h, 0.82, 0.98);
       }
       this.clouds?.preRender?.(renderer, camera);
@@ -222,12 +229,24 @@ class Atmosphere {
 
   isReady() { return true; }
 
+  // compass azimuth (deg, 0 = north, 90 = east) of a direction seen from local up
+  _azimuth(up, d) {
+    const east = _v.set(0, 1, 0).cross(up);
+    if (east.lengthSq() < 1e-8) east.set(1, 0, 0);
+    east.normalize();
+    const north = _n.crossVectors(up, east);
+    return (Math.atan2(d.dot(east), d.dot(north)) * 57.2958 + 360) % 360;
+  }
+
   getState() {
     const up = this._camLocal.clone().normalize();
     const L = this.lighting;
     return {
       sunElev: +(Math.asin(THREE.MathUtils.clamp(up.dot(this.world.celestial.sunDir), -1, 1)) * 57.2958).toFixed(1),
       key: L.keyIsMoon ? 'moon' : 'sun',
+      moon: L.moon.body ? { name: L.moon.body.name, ill: +L.moon.ill.toFixed(3), elev: +(Math.asin(THREE.MathUtils.clamp(up.dot(L.moon.dir), -1, 1)) * 57.2958).toFixed(1), az: +this._azimuth(up, L.moon.dir).toFixed(1) } : null,
+      sunAz: +this._azimuth(up, this.world.celestial.sunDir).toFixed(1),
+      overcast: +(this.weather.overcast || 0).toFixed(2),
       night: +L.nightFactor.toFixed(2),
       env: !!L.envRT,
       shadows: !!L.key.castShadow,

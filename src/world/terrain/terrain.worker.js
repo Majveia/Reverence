@@ -13,6 +13,8 @@ self.onmessage = (ev) => {
     if (m.type === 'init') {
       gen = new SurfaceGen(m.cfg);
       self.postMessage({ type: 'init', ok: true });
+    } else if (m.type === 'flats') {
+      gen?.setFlattens(m.flats);
     } else if (m.type === 'bake') {
       const data = bakeDetail(m.size || DETAIL_SIZE);
       self.postMessage({ type: 'bake', data, size: m.size || DETAIL_SIZE }, [data.buffer]);
