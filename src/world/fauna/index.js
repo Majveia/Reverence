@@ -100,6 +100,7 @@ class Fauna {
     };
     this.animCtx = { ground: this.env.ground, sample: true, t: 0 };
     this.showcase = String(world.params?.fauna ?? '').toLowerCase();
+    this.showDist = Math.max(0.3, Math.min(4, parseFloat(world.params?.faunadist ?? 1) || 1));   // showcase distance multiplier
     this.motes = null;
     try { this.motes = new Motes(this); } catch (e) { console.warn('[fauna] motes disabled', e); }
   }
@@ -364,7 +365,13 @@ class Fauna {
     const ux = P[0] / l, uy = P[1] / l, uz = P[2] / l;
     const alt = l - this.R - Math.max(0, this.surface.height(ux, uy, uz));
     const F = this.body.life?.fauna ?? 0.5;
-    const room = () => this.creatures.length < this.maxCreatures;
+    // per-layer budgets so bird flocks / fish schools never starve the herds
+    const cnt = this._layerCount || (this._layerCount = {});
+    for (const k in cnt) cnt[k] = 0;
+    for (const c of this.creatures) { const L = c.species.layer; cnt[L] = (cnt[L] || 0) + 1; }
+    const budget = { ground: 0.5, air: 0.4, float: 0.12, sky: 0.05, water: 0.25 };
+    let layerNow = 'ground';
+    const room = () => (cnt[layerNow] || 0) < this.maxCreatures * (budget[layerNow] ?? 0.3);
     if (alt < 2500) {
       // ground herds
       this._streamLayer('g', this.N, this.cellSize, this.streamR, ux, uy, uz, (key, rng, entry) => {
@@ -373,12 +380,13 @@ class Fauna {
           if (!rng.chance(k === 0 ? pGroup : pGroup * 0.35)) continue;
           cellDir(key, this.N, _d, rng.range(0.15, 0.85), rng.range(0.15, 0.85));
           const h = this.surface.height(_d[0], _d[1], _d[2]);
+          layerNow = 'ground';
           if (h < this.sea + 2 || !room()) continue;
           const sp = this._pickGround(rng, _d, h);
           if (!sp) continue;
           const r = this.R + h;
           const grp = this._spawnHerd(sp, new Float64Array([_d[0] * r, _d[1] * r, _d[2] * r]), rng.fork('g' + k));
-          if (grp) entry.groups.push(grp);
+          if (grp) { entry.groups.push(grp); cnt[grp.species.layer] = (cnt[grp.species.layer] || 0) + grp.members.length; }
         }
       });
       // air: flocks, rays, jellies
@@ -386,6 +394,7 @@ class Fauna {
         const tries = [['air', 0.55 * this.density + 0.2], ['air', 0.25 * this.density], ['float', 0.3 * this.density]];
         for (let k = 0; k < tries.length; k++) {
           const [layer, p] = tries[k];
+          layerNow = layer;
           if (!rng.chance(p) || !room()) continue;
           const sp = this._pickLayer(rng, layer);
           if (!sp) continue;
@@ -394,12 +403,13 @@ class Fauna {
           if (sp.archetype === 'jelly' && h < this.sea + 1) continue;
           const r = this.R + Math.max(h, this.sea);
           const grp = this._spawnAir(sp, new Float64Array([_d[0] * r, _d[1] * r, _d[2] * r]), rng.fork('a' + k));
-          if (grp) entry.groups.push(grp);
+          if (grp) { entry.groups.push(grp); cnt[grp.species.layer] = (cnt[grp.species.layer] || 0) + grp.members.length; }
         }
       });
       // water: fish schools near the player's shores
       if (this.hasOcean) {
         this._streamLayer('f', this.NF, this.fishCell, 420, ux, uy, uz, (key, rng, entry) => {
+          layerNow = 'water';
           if (!rng.chance(0.55 * this.density + 0.2) || !room()) return;
           const sp = this._pickLayer(rng, 'water');
           if (!sp) return;
@@ -409,7 +419,7 @@ class Fauna {
             if (h > this.sea - 1.5 || h < this.sea - 40) continue;
             const r = this.R + this.sea;
             const grp = this._spawnAir(sp, new Float64Array([_d[0] * r, _d[1] * r, _d[2] * r]), rng.fork('f' + k));
-            if (grp) entry.groups.push(grp);
+            if (grp) { entry.groups.push(grp); cnt.water = (cnt.water || 0) + grp.members.length; }
             return;
           }
         });
@@ -418,14 +428,15 @@ class Fauna {
     // sky whales (visible from far away, also from low flight)
     if (alt < 12000) {
       this._streamLayer('s', this.NS, this.skyCell, 5200, ux, uy, uz, (key, rng, entry) => {
-        if (!rng.chance(0.4 * Math.min(1, this.density + 0.2))) return;
+        layerNow = 'sky';
+        if (!rng.chance(0.4 * Math.min(1, this.density + 0.2)) || !room()) return;
         const sp = this._pickLayer(rng, 'sky');
         if (!sp) return;
         cellDir(key, this.NS, _d, rng.range(0.2, 0.8), rng.range(0.2, 0.8));
         const h = Math.max(this.sea, this.surface.height(_d[0], _d[1], _d[2]));
         const r = this.R + h;
         const grp = this._spawnAir(sp, new Float64Array([_d[0] * r, _d[1] * r, _d[2] * r]), rng.fork('s'));
-        if (grp) entry.groups.push(grp);
+        if (grp) { entry.groups.push(grp); cnt[grp.species.layer] = (cnt[grp.species.layer] || 0) + grp.members.length; }
       });
     }
   }
@@ -440,7 +451,7 @@ class Fauna {
       const t = i / 16;
       const x = cx + (tx - cx) * t, y = cy + (ty - cy) * t, z = cz + (tz - cz) * t;
       const r = Math.hypot(x, y, z);
-      if (r - this.R < this.surface.height(x / r, y / r, z / r) + 0.3) return false;
+      if (r - this.R < this.surface.height(x / r, y / r, z / r) - 0.05) return false;
     }
     const dx = tx - cx, dy = ty - cy, dz = tz - cz, L2 = dx * dx + dy * dy + dz * dz;
     for (const c of this._nearCol || []) {
@@ -460,6 +471,7 @@ class Fauna {
     const l = Math.hypot(C.x, C.y, C.z);
     const ux = C.x / l, uy = C.y / l, uz = C.z / l;
     cam.getWorldDirection(_v3);
+    const f3x = _v3.x, f3y = _v3.y, f3z = _v3.z;
     let fx = _v3.x, fy = _v3.y, fz = _v3.z;
     const d = fx * ux + fy * uy + fz * uz;
     fx -= ux * d; fy -= uy * d; fz -= uz * d;
@@ -481,15 +493,16 @@ class Fauna {
       const probe = sp || this.roster.find((x) => x.layer === 'ground' && x.archetype === 'grazer');
       if (probe) {
         const g = probe.genome;
-        const base = Math.min(90, Math.max(12, 7 + g.S * (legged ? 7 : 10) + (probe.archetype === 'giant' ? 38 : 0)));
+        const base = Math.min(90, Math.max(12, 7 + g.S * (legged ? 7 : 10) + (probe.archetype === 'giant' ? 38 : 0))) * this.showDist;
         const angs = [0, 0.3, -0.3, 0.55, -0.55, 0.8, -0.8];
-        let placed = false;
+        let placed = false, fallback = null;
         for (const k of [1, 0.7, 1.4, 0.5]) {
           for (const ang of angs) {
             const p = at(dirAt(ang), base * k);
             const h = this.env.ground(p[0], p[1], p[2], _d, 0);
             if (h < this.sea + 2) continue;
-            if (!this._clearView(C, _d[0], _d[1], _d[2], g.S * 0.8)) continue;
+            if (!fallback) fallback = Float64Array.from(_d);
+            if (!this._clearView(C, _d[0], _d[1], _d[2], g.S * 1.1)) continue;
             if (!sp) sp = this._pickGround(rng, [ux, uy, uz], h, (x) => x.archetype !== 'critter') || probe;
             // broadside to the camera: heading along the camera's right vector
             const dl = Math.hypot(_d[0], _d[1], _d[2]);
@@ -497,69 +510,89 @@ class Fauna {
             const hd = Math.atan2(rx * _n[0] + ry * _n[1] + rz * _n[2], rx * _e[0] + ry * _e[1] + rz * _e[2]) + (rng.chance(0.5) ? Math.PI : 0) + 0.35;
             mark(this._spawnHerd(sp, Float64Array.from(_d), rng.fork('welcome'), sp.archetype === 'giant' ? rng.int(3, 4) : rng.int(Math.max(5, sp.group[0]), Math.max(8, sp.group[1])), hd));
             const hg = entry.groups[entry.groups.length - 1];
-            if (hg) hg.timer = 75;          // stay and graze in front of the camera
+            if (hg) { hg.timer = 75; hg.tame = true; }   // stay and graze in front of the camera (until approached)
             placed = true;
             break;
           }
           if (placed) break;
+        }
+        if (!placed && fallback) {
+          if (!sp) sp = probe;
+          mark(this._spawnHerd(sp, fallback, rng.fork('welcome'), sp.archetype === 'giant' ? 3 : Math.max(6, sp.group[0])));
+          const hg = entry.groups[entry.groups.length - 1];
+          if (hg) { hg.timer = 75; hg.tame = true; }
         }
       }
     }
     // ---- sky life framed in the spawn view
     const wantSky = SHOW[this.showcase];
     const pick = (a) => this.roster.find((x) => x.archetype === a);
+    const F3 = [fx, fy, fz];      // horizontal view direction (the player camera settles near the horizon)
+    void f3x; void f3y; void f3z;
+    /** point `dist` m along the camera's 3D view ray (turned by yawOff rad, raised by liftDeg) →
+     *  { home: ground point beneath, agl } (never below minAgl above ground / sea) */
+    const aim = (dist, liftDeg, yawOff = 0, minAgl = 4) => {
+      const c = Math.cos(yawOff), s2 = Math.sin(yawOff);
+      let dx = F3[0] * c + rx * s2, dy = F3[1] * c + ry * s2, dz = F3[2] * c + rz * s2;
+      const lr = liftDeg * Math.PI / 180;
+      dx += ux * Math.tan(lr); dy += uy * Math.tan(lr); dz += uz * Math.tan(lr);
+      const dl = Math.hypot(dx, dy, dz);
+      const px = C.x + dx / dl * dist, py = C.y + dy / dl * dist, pz = C.z + dz / dl * dist;
+      const pl = Math.hypot(px, py, pz);
+      const gh = Math.max(this.sea, this.surface.height(px / pl, py / pl, pz / pl));
+      const agl = Math.max(minAgl, pl - this.R - gh);
+      const home = new Float64Array([px / pl * (this.R + gh), py / pl * (this.R + gh), pz / pl * (this.R + gh)]);
+      return { home, agl };
+    };
+    /** heading angle (spawnAir convention) that crosses the view right → left */
+    const across = (home, k = 0) => {
+      const hl = Math.hypot(home[0], home[1], home[2]);
+      tangentBasis(home[0] / hl, home[1] / hl, home[2] / hl, _e, _n);
+      return Math.atan2(rx * _n[0] + ry * _n[1] + rz * _n[2], rx * _e[0] + ry * _e[1] + rz * _e[2]) + Math.PI + k;
+    };
     if (!want || wantSky === 'bird') {
       const sp = pick('bird');
       if (sp) {
-        const p = at(dirAt(wantSky ? 0.1 : 0.35), wantSky ? 70 : 150);
-        this.env.ground(p[0], p[1], p[2], _d, 0);
-        mark(this._spawnAir(sp, _d, rng.fork('wb'), wantSky ? Math.max(16, sp.group[1]) : undefined, { agl: wantSky ? [18, 34] : [30, 70], radius: wantSky ? 45 : 110, heading: rng.range(0, 6.28) }));
+        const { home, agl } = wantSky ? aim(34 * this.showDist, 11, 0.05, 6) : aim(150, 12, 0.3, 25);
+        mark(this._spawnAir(sp, home, rng.fork('wb'), wantSky ? Math.max(16, sp.group[1]) : undefined, { agl: [agl, agl + 6], radius: wantSky ? 22 : 90, heading: across(home, 0.4) }));
       }
     }
     if (wantSky === 'ray' || (!want && rng.chance(0.5))) {
       const sp = pick('ray');
       if (sp) {
-        const p = at(dirAt(-0.15), wantSky ? 60 + sp.genome.span * 3 : 220);
-        this.env.ground(p[0], p[1], p[2], _d, 0);
-        mark(this._spawnAir(sp, _d, rng.fork('wr'), wantSky ? 5 : undefined, { agl: wantSky ? [14, 30] : [30, 70], radius: 60 }));
+        const { home, agl } = wantSky ? aim((24 + sp.genome.span * 3) * this.showDist, 8, -0.1, 8) : aim(220, 8, -0.25, 25);
+        mark(this._spawnAir(sp, home, rng.fork('wr'), wantSky ? 5 : undefined, { agl: [agl, agl + 8], radius: wantSky ? 35 : 70, heading: across(home, 0.3) }));
       }
     }
     if (wantSky === 'whale' || !want) {
       const sp = pick('whale');
       if (sp) {
-        const dist = wantSky ? 260 + sp.genome.L * 2 : 700;
-        const p = at(dirAt(wantSky ? -0.12 : 0.25), dist);
-        this.env.ground(p[0], p[1], p[2], _d, 0);
-        const gh = Math.max(this.sea, this.surface.height(_d[0] / Math.hypot(..._d), _d[1] / Math.hypot(..._d), _d[2] / Math.hypot(..._d)));
-        const camH = l - this.R;
-        const agl = Math.max(70, camH - gh + (wantSky ? 45 + dist * 0.2 : 180));
-        // cruise across the view (right → left, angled slightly toward the camera)
-        tangentBasis(_d[0] / Math.hypot(..._d), _d[1] / Math.hypot(..._d), _d[2] / Math.hypot(..._d), _e, _n);
-        const hx = rx * _e[0] + ry * _e[1] + rz * _e[2], hy = rx * _n[0] + ry * _n[1] + rz * _n[2];
-        mark(this._spawnAir(sp, _d, rng.fork('ww'), wantSky ? 3 : undefined, { agl: [agl, agl + 30], heading: Math.atan2(hy, hx) + Math.PI - 0.3 }));
+        const { home, agl } = wantSky ? aim((200 + sp.genome.L * 2.2) * this.showDist, 5 - 2 * (1 - Math.min(1, this.showDist)), -0.08, 14 + sp.genome.R) : aim(700, 7, 0.2, 90);
+        mark(this._spawnAir(sp, home, rng.fork('ww'), wantSky ? 3 : undefined, { agl: [agl, agl + 10], heading: across(home, -0.35) }));
       }
     }
-    if (wantSky === 'jelly' || (!want && ((this.world.params?.tod ?? 0.5) > 0.7 || (this.world.params?.tod ?? 0.5) < 0.25))) {
+    const tod = +(this.world.params?.tod ?? 0.5);
+    if (wantSky === 'jelly' || (!want && (tod > 0.7 || tod < 0.25))) {
       const sp = pick('jelly');
       if (sp) {
-        const p = at(dirAt(0), wantSky ? 22 + sp.genome.R * 6 : 60);
-        this.env.ground(p[0], p[1], p[2], _d, 0);
-        mark(this._spawnAir(sp, _d, rng.fork('wj'), wantSky ? 12 : undefined, { agl: [2.5, 14] }));
+        const { home, agl } = wantSky ? aim((14 + sp.genome.R * 5) * this.showDist, 6, 0, 2.5) : aim(60, 5, -0.3, 3);
+        mark(this._spawnAir(sp, home, rng.fork('wj'), wantSky ? 12 : undefined, { agl: [Math.max(2.5, agl - 6), agl + 6] }));
       }
     }
     if (wantSky === 'fish' && this.hasOcean) {
       const sp = pick('fish');
       if (sp) {
         // nearest water in front of the camera
-        for (let dist = 8; dist < 400; dist *= 1.25) {
+        for (let dist = 10; dist < 400; dist *= 1.15) {
           let done = false;
           for (const ang of [0, 0.35, -0.35, 0.7, -0.7, 1.2, -1.2]) {
             const p = at(dirAt(ang), dist);
             const pl = Math.hypot(...p);
             const h = this.surface.height(p[0] / pl, p[1] / pl, p[2] / pl);
-            if (h < this.sea - 1.5) {
+            if (h < this.sea - 1.3) {
               const r = this.R + this.sea;
-              mark(this._spawnAir(sp, [p[0] / pl * r, p[1] / pl * r, p[2] / pl * r], rng.fork('wf'), 28, { range: 8 }));
+              const g = mark(this._spawnAir(sp, [p[0] / pl * r, p[1] / pl * r, p[2] / pl * r], rng.fork('wf'), 28, { range: 8 }));
+              if (g) g.showy = true;          // showcase school: frequent leaps so it reads above the surface
               done = true; break;
             }
           }

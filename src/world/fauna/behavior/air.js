@@ -94,7 +94,10 @@ export class Flock {
     // player threat
     const P = env.player;
     const dp = Math.hypot(P[0] - C[0], P[1] - C[1], P[2] - C[2]);
-    const threat = dp < o.fear ? 1 : 0;
+    // a still observer only spooks the flock at close range; a moving one (or a vehicle) much earlier
+    const fear = o.fear * (env.playerSpeed < 0.6 ? 0.3 : env.playerSpeed > 6 ? 1.6 : 1);
+    this.fearR = fear;
+    const threat = dp < fear ? 1 : 0;
     this.scatter += (threat - this.scatter) * damp(threat ? 3 : 0.3, dt);
     this._anchor(dt, env);
     const spd = o.speed;
@@ -124,7 +127,7 @@ export class Flock {
       const up = m.up;
       const px = m.pos[0] - P[0], py = m.pos[1] - P[1], pz = m.pos[2] - P[2];
       const pd = Math.hypot(px, py, pz);
-      if (pd < o.fear) { const k = (o.fear - pd) / o.fear * o.seek * 2.5 / (pd || 1); ax += px * k + up[0] * o.seek * 1.5; ay += py * k + up[1] * o.seek * 1.5; az += pz * k + up[2] * o.seek * 1.5; }
+      if (pd < fear) { const k = (fear - pd) / fear * o.seek * 2.5 / (pd || 1); ax += px * k + up[0] * o.seek * 1.5; ay += py * k + up[1] * o.seek * 1.5; az += pz * k + up[2] * o.seek * 1.5; }
       // terrain / sea clearance
       m.gT = (m.gT || 0) - dt;
       if (m.gT <= 0) { m.gH = Math.max(env.sea, groundH(env, m.pos)); m.gT = m.dist < 200 ? 0.15 : 0.6; }
@@ -184,7 +187,7 @@ export class Pod {
       const m = M[i];
       upOf(m.pos, m.up);
       const r = Math.hypot(m.pos[0], m.pos[1], m.pos[2]);
-      const aglT = m.agl + Math.sin(this.t0 * 0.05 + i * 2) * 25;
+      const aglT = m.agl + Math.sin(this.t0 * 0.05 + i * 2) * Math.min(25, m.agl * 0.25);
       const alt = r - env.R - this.gH;
       const vUp = clamp((aglT - alt) * 0.05, -1.5, 2.5);
       // heading: leader wanders; followers keep slot relative to leader
@@ -309,9 +312,9 @@ export class School {
     // leaping
     this.jumpT -= dt;
     if (this.jumpT <= 0) {
-      this.jumpT = this.rng.range(2.5, 8);
+      this.jumpT = this.showy ? this.rng.range(0.15, 0.7) : this.rng.range(2.5, 8);
       const j = M[Math.floor(this.rng.next() * n)];
-      if (j && !j.leap) { j.leap = true; const up = j.up; const k = 3.2 + this.rng.next() * 2; j.vel[0] += up[0] * k; j.vel[1] += up[1] * k; j.vel[2] += up[2] * k; }
+      if (j && !j.leap) { j.leap = true; const up = j.up; const k = (this.showy ? 4.2 : 3.2) + this.rng.next() * 2; j.vel[0] += up[0] * k; j.vel[1] += up[1] * k; j.vel[2] += up[2] * k; }
     }
     for (let i = 0; i < n; i++) {
       const m = M[i];

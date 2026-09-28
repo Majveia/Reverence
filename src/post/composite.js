@@ -12,7 +12,7 @@ precision highp sampler3D;
 #include <rv_common>
 uniform sampler2D tColor, tBloom, tBloomWide, tAdapt, tSunVis, tDirt;
 uniform sampler3D tLUT;
-uniform float uHasBloom, uBloomMode, uBloomStrength, uBloomScatter;
+uniform float uHasBloom, uBloomMode, uBloomStrength, uBloomScatter, uClarity;
 uniform float uExposure, uAuto, uAEKey, uAEMin, uAEMax, uAEStrength;
 uniform float uTemperature, uTint, uLookPower, uLookSat;
 uniform float uVignette, uChromatic, uBlackPoint, uLutSize, uUseLUT; uniform int uTonemap;
@@ -53,16 +53,18 @@ vec3 sunFlare(vec2 uv, float vis){
   vec2 d = (uv - uSunUv) * asp;
   float r = length(d);
   vec3 f = vec3(0.0);
-  // halo / veiling glare around the sun
-  f += uSunCol * uHalo * (0.035 / (1.0 + r * r * 900.0) + 0.012 * exp(-r * 7.0));
-  // starburst: 6-blade aperture diffraction spikes + fine ragged rays
+  // core + halo / veiling glare around the sun (a bright core also stands in for a sun disc that
+  // is too small to resolve; over a rendered disc it just saturates)
+  f += uSunCol * uHalo * (1.6 / (1.0 + r * r * 90000.0) + 0.05 / (1.0 + r * r * 1400.0) + 0.012 * exp(-r * 6.0));
+  // starburst: 6-blade aperture diffraction spikes (thin, tapering) + fine ragged rays
   float ang = atan(d.y, d.x) + uFlareRot;
-  float spikes = pow(abs(cos(ang * 3.0)), 180.0) + 0.5 * pow(abs(cos(ang * 3.0 + 1.5708)), 400.0);
-  float ragged = rv_hash11(floor((ang + 3.1416) * 40.0)) * 0.6 + 0.4;
-  ragged *= pow(abs(sin(ang * 23.0 + 1.3)), 6.0);
-  f += uSunCol * uStarburst * (spikes * 0.5 + ragged * 0.12) * (0.04 / (0.02 + r * 3.0)) * exp(-r * 3.5);
+  float spikes = pow(abs(cos(ang * 3.0)), 400.0);
+  float ragged = rv_hash11(floor((ang + 3.1416) * 57.0)) * rv_hash11(floor((ang + 3.1416) * 13.0) + 7.0);
+  ragged = pow(ragged, 3.0) * pow(abs(sin(ang * 37.0 + 1.3)), 2.0);
+  float fall = 0.03 / (0.015 + r * 4.0);
+  f += uSunCol * uStarburst * (spikes * 0.35 * exp(-r * 5.0) + ragged * 0.35 * exp(-r * 9.0)) * fall;
   // anamorphic streak
-  f += uSunCol * vec3(0.55, 0.75, 1.0) * uStreak * exp(-abs(d.y) * 220.0) * exp(-abs(d.x) * 1.8) * 0.18;
+  f += uSunCol * vec3(0.55, 0.75, 1.0) * uStreak * exp(-abs(d.y) * 260.0) * exp(-abs(d.x) * 2.6) * 0.14;
   // ghosts along the optical axis (sun → centre → beyond), hexagonal aperture, tinted coatings
   vec2 axis = vec2(0.5) - uSunUv;
   vec3 g = vec3(0.0);
@@ -78,13 +80,13 @@ vec3 sunFlare(vec2 uv, float vis){
     float shapeR = smoothstep(1.0, 0.82, hr), shapeB = smoothstep(1.0, 0.82, hb);
     float rim = smoothstep(0.7, 0.98, hr) * shapeR;           // brighter rim like a real ghost
     vec3 sh = vec3(shapeR, mix(shapeR, shapeB, 0.5), shapeB) * (0.55 + 0.9 * rim);
-    g += tint * sh * (i == 6 ? 0.25 : 0.55) / (1.0 + fi * 0.25);
+    g += tint * sh * (i == 6 ? 0.18 : 0.45) / (1.0 + fi * 0.25);
   }
   // ghosts fade when the sun is near the centre (they collapse) and brighten off-axis
   float off = clamp(length(axis * asp) * 2.2, 0.0, 1.0);
   f += g * uGhosts * 0.05 * (0.35 + 0.65 * off) * (uSunCol / max(rv_luma(uSunCol), 1e-3)) * min(rv_luma(uSunCol), 2.0);
   // lens dirt catches the sun
-  if (uHasDirt > 0.5) f += uSunCol * uDirt * texture2D(tDirt, uv).r * 0.35 * exp(-r * 1.6);
+  if (uHasDirt > 0.5) f += uSunCol * uDirt * texture2D(tDirt, uv).r * 0.12 * exp(-r * 3.0);
   return f * vis;
 }
 
@@ -103,6 +105,13 @@ void main(){
   vec3 bloomW = vec3(0.0);
   if (uHasBloom > 0.5) {
     vec3 b = texture2D(tBloom, uv).rgb;
+    // clarity: ratio-based local contrast against the low-pass pyramid (cuts through flat haze;
+    // multiplicative so black stays black)
+    if (uClarity > 0.0 && uBloomMode > 0.5) {
+      float L = rv_luma(col), Lb = rv_luma(b);
+      float k = pow(clamp((L + 1e-4) / (Lb + 1e-4), 0.3, 3.0), uClarity);
+      col *= mix(1.0, k, smoothstep(0.0, 0.02, Lb));
+    }
     if (uBloomMode < 0.5) col += b * uBloomStrength;
     else col = mix(col, b, uBloomScatter);                     // energy-conserving scatter
     bloomW = texture2D(tBloomWide, uv).rgb;

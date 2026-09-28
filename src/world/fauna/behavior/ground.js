@@ -157,17 +157,17 @@ export class Herd {
     this.timer -= dt;
     switch (this.state) {
       case GRAZE:
-        if (dNear < this.alertR * threatBoost && env.playerOnGround) { this.state = ALERT; this.timer = 3; }
+        if (dNear < this.alertR * threatBoost && env.playerOnGround && !(this.tame && env.playerSpeed < 1.5)) { this.state = ALERT; this.timer = 3; }
         else if (this.timer <= 0) { this.state = WANDER; this.timer = this.rng.range(25, 45); this._pickTarget(env); }
         break;
       case WANDER: {
         const tx = this.target[0] - this.center[0], ty = this.target[1] - this.center[1], tz = this.target[2] - this.center[2];
-        if (dNear < this.alertR * threatBoost && env.playerOnGround) { this.state = ALERT; this.timer = 3; }
+        if (dNear < this.alertR * threatBoost && env.playerOnGround && !(this.tame && env.playerSpeed < 1.5)) { this.state = ALERT; this.timer = 3; }
         else if (Math.hypot(tx, ty, tz) < this.spacing * 2 || this.timer <= 0) { this.state = GRAZE; this.timer = this.rng.range(20, 50); }
         break;
       }
       case ALERT:
-        if (this.fleeR > 0 && dNear < this.fleeR * threatBoost * (still ? 0.6 : 1)) {
+        if (this.fleeR > 0 && dNear < this.fleeR * threatBoost * (still ? 0.6 : 1) && !(this.tame && env.playerSpeed < 1.5)) {
           this.state = FLEE; this.timer = this.rng.range(5, 9);
           this.fleeDir[0] = -dxp; this.fleeDir[1] = -dyp; this.fleeDir[2] = -dzp;
         } else if (dNear > this.alertR * 1.35 * threatBoost) { if (this.timer <= 0) { this.state = GRAZE; this.timer = this.rng.range(6, 20); } }

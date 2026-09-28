@@ -51,7 +51,7 @@ export function chainGenome(rng, kind, style = {}) {
     g.nT = 3;
   } else if (kind === 'whale') {
     g.L = r2(rng, 36, 70) * (0.85 + ex * 0.5);
-    g.R = g.L * r2(rng, 0.09, 0.12);
+    g.R = g.L * r2(rng, 0.125, 0.16);
     g.flatK = r2(rng, 0.8, 1.0);
     g.headK = r2(rng, 0.9, 1.15);
     g.finLen = g.L * r2(rng, 0.18, 0.32);
@@ -62,7 +62,7 @@ export function chainGenome(rng, kind, style = {}) {
     g.speed = r2(rng, 5, 9);
     g.nT = 4;
   } else if (kind === 'fish') {
-    g.L = r2(rng, 0.35, 0.9);
+    g.L = r2(rng, 0.45, 1.2);
     g.H = r2(rng, 0.16, 0.3);
     g.W = r2(rng, 0.07, 0.11);
     g.tail = rng.weighted([['fork', 3], ['fan', 1.5], ['lunate', 1]]);

@@ -60,11 +60,11 @@ export function makeLook(rng, art, archetype, st, glowing) {
   const wild = rng.next() < exotic * 0.85;
   if (!wild) {
     // naturalistic mammal / reptile palettes: browns, tans, rufous, greys, cream, charcoal
-    const fam = rng.weighted([['tan', 3], ['rufous', 2], ['grey', 1.5], ['dark', 1], ['cream', 0.8], ['olive', 1]]);
-    const H = { tan: [0.075, 0.11], rufous: [0.03, 0.065], grey: [0.05, 0.12], dark: [0.04, 0.1], cream: [0.09, 0.13], olive: [0.13, 0.2] }[fam];
+    const fam = rng.weighted([['tan', 3], ['golden', 2], ['rufous', 2.5], ['grey', 0.6], ['dark', 1], ['cream', 0.7], ['olive', 0.8]]);
+    const H = { tan: [0.075, 0.11], golden: [0.095, 0.125], rufous: [0.03, 0.065], grey: [0.05, 0.12], dark: [0.04, 0.1], cream: [0.09, 0.13], olive: [0.13, 0.2] }[fam];
     const h = rng.range(H[0], H[1]);
-    const S = { tan: [0.45, 0.68], rufous: [0.55, 0.8], grey: [0.06, 0.18], dark: [0.15, 0.35], cream: [0.3, 0.5], olive: [0.25, 0.45] }[fam];
-    const L = { tan: [0.26, 0.38], rufous: [0.2, 0.32], grey: [0.2, 0.34], dark: [0.07, 0.14], cream: [0.46, 0.58], olive: [0.18, 0.28] }[fam];
+    const S = { golden: [0.6, 0.8], tan: [0.45, 0.68], rufous: [0.55, 0.8], grey: [0.06, 0.18], dark: [0.15, 0.35], cream: [0.3, 0.5], olive: [0.25, 0.45] }[fam];
+    const L = { golden: [0.34, 0.44], tan: [0.26, 0.38], rufous: [0.2, 0.32], grey: [0.2, 0.34], dark: [0.07, 0.14], cream: [0.46, 0.58], olive: [0.18, 0.28] }[fam];
     const s = Math.min(0.9, rng.range(S[0], S[1]) * sat), l = rng.range(L[0], L[1]);
     back = col(h, s, l);
     belly = col(h + 0.01, s * 0.5, Math.min(0.72, l + rng.range(0.14, 0.3)));
@@ -99,7 +99,7 @@ export function makeLook(rng, art, archetype, st, glowing) {
   return {
     back, belly, pattern, accent, keratin, eye, glow,
     patternParams: [patternType, scaleByType[patternType] * sizeK, rng.range(0.1, 0.45), patternType ? rng.range(0.55, 0.95) : 0],
-    glowParams: [glowing ? rng.range(1.2, 2.6) : 0, rng.int(1, 4), rng.range(0.6, 2.2), rng.range(0.4, 1.0)],
+    glowParams: [glowing ? rng.range(1.2, 2.6) : 0, archetype === 'whale' || archetype === 'ray' ? rng.pick([1, 2, 2, 4]) : rng.int(1, 4), rng.range(0.6, 2.2), rng.range(0.4, 1.0)],
     surf: [fur ? rng.range(0.72, 0.88) : rng.range(0.45, 0.7), fur ? rng.range(0.55, 0.9) : rng.range(0.1, 0.35), fur ? rng.range(0.8, 1.2) : rng.range(0.9, 1.6), fur ? rng.range(0.6, 1.3) : rng.range(0.1, 0.4)],
     extra: [rng.chance(0.5) ? rng.range(0.4, 0.95) : 0, archetype === 'hexapod' ? rng.range(0.3, 0.9) : 0, rng.range(0.6, 1.1), rng.range(0.7, 1.2)],
   };

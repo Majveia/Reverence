@@ -12,25 +12,35 @@ uniform vec2 uSun, uRadius;       // sun uv, probe radius in uv (x,y)
 uniform float uDt, uSnap, uOnScreen, uLumRef;
 varying vec2 vUv;
 void main(){
-  float vis = 0.0, lum = 0.0;
-  // 24-tap Vogel disk over the solar disc (+ a little margin)
-  for (int i = 0; i < 24; i++) {
-    float r = sqrt((float(i) + 0.5) / 24.0);
+  float vis = 0.0, disc = 0.0, ring = 0.0, n = 0.0;
+  // 16-tap Vogel disk over the solar disc (depth + luminance), 12 taps on a surrounding ring
+  for (int i = 0; i < 16; i++) {
+    float r = sqrt((float(i) + 0.5) / 16.0);
     float th = float(i) * 2.39996323;
     vec2 uv = uSun + vec2(cos(th), sin(th)) * r * uRadius;
     float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
     float d = texture2D(tDepth, clamp(uv, 0.0, 1.0)).r;
     vis += inside * (rvp_isSky(d) ? 1.0 : 0.0);
-    lum += inside * rv_luma(texture2D(tColor, clamp(uv, 0.0, 1.0)).rgb);
+    disc += inside * rv_luma(texture2D(tColor, clamp(uv, 0.0, 1.0)).rgb);
+    n += inside;
   }
-  vis /= 24.0; lum /= 24.0;
-  // clouds / haze in front of the sun: they are drawn over far-plane depth, so also require the
-  // disc to actually be bright (relative to what an unobstructed sun renders at)
-  float lumVis = smoothstep(0.08, 0.6, lum / max(uLumRef, 1e-3));
-  float target = uOnScreen * vis * mix(1.0, lumVis, 0.85);
+  float nr = 0.0;
+  for (int i = 0; i < 12; i++) {
+    float th = float(i) * 0.5235988 + 0.26;
+    vec2 uv = uSun + vec2(cos(th), sin(th)) * uRadius * 3.5;
+    float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+    ring += inside * rv_luma(texture2D(tColor, clamp(uv, 0.0, 1.0)).rgb);
+    nr += inside;
+  }
+  vis /= 16.0; disc /= max(n, 1.0); ring /= max(nr, 1.0);
+  // clouds / thick haze in front of the sun are drawn over far-plane depth: require the disc to
+  // stand out from its surroundings (a visible sun is far brighter than the sky next to it)
+  float contrast = disc / max(ring, 1e-5);
+  float lumVis = max(smoothstep(1.03, 1.35, contrast), smoothstep(0.25, 1.0, disc / max(uLumRef, 1e-3)));
+  float target = uOnScreen * vis * lumVis;
   float prev = texture2D(tPrev, vec2(0.5)).r;
   float a = uSnap > 0.5 ? 1.0 : 1.0 - exp(-uDt * 14.0);
-  gl_FragColor = vec4(mix(prev, target, a), lum, 0.0, 1.0);
+  gl_FragColor = vec4(mix(prev, target, a), disc, ring, 1.0);
 }`;
 
 export class Lens {
@@ -95,7 +105,7 @@ function makeDirtTexture() {
     const x = rnd() * W, y = rnd() * H, r = 1.5 + Math.pow(rnd(), 3) * 16;
     const a = 0.08 + rnd() * 0.22;
     const gr = g.createRadialGradient(x, y, r * 0.2, x, y, r);
-    gr.addColorStop(0, `rgba(255,255,255,${a * 0.6})`); gr.addColorStop(0.8, `rgba(255,255,255,${a})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    gr.addColorStop(0, `rgba(255,255,255,${a})`); gr.addColorStop(0.65, `rgba(255,255,255,${a * 0.75})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
   }
   // a few hair-thin scratches

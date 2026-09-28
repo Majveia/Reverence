@@ -46,9 +46,9 @@ void main(){
   if (aSeed.z < 0.5) {
     // blinking: long dark gaps, soft 1 s glows
     float b = sin(t * (0.8 + sp * 0.9) + ph * 11.0);
-    float blink = smoothstep(0.35, 1.0, b);
+    float blink = 0.15 + 0.85 * smoothstep(0.05, 0.9, b);
     a = blink * smoothstep(0.35, 0.8, uNight) * aOn;
-    size = aSeed.w * 0.16;
+    size = aSeed.w * 0.42;
   } else {
     vec3 V = normalize(p - uCam);
     vSun = pow(max(dot(V, uSunDir), 0.0), 3.0);
@@ -56,7 +56,7 @@ void main(){
     size = aSeed.w * 0.035;
   }
   vA = a * edge;
-  gl_PointSize = clamp(size * uResolution.y / max(dist, 0.1), 1.2, 48.0);
+  gl_PointSize = clamp(size * uResolution.y / max(dist, 0.1), aSeed.z < 0.5 ? 3.0 : 1.2, 64.0);
   if (vA < 0.004) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 }`;
 
@@ -74,8 +74,8 @@ void main(){
   vec3 col;
   float a;
   if (vKind < 0.5) {
-    float core = exp(-r2 * 9.0), halo = exp(-r2 * 2.5) * 0.35;
-    col = uFire * (core * 5.0 + halo * 1.2) + vec3(1.0, 1.0, 0.85) * core * core * 2.0;
+    float core = exp(-r2 * 22.0), halo = exp(-r2 * 4.0);
+    col = uFire * (core * 9.0 + halo * 1.1) + vec3(1.0, 1.0, 0.85) * core * core * 4.0;
     a = vA;
   } else {
     float core = exp(-r2 * 5.0);
