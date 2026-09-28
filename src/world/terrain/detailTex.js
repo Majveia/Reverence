@@ -189,17 +189,19 @@ export function bakeDetail(size = DETAIL_SIZE) {
     }
     norm(); put(4, 0.08);
   }
-  // ---- 5 noise: four independent smooth periodic fbm channels
+  // ---- 5 noise: B = smooth ridged-ish fbm "macro relief" (with its slopes in RG), A = independent fbm.
+  //      RGBA are also used as four decorrelated macro-variation noises by the shader.
   {
-    const hs = [makeHash(61), makeHash(62), makeHash(63), makeHash(64)];
-    const base = 5 * S * S * 4;
+    const h1 = makeHash(61), h2 = makeHash(64), h3 = makeHash(65);
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
-      const u = x / S, v = y / S, o = base + (y * S + x) * 4;
-      for (let c = 0; c < 4; c++) {
-        const n = pfbm(hs[c], u, v, 4, 5, 0.5);
-        out[o + c] = Math.max(0, Math.min(255, Math.round((0.5 + 0.62 * n) * 255)));
-      }
+      const u = x / S, v = y / S;
+      const wu = u + 0.08 * pfbm(h3, u, v, 3, 2), wv = v + 0.08 * pfbm(h3, u + 0.4, v + 0.2, 3, 2);
+      const n = pfbm(h1, wu, wv, 4, 5, 0.5);
+      const r = 1 - Math.abs(pfbm(h1, wu + 0.3, wv + 0.7, 6, 3, 0.5));
+      H[y * S + x] = 0.65 * n + 0.35 * r * r;
+      A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.62 * pfbm(h2, u, v, 4, 5, 0.5)));
     }
+    norm(); put(5, 0.05);
   }
   // ---- 6 strata: layered sedimentary rock, v = vertical
   {

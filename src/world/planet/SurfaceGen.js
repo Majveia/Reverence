@@ -446,10 +446,11 @@ export class SurfaceGen {
 
   // ------------------------------------------------------------------ profiles
   static mesa(v) {
-    // v >= 0 caprock top, [-0.22,0) cliff, [-1,-0.22) concave talus
+    // v >= 0 caprock top, [-0.75,0) steep cliff (~70-80°: steep but still a well-conditioned
+    // heightfield — true verticals shade as vertical stripes), [-2,-0.75) concave talus apron
     if (v >= 0) return 1 - 0.03 * Math.exp(-v * 18);
-    if (v > -0.22) { const t = -v / 0.22; return 0.97 - 0.6 * Math.pow(t, 0.8); }
-    if (v > -1) { const t = (v + 1) / 0.78; return 0.37 * t * t; }
+    if (v > -0.75) { const t = -v / 0.75; return 0.97 - 0.55 * (t * 0.85 + 0.15 * t * t); }
+    if (v > -2) { const t = (v + 2) / 1.25; return 0.42 * t * t; }
     return 0;
   }
 
@@ -561,7 +562,7 @@ export class SurfaceGen {
         const p1 = SurfaceGen.mesa(v1), p2 = SurfaceGen.mesa(v2);
         const add = st.plateauH * (p1 + 0.8 * p2) * reg * inland;
         h += add;
-        const cl = Math.min(1, SurfaceGen.band(v1, -0.4, -0.26, -0.02, 0.06) + SurfaceGen.band(v2, -0.4, -0.26, -0.02, 0.06)) * reg * inland;
+        const cl = Math.min(1, SurfaceGen.band(v1, -1.0, -0.8, -0.02, 0.06) + SurfaceGen.band(v2, -1.0, -0.8, -0.02, 0.06)) * reg * inland;
         if (cl > cliff) cliff = cl;
         if (cl > rock) rock = cl;
       }
@@ -574,7 +575,7 @@ export class SurfaceGen {
         const p = SurfaceGen.mesa(v);
         const mh = st.plateauH * (1.2 + 0.8 * sstep(-1, 1, nF.n3(px * f * 0.3, py * f * 0.3 + 3, pz * f * 0.3)));
         h += mh * p * reg * inland;
-        const cl = SurfaceGen.band(v, -0.45, -0.3, 0.02, 0.12) * reg * inland;
+        const cl = SurfaceGen.band(v, -1.0, -0.8, 0.02, 0.12) * reg * inland;
         if (cl > cliff) cliff = cl;
         if (cl > rock) rock = cl;
       }
@@ -624,7 +625,7 @@ export class SurfaceGen {
           if (q >= 1.5) return 0;
           const ht = 0.45 + 0.55 * J[(hh + 4) & 4095];
           let p;
-          if (q < 1) p = 0.12 + 0.88 * Math.pow(1 - q * q * q * q, 0.45);
+          if (q < 1) p = 0.12 + 0.88 * Math.pow(1 - q * q * q * q, 0.65);
           else { const u = (q - 1) / 0.5; p = 0.12 * (1 - u) * (1 - u); }
           return p * ht;
         });
@@ -738,7 +739,7 @@ export class SurfaceGen {
             const q = d / (0.13 + 0.1 * J[hh + 3]);
             if (q >= 1.3) return 0;
             const ht = 0.45 + 0.55 * J[hh + 2];
-            return (q < 1 ? 0.06 + 0.94 * Math.pow(1 - Math.pow(q, 6), 0.35) : 0.06 * (1.3 - q) / 0.3) * ht;
+            return (q < 1 ? 0.06 + 0.94 * Math.pow(1 - Math.pow(q, 5), 0.6) : 0.06 * (1.3 - q) / 0.3) * ht;
           });
           if (t > 0) {
             const top = 40 + 110 * (st.seastacks > 0.9 ? 1 : 0.6);
@@ -862,7 +863,7 @@ export class SurfaceGen {
         const hb = (h < 0 ? -f : f) * H;
         h = h + (hb - h) * bk;
       }
-      sand = Math.max(sand, (1 - sstep(st.beachH * 0.25, st.beachH * 0.9, h)) * (1 - cliff));
+      sand = Math.max(sand, (1 - sstep(st.beachH * 0.15, st.beachH * 0.55, h)) * (1 - cliff));
     }
 
     // ---- fractal detail: meso bumps → decimetre relief (rougher on rock)

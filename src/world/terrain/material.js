@@ -153,7 +153,10 @@ void rvTerrain( inout vec3 albedo ) {
       ws += wa;
       // macro crags: 512 m and 128 m tiles (facets of ~100 m and ~25 m read from kilometres away)
       // (uv warped by the low-frequency noise so the macro tiles never line up)
-      vec4 t = textureGrad( uRvDetail, vec3( uv * ( 1.0 / 192.0 ) + 0.71 + ( mA.rb - 0.5 ) * 1.4 + ( mC.gr - 0.5 ) * 0.2, 0.0 ), gx * ( 1.0 / 192.0 ), gy * ( 1.0 / 192.0 ) );
+      // organic buttresses/undulations (noise relief, 96 m) + faceted crags (layer 0, 256 m, warped)
+      vec4 t = textureGrad( uRvDetail, vec3( uv * ( 1.0 / 512.0 ) + 0.13, 5.0 ), gx * ( 1.0 / 512.0 ), gy * ( 1.0 / 512.0 ) );
+      vec4 t2 = textureGrad( uRvDetail, vec3( uv * ( 1.0 / 192.0 ) + 0.71 + ( mA.rb - 0.5 ) * 1.4, 0.0 ), gx * ( 1.0 / 192.0 ), gy * ( 1.0 / 192.0 ) );
+      t = vec4( 0.5 + ( t.rg - 0.5 ) * 1.0 + ( t2.rg - 0.5 ) * 0.6, t.b * 0.5 + t2.b * 0.5, t.a * 0.4 + t2.a * 0.6 );
       accM += wa * t; gM += wa * rvGw( a, t.rg * 2.0 - 1.0 );
       if ( fMid > 0.0 ) {
         t = rvFetchS( 0.0, uv * 0.125, gx * 0.125, gy * 0.125, kS );
@@ -220,7 +223,7 @@ void rvTerrain( inout vec3 albedo ) {
 
   // ---- final blend weights (snow on up-facing micro facets, rock peeks through)
   float bRock = rvHB( wRock, 0.6 * hRock + 0.4 * mC.g, 0.12 );
-  float bSand = rvHB( wSand, 0.35 * ( 1.0 - hGround ) + 0.65 * mC.r, 0.2 );
+  float bSand = rvHB( wSand, 0.5 * ( 1.0 - hGround ) + 0.5 * mC.r, 0.34 );
   float snowFacing = smoothstep( 0.52 + 0.12 * n1, 0.82, ndu + 0.12 * ( hSnow - 0.5 ) + 0.25 * clamp( curv, 0.0, 1.0 ) );
   float bSnow = smoothstep( 0.3, 0.7, snowPot * snowFacing + ( hSnow - 0.5 ) * 0.15 );
 
@@ -228,8 +231,8 @@ void rvTerrain( inout vec3 albedo ) {
   float lush = clamp( smoothstep( 0.3, 0.75, moist + 0.22 * n3 ) * uRvS2.x, 0.0, 1.0 );
   vec3 grassC = mix( uRvGrass2, uRvGrass, lush );
   grassC = mix( grassC, uRvForest, smoothstep( 0.6, 0.9, moist + 0.25 * n1 ) * uRvS2.y );
-  grassC = mix( grassC, uRvDry, smoothstep( 0.45, 0.2, moist + 0.2 * n3 ) * 0.6 );
-  grassC = mix( grassC, uRvGrass2 * vec3( 1.0, 0.92, 0.78 ), smoothstep( 0.35, 0.15, temp ) * 0.6 );
+  grassC = mix( grassC, uRvDry, smoothstep( 0.4, 0.15, moist + 0.2 * n3 ) * 0.6 * ( 1.0 - 0.65 * uRvS2.x ) );
+  grassC = mix( grassC, uRvGrass2 * vec3( 1.0, 0.92, 0.78 ), smoothstep( 0.28, 0.1, temp ) * 0.6 );
   grassC = mix( grassC, uRvGrass2, smoothstep( 0.55, 0.8, mC.r ) * 0.35 );
   grassC = mix( grassC, uRvForest * 0.85, smoothstep( 0.5, 0.75, mC.b + 0.3 * n3 ) * 0.4 );
   grassC = mix( grassC, vec3( rvLum( grassC ) ), 0.26 );
@@ -279,7 +282,8 @@ void rvTerrain( inout vec3 albedo ) {
   hD = mix( hD, hSnow, bSnow * 0.7 );
   rvAO = clamp( ( 1.0 - 0.5 * cav ) * mix( mix( 0.55, 0.38, bRock ), 1.08, hD ), 0.2, 1.0 );
   col *= mix( 1.0, 0.62 + 0.6 * hD, bRock ) * ( 1.0 - 0.18 * cav * ( 1.0 - bSnow ) );
-  col *= 1.0 + 0.12 * clamp( -curv, 0.0, 1.0 );
+  col *= 1.0 + ( 0.12 + 0.12 * bRock ) * clamp( -curv, 0.0, 1.0 );
+  col *= 1.0 - 0.14 * bRock * cav;
 
   // ---- emissive extras
   rvEmis = vec3( 0.0 );
@@ -330,7 +334,7 @@ export function createTerrainMaterial(body, quality) {
   const accent = col(p.accent, '#ffb060');
   const deep = col(p.deep, '#1c3a48');
   const rock2 = rock.clone().multiplyScalar(0.58).lerp(sand, 0.12);
-  const soil = rock.clone().lerp(sand, 0.35).multiplyScalar(0.55);
+  const soil = rock.clone().lerp(sand, 0.45).multiplyScalar(0.72);
   const dry = grass2.clone().lerp(sand, 0.55);
   const seabed = sand.clone().multiplyScalar(0.55).lerp(deep, 0.35);
   // barren / volcanic worlds: no vegetation colors on the ground
@@ -381,7 +385,7 @@ export function createTerrainMaterial(body, quality) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v10';
+  mat.customProgramCacheKey = () => 'rv-terrain-v13';
   return mat;
 }
 

@@ -21,8 +21,11 @@ import { AtmosphereLUTs } from './luts.js';
 import { AtmosphereEffect } from './effect.js';
 import { Lighting } from './lighting.js';
 import { RenderState } from './fs.js';
+import { Clouds } from './clouds.js';
+import { Weather } from './weather.js';
+import { LightShafts } from './lightshafts.js';
 
-const _up = new THREE.Vector3(), _v = new THREE.Vector3();
+const _up = new THREE.Vector3(), _v = new THREE.Vector3(), _n = new THREE.Vector3();
 
 class Atmosphere {
   constructor(world) {
@@ -68,6 +71,19 @@ class Atmosphere {
     this.needsSkyPass = true;
     this._removers = [];
     this._removers.push(world.engine.pipeline.addEffect(this.effect));
+    try {
+      this.clouds = new Clouds(this);
+      if (this.clouds.present) this._removers.push(world.engine.pipeline.addEffect(this.clouds));
+      this.lighting.envU.uCloudCover.value = this.clouds.meanCover * 0.6;
+    } catch (e) { console.error('[atmosphere] clouds init failed', e); this.clouds = null; }
+    try {
+      this.shafts = new LightShafts(this);
+      if (this.shafts.enabled) this._removers.push(world.engine.pipeline.addEffect(this.shafts));
+    } catch (e) { console.error('[atmosphere] light shafts init failed', e); this.shafts = null; }
+    try {
+      this.weatherSys = new Weather(this);
+      this._removers.push(world.engine.pipeline.addEffect(this.weatherSys));
+    } catch (e) { console.error('[atmosphere] weather init failed', e); this.weatherSys = null; }
 
     // GPU work that must happen before the scene renders (LUTs, env map, cloud shadows)
     this._rs = new RenderState();
@@ -86,7 +102,7 @@ class Atmosphere {
   // ---------------------------------------------------------------- per-frame CPU
   lateUpdate(dt, t) {
     const w = this.world, cel = w.celestial;
-    const camLocal = this._camLocal.copy(w.camera.position);
+    const camLocal = w.camera.getWorldPosition(this._camLocal).add(w.origin);
     const camR = camLocal.length();
     const up = _up.copy(camLocal).divideScalar(Math.max(camR, 1));
     const sunDir = cel.sunDir;
@@ -104,9 +120,9 @@ class Atmosphere {
     const tint = this.model.tint;
     this.nightAmbient.setRGB(0.020 + tint.r * 0.006, 0.026 + tint.g * 0.008, 0.052 + tint.b * 0.012).multiplyScalar(night * E * 0.55);
     const present = this.model.present;
-    const ns = present ? night * E * 0.0016 : 0;
+    const ns = present ? night * E * 0.00022 : 0;
     S.uNightSky.value.set(0.30 * ns, 0.42 * ns, 0.85 * ns);
-    S.uAirglow.value.set(0.10, 0.55, 0.30).multiplyScalar(present ? night * E * 0.00055 * (0.6 + this.model.density * 0.4) : 0);
+    S.uAirglow.value.set(0.10, 0.55, 0.30).multiplyScalar(present ? night * E * 0.00014 * (0.6 + this.model.density * 0.4) : 0);
 
     this.lighting.update(dt, { model: this.model, camLocal, up, sunDir, camR, starColor: this.starColor, sunAngR: this.sunAngR, nightAmbient: this.nightAmbient, weather: this.weather });
 
@@ -115,15 +131,23 @@ class Atmosphere {
     const R = this.model.rayleigh;
     const rm = Math.max(R.x, R.y, R.z);
     const mE = moon.ill * E * (present ? 1 : 0) * night;
-    S.uMoonSky.value.set(R.x / rm, R.y / rm, R.z / rm).multiplyScalar(mE * 0.2);
+    S.uMoonSky.value.set(R.x / rm, R.y / rm, R.z / rm).multiplyScalar(mE * 0.06);
 
     // aurora
-    const aur = w.body.weather?.aurora || 0;
+    const aur = this.weather.aurora ?? w.body.weather?.aurora ?? 0;
     S.uAurora.value = present ? aur * night * 1.6 : 0;
     S.uAuroraLat.value = Math.sin(THREE.MathUtils.lerp(58, 8, THREE.MathUtils.clamp(aur, 0, 1)) * Math.PI / 180);
 
-    // wind (until the weather module drives it)
+    // wind direction (strength, wetness, snow: weather module)
     this._updateWind(t, up);
+    if (this.weatherSys) {
+      try { this.weatherSys.update(dt, t); } catch (e) { if ((this._wErr = (this._wErr || 0) + 1) < 4) console.error('[atmosphere] weather update failed', e); }
+    }
+    this._updateFog(t);
+    if (this.clouds?.present) {
+      try { this.clouds.update(dt, t, { G, lighting: this.lighting, sunDir, sunMu: muS, camR, coverBoost: this.weather.coverBoost || 0, flash: this.weather.flash || 0 }); }
+      catch (e) { if ((this._cErr = (this._cErr || 0) + 1) < 4) console.error('[atmosphere] clouds update failed', e); }
+    }
     this.effect.u.uFallbackSun.value = w.get('space') ? 0 : 1;
     this.frame++;
   }
@@ -132,29 +156,54 @@ class Atmosphere {
     const wx = this.world.body.art?.weather || {};
     const base = wx.wind ?? 0.3;
     const gust = 0.5 + 0.5 * Math.sin(t * 0.13) * Math.sin(t * 0.071 + 1.3);
-    G.uWindStrength.value = THREE.MathUtils.clamp(base * (0.75 + 0.5 * gust) + this.weather.storm * 0.4, 0, 1);
+    if (!this.weatherSys) G.uWindStrength.value = THREE.MathUtils.clamp(base * (0.75 + 0.5 * gust) + this.weather.storm * 0.4, 0, 1);
     // prevailing wind: eastward (tangent), slowly veering
     const east = _v.set(0, 1, 0).cross(up);
     if (east.lengthSq() < 1e-6) east.set(1, 0, 0);
     east.normalize();
-    const north = new THREE.Vector3().crossVectors(up, east);
+    const north = _n.crossVectors(up, east);
     const a = 0.6 * Math.sin(t * 0.017) + 0.3;
     G.uWindDir.value.copy(east).multiplyScalar(Math.cos(a)).addScaledVector(north, Math.sin(a)).normalize();
+  }
+
+  // height fog / fog banks / dust / rain haze (analytic exponential height fog in the atmosphere pass)
+  _updateFog(t) {
+    const W = this.weather, u = this.effect.u, m = this.model;
+    if (!m.present) { u.uFog.value.set(0, 1, 0, 0); return; }
+    const fog = W.fog || 0, dust = W.dust || 0, rain = Math.max(W.rain || 0, W.snow || 0);
+    const rho = fog * fog * 3.2e-4 + rain * 5e-5 + dust * 1.2e-3;
+    const Hf = THREE.MathUtils.lerp(320, 1600, THREE.MathUtils.clamp((rain + dust * 1.5) / Math.max(fog + rain + dust, 1e-3), 0, 1));
+    const sea = this.world.surface?.seaLevel ?? 0;
+    u.uFog.value.set(rho, Hf, sea + 30, 0.35 + 0.65 * fog);
+    // fog color: dust tint / cool rain grey / white mist
+    const tint = m.tint;
+    const c = u.uFogAlbedo.value;
+    c.set(0.95, 0.96, 1.0);
+    if (dust > 0) c.lerp(_v.set(0.95 * Math.min(1, tint.r * 1.6 + 0.3), 0.75 * Math.min(1, tint.g * 1.4 + 0.25), 0.55 * Math.min(1, tint.b * 1.2 + 0.2)), Math.min(1, dust * 1.5));
+    const sky = this.lighting.skyIrr, na = this.nightAmbient;
+    u.uFogAmb.value.set((sky[0] + na.r) / Math.PI, (sky[1] + na.g) / Math.PI, (sky[2] + na.b) / Math.PI);
+    const sc = this.lighting.sunColor, sd = Math.max(0, W.sunDim ?? 1);
+    u.uFogSun.value.set(sc.r, sc.g, sc.b).multiplyScalar(sd * sd);
+    u.uFogWind.value.set(G.uWindDir.value.x, G.uWindDir.value.z).multiplyScalar(t * 6);
   }
 
   // ---------------------------------------------------------------- GPU pre-render
   _preRender(renderer, camera) {
     if (this._errors > 5) return;
+    // only for the main view (reflection / probe cameras reuse this frame's LUTs)
+    if (camera !== this.world.camera && this._preFrame === this.engine.time.frame) return;
+    this._preFrame = this.engine.time.frame;
     const rs = this._rs;
     rs.save(renderer);
     try {
       renderer.autoClear = true;
-      const camLocal = this.world.camera.position;
+      const camLocal = _v.setFromMatrixPosition(camera.matrixWorld).add(this.world.origin);
       const camR = camLocal.length();
+      this.lighting.envU.uCamPlanet.value.copy(camLocal);
       if (this.luts) {
         if (!this.luts.staticDone) this.luts.buildStatic(renderer);
         if (camR < this.model.Rt * 1.001) {
-          const muS = _v.copy(camLocal).normalize().dot(this.shared.uSunDir.value);
+          const muS = camLocal.normalize().dot(this.shared.uSunDir.value);
           const gi = this.lighting.envU.uGroundIrr.value;
           this.luts.updateSky(renderer, camR, muS, gi);
         }
@@ -174,7 +223,7 @@ class Atmosphere {
   isReady() { return true; }
 
   getState() {
-    const up = this.world.camera.position.clone().normalize();
+    const up = this._camLocal.clone().normalize();
     const L = this.lighting;
     return {
       sunElev: +(Math.asin(THREE.MathUtils.clamp(up.dot(this.world.celestial.sunDir), -1, 1)) * 57.2958).toFixed(1),
@@ -182,6 +231,9 @@ class Atmosphere {
       night: +L.nightFactor.toFixed(2),
       env: !!L.envRT,
       shadows: !!L.key.castShadow,
+      clouds: this.clouds?.present ? this.clouds.type : 'none',
+      weather: Object.fromEntries(['rain', 'snow', 'dust', 'fog', 'storm', 'wind', 'flash'].map((k) => [k, +(this.weather[k] || 0).toFixed(2)])),
+      wet: +G.uWetness.value.toFixed(2), snowCover: +G.uSnow.value.toFixed(2),
     };
   }
 
@@ -191,6 +243,8 @@ class Atmosphere {
     this.effect.dispose();
     this.luts?.dispose();
     this.clouds?.dispose?.();
+    this.shafts?.dispose?.();
+    this.weatherSys?.dispose?.();
     this.lighting.dispose();
     if (this.world.lighting === this.lighting) this.world.lighting = null;
     if (this.world.atmosphere === this) this.world.atmosphere = null;

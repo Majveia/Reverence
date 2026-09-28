@@ -46,11 +46,20 @@ export class AtmosphereModel {
     this.Rt = R + H;
     this.height = H;
 
-    // --- scale heights (fractions of the atmosphere thickness; Earth: 8 km / 100 km)
-    this.HR = H * 0.165;
-    this.HM = this.HR * 0.34;
-    this.ozoneCenter = this.HR * 3.1;
-    this.ozoneHalfWidth = this.HR * 1.9;
+    // --- scale heights (fractions of the atmosphere thickness). The worlds are miniature (R ≈ 30–110 km,
+    // relief up to 7 km), so the air is "taller" relative to the shell than Earth's (8 km / 100 km):
+    // mountains stay inside the air and the density fades smoothly to zero at the top (see medium()).
+    this.HR = H * 0.36;
+    this.HM = this.HR * 0.4;
+    this.ozoneCenter = H * 0.55;
+    this.ozoneHalfWidth = H * 0.3;
+    this.topFade0 = H * 0.62;
+    // Sun-path reddening: small planets have a short horizon air mass (≈ sqrt(πR/2H) ≈ 5 vs Earth's 38),
+    // which would give pale sunsets. Low-sun transmittance is raised to this power (GPU + CPU) so the
+    // light reaching the air and the ground turns gold → orange → red as on Earth, without extra haze.
+    this.sunsetK = 1.9;
+    this.skyGain = 2.0;   // (reduced below for moody / dark-tinted worlds)
+    this.H = H;
 
     // --- art-directed sky tint (linear)
     const tint = new THREE.Color(pal.sky || '#7ab8ff');
@@ -60,14 +69,19 @@ export class AtmosphereModel {
     const d = this.present ? this.density : 0;
 
     // Rayleigh: vertical optical depth = Earth × kR  (kR > 1 compensates the small planet)
-    const kR = 1.55 * d;
+    const kR = 1.3 * clamp(d, 0, 1.8);
     this.rayleigh = new THREE.Vector3(...EARTH_RAY.map((b) => b * 8000 * kR / this.HR));
 
     // Mie (aerosols / haze / dust)
     const pale = clamp(1 - hsv.s, 0, 1);            // desaturated tint → hazier sky
     const dust = wx.dust ?? A.haze ?? 0;
     const fog = wx.fog ?? 0;
-    const tauM = 0.02 * (A.mie ?? 1) * d * (1 + pale * 1.0 + dust * 2.5 + fog * 0.6);
+    const tauM = 0.011 * (A.mie ?? 1) * clamp(d, 0, 1.8) * (1 + pale * 0.8 + dust * 2.5 + fog * 0.8);
+    this.fog = fog; this.dust = dust;
+    // aerial perspective distance scale (UE-style art control): the per-meter air of these small worlds is
+    // denser than Earth's for the same sky color; near the ground geometry sees a lighter veil, blending to
+    // fully physical from altitude/space. Foggy/dusty presets get more veil.
+    this.apScale = clamp(0.32 + fog * 0.35 + dust * 0.3, 0.25, 0.85);
     this.mieG = clamp((A.mieG ?? 0.8) + 0.04, 0.75, 0.9);
     // dust absorbs blue: tint the aerosol albedo toward the (warm) sky color when dusty
     const warm = clamp((tint.r - tint.b) / Math.max(tint.r, 1e-3), 0, 1);
@@ -79,15 +93,19 @@ export class AtmosphereModel {
       t.divideScalar(mx);
       albedo.lerp(new THREE.Vector3(0.95 * Math.pow(t.x, 0.35), 0.9 * Math.pow(t.y, 0.45), 0.85 * Math.pow(t.z, 0.6)), dustiness);
     }
-    // dark tints (smog / moody worlds) → absorbing aerosols
-    if (hsv.v < 0.45 && d > 0) albedo.multiplyScalar(0.55 + hsv.v);
-    const betaM = tauM / this.HM;
+    // dark tints (smog / moody worlds) → absorbing aerosols, thicker smog, dimmer sky
+    this.moody = clamp((0.45 - hsv.v) / 0.35, 0, 1) * (d > 0 ? 1 : 0);
+    if (this.moody > 0) albedo.multiplyScalar(1 - this.moody * 0.4);
+    const betaM = tauM * (1 + (this.moody || 0) * 2.5) / this.HM;
     this.mieExt = new THREE.Vector3(betaM, betaM, betaM);
     this.mieScat = new THREE.Vector3(betaM * albedo.x, betaM * albedo.y, betaM * albedo.z);
 
     // Ozone (drives the blue hour); scaled like the Rayleigh layer
-    const kO = 1.4 * d;
+    const kO = 0.95 * clamp(d, 0, 1.8);
     this.ozone = new THREE.Vector3(...EARTH_OZONE.map((b) => b * 15000 * kO / (this.ozoneHalfWidth)));
+
+    this.skyGain *= 1 - this.moody * 0.35;
+    this.apScale = Math.min(0.9, (this.apScale ?? 0.4) + this.moody * 0.25);
 
     // Ground albedo (average of the world palette, ocean-weighted) for multiple scattering
     const land = new THREE.Color(0, 0, 0);
@@ -112,7 +130,8 @@ export class AtmosphereModel {
   // ------------------------------------------------------------ medium
   medium(h, outS, outE) {
     h = Math.max(h, 0);
-    const dR = Math.exp(-h / this.HR), dM = Math.exp(-h / this.HM);
+    const f = 1 - smooth(this.topFade0, this.H, h);
+    const dR = Math.exp(-h / this.HR) * f, dM = Math.exp(-h / this.HM) * f;
     const dO = Math.max(0, 1 - Math.abs(h - this.ozoneCenter) / this.ozoneHalfWidth);
     const R = this.rayleigh, M = this.mieScat, ME = this.mieExt, O = this.ozone;
     outS[0] = R.x * dR; outS[1] = R.y * dR; outS[2] = R.z * dR;
@@ -153,8 +172,8 @@ export class AtmosphereModel {
         const dd = dMin + xMu * (dMax - dMin);
         const mu = dd === 0 ? 1 : clamp((Hh * Hh - rho * rho - dd * dd) / (2 * r * dd), -1, 1);
         this._opticalDepth(r, mu, od, 48);
-        const k = (j * TW + i) * 3;
-        this.table[k] = Math.exp(-od[0]); this.table[k + 1] = Math.exp(-od[1]); this.table[k + 2] = Math.exp(-od[2]);
+        const k = (j * TW + i) * 3, K = 1;
+        this.table[k] = Math.exp(-od[0] * K); this.table[k + 1] = Math.exp(-od[1] * K); this.table[k + 2] = Math.exp(-od[2] * K);
       }
     }
   }
@@ -190,7 +209,8 @@ export class AtmosphereModel {
     const a = Math.max(angR, 0.004);
     const vis = smooth(-a, a, (muS - cosH) / Math.max(sinH, 1e-3));
     this.transmittance(r, muS, out);
-    out[0] *= vis; out[1] *= vis; out[2] *= vis;
+    const K = (this.sunsetK ?? 1) + (1 - (this.sunsetK ?? 1)) * smooth(0, 0.32, muS);
+    out[0] = Math.pow(out[0], K) * vis; out[1] = Math.pow(out[1], K) * vis; out[2] = Math.pow(out[2], K) * vis;
     return out;
   }
 
@@ -237,6 +257,8 @@ export class AtmosphereModel {
         Tv[c] *= Tseg;
       }
     }
+    const gain = this.skyGain ?? 1;
+    out[0] *= gain; out[1] *= gain; out[2] *= gain;
     return out;
   }
 
@@ -292,8 +314,8 @@ export class AtmosphereModel {
         const dd = dMin + xMu * (dMax - dMin);
         const mu = dd === 0 ? 1 : clamp((Hh * Hh - rho * rho - dd * dd) / (2 * r * dd), -1, 1);
         this._opticalDepth(r, mu, od, 16);
-        const k = (j * TW + i) * 3;
-        this.table[k] = Math.exp(-od[0]); this.table[k + 1] = Math.exp(-od[1]); this.table[k + 2] = Math.exp(-od[2]);
+        const k = (j * TW + i) * 3, K = 1;
+        this.table[k] = Math.exp(-od[0] * K); this.table[k + 1] = Math.exp(-od[1] * K); this.table[k + 2] = Math.exp(-od[2] * K);
       }
     }
   }
@@ -347,6 +369,9 @@ export class AtmosphereModel {
       uOzoneAbs: { value: this.ozone.clone() },
       uOzoneCenter: { value: this.ozoneCenter },
       uOzoneInvHalfW: { value: 1 / this.ozoneHalfWidth },
+      uTopFade: { value: new THREE.Vector2(this.topFade0, this.H) },
+      uSunsetK: { value: this.sunsetK },
+      uSkyGain: { value: this.skyGain },
       uGroundAlbedo: { value: new THREE.Vector3(this.groundAlbedo.r, this.groundAlbedo.g, this.groundAlbedo.b) },
       uSunAngR: { value: 0.005 },
       uTransLUT: { value: null },

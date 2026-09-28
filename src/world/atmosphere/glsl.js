@@ -38,6 +38,9 @@ uniform float uMieG;            // Mie asymmetry
 uniform vec3  uOzoneAbs;        // ozone absorption at peak (1/m)
 uniform float uOzoneCenter;     // ozone layer center altitude (m)
 uniform float uOzoneInvHalfW;   // 1 / ozone half width
+uniform float uSkyGain;         // art gain on in-scattered light (sky brighter than sunlit ground, as in games)
+uniform vec2  uTopFade;
+uniform float uSunsetK;         // sun-path reddening power for low suns (see atmo_sunTransmittance)         // density fades to 0 between x and y (altitude, m)
 uniform vec3  uGroundAlbedo;
 uniform float uSunAngR;         // angular radius of the star (rad)
 uniform sampler2D uTransLUT;
@@ -59,8 +62,9 @@ vec2 atmo_raySphere(vec3 ro, vec3 rd, float r){
 // ---------------------------------------------------------------- medium
 void atmo_medium(float h, out vec3 scatR, out vec3 scatM, out vec3 ext){
   h = max(h, 0.0);
-  float dR = exp(-h * uRayInvH);
-  float dM = exp(-h * uMieInvH);
+  float f = 1.0 - smoothstep(uTopFade.x, uTopFade.y, h);
+  float dR = exp(-h * uRayInvH) * f;
+  float dM = exp(-h * uMieInvH) * f;
   float dO = max(0.0, 1.0 - abs(h - uOzoneCenter) * uOzoneInvHalfW);
   scatR = uRayScat * dR;
   scatM = uMieScat * dM;
@@ -110,6 +114,20 @@ vec3 atmo_transmittance(float r, float mu){
   r = clamp(r, uAtmoRb + 0.5, uAtmoRt);
   return texture(uTransLUT, atmo_transUV(r, mu)).rgb;
 }
+// Transmittance of the straight segment p0 → p1 (planet-centered), from the LUT (Bruneton): descending
+// segments use the reversed (upward) form.
+vec3 atmo_transSegment(vec3 p0, vec3 p1){
+  vec3 d = p1 - p0;
+  float l = length(d);
+  if (l < 1.0) return vec3(1.0);
+  d /= l;
+  float r0 = length(p0), r1 = length(p1);
+  float mu0 = dot(p0, d) / r0, mu1 = dot(p1, d) / r1;
+  vec3 T;
+  if (mu1 < 0.0) T = atmo_transmittance(r1, -mu1) / max(atmo_transmittance(r0, -mu0), vec3(1e-5));
+  else T = atmo_transmittance(r0, mu0) / max(atmo_transmittance(r1, mu1), vec3(1e-5));
+  return clamp(T, 0.0, 1.0);
+}
 // Transmittance toward the star from radius r, star zenith cosine muS, with a soft planet shadow
 // (the star is a disk: fraction of the disk above the geometric horizon).
 vec3 atmo_sunTransmittance(float r, float muS){
@@ -118,7 +136,10 @@ vec3 atmo_sunTransmittance(float r, float muS){
   float cosH = -sqrt(max(0.0, 1.0 - sinH * sinH));
   float a = max(uSunAngR, 0.004);
   float vis = smoothstep(-a, a, (muS - cosH) / max(sinH, 1e-3));
-  return vis > 0.0 ? atmo_transmittance(r, muS) * vis : vec3(0.0);
+  if (vis <= 0.0) return vec3(0.0);
+  // art-directed sunset reddening: low suns get a deeper (Earth-like) air-mass color
+  float k = mix(uSunsetK, 1.0, smoothstep(0.0, 0.32, muS));
+  return pow(atmo_transmittance(r, muS), vec3(k)) * vis;
 }
 
 // ---------------------------------------------------------------- multiple scattering LUT
@@ -135,7 +156,7 @@ vec3 atmo_multiScat(float r, float muS){ return texture(uMsLUT, atmo_msUV(r, muS
 // Lr/Lm must be multiplied by the Rayleigh/Mie phase for the view/sun angle (constant along a ray).
 struct AtmoInscatter { vec3 Lr; vec3 Lm; vec3 Lms; vec3 T; };
 
-AtmoInscatter atmo_march(vec3 ro, vec3 rd, float t0, float t1, vec3 sunDir, float steps, float jitter){
+AtmoInscatter atmo_marchS(vec3 ro, vec3 rd, float t0, float t1, vec3 sunDir, float steps, float jitter, float dens){
   AtmoInscatter o;
   o.Lr = vec3(0.0); o.Lm = vec3(0.0); o.Lms = vec3(0.0); o.T = vec3(1.0);
   float len = max(t1 - t0, 0.0);
@@ -149,6 +170,7 @@ AtmoInscatter atmo_march(vec3 ro, vec3 rd, float t0, float t1, vec3 sunDir, floa
     vec3 up = p / r;
     vec3 sR, sM, ext;
     atmo_medium(r - uAtmoRb, sR, sM, ext);
+    sR *= dens; sM *= dens; ext *= dens;
     float muS = dot(up, sunDir);
     vec3 Ts = atmo_sunTransmittance(r, muS);
     vec3 ms = atmo_multiScat(r, muS);
@@ -162,8 +184,12 @@ AtmoInscatter atmo_march(vec3 ro, vec3 rd, float t0, float t1, vec3 sunDir, floa
   return o;
 }
 
+AtmoInscatter atmo_march(vec3 ro, vec3 rd, float t0, float t1, vec3 sunDir, float steps, float jitter){
+  return atmo_marchS(ro, rd, t0, t1, sunDir, steps, jitter, 1.0);
+}
+
 vec3 atmo_combine(AtmoInscatter a, float cosTheta){
-  return a.Lr * atmo_phaseRayleigh(cosTheta) + a.Lm * atmo_phaseMie(cosTheta, uMieG) + a.Lms;
+  return (a.Lr * atmo_phaseRayleigh(cosTheta) + a.Lm * atmo_phaseMie(cosTheta, uMieG) + a.Lms) * uSkyGain;
 }
 
 // Segment of a ray (planet-centered origin) inside the atmosphere, clipped to [0, tMax].
@@ -215,7 +241,7 @@ vec3 atmo_skyLUT(vec3 dir, vec3 up, float viewR, vec3 sunDir, float nu){
   vec3 Lr = texture(uSkyR, uv).rgb;
   vec3 Lm = texture(uSkyM, uv).rgb;
   vec3 Lms = texture(uSkyMS, uv).rgb;
-  return Lr * atmo_phaseRayleigh(nu) + Lm * atmo_phaseMie(nu, uMieG) + Lms;
+  return (Lr * atmo_phaseRayleigh(nu) + Lm * atmo_phaseMie(nu, uMieG) + Lms) * uSkyGain;
 }
 #endif
 `);

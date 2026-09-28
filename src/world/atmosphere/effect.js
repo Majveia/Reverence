@@ -40,7 +40,44 @@ uniform vec3 uAuroraCol2;
 uniform float uTime;
 uniform float uHasAtmo;
 uniform float uDebug;
+uniform float uAPScale;       // aerial perspective density scale for geometry (art control)
+uniform mat3 uStarRot;        // planet-local → inertial (fallback star field wheels with the sky)
+uniform vec4 uFog;            // height fog: density at base (1/m), scale height (m), base altitude (m), patchiness
+uniform vec3 uFogAlbedo;
+uniform vec3 uFogAmb;         // ambient radiance for the fog
+uniform vec3 uFogSun;         // sun illuminance at the camera
+uniform vec2 uFogWind;
+uniform float uPixAng;        // angular size of a pixel (rad)
 varying vec2 vUv;
+
+// Fallback night sky (only when the space track is absent): hashed stars + faint galactic band.
+vec3 fallbackStars(vec3 d){
+  vec3 col = vec3(0.0);
+  for (int k = 0; k < 2; k++){
+    float sc = k == 0 ? 90.0 : 190.0;
+    vec3 q = d * sc;
+    vec3 c = floor(q);
+    vec3 h = rv_hash33(c + float(k) * 17.0);
+    float thr = k == 0 ? 0.93 : 0.8;
+    if (h.x > thr){
+      vec3 sp = c + 0.2 + 0.6 * rv_hash33(c + 5.3);
+      vec3 sd = normalize(sp);
+      float a = length(cross(d, sd));
+      float sig = max(uPixAng * 0.85, 1e-5);
+      float b = pow((h.x - thr) / (1.0 - thr), k == 0 ? 3.0 : 5.0) * (k == 0 ? 2.2 : 0.7);
+      vec3 tint = mix(vec3(1.0, 0.78, 0.55), vec3(0.72, 0.84, 1.0), h.y);
+      col += tint * b * exp(-a * a / (sig * sig)) ;
+    }
+  }
+  // galactic band
+  vec3 gN = normalize(vec3(0.35, 0.8, 0.48));
+  float lat = dot(d, gN);
+  float band = exp(-lat * lat * 26.0);
+  float n = rv_snoise(d * 5.0) * 0.5 + rv_snoise(d * 13.0) * 0.25 + 0.6;
+  float dust = smoothstep(0.1, 0.6, rv_snoise(d * 7.0 + 3.0) * 0.5 + 0.5) * exp(-lat * lat * 140.0);
+  col += vec3(0.55, 0.6, 0.75) * band * max(n, 0.0) * 0.012 * (1.0 - dust * 0.8);
+  return col * 0.35;
+}
 
 // chord length of a ray through a spherical shell [r0, r1], clipped to [0, tMax]
 float shellChord(vec3 ro, vec3 rd, float r0, float r1, float tMax){
@@ -96,6 +133,26 @@ vec3 auroraMarch(vec3 ro, vec3 rd, float tMax, float jitter){
   return acc * uAurora / (r1 - r0);
 }
 
+// Analytic exponential height fog along [0, d] (flat-earth approximation near the camera), patchy banks.
+vec3 applyFog(vec3 col, vec3 ro, vec3 dir, float d, vec3 up, float nu){
+  if (uFog.x <= 0.0) return col;
+  float camR = length(ro);
+  float hc = camR - uAtmoRb - uFog.z;
+  float cz = dot(dir, up);
+  d = min(d, 60000.0);
+  float Hf = uFog.y;
+  float he = hc + cz * d;
+  float e0 = exp(-max(hc, -2.0 * Hf) / Hf), e1 = exp(-max(he, -2.0 * Hf) / Hf);
+  float od = abs(cz) > 1e-4 ? uFog.x * Hf * (e0 - e1) / cz : uFog.x * d * e0;
+  // drifting banks: modulate by noise at the ray's end region
+  vec3 pe = ro + dir * min(d, 8000.0);
+  float n = rv_snoise(vec3(pe.xz * 0.00035 + uFogWind * 0.0004, pe.y * 0.0003)) * 0.5 + 0.5;
+  od *= mix(1.0, 0.25 + 1.5 * n, uFog.w);
+  float T = exp(-max(od, 0.0));
+  vec3 L = uFogAmb * 1.6 + uFogSun * (atmo_phaseHG(nu, 0.55) * 0.9 + 0.05);
+  return col * T + L * uFogAlbedo * (1.0 - T);
+}
+
 void main(){
   vec3 col = texture(tColor, vUv).rgb;
   if (uHasAtmo < 0.5){ gl_FragColor = vec4(col, 1.0); return; }
@@ -120,12 +177,13 @@ void main(){
     float len = max(t1 - t0, 0.0);
     // more steps for long paths (from altitude / space)
     float steps = clamp(uGeoSteps * (0.5 + len / 6000.0), 4.0, uGeoSteps * 2.0);
-    AtmoInscatter a = atmo_march(ro, dir, t0, t1, uSunDir, steps, 0.5);
+    AtmoInscatter a = atmo_marchS(ro, dir, t0, t1, uSunDir, steps, 0.5, uAPScale);
     vec3 L = atmo_combine(a, nu) * uSunIll;
     // moonlit / starlit air (tiny, keeps night silhouettes readable)
     float airT = 1.0 - dot(a.T, vec3(0.3333));
     L += (uNightSky * 0.8 + uMoonSky * atmo_phaseRayleigh(dot(dir, uMoonDir)) * 6.0) * airT;
     outc = col * a.T + L;
+    outc = applyFog(outc, ro, dir, tHit, up, nu);
   } else {
     // ---------------- sky / background
     float tAtmEnd = far ? top.y : min(tHit, top.y);
@@ -182,19 +240,25 @@ void main(){
     // background (stars, sun disk, planets) seen through the atmosphere; faint stars vanish by day
     vec3 bg = col;
     if (uFallbackSun > 0.5){
-      float cs = cos(uSunAngR);
-      float sd = smoothstep(cs - 0.00002, cs + 0.00002, nu);
-      bg += uSunIll * sd * 4000.0;
-      bg += uSunIll * pow(max(nu, 0.0), 2000.0) * 6.0;
+      // fallback star disk (limb-darkened) when no space track draws the star
+      float ang = acos(clamp(nu, -1.0, 1.0));
+      float x = clamp(ang / uSunAngR, 0.0, 1.0);
+      float disk = 1.0 - smoothstep(0.92, 1.0, ang / uSunAngR);
+      float limb = 0.45 + 0.55 * sqrt(max(1.0 - x * x, 0.0));
+      bg += uSunIll * disk * limb * 40.0;
     }
+    if (uFallbackSun > 0.5 && far) bg += fallbackStars(uStarRot * dir);
     bg *= T;
     float bl = rv_luma(bg);
     float sl = rv_luma(L);
     float vis = clamp((bl - uStarVis * sl) / max(bl, 1e-6), 0.0, 1.0);
     outc = bg * vis + L;
+    if (camR < uAtmoRt) outc = applyFog(outc, ro, dir, far ? 40000.0 : tHit, up, nu);
   }
   gl_FragColor = vec4(outc, 1.0);
 }`;
+
+const _q = new THREE.Quaternion(), _m4 = new THREE.Matrix4();
 
 export class AtmosphereEffect {
   constructor(atmo) {
@@ -232,6 +296,14 @@ export class AtmosphereEffect {
       uTime: atmo.shared.uTime,
       uHasAtmo: { value: atmo.model.present ? 1 : 0 },
       uDebug: { value: +(atmo.world.params?.atmoDebug ?? 0) },
+      uAPScale: { value: atmo.model.apScale ?? 1 },
+      uStarRot: { value: new THREE.Matrix3() },
+      uFog: { value: new THREE.Vector4(0, 1, 0, 0) },
+      uFogAlbedo: { value: new THREE.Vector3(1, 1, 1) },
+      uFogAmb: { value: new THREE.Vector3() },
+      uFogSun: { value: new THREE.Vector3() },
+      uFogWind: { value: new THREE.Vector2() },
+      uPixAng: { value: 0.001 },
       ...atmo.atmoUniforms,
     };
     this.mat = fsMaterial(FRAG, this.u);
@@ -242,6 +314,14 @@ export class AtmosphereEffect {
     u.uCamWorld.value.copy(camera.matrixWorld);
     u.uProjParams.value.set(p[0], p[5], p[8], p[9]);
     u.uNear.value = camera.near; u.uFar.value = camera.far;
+    const cel = this.atmo.world.celestial;
+    if (cel?.qInv) { _q.copy(cel.qInv).invert(); _m4.makeRotationFromQuaternion(_q); u.uStarRot.value.setFromMatrix4(_m4); }
+    u.uPixAng.value = 2 / (p[5] * Math.max(1, this.atmo.engine.pipeline?.height || 540));
+    // planet-centered camera position: scene position + floating origin (root = -origin, no rotation)
+    u.uCamPlanet.value.setFromMatrixPosition(camera.matrixWorld).add(this.atmo.world.origin);
+    const m = this.atmo.model;
+    const h = (u.uCamPlanet.value.length() - m.Rb) / m.height;
+    u.uAPScale.value = THREE.MathUtils.lerp(m.apScale ?? 1, 1, THREE.MathUtils.smoothstep(h, 0.3, 1.0));
   }
 
   render(renderer, io) {
