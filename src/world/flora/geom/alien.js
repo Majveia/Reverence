@@ -227,7 +227,7 @@ export function tentaclePlant(rnd, P) {
   }
   const emit = (detail) => {
     const b = new PlantBuilder();
-    for (const t of tt) b.tube(detail ? t.pts.filter((_, i) => i % 3 === 0) : t.pts, { segs: detail ? 5 : 9, kind: KIND.SOLID, pattern: PAT.POLKA, color: (u) => mix3(P.colA, P.colB, u), phase: t.phase, capTip: true, vScale: 2 });
+    for (const t of tt) b.tube(detail ? t.pts.filter((_, i) => i % 4 === 0 || i === t.pts.length - 1) : t.pts, { segs: detail ? 4 : 9, kind: KIND.SOLID, pattern: PAT.POLKA, color: (u) => mix3(P.colA, P.colB, u), phase: t.phase, capTip: true, vScale: 2 });
     return b;
   };
   return { lod0: emit(0), lod1: emit(1), height: P.height, crownR: P.radius, trunkR: P.thick, collider: { r: P.radius * 0.5, h: P.height * 0.7 } };
@@ -286,7 +286,7 @@ export function balloonTree(rnd, P) {
     b.tube(trunk, { segs: detail ? 5 : 9, kind: KIND.SOLID, pattern: P.trunkPattern ?? PAT.RIBS, color: P.trunk });
     for (const a of arms) {
       b.tube(detail ? a.path.filter((_, i) => i % 2 === 0) : a.path, { segs: detail ? 4 : 6, kind: KIND.SOLID, color: P.trunk, phase: a.phase });
-      b.sphere({ c: [a.e[0], a.e[1] + a.r * 0.8, a.e[2]], r: [a.r, a.r * 1.15, a.r], wSegs: detail ? 8 : 14, hSegs: detail ? 6 : 10, kind: P.glow ? KIND.GLOW : KIND.SOLID, pattern: P.bulbPattern ?? PAT.BANDS, color: a.c, flex: 0.5, phase: a.phase, ao: 1 });
+      b.sphere({ c: [a.e[0], a.e[1] + a.r * 0.8, a.e[2]], r: [a.r, a.r * 1.15, a.r], wSegs: detail ? 7 : 14, hSegs: detail ? 5 : 10, kind: P.glow ? KIND.GLOW : KIND.SOLID, pattern: P.bulbPattern ?? PAT.BANDS, color: a.c, flex: 0.5, phase: a.phase, ao: 1 });
     }
     return b;
   };

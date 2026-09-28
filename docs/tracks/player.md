@@ -79,9 +79,52 @@ glide roll. First person (V) from the animated eye (stabilised), head hidden, bo
 * `zoom=<k>` arm multiplier (0.5 = close-up), `fov=<deg>`.
 * Surface/fp spawns snap to the nearest walkable spot within 45 m (`flat=0` disables).
 
-## Best captures
-(see below — filled in after the final captures)
+## Best captures (all verified; 1280x720 finals)
+
+| view | URL | steps |
+|---|---|---|
+| W1 golden-hour run (core use) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.27&pitch=-7` | `[{"advance":1},{"move":[0.05,1],"sec":2.5},{"advance":1.3}]` |
+| W2 paraglider banking over the valley | `/?mode=system&galaxy=0&star=11&planet=0&view=surface&alt=60&lat=18.18&lon=-50.80&yaw=22&pitch=-14&tod=0.3` | `[{"advance":1.5},{"move":[0.7,0.6],"sec":2},{"advance":1.4}]` |
+| W3 surfing a desert sand slope | `/?mode=system&galaxy=0&star=9&planet=2&view=surface&lat=22.571&lon=56.286&act=slide&tod=0.68` | `[{"hold":"KeyC","sec":4},{"move":[0.5,0],"sec":1.2},{"advance":1.6}]` |
+| W3 first person | `/?mode=system&galaxy=0&star=9&planet=2&view=fp&lat=22.571&lon=56.286&yaw=200&pitch=-8&tod=0.68` | `[{"advance":1},{"move":[0,0.4],"sec":1.5},{"advance":1.2}]` (add `{"look":[0,-50]}` to see the body) |
+| hero portrait (front ¾, gold visor) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.3&camyaw=150&zoom=0.55&pitch=-3` | `[{"advance":1.5}]` |
+| W2 climbing a rock face | `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=18.3733&lon=-51.0533&yaw=90&pitch=0&tod=0.35` | `[{"advance":1},{"move":[0,1],"sec":5},{"advance":3.5}]` |
+| swimming (W1 shallows) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=1.086&lon=-28.557&yaw=0&pitch=-8&tod=0.3` | `[{"advance":1},{"move":[0,1],"sec":3},{"advance":2}]` |
+| jetpack double jump | W1 default spawn | `[{"advance":1},{"hold":"ShiftLeft","sec":3},{"move":[0.3,1],"sec":3},{"advance":2},{"press":"Space"},{"advance":0.35},{"press":"Space"},{"advance":0.3}]` |
+
+`window.__rv.world.player.getState()` → `{view, state, alt, speed, grounded, fuel, surface, tris, colliders}`.
+
+## Performance
+Explorer ≈38k tris / 5 draw calls (+2 scarf, +3 glider when open, ≤7 FX); tessellation scales with
+`quality.tier` (low 0.6×, med 0.8×); `low` uses MeshStandard instead of MeshPhysical. Particle pool
+scales with `particleScale`. Hot paths are allocation-free (module temps, pooled FX); heightfield
+queries go through a lazily filled 0.4 m cache grid around the player; the collider hash appends
+incrementally and rebuilds time-sliced (5k/frame). Scarf: 75 verlet particles × 2–3 substeps.
 
 ## Known issues
+* No water surface is rendered yet (no water track in the tree), so swimming floats over the visible
+  seabed; ripples/splashes are drawn at `surface.seaLevel`. Swim uses `water.heightAt(p)` automatically
+  once the water track exposes it.
+* Flora rocks / trees register no `world.colliders`, so the player walks through boulders and the camera
+  can end up inside big props (heightfield collision works everywhere). The camera ignores colliders
+  smaller than 2.2 m on purpose (BotW-style), so parked vehicles don't yank the arm.
+* Climbing works on the heightfield only (not on building colliders); mantling is a simple hop.
+* The URL on-foot spot from the terrain notes (`lat=3.96&lon=-29.58`) is a cliff edge: walking forward
+  drops you off (the camera follows the fall; press Space to glide).
+* The explorer's physical materials (sheen / clearcoat / iridescence) cost a noticeable one-time shader
+  compile on software GL.
 
 ## Requests
+* **flora** — register `world.addCollider({type:'sphere'|'capsule', pos, radius, height})` for boulders
+  > ~1 m and tree trunks (the player's `ColliderIndex` hashes them; step-up and camera avoidance follow).
+* **civ** — box colliders for buildings (`halfExtents` + `quaternion`, local Y ≈ up): the player can
+  stand on roofs / walls block movement and the camera; large boxes also block the camera.
+* **water** — expose `heightAt(p)` (planet-local point → water surface height in m rel. radius, waves
+  included); the player floats and splashes on it automatically.
+* **audio** — one-shots used: `step {surface: ground|sand|snow|rock, speed, side}`, `jump`, `land
+  {intensity}`, `boost`, `glider {open}`, `splash {intensity}`; params `speed, altitude, wind, glide, swim, boost`.
+* **ui** — the player uses prompt id `'player'` (text only, e.g. "Glide", "Dive · Shift   Drop · C");
+  a touch "glide/jump" button can map to the `jump` action, "slide" to `descend`.
+* **vehicles** — parked vehicles' sphere colliders are treated as dynamic (tested every query), thanks
+  for the `vehicle: true` flag. The parked bike shows a rider mannequin while unoccupied.
+* **core** — none required. (Lead inbox item done: `view=orbit` now looks at the planet; spawns never roll.)

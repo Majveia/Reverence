@@ -77,13 +77,15 @@ export class PlantBuilder {
     let vAcc = 0;
     const base = this.count;
     const uOff = opts.uOffset ?? 0;
+    // bark: wrap the tiling texture several times around thick trunks so features keep a real-world size
+    const uRep = (opts.kind ?? KIND.BARK) === KIND.BARK ? Math.max(1, Math.round((Math.PI * 2 * pts[0].r) / 0.75)) : 1;
     for (let k = 0; k < n; k++) {
       const q = pts[k];
       if (k > 0) {
         const pq = pts[k - 1];
         const len = Math.hypot(q.x - pq.x, q.y - pq.y, q.z - pq.z);
         const rr = Math.max(0.02, (q.r + pq.r) * 0.5);
-        vAcc += (len / (Math.PI * 2 * rr)) * 0.5 * vScale;
+        vAcc += (len / (Math.PI * 2 * rr)) * 0.5 * vScale * uRep;
       }
       const col = typeof opts.color === 'function' ? opts.color(k / (n - 1), q) : (q.color || opts.color || [0.3, 0.25, 0.2]);
       for (let s = 0; s <= segs; s++) {
@@ -91,7 +93,7 @@ export class PlantBuilder {
         const ca = Math.cos(a), sa = Math.sin(a);
         const nx = N[k].x * ca + B[k].x * sa, ny = N[k].y * ca + B[k].y * sa, nz = N[k].z * ca + B[k].z * sa;
         const r = q.r;
-        this.vert(q.x + nx * r, q.y + ny * r, q.z + nz * r, nx, ny, nz, s / segs + uOff, vAcc,
+        this.vert(q.x + nx * r, q.y + ny * r, q.z + nz * r, nx, ny, nz, (s / segs) * uRep + uOff, vAcc,
           kind, q.flex ?? 0, q.ao ?? 1, phase, nx, ny, nz, col[0], col[1], col[2]);
       }
     }

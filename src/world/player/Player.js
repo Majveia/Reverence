@@ -265,6 +265,7 @@ export class Player {
     const w = this.world;
     if (w.controller !== this) { if (this._visible) this._setVisible(false); return; }
     dt = Math.min(Math.max(dt, 0), 1 / 20);
+    if (this.view === 'orbit') { this._setVisible(false); this.cam.orbitView(dt, this.input, this.R); return; }
     if (dt <= 0) return;
     this.time += dt;
     const input = this.input;
@@ -679,6 +680,7 @@ export class Player {
     if (sp > 0.4) this._turnToward(vt, 9, dt);
     // exits
     if (this.jumpBuf > 0) { this._jump(1.05); this._move(dt); return; }
+    if (!I.descend && I.mag > 0.4 && sp < 6 && this._wallAhead(I.wish, _e)) { this._enterClimb(_e); return; }
     if ((sp < 0.9 && cosN > T.slideAutoCos) || (!I.descend && sp < 3.2 && cosN > T.walkCos && S.t > 0.4) || (!I.descend && S.t > 0.5 && cosN > 0.97 && sp < 6)) {
       this.state = 'ground';
     }
@@ -903,7 +905,7 @@ export class Player {
       gg.visible = gg.visible && vis;
     }
     // ---- scarf (anchors in chest space → planet-local)
-    if (this.scarf && vis) {
+    if (this.scarf && vis && this.view !== 'fp') {
       const an = this.animator;
       const ch = an.gp[B.chest], cq = an.gq[B.chest];
       for (let k = 0; k < 2; k++) for (let i = 0; i < 3; i++) {
@@ -925,11 +927,11 @@ export class Player {
       if (this.state === 'swim') w.multiplyScalar(0.1);
       safe(() => this.scarf.update(dt, this.anchorsW, up, this.g, w, sp, this.gpos));
     }
-    if (this.scarf) this.scarf.group.visible = vis;
+    if (this.scarf) this.scarf.group.visible = vis && this.view !== 'fp';
   }
 
   _camera(dt) {
-    if (this.view === 'orbit') return;
+    if (this.view === 'orbit') { this.cam.orbitView(dt, this.input, this.R); return; }
     const ctx = this._camCtx || (this._camCtx = {});
     ctx.pos = this.pos; ctx.up = this.up; ctx.vel = this.vel; ctx.state = this.state;
     ctx.heights = this.heights; ctx.colliders = this.colliders; ctx.bank = this.glide.bank;
@@ -1026,7 +1028,7 @@ export class Player {
         const gg = this.glider.group, c = this.glider.canopy;
         _m.multiplyMatrices(this.group.matrix, gg.matrix);
         for (const [s, out] of [[1, tr.a], [-1, tr.b]]) {
-          out.set(s * 1.45 * c.scale.x, c.position.y - 0.52, -0.2).applyMatrix4(_m);
+          out.set(s * 1.62 * c.scale.x, c.position.y - 0.6, -0.2).applyMatrix4(_m);
         }
       }
       fx.rebase(this.pos);
@@ -1075,6 +1077,7 @@ export class Player {
       fuel: +this.jetFuel.toFixed(2),
       surface: this.surfaceKind,
       tris: this.rig?.triangles | 0,
+      colliders: this.colliders.count,
     };
   }
 

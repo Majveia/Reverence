@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { G } from '../../core/Uniforms.js';
 import { clamp, easeOutBack } from './util.js';
 
-const SPAN = 2.9, CHORD = 0.95, ARC = 0.8, CELLS = 11;
+const SPAN = 3.3, CHORD = 1.0, ARC = 0.8, CELLS = 11;
 
 function buildCanopy(P, lod) {
   const ns = Math.round(44 * lod), nc = Math.round(12 * lod);
@@ -44,9 +44,12 @@ function buildCanopy(P, lod) {
       const cell = Math.floor((s + 1) * 0.5 * CELLS);
       const tip = Math.abs(s) > 0.8;
       if (tip) c.copy(P.scarf);
-      else if (t < 0.2) c.copy(P.accent);
-      else if (cell % 2 === 0) c.copy(P.shell);
-      else c.copy(P.shell2).lerp(P.shell, 0.4);
+      else if (t < 0.16) c.copy(P.dark).lerp(P.accent, 0.35);
+      else if (cell === Math.floor(CELLS / 2)) c.copy(P.shell);
+      else if (cell % 3 === 0) c.copy(P.accent);
+      else if (cell % 3 === 1) c.copy(P.shell).lerp(P.accent, 0.15);
+      else c.copy(P.scarf2).lerp(P.shell, 0.35);
+      if (t > 0.86) c.lerp(P.dark, 0.25); // trailing-edge band
       if (!upper) c.multiplyScalar(0.82);
       // rib seams
       const rib = 1 - 0.12 * Math.pow(Math.abs(Math.cos(s * CELLS * Math.PI * 0.5)), 24);
@@ -122,7 +125,7 @@ export class Glider {
     const lg = new THREE.BufferGeometry();
     this.linePos = new Float32Array(attach.length * 2 * 3);
     lg.setAttribute('position', new THREE.BufferAttribute(this.linePos, 3));
-    this.lineMat = new THREE.LineBasicMaterial({ color: 0x2a2a2e, transparent: true, opacity: 0.8 });
+    this.lineMat = new THREE.LineBasicMaterial({ color: 0x8a8680, transparent: true, opacity: 0.45 });
     this.lines = new THREE.LineSegments(lg, this.lineMat);
     this.lines.frustumCulled = false;
     this.group.add(this.lines);
@@ -158,7 +161,7 @@ export class Glider {
       L[o + 3] = a.x < 0 ? -0.26 : 0.26; L[o + 4] = 0; L[o + 5] = 0;
     }
     this.lines.geometry.attributes.position.needsUpdate = true;
-    this.lineMat.opacity = 0.8 * d;
+    this.lineMat.opacity = 0.45 * d;
     this.bar.scale.set(1, Math.max(0.05, d), 1);
   }
 

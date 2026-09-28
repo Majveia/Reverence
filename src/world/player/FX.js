@@ -125,10 +125,10 @@ export class FX {
         uniform vec3 uSunColor; uniform vec3 uAmbientSky; varying vec2 vP; varying vec2 vM;
         void main(){
           float d = length(vP);
-          float ring = smoothstep(0.78, 0.9, d) * smoothstep(1.0, 0.92, d) + 0.35 * smoothstep(0.5, 0.62, d) * smoothstep(0.72, 0.64, d);
+          float ring = smoothstep(0.86, 0.93, d) * smoothstep(1.0, 0.95, d) + 0.3 * smoothstep(0.6, 0.66, d) * smoothstep(0.72, 0.68, d);
           float a = ring * vM.y;
           if (a < 0.004) discard;
-          gl_FragColor = vec4(uSunColor * 0.25 + uAmbientSky * 1.2 + 0.1, a * 0.55);
+          gl_FragColor = vec4(uSunColor * 0.2 + uAmbientSky * 1.1 + 0.05, a * 0.28);
         }`,
     });
     this.ripples = new THREE.Mesh(rg, this.rMat);

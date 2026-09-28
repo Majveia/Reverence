@@ -575,7 +575,7 @@ export class Animator {
     }
     // first person: hide head (collapse head bone)
     const hs = this.headHidden ? 0.0001 : 1;
-    bones[B.head].scale.setScalar(hs);
+    bones[B.neck].scale.setScalar(hs); // collar ring + helmet collapse (first person)
     bones[B.antenna].scale.setScalar(this.headHidden ? 0.0001 : 1);
   }
 

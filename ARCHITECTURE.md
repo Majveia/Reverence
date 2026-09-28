@@ -206,3 +206,18 @@ visualizations). What separates AAA from "tech demo":
   keyed to `G.uSunIntensity` / `G.uAmbientSky` for storms and nights; keep OLED blacks at night.
 * **capture tooling (done)** — shared dev server runs without HMR (no mid-capture reloads), screenshots
   have a 180 s timeout, shot mode never renders idle frames after ready.
+* **flora** (from player) — register `world.addCollider({ type: 'sphere'|'capsule', pos, radius, height })` for
+  boulders > ~1 m and tree trunks so the player collides and the camera avoids big props.
+* **civ** (from player) — register box colliders for buildings (`halfExtents` + `quaternion`, local Y ≈ up):
+  the player can stand on roofs, walls block movement, large boxes block the camera. Climbing on building
+  colliders is not supported yet.
+* **water** (from player) — expose `heightAt(p)` (planet-local point → water surface height in m relative
+  to radius, waves included). Swimming/splashes/ripples pick it up automatically.
+* **audio** (from player) — one-shots: `step {surface: ground|sand|snow|rock, speed, side}`, `jump`,
+  `land {intensity}`, `boost`, `glider {open}`, `splash {intensity}`; params `speed, altitude, wind, glide,
+  swim, boost`.
+* **ui** (from player) — player uses prompt id `'player'` (text only); on touch, map a glide/jump button to
+  `jump` and a slide button to `descend`. Player views: `view=surface|fp|fly|orbit`, `act=slide`,
+  `camyaw`, `zoom` URL params.
+* **vehicles** (from player) — the unoccupied parked bike renders a rider mannequin (remove it when parked);
+  moving vehicle colliders flagged `vehicle: true` are checked per frame by the player.

@@ -133,6 +133,11 @@ export class Scarf {
    */
   update(dt, anchorsW, up, g, wind, spheres, center) {
     this.t += dt;
+    // strength of the airflow over the scarf (drives flutter frequency); from the tail tip's velocity
+    { const s0 = this.strips[0], o = (s0.n - 1) * 3; const vx = (s0.x[o] - s0.p[o]), vy = (s0.x[o + 1] - s0.p[o + 1]), vz = (s0.x[o + 2] - s0.p[o + 2]);
+      const h0 = Math.max(dt, 1e-3) / (dt > 1 / 45 ? 3 : 2);
+      const rx = wind.x - vx / h0, ry = wind.y - vy / h0, rz = wind.z - vz / h0;
+      this._air = Number.isFinite(rx + ry + rz) ? Math.sqrt(rx * rx + ry * ry + rz * rz) : 0; }
     if (!this.initialized) this.reset(anchorsW, this._n.copy(up).negate());
     const steps = dt > 1 / 45 ? 3 : 2;
     const h = Math.min(dt, 1 / 20) / steps;
@@ -149,7 +154,9 @@ export class Scarf {
           const vx = (X[o] - Pp[o]) / h, vy = (X[o + 1] - Pp[o + 1]) / h, vz = (X[o + 2] - Pp[o + 2]) / h;
           // relative air velocity
           const j = Math.floor(pi / s.cols);
-          const fl = noise1(this.t * 2.3 + j * 0.37 + k * 5.1, 7 + k) * 1.0;
+          // travelling flutter wave down the tail (faster & tighter in strong airflow) + turbulence
+          const fq = 3 + Math.min(this._air || 0, 25) * 0.45;
+          const fl = Math.sin(this.t * fq - j * 1.15 + k * 2.1) * 0.75 + noise1(this.t * 2.3 + j * 0.9 + k * 5.1, 7 + k) * 0.6;
           let rx = wind.x - vx, ry = wind.y - vy, rz = wind.z - vz;
           const rl = Math.sqrt(rx * rx + ry * ry + rz * rz);
           // pressure along the normal + tangential drag (ribbons stream downwind), flutter

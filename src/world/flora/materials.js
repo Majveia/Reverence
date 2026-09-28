@@ -177,15 +177,16 @@ if (kind < 0.5) {
   vec2 buv = vAtlasUv * vec2(1.0, uBarkScale);
   vec4 bk = texture(uBark, vec3(buv, uBarkLayer));
   rvBarkH = bk.g;
-  albedo = vCol * (0.3 + 1.15 * bk.r);
+  albedo = vCol * (0.5 + 0.8 * bk.r);
   albedo = mix(albedo, uMoss * (0.6 + 0.6 * bk.r), clamp(bk.b * uMossAmt * 1.5, 0.0, 1.0));
 } else if (kind < 2.5) {
   vec4 tx = texture2D(uAtlas, vAtlasUv);
   vec2 px = vAtlasUv * uAtlasSize;
   vec2 dx = dFdx(px), dy = dFdy(px);
   float mip = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
-  alpha = tx.a * (1.0 + mip * 0.28);
+  alpha = tx.a * (1.0 + mip * 0.14);
   albedo = mix(vCol, uTint2, tx.g) * (tx.r * 1.45);
+  rvBarkH = tx.r;
   rvTransl = tx.b * uTransl * (kind > 1.5 ? 1.3 : 1.0);
   rvWrap = 0.5;
   if (uCardGlow > 0.0 && kind > 1.5) rvGlow = albedo * uCardGlow * (0.05 + uNight) * (0.8 + 0.2 * sin(uTime * 1.3 + vSeed * 20.0));
@@ -205,6 +206,8 @@ if (kind < 0.5) {
 }
 // LOD crossfade (complementary dither)
 float dth = rvIGN(gl_FragCoord.xy);
+// dissolve foliage/branches right in front of the camera so they never smother the view
+{ float cd = length(vViewPosition); if (cd < 2.6 && dth > smoothstep(0.9, 2.6, cd)) discard; }
 if (vFade.y < 0.999 && dth >= vFade.y) discard;
 if (vFade.x < 0.999 && (1.0 - dth) >= vFade.x) discard;
 diffuseColor.rgb *= albedo;
@@ -214,7 +217,15 @@ diffuseColor.a = alpha;
 const PLANT_NORMAL = /* glsl */`
 #include <normal_fragment_begin>
 if (rvKind > 0.5 && rvKind < 2.5) {
+  // crown-level (spherified) normal + per-leaf relief from the atlas luminance: sunlit vs shaded leaves
   normal = normalize(vShadeN);
+  float hx = dFdx(rvBarkH), hy = dFdy(rvBarkH);
+  vec3 vpos = -vViewPosition;
+  vec3 dpdx = dFdx(vpos), dpdy = dFdy(vpos);
+  vec3 r1 = cross(dpdy, normal), r2 = cross(normal, dpdx);
+  float det = dot(dpdx, r1);
+  vec3 grad = sign(det) * (hx * r1 + hy * r2);
+  normal = normalize(abs(det) * normal - 0.9 * grad);
 } else if (rvKind < 0.5) {
   vec3 vpos = -vViewPosition;
   vec3 dpdx = dFdx(vpos), dpdy = dFdy(vpos);
@@ -230,7 +241,7 @@ if (rvKind > 0.5 && rvKind < 2.5) {
 
 // Foliage lighting: wrap diffuse + thin-leaf translucency (shadowed, since directLight.color
 // already includes the shadow term).
-const PLANT_LIGHT_PARS = /* glsl */`
+export const PLANT_LIGHT_PARS = /* glsl */`
 #include <lights_physical_pars_fragment>
 void RE_Direct_Flora(const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in PhysicalMaterial material, inout ReflectedLight reflectedLight) {
   RE_Direct_Physical(directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
@@ -278,7 +289,7 @@ export class FloraShared {
   }
 }
 
-function linkCommon(shader, u) {
+export function linkCommon(shader, u) {
   shader.uniforms.uTime = G.uTime;
   shader.uniforms.uWindDir = G.uWindDir;
   shader.uniforms.uWindStrength = G.uWindStrength;
@@ -348,7 +359,7 @@ varying vec2 vAtlasUv; varying vec4 vInfo; varying vec2 vFade;`);
     float a = texture2D(uAtlas, vAtlasUv).a;
     vec2 px = vAtlasUv * uAtlasSize; vec2 dx = dFdx(px), dy = dFdy(px);
     float mip = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
-    if (a * (1.0 + mip * 0.28) < 0.5) discard;
+    if (a * (1.0 + mip * 0.14) < 0.5) discard;
   }
 }`);
     shader.fragmentShader = fs;

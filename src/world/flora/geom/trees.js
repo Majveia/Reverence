@@ -9,7 +9,7 @@ const up3 = [0, 1, 0];
 
 function colorVar(rnd, a, b, bright = 1, t = rnd()) {
   const c = mix3(a, b, t);
-  const v = bright * (0.85 + rnd() * 0.3);
+  const v = bright * (0.93 + rnd() * 0.14);
   return [c[0] * v, c[1] * v, c[2] * v];
 }
 
@@ -35,7 +35,7 @@ function leafClump(b, rnd, cl, o) {
     const ao = clamp((0.25 + 0.75 * smooth(0.15, 1.0, depth)) * (0.55 + 0.45 * under), 0.12, 1);
     // sun-kissed tops are warmer/lighter
     const top = smooth(-0.2, 0.9, sh[1]);
-    const col = colorVar(rnd, o.colA, o.colB, 0.9 + top * 0.25, clamp(top * 0.7 + rnd() * 0.45, 0, 1));
+    const col = colorVar(rnd, o.colA, o.colB, 0.92 + top * 0.18, clamp(0.1 + top * 0.6 + rnd() * 0.2, 0, 1));
     const s = size * (0.8 + rnd() * 0.45);
     b.bcard({
       c: [px, py, pz], w: s * 0.5, h: s * 0.5, roll: rnd() * Math.PI * 2, rect: o.rect(rnd),

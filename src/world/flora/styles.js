@@ -34,8 +34,8 @@ export function buildStyle(body, atlas) {
     rock: { spacing: 9, cover: bw({ ROCK: 0.5, TUNDRA: 0.3, DESERT: 0.12, SAVANNA: 0.1, GRASSLAND: 0.07, FOREST: 0.12, TAIGA: 0.2, SNOW: 0.2, BEACH: 0.1, JUNGLE: 0.05, VOLCANIC: 0.35, CRYSTAL: 0.2, TOXIC: 0.1 }), species: [], slopeBoost: 1.2 },
     grass: {
       density: 1, height: 0.55, cover: bw({ GRASSLAND: 1, SAVANNA: 0.95, FOREST: 0.55, JUNGLE: 0.75, TAIGA: 0.5, TUNDRA: 0.55, BEACH: 0.12, DESERT: 0.05, TOXIC: 0.6, CRYSTAL: 0.4 }),
-      base: mix3(grass, [0.02, 0.03, 0.01], 0.45), tip: mix3(grass2, [1, 0.95, 0.7], 0.1), dry: mix3(sand, grass2, 0.4),
-      dryAmount: 0.18, glowTip: null, flowers: [], widthMul: 1,
+      base: mix3(grass, [0.015, 0.035, 0.008], 0.5), tip: mix3(mix3(grass, grass2, 0.55), [0.75, 1, 0.45], 0.08), dry: mix3(sand, grass2, 0.4),
+      dryAmount: 0.08, glowTip: null, flowers: [], widthMul: 1,
     },
     glow: 0, cardGlow: 0, windAmp: 1, translucency: 0.9,
   };
@@ -113,7 +113,7 @@ export function buildStyle(body, atlas) {
   switch (key) {
     case 'lush': {
       add('canopy', oak());
-      add('canopy', oak({ id: 'autumn', variants: 2, params: { leafA: mix3(fl(2), fl(1), 0.25), leafB: fl(Math.min(3, (pal.flora?.length || 4) - 1)), height: 12, crownR: 4.8 }, biomes: bw({ FOREST: 0.2, GRASSLAND: 0.28, SAVANNA: 0.1 }), zone: 2, dens: 0.35 }));
+      add('canopy', oak({ id: 'autumn', variants: 2, params: { leafA: mix3(fl(2), fl(1), 0.25), leafB: fl(Math.min(3, (pal.flora?.length || 4) - 1)), height: 12, crownR: 4.8 }, biomes: bw({ FOREST: 0.2, GRASSLAND: 0.28, SAVANNA: 0.1 }), zone: 2, dens: 0.18 }));
       add('canopy', birch({ biomes: bw({ FOREST: 0.3, GRASSLAND: 0.2, TAIGA: 0.3 }), dens: 0.5 }));
       add('canopy', conifer({ params: { height: 19 }, biomes: bw({ TAIGA: 1, FOREST: 0.2, TUNDRA: 0.45, SNOW: 0.1 }), dens: 0.8 }));
       add('under', bushSp());
@@ -122,7 +122,7 @@ export function buildStyle(body, atlas) {
       S.grass.height = 0.62; S.grass.density = 1.1;
       S.grass.flowers = [
         { rect: R('daisy'), colA: [0.9, 0.88, 0.8], colB: [1, 1, 0.92], tint2: [0.85, 0.6, 0.08], type: 'daisy', freq: 1 },
-        { rect: R('spike'), colA: fl(3), colB: accent, tint2: fl(1), type: 'spike', freq: 0.7, height: 0.75 },
+        { rect: R('spike'), colA: fl(3), colB: accent, tint2: fl(1), type: 'spike', freq: 0.28, height: 0.5 },
         { rect: R('cup'), colA: mix3(accent, [1, 0.3, 0.2], 0.4), colB: fl(3), tint2: [0.06, 0.12, 0.03], type: 'cup', freq: 0.45 },
       ];
       rocksDefault(0.45);
@@ -200,7 +200,7 @@ export function buildStyle(body, atlas) {
       S.canopy.cover = bw({ FOREST: 0.8, JUNGLE: 0.85, GRASSLAND: 0.32, SAVANNA: 0.26, TUNDRA: 0.08, DESERT: 0.05, TOXIC: 0.8, BEACH: 0.02 });
       S.under.cover = bw({ FOREST: 0.6, JUNGLE: 0.7, GRASSLAND: 0.35, SAVANNA: 0.3, TUNDRA: 0.15, DESERT: 0.06, TOXIC: 0.6 });
       S.grass.base = mix3(grass, [0.03, 0.04, 0.02], 0.5); S.grass.tip = mix3(grass2, capB, 0.35); S.grass.height = 0.5; S.grass.glowTip = glowC;
-      S.grass.cover[B.DESERT] = 0.25; S.grass.cover[B.SAVANNA] = 1;
+      S.grass.cover[B.DESERT] = 0.25; S.grass.cover[B.SAVANNA] = 1; S.grass.cover[B.FOREST] = 0.85; S.grass.cover[B.JUNGLE] = 0.9; S.grass.cover[B.GRASSLAND] = 1;
       S.grass.flowers = [{ rect: R('spores'), colA: glowC, colB: lav, tint2: [1, 1, 0.9], type: 'daisy', freq: 0.7, glow: 2.5 }];
       S.glow = 2.6;
       rocksDefault(0.3, ['boulder', 'layered', 'spire']);
@@ -261,6 +261,7 @@ export function buildStyle(body, atlas) {
         biomes: bw({ JUNGLE: 1, FOREST: 0.8, GRASSLAND: 0.3 }), m: [0.1, 1.6], t: [0, 1.4], slope: 0.8, alt: [0, 0.6], zone: 0, dens: 0.8, scale: [0.6, 1.4], lean: 0.08, sink: 0.05 });
       S.canopy.cover = bw({ JUNGLE: 0.7, FOREST: 0.65, GRASSLAND: 0.12, SAVANNA: 0.06, BEACH: 0.05 });
       S.grass.base = mix3(grass, [0.02, 0.05, 0.01], 0.35); S.grass.tip = mix3(grass2, [1, 1, 0.5], 0.15); S.grass.height = 0.55;
+      S.grass.cover[B.FOREST] = 0.85; S.grass.cover[B.JUNGLE] = 0.9;
       S.grass.flowers = [
         { rect: R('daisy'), colA: cols[0], colB: cols[4], tint2: cols[3], type: 'daisy', freq: 1 },
         { rect: R('cup'), colA: cols[1], colB: cols[3], tint2: [0.1, 0.3, 0.05], type: 'cup', freq: 0.6 },

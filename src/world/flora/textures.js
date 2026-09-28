@@ -100,55 +100,52 @@ function twig(ctx, x0, y0, x1, y1, w, bend = 0) {
   ctx.stroke();
 }
 
+
+/** Paint a leaf cluster filling a soft disc (cell space 512). */
+function leafCluster(ctx, rnd, o) {
+  const cx = 256, cy = 256, R = o.R;
+  const base = [256, 505];
+  const tw = [];
+  for (let k = 0; k < o.twigs; k++) {
+    const a = -Math.PI / 2 + (k / (o.twigs - 1) - 0.5) * 2.3 + (rnd() - 0.5) * 0.25;
+    const len = R * (0.75 + rnd() * 0.45);
+    const x1 = cx + Math.cos(a) * len * 0.9, y1 = cy + 40 + Math.sin(a) * len * 0.85;
+    twig(ctx, base[0] + (rnd() - 0.5) * 24, base[1], x1, y1, 3 + rnd() * 3, (rnd() - 0.5) * 0.25);
+    tw.push([x1, y1]);
+  }
+  const leaves = [];
+  for (let n = 0; n < o.n; n++) {
+    const r = R * Math.pow(rnd(), 0.62), a = rnd() * TAU;
+    let x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r * 0.94;
+    if (o.droop) y += (r / R) * (r / R) * 40 * o.droop * 4;
+    const edge = r / R;
+    // leaves point away from the cluster base, with noise
+    const dir = Math.atan2(y - base[1] + 120, x - base[0]) + Math.PI / 2 + (rnd() - 0.5) * 1.6;
+    leaves.push({ x, y, dir, edge });
+  }
+  leaves.sort((p, q) => p.edge - q.edge);
+  for (const lf of leaves) {
+    const L = o.L[0] + rnd() * (o.L[1] - o.L[0]), W = o.W[0] + rnd() * (o.W[1] - o.W[0]);
+    if (Math.hypot(lf.x - cx, lf.y - cy) + L * 0.9 > 250) continue;
+    const lum = 0.38 + 0.42 * Math.pow(lf.edge, 0.7) + rnd() * 0.25;
+    drawLeaf(ctx, lf.x, lf.y, lf.dir, L, W, Math.min(1, lum), rnd, o.lobes ? { lobes: 5 + ((rnd() * 3) | 0) * 2, veins: o.veins } : { sharp: o.sharp ?? 0.5, vein: o.vein });
+  }
+}
+
 // ------------------------------------------------------------------ cell painters
 const PAINT = {
   broad(ctx, rnd) {
-    // BotW-style broadleaf spray: twigs fanning from the bottom, leaves fill a round silhouette
-    const cx = 256, cy = 470;
-    const tips = [];
-    for (let k = 0; k < 7; k++) {
-      const a = -Math.PI / 2 + (k - 3) * 0.36 + (rnd() - 0.5) * 0.2;
-      const len = 250 + rnd() * 150;
-      const x1 = cx + Math.cos(a) * len, y1 = cy + Math.sin(a) * len * 0.95;
-      twig(ctx, cx + (rnd() - 0.5) * 20, cy, x1, y1, 5 + rnd() * 3, (rnd() - 0.5) * 0.2);
-      tips.push([x1, y1, a]);
-    }
-    for (let n = 0; n < 150; n++) {
-      // leaves along twigs, biased to the outer disc
-      const t = tips[n % tips.length];
-      const f = 0.32 + Math.pow(rnd(), 0.6) * 0.72;
-      const x = cx + (t[0] - cx) * f + (rnd() - 0.5) * 50, y = cy + (t[1] - cy) * f + (rnd() - 0.5) * 50;
-      if (Math.hypot(x - 256, y - 250) > 238) continue;
-      const ang = t[2] + Math.PI / 2 + (rnd() - 0.5) * 1.9;
-      drawLeaf(ctx, x, y, ang, 58 + rnd() * 34, 24 + rnd() * 10, 0.55 + rnd() * 0.45, rnd, { sharp: 0.55 });
-    }
+    // dense rounded broadleaf cluster: twigs fan from the base, leaves fill a soft disc, inner
+    // leaves darker (self-shadowing inside the cluster), outer leaves brighter
+    leafCluster(ctx, rnd, { n: 300, R: 205, L: [36, 58], W: [15, 23], sharp: 0.55, twigs: 9 });
   },
   broad2(ctx, rnd) {
-    // lobed leaves (oak/maple) — denser, larger
-    const cx = 256, cy = 480;
-    for (let k = 0; k < 5; k++) twig(ctx, cx, cy, cx + (k - 2) * 90 + (rnd() - 0.5) * 30, 90 + rnd() * 120, 6, (rnd() - 0.5) * 0.3);
-    for (let n = 0; n < 95; n++) {
-      const r = 60 + Math.pow(rnd(), 0.5) * 175, a = rnd() * TAU;
-      const x = 256 + Math.cos(a) * r, y = 245 + Math.sin(a) * r * 0.95;
-      if (y > 470) continue;
-      drawLeaf(ctx, x, y, a + Math.PI / 2 + (rnd() - 0.5) * 1.2, 70 + rnd() * 34, 36 + rnd() * 10, 0.55 + rnd() * 0.45, rnd, { lobes: 6 + ((rnd() * 3) | 0) * 2, veins: true });
-    }
+    // lobed leaves (oak/maple) — slightly larger, fuller
+    leafCluster(ctx, rnd, { n: 200, R: 196, L: [46, 70], W: [24, 34], lobes: true, veins: true, twigs: 7 });
   },
   small(ctx, rnd) {
-    // birch/willow small leaves on thin drooping twigs
-    for (let k = 0; k < 9; k++) {
-      let x = 60 + k * 50 + (rnd() - 0.5) * 30, y = 20 + rnd() * 40;
-      const drift = (rnd() - 0.5) * 1.2;
-      for (let s = 0; s < 14; s++) {
-        const nx = x + drift * 12 + (rnd() - 0.5) * 12, ny = y + 30;
-        twig(ctx, x, y, nx, ny, 2.2);
-        if (s > 1) {
-          for (const sd of [-1, 1]) if (rnd() < 0.85) drawLeaf(ctx, nx, ny, sd * (0.9 + rnd() * 0.6) + Math.PI, 30 + rnd() * 16, 12 + rnd() * 5, 0.55 + rnd() * 0.45, rnd, { sharp: 0.7, vein: false });
-        }
-        x = nx; y = ny;
-        if (y > 480) break;
-      }
-    }
+    // birch/aspen: many small rounded leaves on fine drooping twigs
+    leafCluster(ctx, rnd, { n: 440, R: 215, L: [22, 34], W: [11, 16], sharp: 0.75, twigs: 12, droop: 0.25, vein: false });
   },
   needle(ctx, rnd) {
     // spruce/fir sprig: flat branch with dense short needles (seen from above)

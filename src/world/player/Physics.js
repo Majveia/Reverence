@@ -189,7 +189,8 @@ export class ColliderIndex {
     const x0 = Math.floor((_c.x - r) / CELL), x1 = Math.floor((_c.x + r) / CELL);
     const y0 = Math.floor((_c.y - r) / CELL), y1 = Math.floor((_c.y + r) / CELL);
     const z0 = Math.floor((_c.z - r) / CELL), z1 = Math.floor((_c.z + r) / CELL);
-    if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > 64) { this.big.push(c); return; }
+    // moving colliders (vehicles) and huge ones are tested directly every query → never stale
+    if (c.vehicle || c.dynamic || (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > 64) { this.big.push(c); return; }
     for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) {
       const k = hkey(x, y, z);
       let a = this.cells.get(k);
@@ -333,11 +334,12 @@ export class ColliderIndex {
   }
 
   /** Ray vs colliders: nearest hit distance along unit dir (or Infinity). `pad` inflates shapes. */
-  raycast(o, dir, maxDist, pad = 0) {
+  raycast(o, dir, maxDist, pad = 0, minSize = 0) {
     _e.copy(o).addScaledVector(dir, maxDist * 0.5);
     const list = this.query(_e, maxDist * 0.5 + pad + 1);
     let best = Infinity;
     for (let i = 0; i < list.length; i++) {
+      if (minSize > 0 && ColliderIndex.bounds(list[i], _f) < minSize) continue;
       const t = rayCollider(list[i], o, dir, pad);
       if (t >= 0 && t < best && t <= maxDist) best = t;
     }
