@@ -52,7 +52,7 @@ class Terrain {
     this.group = new THREE.Group();
     this.group.name = 'terrain';
     world.root.add(this.group);
-    this.material = createTerrainMaterial(world.body, q);
+    this.material = createTerrainMaterial(world.body, q, { lite: this._liteLighting(q) });
     this.depthMaterial = createTerrainDepthMaterial();
     this.index = new THREE.BufferAttribute(buildIndices(RES), 1);
     // CDLOD range factor from a screen-space error target: a chunk quad should cover ~ppq pixels
@@ -70,6 +70,9 @@ class Terrain {
     this.hMin0 = this.surface.minHeight ?? -this.surface.amp;
     this.hMax0 = this.surface.maxHeight ?? this.surface.amp;
     this.shadowDist = q.tier === 'ultra' ? 2800 : q.tier === 'med' ? 300 : 900;
+    // software rasterizers (headless captures) are fill-rate bound in the shadow cascades: terrain
+    // only casts into the near cascades there (GPU tiers keep the full range)
+    if (this._softGL()) this.shadowDist = Math.min(this.shadowDist, 260);
     this.shot = !!world.engine?.shot;
     this.uploadBudgetMs = this.shot ? 1e9 : 3;
     this.frame = 0;
@@ -100,7 +103,14 @@ class Terrain {
         const w = new Worker(new URL('./terrain.worker.js', import.meta.url), { type: 'module' });
         w.busy = 0;
         w.onmessage = (ev) => this._onMessage(w, ev.data);
-        w.onerror = (e) => { console.warn('[terrain] worker error', e.message || e); this._workerFailed = true; };
+        w.onerror = (e) => {
+          console.warn('[terrain] worker error — falling back to main-thread builds', e.message || e);
+          this._workerFailed = true;
+          // requeue whatever was in flight so nothing waits forever
+          for (const n of this.jobs.values()) if (n.state === 1) n.state = 0;
+          this.jobs.clear(); this.inflight = 0;
+          if (!this.texReady) this._setDetail(bakeDetail(DETAIL_SIZE), DETAIL_SIZE);
+        };
         w.postMessage({ type: 'init', cfg });
         this.workers.push(w);
       }
@@ -145,6 +155,15 @@ class Terrain {
       U.uRvP.value.w = this.q.tier === 'low' ? 0.6 : 1;
       this.texReady = true;
     } catch (e) { console.warn('[terrain] detail texture failed', e); this.texReady = true; }
+  }
+
+  _liteLighting(q) {
+    try {
+      const v = new URLSearchParams(globalThis.location?.search || '').get('tlite');
+      if (v === '0') return false;
+      if (v === '1') return true;
+    } catch (_) { /* no url */ }
+    return q.tier === 'low' || this._softGL();
   }
 
   _softGL() {

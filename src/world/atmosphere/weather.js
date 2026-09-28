@@ -146,7 +146,7 @@ export class Weather {
     };
     this.pmat = new THREE.ShaderMaterial({
       vertexShader: P_VERT, fragmentShader: P_FRAG, uniforms: this.pu,
-      transparent: true, depthTest: false, depthWrite: false,
+      transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
       blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
     });
     this.points = new THREE.Mesh(geo, this.pmat);
@@ -208,7 +208,7 @@ export class Weather {
       case 'snow': snow = 1; rain = 0; dust = 0; break;
       case 'dust': dust = 1; rain = snow = 0; break;
       case 'fog': fog = 1; break;
-      case 'aurora': aurora = 1; break;
+      case 'aurora': aurora = 1; rain = snow = dust = storm = 0; fog *= 0.3; break;
       default: break;
     }
     if (storm > 0) rain = Math.max(rain, this.cold ? 0 : storm * 0.9), snow = this.cold ? Math.max(snow, storm) : snow;
@@ -228,7 +228,7 @@ export class Weather {
     st.aurora = tg.aurora;
     const precip = Math.max(st.rain, st.snow);
     st.coverBoost = 0.5 * precip + 0.35 * st.storm + 0.15 * st.dust;
-    st.sunDim = 1 - 0.45 * precip - 0.35 * st.storm - 0.4 * st.dust;
+    st.sunDim = Math.max(0.12, 1 - 0.7 * precip - 0.3 * st.storm - 0.45 * st.dust);
     // surface state
     if (shot) { this.wet = Math.max(st.rain, this.base.rain * 0.3); this.snowCover = Math.max(this.snowCover, st.snow * 0.8, this.cold ? 0.5 : 0); }
     else {
@@ -330,15 +330,15 @@ export class Weather {
     let speed, box, width, alpha;
     const amb = G.uAmbientSky.value, sun = G.uSunColor.value;
     if (kind === 0) {
-      speed = 9; box = 30; width = 0.016; alpha = 0.7;
+      speed = 9; box = 26; width = 0.009; alpha = 0.45;
       _v2.copy(up).multiplyScalar(-speed).addScaledVector(wind, ws * 6 + 1);
-      u.uFall.value.copy(_v2).multiplyScalar(0.075); // shutter → streak length
-      u.uColor.value.setRGB(amb.r * 0.45 + sun.r * 0.05 + 0.03, amb.g * 0.45 + sun.g * 0.05 + 0.033, amb.b * 0.45 + sun.b * 0.05 + 0.04);
+      u.uFall.value.copy(_v2).multiplyScalar(0.06); // shutter → streak length
+      u.uColor.value.setRGB(amb.r * 0.32 + sun.r * 0.03 + 0.02, amb.g * 0.32 + sun.g * 0.03 + 0.022, amb.b * 0.32 + sun.b * 0.03 + 0.026);
     } else if (kind === 1) {
-      speed = 1.1; box = 26; width = 0.018; alpha = 0.9;
+      speed = 1.1; box = 22; width = 0.028; alpha = 1.0;
       _v2.copy(up).multiplyScalar(-speed).addScaledVector(wind, ws * 3 + 0.3);
       u.uFall.value.copy(up);
-      u.uColor.value.setRGB(amb.r * 0.5 + sun.r * 0.1 + 0.01, amb.g * 0.5 + sun.g * 0.1 + 0.01, amb.b * 0.5 + sun.b * 0.1 + 0.012);
+      u.uColor.value.setRGB(amb.r * 0.9 + sun.r * 0.15 + 0.02, amb.g * 0.9 + sun.g * 0.15 + 0.02, amb.b * 0.9 + sun.b * 0.15 + 0.024);
     } else {
       speed = 0.4; box = 30; width = 0.01; alpha = 0.6;
       _v2.copy(wind).multiplyScalar(4 + ws * 14).addScaledVector(up, -0.3);

@@ -209,7 +209,7 @@ export class AtmosphereModel {
     const a = Math.max(angR, 0.004);
     const vis = smooth(-a, a, (muS - cosH) / Math.max(sinH, 1e-3));
     this.transmittance(r, muS, out);
-    const K = (this.sunsetK ?? 1) + (1 - (this.sunsetK ?? 1)) * smooth(0, 0.32, muS);
+    const K = (this.sunsetK ?? 1) + (1 - (this.sunsetK ?? 1)) * smooth(0, 0.2, muS);
     out[0] = Math.pow(out[0], K) * vis; out[1] = Math.pow(out[1], K) * vis; out[2] = Math.pow(out[2], K) * vis;
     return out;
   }
@@ -267,7 +267,8 @@ export class AtmosphereModel {
     const t = this.tint, hsv = this.tintHSV;
     const tc = new THREE.Color().setHSL(0, 0, 0);
     // rebuild the tint with saturation >= 0.55 (in HSV space) at full value
-    const h = hsv.h, s = Math.max(hsv.s, 0.8);
+    const moodyK = clamp((0.45 - hsv.v) / 0.35, 0, 1);
+    const h = hsv.h, s = Math.max(hsv.s, 0.8) * (1 - 0.55 * moodyK);
     const hsvToRgb = (hh, ss, vv) => {
       const i = Math.floor(hh * 6), f = hh * 6 - i, p = vv * (1 - ss), q = vv * (1 - f * ss), u = vv * (1 - (1 - f) * ss);
       return [[vv, u, p], [q, vv, p], [p, vv, u], [p, q, vv], [u, p, vv], [vv, p, q]][((i % 6) + 6) % 6];

@@ -110,7 +110,11 @@ void main(){
   q += w * 0.9;
   float n = rv_fbm(q + uSeed, 5) * 0.5 + 0.5;
   // clear gaps between cloud fields; body coverage 0.15–0.7 → mostly broken skies
-  float cov = clamp(uCoverage * 0.58 + (n - 0.5) * 2.2, 0.0, 1.0);
+  // large weather systems (fronts / cyclones, visible from orbit) × regional cloud fields
+  vec3 db = d * 2.2 + uSeed.zxy * 0.3;
+  db += 0.35 * vec3(rv_snoise(db * 1.3 + 4.0), rv_snoise(db * 1.3 + 9.0), rv_snoise(db * 1.3 + 13.0));
+  float big = rv_fbm(db, 3) * 0.5 + 0.5;
+  float cov = clamp(uCoverage * 0.55 + (big - 0.5) * 1.2 + (n - 0.5) * 1.7, 0.0, 1.0);
   float tall = clamp(rv_fbm(q * 1.7 + uSeed.zyx + 11.0, 3) * 0.7 + 0.5, 0.0, 1.0);
   float storm = uStorms * smoothstep(0.62, 0.8, rv_fbm(d * uFreq * 0.6 + uSeed.yxz + 21.0, 3) * 0.5 + 0.5);
   cov = max(cov, storm);
@@ -154,8 +158,8 @@ float cl_base(vec3 p, float h, vec4 wx, out float prof){
   base = cl_remap(base * prof, 1.0 - cover, 1.0, 0.0, 1.0) * cover;
   return max(base, 0.0);
 }
-float cl_density(vec3 p, float h, bool detail){
-  vec4 wx = cl_weather(p);
+float cl_densityW(vec3 p, float h, bool detail, out vec4 wx){
+  wx = cl_weather(p);
   float prof;
   float b = cl_base(p, h, wx, prof);
   if (b <= 0.0) return 0.0;
@@ -170,6 +174,7 @@ float cl_density(vec3 p, float h, bool detail){
   // storms are denser & darker
   return max(b, 0.0) * (1.0 + wx.b * 1.5);
 }
+float cl_density(vec3 p, float h, bool detail){ vec4 wx; return cl_densityW(p, h, detail, wx); }
 float cl_hg(float c, float g){ float g2 = g * g; return (1.0 - g2) / (12.5663706 * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5)); }
 #endif
 `);
@@ -191,6 +196,7 @@ uniform vec3 uAmbBot;        // ground bounce
 uniform vec3 uAmbRef;        // top ambient for a reference sun (per-sample daylight scaling, orbit)
 uniform float uAmbLocal;     // 1: use the camera-local ambient (inside the atmosphere)
 uniform vec4 uFlash;         // lightning: planet-local position (xyz), intensity (w)
+uniform float uAPScale;      // aerial perspective density scale (shared with the atmosphere pass)
 uniform float uSteps;
 uniform float uLightSteps;
 uniform float uFrameJitter;
@@ -237,14 +243,15 @@ void main(){
   float tSum = 0.0, wSum = 0.0;
   float lightStep = thick * 0.07;
   float emptyRun = 0.0;
-  for (int i = 0; i < 96; i++){
+  for (int i = 0; i < 128; i++){
     if (float(i) >= steps || T < 0.015) break;
     float t = t0 + (float(i) + jit) * dt;
     vec3 p = ro + dir * t;
     float r = length(p);
     float h = (r - Rc0) / thick;
     if (h < 0.0 || h > 1.0) continue;
-    float dens = cl_density(p, h, true);
+    vec4 wxs;
+    float dens = cl_densityW(p, h, true, wxs);
     if (dens <= 0.001) continue;
     vec3 n = p / r;
     float s = dens * sigma;
@@ -277,6 +284,10 @@ void main(){
     vec3 aTop = mix(uAmbRef * day, uAmbTop, uAmbLocal);
     vec3 aBot = mix(uAmbRef * day * 0.5, uAmbBot, uAmbLocal);
     vec3 amb = mix(aBot, aTop, clamp(h * 1.2, 0.0, 1.0)) * uShape3.w * (0.55 + 0.45 * exp(-dens * 0.9));
+    // overcast / storm: light reaching the base is diffused through the deck → neutral grey, darker
+    float oc = clamp(max((wxs.r * uShape3.x + uShape3.y + uCoverBoost) * 1.4 - 0.5, uCoverBoost * 2.2), 0.0, 1.0);
+    float ocb = oc * (1.0 - 0.6 * h);
+    amb = mix(amb, vec3(dot(amb, vec3(0.2126, 0.7152, 0.0722))) * 0.8, ocb * 0.9) * (1.0 - 0.35 * ocb) * (1.0 - 0.55 * wxs.b * (1.0 - h));
     // energy lost by the truncated octave series (thick clouds reflect ~75%): art gain on the key light
     vec3 S = (sunT * lum * powder * 2.4 + amb) * s;
     if (uFlash.w > 0.001){ vec3 fd = p - uFlash.xyz; S += vec3(0.75, 0.82, 1.0) * uFlash.w * 900.0 * exp(-dot(fd, fd) / (thick * thick * 2.5)) * s; }
@@ -294,7 +305,7 @@ void main(){
     // transmittance camera → cloud from the (sun-path) LUT ratio, undoing the sunset reddening power
     vec2 ta = atmo_raySphere(ro, dir, uAtmoRt);
     vec3 pa = ro + dir * max(ta.x, 0.0);
-    vec3 Tair = mix(vec3(1.0), atmo_transSegment(pa, p1), 0.85);
+    vec3 Tair = mix(vec3(1.0), pow(atmo_transSegment(pa, p1), vec3(uAPScale)), 0.85);
     vec3 skyL = vec3(0.0);
     if (uInside > 0.5) skyL = atmo_skyLUT(dir, ro / camR, camR, uSunDir, dot(dir, uSunDir)) * uSunIllSky;
     L = L * Tair + skyL * (1.0 - Tair) * alpha;
@@ -317,6 +328,7 @@ uniform vec3 uLightIll;
 uniform vec3 uAmbTop;
 uniform vec3 uAmbBot;
 uniform float uInside;
+uniform float uAPScale;
 varying vec2 vUv;
 void main(){
   float depth = texture(tDepth, vUv).r;
@@ -334,11 +346,12 @@ void main(){
   vec3 p = ro + dir * t;
   float r = length(p);
   vec3 n = p / r;
-  float d0 = cl_density(p, 0.35, false);
-  float d1 = cl_density(p + uLightDir * thick * 0.25, 0.6, false);
-  float path = thick * 0.6 / max(abs(dot(dir, n)), 0.12);
+  float er = uShape.z * 0.35;
+  float d0 = max(cl_density(p, 0.3, false) - er, 0.0) + max(cl_density(p + dir * thick * 0.3, 0.55, false) - er, 0.0);
+  float d1 = max(cl_density(p + uLightDir * thick * 0.25, 0.6, false) - er, 0.0);
+  float path = thick * 0.5 / max(abs(dot(dir, n)), 0.15);
   float sigma = uShape.w;
-  float T = exp(-d0 * sigma * path * 0.35);
+  float T = exp(-d0 * sigma * path * 0.12);
   float od = d1 * sigma * thick * 0.5;
   float nu = dot(dir, uLightDir);
   float ph = mix(cl_hg(nu, 0.7), cl_hg(nu, -0.2), 0.3);
@@ -346,7 +359,7 @@ void main(){
   vec3 Lc = sunT * (exp(-od) * ph * 3.2 + exp(-od * 0.25) * 0.2) + mix(uAmbBot, uAmbTop, 0.6) * uShape3.w;
   vec3 L = Lc * (1.0 - T);
   vec2 ta = atmo_raySphere(ro, dir, uAtmoRt);
-  vec3 Tair = mix(vec3(1.0), atmo_transSegment(ro + dir * max(ta.x, 0.0), p), 0.85);
+  vec3 Tair = mix(vec3(1.0), pow(atmo_transSegment(ro + dir * max(ta.x, 0.0), p), vec3(uAPScale)), 0.85);
   vec3 skyL = uInside > 0.5 ? atmo_skyLUT(dir, ro / camR, camR, uSunDir, dot(dir, uSunDir)) * uSunIllSky : vec3(0.0);
   L = L * Tair + skyL * (1.0 - Tair) * (1.0 - T);
   gl_FragColor = vec4(L, T);
@@ -418,10 +431,11 @@ void main(){
       float r = length(p);
       float h = (r - uLayer.x) / thick;
       if (h < 0.0 || h > 1.0) continue;
-      od += cl_density(p, h, false) * dt;
+      // base shape minus the average detail erosion (the shadow pass skips the detail fetch)
+      od += max(cl_density(p, h, false) - uShape.z * 0.35, 0.0) * dt;
     }
   }
-  float T = exp(-od * uShape.w * 0.6);
+  float T = exp(-od * uShape.w * 0.3);
   gl_FragColor = vec4(T, T, T, 1.0);
 }`;
 
@@ -454,6 +468,7 @@ export class Clouds {
     this.coverage = clamp(C.coverage ?? 0.4, 0, 1);
 
     const tierSteps = { low: 16, med: 36, high: 56, ultra: 80 }[this.tier] ?? 56;
+    this.baseSteps = tierSteps;
     const lightSteps = { low: 2, med: 3, high: 5, ultra: 6 }[this.tier] ?? 5;
     const seed = body.seed ?? 1;
     const hs = (k) => ((Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453) % 1 + 1) % 1;
@@ -486,6 +501,7 @@ export class Clouds {
       uAmbRef: { value: new THREE.Vector3(0.3, 0.35, 0.45) },
       uAmbLocal: { value: 1 },
       uFlash: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uAPScale: atmo.effect?.u?.uAPScale ?? { value: 1 },
       uSteps: { value: tierSteps },
       uLightSteps: { value: lightSteps },
       uFrameJitter: { value: 0 },
@@ -570,7 +586,10 @@ export class Clouds {
     this.weatherAngle += dt * speed / (this.atmo.model.Rb * 1.0);
     const c = Math.cos(this.weatherAngle), s = Math.sin(this.weatherAngle);
     u.uWeatherRot.value.set(c, 0, s, 0, 1, 0, -s, 0, c);
-    u.uFrameJitter.value = this.world.engine.shot ? 0 : (u.uFrameJitter.value + 0.618034) % 1;
+    const shot = this.world.engine.shot;
+    u.uFrameJitter.value = shot ? 0 : (u.uFrameJitter.value + 0.618034) % 1;
+    // stills get no temporal accumulation: spend more samples instead
+    u.uSteps.value = this.baseSteps * (shot ? 1.5 : 1);
     u.uCoverBoost.value = ctx.coverBoost || 0;
     u.uFlash.value.w = ctx.flash || 0;
     // key light: sun, or the moon deep at night
@@ -590,7 +609,8 @@ export class Clouds {
     const m = this.atmo.model, rc = (this.Rc0 + this.Rc1) * 0.5;
     const sk = this._sk || (this._sk = [0, 0, 0]), gr = this._gr || (this._gr = [0, 0, 0]);
     const scE = [sc.r * E, sc.g * E, sc.b * E];
-    const na = this.atmo.nightAmbient, k = 1 / Math.PI;
+    // night: the art-boosted terrain night ambient would make clouds glow; keep them dark silhouettes
+    const na = _na.copy(this.atmo.nightAmbient).multiplyScalar(0.12), k = 1 / Math.PI;
     m.skyIrradiance(rc, clamp(sunElev, -1, 1), sk, gr);
     const at = u.uAmbTop.value.set((sk[0] * scE[0] + na.r) * k * 1.6, (sk[1] * scE[1] + na.g) * k * 1.6, (sk[2] * scE[2] + na.b) * k * 1.6);
     // cloud bases see the horizon sky as much as the ground: cool, not brown
@@ -686,4 +706,4 @@ export class Clouds {
   }
 }
 
-const _X = new THREE.Vector3(1, 0, 0), _Y = new THREE.Vector3(0, 1, 0), _c = new THREE.Vector3();
+const _X = new THREE.Vector3(1, 0, 0), _Y = new THREE.Vector3(0, 1, 0), _c = new THREE.Vector3(), _na = new THREE.Color();

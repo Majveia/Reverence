@@ -76,7 +76,7 @@ vec3 fallbackStars(vec3 d){
   float n = rv_snoise(d * 5.0) * 0.5 + rv_snoise(d * 13.0) * 0.25 + 0.6;
   float dust = smoothstep(0.1, 0.6, rv_snoise(d * 7.0 + 3.0) * 0.5 + 0.5) * exp(-lat * lat * 140.0);
   col += vec3(0.55, 0.6, 0.75) * band * max(n, 0.0) * 0.012 * (1.0 - dust * 0.8);
-  return col * 0.35;
+  return col * 0.06;
 }
 
 // chord length of a ray through a spherical shell [r0, r1], clipped to [0, tMax]
@@ -105,7 +105,7 @@ vec3 auroraMarch(vec3 ro, vec3 rd, float tMax, float jitter){
   if (i.x > a && i.x < b) b = i.x;          // looking up from below: first segment only
   else if (i.y > a && i.y < b && i.x < a) a = i.y;
   if (b <= a) return vec3(0.0);
-  const float N = 28.0;
+  const float N = 40.0;
   float dt = (b - a) / N;
   vec3 acc = vec3(0.0);
   for (float k = 0.0; k < N; k += 1.0){
@@ -121,12 +121,13 @@ vec3 auroraMarch(vec3 ro, vec3 rd, float tMax, float jitter){
     float w1 = rv_snoise(vec3(q * 0.7, uTime * 0.05));
     float w2 = rv_snoise(vec3(q * 1.9 + 3.1, uTime * 0.11));
     float f = n.y * 14.0 + w1 * 1.6 + w2 * 0.45;
-    float curtain = pow(1.0 - abs(fract(f) * 2.0 - 1.0), 10.0);
-    curtain += 0.5 * pow(1.0 - abs(fract(f * 1.7 + 0.37) * 2.0 - 1.0), 14.0);
+    float curtain = pow(1.0 - abs(fract(f) * 2.0 - 1.0), 22.0);
+    curtain += 0.6 * pow(1.0 - abs(fract(f * 1.7 + 0.37) * 2.0 - 1.0), 28.0);
     // rays (vertical striations)
-    float rays = 0.55 + 0.45 * rv_snoise(vec3(lon * 90.0, hf * 0.6, uTime * 0.35));
+    float rn = rv_snoise(vec3(lon * 260.0 + w1 * 3.0, hf * 0.5, uTime * 0.35)) * 0.5 + 0.5;
+    float rays = 0.25 + 1.5 * rn * rn * rn;
     // vertical profile: sharp bottom, long fading top
-    float prof = smoothstep(0.0, 0.07, hf) * exp(-hf * 2.6);
+    float prof = smoothstep(0.0, 0.025, hf) * exp(-hf * 2.4);
     vec3 col = mix(uAuroraCol1, uAuroraCol2, smoothstep(0.25, 0.85, hf));
     acc += col * curtain * rays * prof * band * dt;
   }
@@ -181,7 +182,7 @@ void main(){
     vec3 L = atmo_combine(a, nu) * uSunIll;
     // moonlit / starlit air (tiny, keeps night silhouettes readable)
     float airT = 1.0 - dot(a.T, vec3(0.3333));
-    L += (uNightSky * 0.8 + uMoonSky * atmo_phaseRayleigh(dot(dir, uMoonDir)) * 6.0) * airT;
+    L += (uNightSky * 0.5 + uMoonSky * atmo_phaseRayleigh(dot(dir, uMoonDir)) * 2.0) * airT;
     outc = col * a.T + L;
     outc = applyFog(outc, ro, dir, tHit, up, nu);
   } else {
@@ -284,7 +285,7 @@ export class AtmosphereEffect {
       uNightSky: atmo.shared.uNightSky,
       uMoonDir: atmo.shared.uMoonDir,
       uMoonSky: atmo.shared.uMoonSky,
-      uStarVis: { value: 1.2 },
+      uStarVis: { value: 3.0 },
       uFallbackSun: { value: 0 },
       uAirglow: atmo.shared.uAirglow,
       uAirglowR: { value: atmo.model.Rb + atmo.model.height * 0.62 },

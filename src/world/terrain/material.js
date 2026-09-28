@@ -243,13 +243,14 @@ void rvTerrain( inout vec3 albedo ) {
   groundC = mix( groundC, uRvSoil * 0.95, wScree * 0.55 * mix( 0.6, dPeb.b, fMid ) );
 
   // rock tone: palette rock pulled toward neutral grey, strata bands only where the style asks for it
-  vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ) * vec3( 0.95, 0.99, 1.07 ), 0.62 );
+  vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ) * vec3( 0.95, 0.99, 1.07 ), 0.45 );
   vec3 rockC = mix( rockBase, uRvRock2, smoothstep( 0.2, 0.9, bh ) * ( 0.15 + 0.6 * uRvS.x * uRvS.x ) );
   rockC = mix( rockC, uRvSand * 0.8, smoothstep( 0.8, 0.97, bh ) * 0.35 * uRvS.x * uRvS.x );
   rockC = mix( rockC, rockBase * 0.55, smoothstep( 0.35, 0.65, mC.g + 0.3 * n2 ) * 0.35 );
   rockC *= 0.55 + 0.9 * aRock;
   rockC *= mix( 1.0, 0.86 + 0.28 * streak, rockS );
   rockC *= 0.88 + 0.24 * mA.g;
+  rockC *= mix( vec3( 1.07, 1.0, 0.9 ), vec3( 0.9, 0.97, 1.08 ), smoothstep( 0.25, 0.75, mA.b + 0.3 * n4 ) );
   // lichen / moss on moderately steep, moist rock
   rockC = mix( rockC, grassC * 0.75, ( 1.0 - rockS ) * smoothstep( 0.4, 0.8, moist ) * 0.45 * uRvS2.x );
   vec3 sandC = uRvSand * ( 0.86 + 0.28 * mix( 0.5, dSand.a, fMid * fNear * 0.7 + fMid * 0.3 ) + 0.12 * n1 + 0.08 * n4 );
@@ -323,7 +324,7 @@ export function terrainStyle(body) {
   };
 }
 
-export function createTerrainMaterial(body, quality) {
+export function createTerrainMaterial(body, quality, opts = {}) {
   const p = body.art?.palette || {};
   const st = terrainStyle(body);
   const rock = col(p.rock, '#8a7d6c');
@@ -361,7 +362,11 @@ export function createTerrainMaterial(body, quality) {
     uRvS2: { value: new THREE.Vector4(st.lush, st.forest, 0, 0) },
   };
 
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.0 });
+  // opts.lite: Lambert lighting (software rasterizers / headless captures, where GGX + IBL on every
+  // terrain pixel dominates frame time). Same albedo, normals, AO and emissive; no specular.
+  const mat = opts.lite
+    ? new THREE.MeshLambertMaterial({ color: 0xffffff })
+    : new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.0 });
   mat.name = 'rv-terrain';
   mat.userData.rvTerrain = true;
   try { if (new URLSearchParams(globalThis.location?.search || '').get('tnoatmo')) mat.userData.noCSM = true; } catch (_) { /* */ }
@@ -385,7 +390,7 @@ export function createTerrainMaterial(body, quality) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v13';
+  mat.customProgramCacheKey = () => 'rv-terrain-v14' + (opts.lite ? 'L' : '');
   return mat;
 }
 

@@ -138,7 +138,7 @@ vec3 atmo_sunTransmittance(float r, float muS){
   float vis = smoothstep(-a, a, (muS - cosH) / max(sinH, 1e-3));
   if (vis <= 0.0) return vec3(0.0);
   // art-directed sunset reddening: low suns get a deeper (Earth-like) air-mass color
-  float k = mix(uSunsetK, 1.0, smoothstep(0.0, 0.32, muS));
+  float k = mix(uSunsetK, 1.0, smoothstep(0.0, 0.2, muS));
   return pow(atmo_transmittance(r, muS), vec3(k)) * vis;
 }
 

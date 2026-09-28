@@ -164,6 +164,7 @@ uniform float uHasAtmo;
 uniform float uCloudCover;
 uniform vec3 uCloudLight;
 uniform vec3 uCloudShade;
+uniform vec3 uNightAmb;     // art-directed "readable night" ambient radiance (upper hemisphere)
 varying vec3 vDir;
 void main(){
   vec3 dir = normalize(vDir);
@@ -199,6 +200,7 @@ void main(){
     float mnu = dot(dir, uMoonDir);
     L += (uNightSky * (0.45 + 0.18 * airmass) + uMoonSky * (atmo_phaseRayleigh(mnu) * (0.6 + 0.15 * airmass) + 0.35 * atmo_phaseHG(mnu, 0.8))) * inside;
     // cloud deck (smooth approximation of the volumetric layer for reflections / ambient)
+    L += uNightAmb * (0.6 + 0.4 * cz) * inside;
     float cov = uCloudCover * smoothstep(-0.02, 0.25, dot(dir, up)) * inside;
     vec3 cl = mix(uCloudShade, uCloudLight, 0.5 + 0.5 * nu);
     L = mix(L, cl, cov);
@@ -269,6 +271,7 @@ export class Lighting {
       uCloudCover: { value: 0 },
       uCloudLight: { value: new THREE.Vector3(1, 1, 1) },
       uCloudShade: { value: new THREE.Vector3(0.5, 0.5, 0.5) },
+      uNightAmb: { value: new THREE.Vector3() },
       ...atmo.atmoUniforms,
     };
     this.envMat = new THREE.ShaderMaterial({ vertexShader: ENV_VERT, fragmentShader: ENV_FRAG, uniforms: this.envU, side: THREE.BackSide, depthWrite: false, depthTest: false });
@@ -398,9 +401,11 @@ export class Lighting {
     this.dayness = dayness;
     this.envU.uGroundIrr.value.set(sky[0] / E, sky[1] / E, sky[2] / E).multiplyScalar(1);
     this.envU.uCamPlanet.value.copy(camLocal);
+    this.envU.uNightAmb.value.set(nightAmb.r, nightAmb.g, nightAmb.b).multiplyScalar(0.55 / Math.PI);
 
     // periodic material auto-setup
-    this._matTimer -= dt;
+    // (frame-based too: sim time is frozen while a capture streams in)
+    this._matTimer -= Math.max(dt, 1 / 60);
     if (this._matTimer <= 0) { this._matTimer = 1.0; this.setupAll(); }
   }
 

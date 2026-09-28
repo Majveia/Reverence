@@ -122,7 +122,7 @@ class Atmosphere {
     const present = this.model.present;
     const ns = present ? night * E * 0.00022 : 0;
     S.uNightSky.value.set(0.30 * ns, 0.42 * ns, 0.85 * ns);
-    S.uAirglow.value.set(0.10, 0.55, 0.30).multiplyScalar(present ? night * E * 0.00014 * (0.6 + this.model.density * 0.4) : 0);
+    S.uAirglow.value.set(0.10, 0.55, 0.30).multiplyScalar(present ? night * E * 0.00003 * (0.6 + this.model.density * 0.4) : 0);
 
     this.lighting.update(dt, { model: this.model, camLocal, up, sunDir, camR, starColor: this.starColor, sunAngR: this.sunAngR, nightAmbient: this.nightAmbient, weather: this.weather });
 
@@ -171,7 +171,7 @@ class Atmosphere {
     const W = this.weather, u = this.effect.u, m = this.model;
     if (!m.present) { u.uFog.value.set(0, 1, 0, 0); return; }
     const fog = W.fog || 0, dust = W.dust || 0, rain = Math.max(W.rain || 0, W.snow || 0);
-    const rho = fog * fog * 3.2e-4 + rain * 5e-5 + dust * 1.2e-3;
+    const rho = fog * fog * 2.0e-4 + rain * 5e-5 + dust * 1.2e-3;
     const Hf = THREE.MathUtils.lerp(320, 1600, THREE.MathUtils.clamp((rain + dust * 1.5) / Math.max(fog + rain + dust, 1e-3), 0, 1));
     const sea = this.world.surface?.seaLevel ?? 0;
     u.uFog.value.set(rho, Hf, sea + 30, 0.35 + 0.65 * fog);
@@ -180,8 +180,8 @@ class Atmosphere {
     const c = u.uFogAlbedo.value;
     c.set(0.95, 0.96, 1.0);
     if (dust > 0) c.lerp(_v.set(0.95 * Math.min(1, tint.r * 1.6 + 0.3), 0.75 * Math.min(1, tint.g * 1.4 + 0.25), 0.55 * Math.min(1, tint.b * 1.2 + 0.2)), Math.min(1, dust * 1.5));
-    const sky = this.lighting.skyIrr, na = this.nightAmbient;
-    u.uFogAmb.value.set((sky[0] + na.r) / Math.PI, (sky[1] + na.g) / Math.PI, (sky[2] + na.b) / Math.PI);
+    const sky = this.lighting.skyIrr, na = this.nightAmbient, nk = 0.03; // dark nights: no glowing fog
+    u.uFogAmb.value.set((sky[0] + na.r * nk) / Math.PI, (sky[1] + na.g * nk) / Math.PI, (sky[2] + na.b * nk) / Math.PI);
     const sc = this.lighting.sunColor, sd = Math.max(0, W.sunDim ?? 1);
     u.uFogSun.value.set(sc.r, sc.g, sc.b).multiplyScalar(sd * sd);
     u.uFogWind.value.set(G.uWindDir.value.x, G.uWindDir.value.z).multiplyScalar(t * 6);
