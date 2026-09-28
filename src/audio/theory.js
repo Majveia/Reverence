@@ -173,7 +173,7 @@ export function makeMotif(r, beats = 4, density = 0.5, feel = 'straight') {
   for (let i = 1; i < rh.length; i++) {
     let s;
     if (prevLeap) { s = -Math.sign(prevLeap) * r.pick([1, 1, 2]); prevLeap = 0; }
-    else if (r.chance(0.25)) { s = r.pick([-4, -3, 3, 4, 5]); prevLeap = s; }
+    else if (r.chance(0.22)) { s = r.pick([-3, -2, 2, 3, 4]); prevLeap = Math.abs(s) > 2 ? s : 0; }
     else s = r.pick([-1, -1, 1, 1, 2, -2, 0]);
     steps.push(steps[i - 1] + s);
   }

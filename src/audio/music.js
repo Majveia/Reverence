@@ -116,16 +116,29 @@ export class Composer {
     if (this.sectionCount === 1) { kind = 'intro'; bars = st.bpm[1] > 70 ? 2 : 1; }
     else if (this.sectionCount > 2 && this.section?.kind === 'play' && r.chance((st.breath ?? 0.1) * (1.25 - E))) { kind = 'breath'; bars = r.weighted([[1, 1], [2, 3], [4, 1]]); }
     const on = new Set();
-    for (const L of this.layers) {
-      const d = L.def, bed = d.type === 'pad' || d.type === 'drone' || d.type === 'grains';
-      if (kind === 'intro') { if ((bed && !(d.minE > 0.3)) || (!(d.minE > 0.02) && d.type !== 'perc' && d.type !== 'melody')) on.add(L); continue; }
-      if (kind === 'breath') { if ((d.type === 'drone' || (d.type === 'pad' && !(d.minE > 0.05))) && r.chance(0.6)) on.add(L); continue; }
-      const need = (d.minE ?? 0) + r.range(-0.08, 0.08);
-      if (E + (d.type === 'drone' ? 1 : 0) >= need && r.chance(d.prob ?? 1)) on.add(L);
-    }
-    if (kind === 'play' && ![...on].some((L) => L.def.type !== 'drone' && L.def.type !== 'grains')) {
-      const c = this.layers.filter((L) => (L.def.minE ?? 0) <= E + 0.15 && L.def.type !== 'perc');
-      if (c.length) on.add(r.pick(c));
+    if (kind === 'intro' || kind === 'breath') {
+      for (const L of this.layers) {
+        const d = L.def, bed = d.type === 'pad' || d.type === 'drone' || d.type === 'grains';
+        if (kind === 'intro') { if ((bed && !(d.minE > 0.3)) || (!(d.minE > 0.02) && d.type !== 'perc' && d.type !== 'melody')) on.add(L); }
+        else if ((d.type === 'drone' || (d.type === 'pad' && !(d.minE > 0.05))) && r.chance(0.75)) on.add(L);
+        else if (d.core && !this.layers.some((o) => o.def.type === 'pad' || o.def.type === 'drone') && d.type !== 'bass') on.add(L);
+      }
+    } else {
+      // arrangement: energy decides HOW MANY layers play; importance (minE) + chance decide WHICH
+      for (const L of this.layers) if (L.def.type === 'drone' || (L.def.core && (L.def.minE ?? 0) <= E + 0.1)) on.add(L);
+      const elig = this.layers.filter((L) => !on.has(L) && (L.def.minE ?? 0) <= E + 0.12);
+      if (!elig.length && !on.size) elig.push(...this.layers.filter((L) => !on.has(L)).slice(0, 1));
+      const nCore = [...on].filter((L) => L.def.type !== 'drone').length;
+      const k = Math.max(nCore ? 0 : 1, Math.min(elig.length, Math.round((nCore ? 0.3 : 1) + E * elig.length * 1.2 + r.range(-0.7, 0.7))));
+      const ranked = elig.map((L) => [L, (L.def.minE ?? 0) + r.range(0, 0.3) + (1 - (L.def.prob ?? 1)) * r.range(0, 0.6) - (L.def.type === 'melody' && !L.def.answer ? 0.18 : 0)]).sort((a, b) => a[1] - b[1]);
+      for (let i = 0; i < k && i < ranked.length; i++) on.add(ranked[i][0]);
+      // contrast: never repeat the exact same arrangement twice in a row
+      const prev = this.layers.filter((L) => L.on && L.def.type !== 'drone').map((L) => L.def.id).sort().join();
+      const cur = [...on].filter((L) => L.def.type !== 'drone').map((L) => L.def.id).sort().join();
+      if (prev === cur && this.section?.kind === 'play' && elig.length > 1) {
+        const pick = r.pick(elig.slice(Math.min(1, elig.length - 1)));
+        if (on.has(pick) && on.size > 1) on.delete(pick); else on.add(pick);
+      }
     }
     for (const L of this.layers) {
       const was = L.on; L.on = on.has(L);
@@ -137,6 +150,7 @@ export class Composer {
       if (L.def.type === 'perc') L.fill = r.chance(0.5);
     }
     this.section = { kind, bars, left: bars, idx: this.sectionCount, energy: E };
+    if (this.log) this.log.push([+t0.toFixed(3), '§' + kind, bars, +E.toFixed(2), this.layers.filter((L) => L.on).map((L) => L.def.id).join(',')]);
   }
 
   _nextChord() {
@@ -203,7 +217,7 @@ export class Composer {
     if (L.droneTonic !== this.h.tonic) {
       L.droneTonic = this.h.tonic;
       let base = this.h.tonic; while (base > 45) base -= 12;
-      const notes = d.notes.map((n) => { let m = base + n; while (m < 26) m += 12; return m; });
+      const notes = d.notes.map((n) => { let m = base + n; while (m < 33) m += 12; return m; });
       L.bank.setChord(c.t0, notes, { glide: 3, level: 1, attack: 3, bright: 1 });
     }
     if (d.sweep || this.style.key === 'cosmic') L.bank.bright(c.t0, (this.style.key === 'cosmic' ? 0.6 + 1.4 * this.growth : 0.7) + this.r.range(-0.2, 0.9), this.barDur * 0.4);
@@ -250,7 +264,8 @@ export class Composer {
       if (onBeat && s > 0 && r.chance(sparse * 0.5)) continue;
       const accent = onBeat ? (s === 0 ? 1 : 0.85) : 0.68;
       const vel = clamp(accent * c.arc * (0.75 + 0.25 * c.E) * r.range(0.85, 1.05), 0.05, 1);
-      pluck(this.ctx, L.strip, d.inst, this._hz(this._time(c.t0, b)), m, vel, { pan: r.range(-0.45, 0.45), quality: q, bright: 0.8 + 0.3 * c.E });
+      const tn = this._hz(this._time(c.t0, b)); this._log(L, tn, m, 0, vel);
+      pluck(this.ctx, L.strip, d.inst, tn, m, vel, { pan: r.range(-0.45, 0.45), quality: q, bright: 0.8 + 0.3 * c.E });
     }
     L.idx = idx; L.dir = dir;
   }
@@ -259,39 +274,56 @@ export class Composer {
   _melody(L, c) {
     const d = L.def, r = this.r;
     if (!L.motif) L.motif = makeMotif(r, this.meter, d.density ?? 0.4);
-    const answering = d.answer && this.layers.some((o) => o !== L && o.on && o.def.type === 'melody' && !o.def.answer);
-    if (answering && (c.phraseBar === 0 || c.phraseBar === 2)) { L.mono?.silence(c.t0); return; }
+    const partner = this.layers.find((o) => o !== L && o.on && o.def.type === 'melody' && (d.answer ? !o.def.answer : o.def.answer));
+    // call & response: the lead sings bars 0/2 (and holds into 1/3), the answer line replies in bars 1/3
+    if (d.answer && partner && (c.phraseBar === 0 || c.phraseBar === 2)) { L.mono?.silence(c.t0); return; }
+    const replying = !d.answer && partner && (c.phraseBar === 1 || c.phraseBar === 3);
     let m;
     switch (c.phraseBar) {
       case 0: m = L.motif; break;
-      case 1: m = varyMotif(L.motif, r, r.pick(['repeat', 'sequence', 'ornament'])); break;
-      case 2: m = L.motifB || (L.motifB = r.chance(0.5) ? varyMotif(L.motif, r, r.pick(['invert', 'rhythm'])) : makeMotif(r, this.meter, d.density ?? 0.4)); break;
+      case 1: m = varyMotif(L.motif, r, r.pick(['repeat', 'sequence', 'sequence', 'ornament', 'rhythm'])); break;
+      case 2: m = L.motifB || (L.motifB = r.chance(0.55) ? varyMotif(L.motif, r, r.pick(['invert', 'rhythm', 'sequence'])) : makeMotif(r, this.meter, d.density ?? 0.4)); break;
       default: m = varyMotif(L.motif, r, 'truncate');
     }
     if (c.lastBar && this.section.kind !== 'intro') m = varyMotif(m, r, 'truncate');
-    if (L.anchor == null) L.anchor = this.h.degreeOf(Math.round((d.range[0] + d.range[1]) / 2));
-    const lo = d.range[0], hi = d.range[1];
+    if (replying) { m = { rh: [[0, this.meter * 0.75]], steps: [m.steps[0]] }; } // hold one long note under the reply
+    const lo = d.range[0], hi = d.range[1], n = this.h.size;
+    if (L.anchor == null || L.sectionSeen !== this.section.idx) { // new register per section (±a third)
+      L.sectionSeen = this.section.idx;
+      const mid = this.h.degreeOf(Math.round(lo + (hi - lo) * r.range(0.3, 0.55)));
+      L.anchor = L.anchor == null ? mid : Math.round((L.anchor + mid) / 2) + r.pick([-2, -1, 0, 1, 2]);
+      L.arc = r.pick([[0, 2, 4, 1], [0, 1, 3, 0], [2, 3, 1, 0], [0, 3, 2, -1], [1, 0, 2, 0]]); // phrase contour (degrees)
+    }
+    const base = L.anchor + (L.arc?.[c.phraseBar] ?? 0);
     const chordPcs = new Set(this.chordMidis.map((x) => ((x % 12) + 12) % 12));
     const notes = [];
+    let prevMidi = null;
     for (let i = 0; i < m.rh.length; i++) {
       const [b, dur] = m.rh[i];
-      let deg = L.anchor + m.steps[i];
+      let deg = base + m.steps[i];
       let midi = this.h.deg(deg);
-      while (midi > hi) { midi -= 12; deg -= this.h.size; } while (midi < lo) { midi += 12; deg += this.h.size; }
+      while (midi > hi) { midi -= 12; deg -= n; } while (midi < lo) { midi += 12; deg += n; }
       const strong = Math.abs(b - Math.round(b)) < 1e-3 && (Math.round(b) % 2 === 0 || dur >= 1);
-      if (strong && !chordPcs.has(((midi % 12) + 12) % 12)) { // lean onto the nearest chord tone
-        for (const k of [1, -1, 2, -2]) { const mm = this.h.deg(deg + k); if (chordPcs.has(((mm % 12) + 12) % 12) && mm >= lo && mm <= hi) { midi = mm; break; } }
+      if (strong && !chordPcs.has(((midi % 12) + 12) % 12)) { // lean onto a chord tone, preferring the direction of motion
+        const dir = prevMidi == null ? 1 : Math.sign(midi - prevMidi) || 1;
+        for (const k of [dir, -dir, 2 * dir, -2 * dir]) { const mm = this.h.deg(deg + k); if (chordPcs.has(((mm % 12) + 12) % 12) && mm >= lo && mm <= hi) { midi = mm; break; } }
       }
-      notes.push([b, dur, midi]);
+      if (prevMidi != null && midi === prevMidi && r.chance(0.5)) { const mm = this.h.deg(this.h.degreeOf(midi) + r.pick([1, -1])); if (mm >= lo && mm <= hi) midi = mm; } // avoid static repetition
+      if (prevMidi != null && Math.abs(midi - prevMidi) > 7) { // no wild leaps: fold the octave, else step toward it
+        const f = midi + (midi > prevMidi ? -12 : 12);
+        midi = Math.abs(f - prevMidi) <= 7 && f >= lo && f <= hi ? f : this.h.deg(this.h.degreeOf(prevMidi) + Math.sign(midi - prevMidi) * 2);
+      }
+      midi = Math.max(lo, Math.min(hi, midi));
+      notes.push([b, dur, midi]); prevMidi = midi;
     }
-    // cadence: last note of the phrase lands long on a stable chord tone
-    if (c.phraseBar === 3 && notes.length) {
-      const lastN = notes[notes.length - 1]; const pool = this._pool(lo, hi);
+    // cadence: last note of the phrase lands long on a stable chord tone (root or third preferred)
+    if (c.phraseBar === 3 && notes.length && !replying) {
+      const lastN = notes[notes.length - 1];
+      const stable = this._pool(lo, hi, [this.chordMidis[0], this.chordMidis[1]]);
+      const pool = stable.length ? stable : this._pool(lo, hi);
       if (pool.length) lastN[2] = pool.reduce((a, x) => (Math.abs(x - lastN[2]) < Math.abs(a - lastN[2]) ? x : a), pool[0]);
       lastN[1] = Math.max(lastN[1], this.meter - lastN[0]);
     }
-    // gravity: drift the anchor toward where the phrase ended
-    if (notes.length) L.anchor = Math.round(L.anchor * 0.6 + this.h.degreeOf(notes[notes.length - 1][2]) * 0.4);
     const legatoK = d.mono ? 0.98 : 1;
     for (let i = 0; i < notes.length; i++) {
       const [b, dur, midi] = notes[i];
@@ -306,8 +338,8 @@ export class Composer {
           const g = this.h.deg(this.h.degreeOf(midi) + 1);
           L.mono.note(t - 0.07, g, 0.07, vel * 0.8, { legato: true, glide: 0.02 });
         }
-        L.mono.note(t, midi, durS * legatoK, vel, { legato });
-      } else pluck(this.ctx, L.strip, d.inst, t, midi, vel, { pan: r.range(-0.15, 0.15), quality: this.host.quality, dur: d.inst === 'rhodes' || d.inst === 'vibes' ? durS : 0 });
+        L.mono.note(t, midi, durS * legatoK, vel, { legato }); this._log(L, t, midi, durS, vel);
+      } else this._log(L, t, midi, durS, vel), pluck(this.ctx, L.strip, d.inst, t, midi, vel, { pan: r.range(-0.15, 0.15), quality: this.host.quality, dur: d.inst === 'rhodes' || d.inst === 'vibes' ? durS : 0 });
     }
   }
 
@@ -317,7 +349,7 @@ export class Composer {
     let root = this.chordMidis[0]; while (root > d.range[1]) root -= 12; while (root < d.range[0]) root += 12;
     const fifth = root + 7 <= d.range[1] + 2 ? root + 7 : root - 5;
     const vel = clamp(0.8 * c.arc * r.range(0.9, 1.05), 0.2, 1);
-    const P = (b, m, v = vel, dur = 0) => pluck(this.ctx, L.strip, d.inst, this._hz(this._time(t0, b), 0.006), m, v, { dur, quality: this.host.quality, bright: 0.8 });
+    const P = (b, m, v = vel, dur = 0) => this._log(L, this._time(t0, b), m, dur, v) || pluck(this.ctx, L.strip, d.inst, this._hz(this._time(t0, b), 0.006), m, v, { dur, quality: this.host.quality, bright: 0.8 });
     switch (d.style) {
       case 'walk': {
         let nr = this.nextChordMidis[0]; while (nr > root + 7) nr -= 12; while (nr < root - 7) nr += 12;
@@ -330,7 +362,7 @@ export class Composer {
           const target = nr + (cur < nr ? -2 : 2) * (remaining - 1);
           const cands = scale.filter((x) => Math.abs(x - cur) <= 4 && x !== cur);
           cur = cands.length ? cands.reduce((a, x) => (Math.abs(x - target) < Math.abs(a - target) ? x : a), cands[0]) : cur;
-          if (k === 2 && r.chance(0.35)) cur = this.chordMidis.map((x) => { let y = x; while (y > root + 12) y -= 12; while (y < root) y += 12; return y; })[2] ?? cur;
+          if (k === 2 && r.chance(0.35)) { const c5 = this.chordMidis.map((x) => { let y = x; while (y > root + 12) y -= 12; while (y < root) y += 12; return y; })[2]; if (c5 != null && c5 !== tones[tones.length - 1]) cur = c5; }
           tones.push(cur);
         }
         tones.forEach((m, k) => P(k, m, vel * (k === 0 ? 1 : 0.85), B * 0.95));
@@ -357,6 +389,7 @@ export class Composer {
     L.voicing = voiceLead(L.voicing, src, Math.min(4, src.length + (src.length < 4 ? 1 : 0)), d.range[0], d.range[1], r);
     const hitAt = (b, vel, dur, strum = 0, up = false) => {
       const notes = up ? [...L.voicing].reverse() : L.voicing;
+      this._log(L, this._time(c.t0, b), L.voicing[L.voicing.length - 1], dur, vel);
       notes.forEach((m, i) => pluck(this.ctx, L.strip, d.inst, this._hz(this._time(c.t0, b)) + i * strum, m, vel * r.range(0.85, 1), { dur, quality: this.host.quality, pan: (i / notes.length - 0.5) * 0.4 }));
     };
     const B = this.beat;
@@ -481,6 +514,8 @@ export class Composer {
     return t1;
   }
 
+  _log(L, t, midi, dur, vel) { if (this.log && this.log.length < 4000) this.log.push([+t.toFixed(3), L.def.id, midi, +dur.toFixed(2), +vel.toFixed(2)]); }
+
   debug() {
     const sec = this.section;
     return {
@@ -488,7 +523,7 @@ export class Composer {
       key: `${pcName(this.h.tonic)} ${this.modeName}`, bpm: +(this.bpm || 0).toFixed(1), meter: this.meter, swing: this.swing,
       chord: this.chord ? this.h.label(this.chord.deg, this.chord.ext) : null, recentChords: this.history.slice(),
       section: sec ? { kind: sec.kind, bars: sec.bars, left: sec.left, idx: sec.idx } : null, bar: this.bar,
-      energy: +this.energy.toFixed(2), layers: this.layers.map((L) => ({ id: L.def.id, type: L.def.type, inst: L.def.mono || L.def.inst || L.def.timbre || L.def.kit, on: L.on })),
+      energy: +this.energy.toFixed(2), layers: this.layers.map((L) => ({ id: L.def.id, type: L.def.type, inst: L.def.mono || L.def.inst || L.def.timbre || L.def.kit || L.def.wave, on: L.on })),
     };
   }
 }

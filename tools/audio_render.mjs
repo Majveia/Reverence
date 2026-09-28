@@ -67,7 +67,7 @@ else if (opt('preset')) { const n = opt('preset'); if (!PRESETS[n]) { console.er
 else jobs = [{ name: opt('name', `${opt('scene', 'surface')}-${opt('art', 'ghibli')}`), scene: opt('scene', 'surface'), art: opt('art', 'ghibli'), over: J(opt('over'), {}), params: J(opt('params'), {}), events: J(opt('events'), []), walk: +opt('walk', 0), surface: opt('surface', 'grass'), type: opt('type') }];
 if (flag('music-only')) for (const j of jobs) { j.buses = { amb: 0, sfx: 0, ui: 0 }; j.walk = 0; j.name += '-music'; }
 if (opt('only')) { const keep = opt('only').split(','); jobs = jobs.filter((j) => keep.some((k) => j.name === k || j.name.startsWith(k + '-music'))); }
-for (const j of jobs) { j.seconds = j.seconds ?? seconds; j.sampleRate = +opt('rate', 44100); j.seed = +opt('seed', j.seed ?? 1234); j.quality = opt('quality', 'high'); j.scene = j.scene || 'surface'; }
+for (const j of jobs) { j.log = true; j.seconds = j.seconds ?? seconds; j.sampleRate = +opt('rate', 44100); j.seed = +opt('seed', j.seed ?? 1234); j.quality = opt('quality', 'high'); j.scene = j.scene || 'surface'; }
 
 // ---- dev server (reuse the shared one; start a private vite if it is down)
 const base = opt('base', process.env.RV_BASE || 'http://localhost:5173');
@@ -169,7 +169,7 @@ for (const job of jobs) {
       for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
       const rms = Math.sqrt(sum / (2 * n));
       return {
-        b64: btoa(bin), sampleRate: r.sampleRate, n, debug: r.debug, timeline: r.timeline,
+        b64: btoa(bin), sampleRate: r.sampleRate, n, debug: r.debug, timeline: r.timeline, notes: r.notes,
         metrics: { peakDb: +(20 * Math.log10(peak + 1e-9)).toFixed(1), rmsDb: +(20 * Math.log10(rms + 1e-9)).toFixed(1), lufs: +(20 * Math.log10(rms + 1e-9) - 0.7).toFixed(1), clipped, silentPct: +(100 * silent / Math.max(1, wins)).toFixed(1), centroid: Math.round(zc / 2 / (n / r.sampleRate)), width: +(1 - sumLR / Math.sqrt(sumL2 * sumR2 + 1e-12)).toFixed(3) },
       };
     }, job);
@@ -180,7 +180,7 @@ for (const job of jobs) {
   for (let i = 0; i < res.n; i++) { L[i] = i16[i * 2]; R[i] = i16[i * 2 + 1]; }
   const base = path.join(outDir, job.name);
   wav(base + '.wav', L, R, res.sampleRate);
-  const info = { name: job.name, job, metrics: res.metrics, timeline: res.timeline, debug: res.debug };
+  const info = { name: job.name, job, metrics: res.metrics, timeline: res.timeline, debug: res.debug, notes: res.notes };
   fs.writeFileSync(base + '.json', JSON.stringify(info, null, 1));
   const py = spawnSync('python3', [pyFile, base + '.wav', base + '.png', base + '.json'], { encoding: 'utf8' });
   const pngOk = py.status === 0;

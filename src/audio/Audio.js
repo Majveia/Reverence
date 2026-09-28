@@ -24,7 +24,7 @@ import { resolveStyle } from './styles.js';
 import { Ambience } from './ambience.js';
 import { Sfx } from './sfx.js';
 import { VOICES } from './instruments.js';
-import { clamp, smooth, hashStr } from './dsp.js';
+import { clamp, smooth, hashStr, setT } from './dsp.js';
 
 const ALIEN_ART = new Set(['rickmorty', 'nms', 'crystal', 'nausicaa', 'rogerdean', 'beksinski']);
 const HOT_ART = new Set(['moebius', 'villeneuve', 'bebop', 'ghibli', 'bierstadt', 'nms', 'rickmorty', 'botw']);
@@ -143,11 +143,18 @@ export class Audio {
       alien: ALIEN_ART.has(art) || body?.type === 'exotic' || body?.type === 'toxic',
       flora: life.flora ?? 0, fauna: life.fauna ?? 0,
     });
+    this._staticWorld(body);
+    this._dist = null;
+  }
+
+  /** Per-body constants (life, civ style, climate) — also computed while audio is still locked (overlay preview). */
+  _staticWorld(body) {
+    this._lastBody = body;
+    const art = body?.art?.key, life = body?.life || {};
     this.P.flora = life.flora ?? 0; this.P.fauna = life.fauna ?? 0;
     this.P.cityStyle = body?.civ?.style || body?.art?.civ || 'village';
     this.P.hot = HOT_ART.has(art) ? 0.8 : body?.type === 'desert' || body?.type === 'savanna' ? 0.7 : 0.2;
     this.P.cold = body?.type === 'arctic' || art === 'friedrich';
-    this._dist = null;
   }
 
   // ------------------------------------------------------------------ world sensing (time-sliced, ~4 Hz)
@@ -157,6 +164,7 @@ export class Audio {
     const world = this.engine?.director?.current?.world;
     this._worldT -= dt;
     if (mode === 'system' && world) {
+      if (world.body && world.body !== this._lastBody) this._staticWorld(world.body);
       const atmoH = Math.max(1, (G.uAtmosphereRadius.value - G.uPlanetRadius.value) || 5000);
       const camAlt = G.uCameraAltitude.value || 0;
       const sp = clamp((camAlt / atmoH - 0.55) / 0.4, 0, 1);
@@ -260,7 +268,9 @@ export class Audio {
       // energy for the composer
       this.discoveryPulse = Math.max(0, this.discoveryPulse - dt / 20);
       const M = this.music;
-      M.night = P.night; M.danger = this.params.danger || 0; M.growth = this.params.cosmicGrowth || 0;
+      M.night = P.night; M.danger = Math.max(this.params.danger || 0, (P.storm || 0) * 0.5); M.growth = this.params.cosmicGrowth || 0;
+      // altitude / open sky → a little more space in the mix
+      setT(this.mix.revOut.gain, (this.music.style?.revLevel ?? 0.6) * (1 + 0.35 * clamp((P.altitude || 0) / 300, 0, 1) + 0.25 * P.space), t, 1.5, 0.01);
       const E = 0.24 + 0.6 * this.flow + 0.35 * M.danger + 0.25 * this.discoveryPulse + (this.params.discovery || 0) * 0.2 - 0.1 * P.night;
       M.energy = clamp(E, 0, 1);
       M.tick(t);
@@ -276,7 +286,11 @@ export class Audio {
         if (this._dist != null && dt > 0) { const vr = clamp((d - this._dist) / dt, -120, 120); dop = smooth(this._dop || 1, 343 / (343 + vr), 4, dt); }
         this._dist = d; this._dop = dop;
       } else this._dist = null;
-      this.sfx.updateEngines(t, dt, { type: veh?.type || (this.params.engine > 0 ? this.params.engineType : null), engine: veh ? (this.params.engine ?? 0) : (this.params.engineType ? this.params.engine : 0), speed: this.params.speed, boost: this.params.boost, doppler: dop, grounded: veh?.grounded });
+      const ev = this._ev || (this._ev = {});
+      ev.type = veh?.type || (this.params.engine > 0 ? this.params.engineType : null);
+      ev.engine = veh ? (this.params.engine ?? 0) : (this.params.engineType ? this.params.engine : 0);
+      ev.speed = this.params.speed; ev.boost = this.params.boost; ev.doppler = dop; ev.grounded = veh?.grounded;
+      this.sfx.updateEngines(t, dt, ev);
       if (this._overlay) this._overlay.update(dt);
     } catch (e) {
       if (!this._err) { this._err = 1; console.warn('[audio] update failed', e); }
@@ -329,6 +343,7 @@ export class Audio {
     const body = { seed: opts.seed ?? 1234, art: { key: art }, type: opts.type || 'terran', life: { flora: opts.over?.flora ?? 0.8, fauna: opts.over?.fauna ?? 0.6 }, civ: { style: civ[opts.over?.cityStyle] || opts.over?.cityStyle || 'village' }, ocean: { present: true } };
     a.scene = scene; a.sceneParams = scene === 'surface' ? { body } : {};
     a._build(ctx);
+    if (opts.log) a.music.log = [];
     Object.assign(a.params, opts.params || {});
     a.over = { ...(opts.over || {}) };
     for (const [bus, v] of Object.entries(opts.buses || {})) a.mix.setBus(bus, v, 0, 0.001);
@@ -352,7 +367,7 @@ export class Audio {
     }
     const debug = a.debug();
     const buf = await ctx.startRendering();
-    return { sampleRate: sr, channels: [buf.getChannelData(0), buf.getChannelData(1)], debug, timeline };
+    return { sampleRate: sr, channels: [buf.getChannelData(0), buf.getChannelData(1)], debug, timeline, notes: a.music.log || null };
   }
 
   _senseOffline(dt) {

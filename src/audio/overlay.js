@@ -49,7 +49,14 @@ export class AudioOverlay {
     this.cv = el.querySelector('canvas'); this.g2 = this.cv.getContext('2d');
     this.g2.fillStyle = '#000'; this.g2.fillRect(0, 0, this.cv.width, this.cv.height);
     this.info = null;
-    if (!host.ctx) this._preview(); else this._live = true;
+    if (!host.ctx) { // wait for the world to be ready (and a moment of sim) so the preview hears the real scene
+      this.el.querySelector('.s').textContent = 'waiting for world…';
+      const iv = setInterval(() => {
+        if (host.ctx) { clearInterval(iv); return; }
+        const e = host.engine;
+        if ((e?.isReady || window.__rv?.ready) && (e?.time?.t ?? 0) > 0.4) { clearInterval(iv); this._preview(); }
+      }, 250);
+    } else this._live = true;
   }
 
   async _preview() {
@@ -98,8 +105,9 @@ export class AudioOverlay {
 
   _text(d) {
     const m = d.music || {}, a = d.ambience || {};
-    this.el.querySelector('.t').textContent = '♪ ' + (m.label || m.style || 'Audio');
-    this.el.querySelector('.n').textContent = [m.note, m.art && `art: ${m.art}`].filter(Boolean).join(' · ');
+    const [ttl, sub] = String(m.label || m.style || 'Audio').split(' — ');
+    this.el.querySelector('.t').textContent = '♪ ' + ttl;
+    this.el.querySelector('.n').textContent = [sub, m.note, m.art && `art: ${m.art}`].filter(Boolean).join(' · ');
     const beds = Object.entries(a.beds || {}).filter(([, v]) => v > 0.004).map(([k]) => `<span class="amb">${k}</span>`).join('');
     const evs = Object.entries(a.events || {}).map(([k, v]) => `${k}×${v}`).join(' ');
     const rows = [
@@ -117,7 +125,7 @@ export class AudioOverlay {
     this.t += dt;
     const h = this.host;
     if (!h.ctx || !h.mix) return;
-    if (!this._live) { this._live = true; this.el.querySelector('.s').textContent = 'live'; }
+    if (!this._live || !this._liveLbl) { this._live = this._liveLbl = true; this.el.querySelector('.s').textContent = 'live'; const ax = this.el.querySelectorAll('.ax span'); ax[0].textContent = 'live · 35 Hz–22 kHz (log)'; ax[1].textContent = 'now'; }
     // scrolling live spectrogram from the master analyser
     const an = h.mix.analyser; const n = an.frequencyBinCount;
     if (!this._fb || this._fb.length !== n) this._fb = new Float32Array(n);

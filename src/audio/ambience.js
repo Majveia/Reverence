@@ -119,12 +119,12 @@ export class Ambience {
     if (rain > 0.01 || this.beds.rain) {
       const R = this._bed('rain', () => {
         const gain = this._g(0); gain.connect(this.out);
-        const h = this._noise('white', t), hf = this._f('highpass', 1400, 0.5), pk = this._f('peaking', 4200, 0.8), hl = this._f('lowpass', 9000, 0.5); pk.gain.value = 3; const hg = this._g(0.4);
+        const h = this._noise('white', t), hf = this._f('highpass', 1400, 0.5), pk = this._f('peaking', 4200, 0.8), hl = this._f('lowpass', 9000, 0.5); pk.gain.value = 2; const hg = this._g(0.26);
         h.connect(hf); hf.connect(pk); pk.connect(hl); hl.connect(hg); hg.connect(gain);
         const b = this._noise('pink', t), bf = this._f('lowpass', 1100, 0.5), bg = this._g(0.5); b.connect(bf); bf.connect(bg); bg.connect(gain);
         return { gain };
       });
-      this._lvl(R, (0.04 + rain * 0.14) * (rain > 0.01 ? 1 : 0) * (1 - under * 0.7), t, 1.5);
+      this._lvl(R, (0.04 + rain * 0.11) * (rain > 0.01 ? 1 : 0) * (1 - under * 0.7), t, 1.5);
       const drops = rain * 18 * dt * clamp(this.host.quality, 0.4, 1);
       if (r() < drops) { this._oneshot('drip', t + r() * 0.05, r.range(0.05, 0.25) * rain, r.range(-0.9, 0.9), r.range(0.8, 1.3)); }
     }
@@ -166,7 +166,7 @@ export class Ambience {
       if (this._every('cicadaSwell', t, 5, 13)) { const up = r.range(1.5, 4); C.sw.gain.cancelScheduledValues(t); C.sw.gain.setTargetAtTime(r.range(0.5, 1), t, up / 3); C.sw.gain.setTargetAtTime(0.05, t + up + r.range(1, 4), 1.2); }
     }
     const birds = lifeOK * (1 - P.night) * clamp(P.flora * 1.4, 0, 1) * (1 + P.dawn * 1.5);
-    if (birds > 0.05 && this.species && this._every('bird', t, 1.2 / (0.4 + birds), 5 / (0.4 + birds))) this._bird(t + 0.05, birds);
+    if (birds > 0.05 && this.species && this._every('bird', t, 2.4 / (0.3 + birds), 8 / (0.3 + birds))) this._bird(t + 0.05, birds);
 
     // ---------------- distant creatures
     if (P.fauna > 0.05 && dry > 0.5 && this._every('creature', t, 22, 60)) this._creature(t + 0.1, P);
@@ -205,7 +205,7 @@ export class Ambience {
   _bird(t, amt) {
     const r = this.r, sp = r.pick(this.species), ctx = this.ctx;
     const pan = r.range(-0.95, 0.95), dist = r.range(0.25, 1), rate = sp.rate * r.range(0.95, 1.05);
-    const g = this._g(0.06 * sp.level * dist * clamp(amt, 0, 1.5)); const p = ctx.createStereoPanner(); p.pan.value = pan;
+    const g = this._g(0.036 * sp.level * dist * clamp(amt, 0, 1.2) * (sp.fm ? 0.7 : 1)); const p = ctx.createStereoPanner(); p.pan.value = pan;
     const lp = this._f('lowpass', 3000 + 6000 * dist, 0.5);
     g.connect(lp); lp.connect(p); p.connect(this.out); const send = this._g(0.5 * (1.2 - dist)); p.connect(send); send.connect(this.rev);
     const reps = r.chance(0.4) ? 2 : 1;
@@ -298,7 +298,7 @@ export class Ambience {
     const r = this.r, ctx = this.ctx;
     const S = this._bed('space', () => {
       const gain = this._g(0); gain.connect(this.out);
-      const hum = [36, 36.35, 54.1].map((f, i) => { const o = ctx.createOscillator(); o.frequency.value = f; const g = this._g(i === 2 ? 0.25 : 0.4); o.connect(g); g.connect(gain); o.start(t); return o; });
+      const hum = [55, 55.35, 82.6].map((f, i) => { const o = ctx.createOscillator(); o.frequency.value = f; const g = this._g(i === 2 ? 0.18 : 0.26); o.connect(g); g.connect(gain); o.start(t); return o; });
       const rad = this._noise('pink', t), rf = this._f('bandpass', 1400, 14), rg = this._g(0.9); rad.connect(rf); rf.connect(rg); rg.connect(gain);
       const cab = this._noise('brown', t), cf = this._f('lowpass', 140, 0.6), cg = this._g(0); cab.connect(cf); cf.connect(cg); cg.connect(gain);
       return { gain, hum, rf, cg };

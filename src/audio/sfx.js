@@ -162,7 +162,7 @@ export class Sfx {
       const o1 = ctx.createOscillator(); o1.type = 'sawtooth';
       const o2 = ctx.createOscillator(); o2.type = 'square';
       const o3 = ctx.createOscillator(); o3.type = 'sine';
-      const bp = this._f('bandpass', 800, 2.5), lp = this._f('lowpass', 2600, 0.8), og = this._g(0.25), o2g = this._g(0.06), subg = this._g(0.35);
+      const bp = this._f('bandpass', 800, 2.5), lp = this._f('lowpass', 2600, 0.8), og = this._g(0.25), o2g = this._g(0.06), subg = this._g(0.12);
       o1.connect(bp); bp.connect(og); o2.connect(o2g); o2g.connect(lp); og.connect(lp); lp.connect(g); o3.connect(subg); subg.connect(g);
       const n = ctx.createBufferSource(); n.buffer = noiseBuffer(ctx, 'white'); n.loop = true;
       const nf = this._f('bandpass', 1500, 5), ng = this._g(0.12); n.connect(nf); nf.connect(ng); ng.connect(g);

@@ -54,7 +54,10 @@ export class Mixer {
     this.musicLP = f('lowpass', Math.min(18000, ny), 0.5);
     this.shaper = ctx.createWaveShaper(); this.shaper.curve = satCurve(0.6); this.driveIn = g(1); this.driveOut = g(1);
     this.musicDuck = g(1); this.musicVol = g(0.8);
-    this.musicIn.connect(this.musicTrim); this.musicTrim.connect(this.wow); this.wow.connect(this.musicLP);
+    // gentle mastering tilt: tame boomy lows, add air
+    this.eqLow = f('lowshelf', 130, 0.7); this.eqLow.gain.value = -3;
+    this.eqHigh = f('highshelf', Math.min(5500, ny * 0.8), 0.7); this.eqHigh.gain.value = 3.5;
+    this.musicIn.connect(this.musicTrim); this.musicTrim.connect(this.eqLow); this.eqLow.connect(this.eqHigh); this.eqHigh.connect(this.wow); this.wow.connect(this.musicLP);
     this.musicLP.connect(this.driveIn); this.driveIn.connect(this.shaper); this.shaper.connect(this.driveOut);
     this.driveOut.connect(this.musicDuck); this.musicDuck.connect(this.musicVol); this.musicVol.connect(this.pre);
     this.crackleG = g(0);

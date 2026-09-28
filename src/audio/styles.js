@@ -14,7 +14,7 @@ export const STYLES = {
     prog: 'lydian', chordBars: [[2, 2], [3, 1]], exts: [['sus2', 3], ['add9', 3], ['quartal', 2], ['triad', 1]],
     reverb: 'cosmos', revLevel: 0.8, echo: { beats: 1.5, fb: 0.45, mix: 0.35 }, insert: {}, breath: 0, modulate: 0.45,
     layers: [
-      { id: 'pad', type: 'pad', timbre: 'warm', voices: 6, range: [45, 79], level: 0.42, glide: 2.8, attack: 3, rev: 0.7 },
+      { id: 'pad', core: true, type: 'pad', timbre: 'warm', voices: 6, range: [45, 79], level: 0.42, glide: 2.8, attack: 3, rev: 0.7 },
       { id: 'halo', type: 'pad', timbre: 'glass', voices: 3, range: [67, 91], level: 0.16, glide: 4, attack: 4, rev: 0.9, echo: 0.2, minE: 0.1 },
       { id: 'sub', type: 'drone', timbre: 'drone', notes: [-12, -5], level: 0.2, rev: 0.2 },
       { id: 'grains', type: 'grains', wave: 'glass', range: [74, 101], rate: [2, 14], dur: [0.25, 1.4], level: 0.09, rev: 0.9, echo: 0.3 },
@@ -27,7 +27,7 @@ export const STYLES = {
     prog: 'aeolian', chordBars: [[2, 3], [1, 1]], exts: [['triad', 3], ['add9', 2], ['sus2', 1]],
     reverb: 'cathedral', revLevel: 0.75, echo: { beats: 1.5, fb: 0.35, mix: 0.25 }, insert: {}, breath: 0.05, modulate: 0.3,
     layers: [
-      { id: 'choir', type: 'pad', timbre: 'choir', voices: 5, range: [52, 76], level: 0.55, glide: 1.2, attack: 2.2, rev: 0.8, vowels: ['a', 'o', 'u', 'a', 'e'] },
+      { id: 'choir', core: true, type: 'pad', timbre: 'choir', voices: 5, range: [52, 76], level: 0.55, glide: 1.2, attack: 2.2, rev: 0.8, vowels: ['a', 'o', 'u', 'a', 'e'] },
       { id: 'low', type: 'pad', timbre: 'strings', voices: 2, range: [36, 52], level: 0.3, glide: 1.5, attack: 2.5, rev: 0.5 },
       { id: 'grains', type: 'grains', wave: 'sine', range: [79, 103], rate: [1, 6], dur: [0.15, 0.7], level: 0.06, rev: 0.9, echo: 0.3 },
       { id: 'arp', type: 'arp', inst: 'celesta', range: [67, 91], rate: [1, 2], patterns: ['up', 'updown'], level: 0.22, rev: 0.7, echo: 0.35, minE: 0.3, prob: 0.6 },
@@ -53,7 +53,7 @@ export const STYLES = {
     trim: 0.72, label: 'Pastoral — piano, harp & strings', bpm: [70, 86], meter: [[4, 3], [3, 1.3]], swing: 0.5,
     modes: { day: ['lydian', 'ionian', 'ionian', 'mixolydian'], night: ['dorian', 'aeolian', 'ionian'] }, tonic: [48, 55],
     prog: 'tonal', chordBars: [[1, 3], [2, 2]], exts: [['triad', 3], ['add9', 2], ['7', 1], ['sus2', 1]],
-    reverb: 'valley', revLevel: 0.6, echo: { beats: 0.75, fb: 0.25, mix: 0.12 }, insert: {}, breath: 0.2, modulate: 0.25,
+    reverb: 'valley', revLevel: 0.6, echo: { beats: 0.75, fb: 0.25, mix: 0.12 }, insert: {}, breath: 0.12, modulate: 0.25,
     layers: [
       { id: 'pad', type: 'pad', timbre: 'strings', voices: 4, range: [50, 74], level: 0.26, glide: 0.5, attack: 1.4, rev: 0.6, minE: 0.05, prob: 0.8 },
       { id: 'bass', type: 'bass', inst: 'piano', style: 'root', range: [36, 50], level: 0.4, rev: 0.35, minE: 0.1, prob: 0.85 },
@@ -70,7 +70,7 @@ export const STYLES = {
     reverb: 'outdoor', revLevel: 0.55, echo: { beats: 0.5, fb: 0.15, mix: 0.05 }, insert: { wow: 0.15, lp: 12000 }, breath: 0.2, modulate: 0.15,
     layers: [
       { id: 'organ', type: 'pad', timbre: 'organ', voices: 3, range: [48, 67], level: 0.13, glide: 0.2, attack: 0.8, rev: 0.5, minE: 0.1, prob: 0.6 },
-      { id: 'banjo', type: 'arp', inst: 'banjo', range: [55, 79], rate: [2, 2], patterns: ['travis'], level: 0.42, rev: 0.35, minE: 0 },
+      { id: 'banjo', core: true, type: 'arp', inst: 'banjo', range: [55, 79], rate: [2, 2], patterns: ['travis'], level: 0.42, rev: 0.35, minE: 0 },
       { id: 'guitar', type: 'comp', inst: 'guitar', range: [48, 67], rhythm: 'strum', level: 0.3, rev: 0.35, minE: 0.3, prob: 0.6 },
       { id: 'bass', type: 'bass', inst: 'guitar', style: 'rootFifth', range: [36, 50], level: 0.38, rev: 0.2, minE: 0.05 },
       { id: 'mel', type: 'melody', mono: 'harmonica', range: [62, 82], level: 0.42, density: 0.35, rev: 0.5, minE: 0.3, prob: 0.6 },
@@ -84,7 +84,7 @@ export const STYLES = {
     reverb: 'valley', revLevel: 0.65, echo: { beats: 0.75, fb: 0.3, mix: 0.12 }, insert: { drive: 0.1 }, breath: 0.15, modulate: 0.1,
     layers: [
       { id: 'drone', type: 'drone', timbre: 'organ', notes: [0, 7, 12], level: 0.2, rev: 0.5 },
-      { id: 'duduk', type: 'melody', mono: 'duduk', range: [57, 76], level: 0.6, density: 0.32, rev: 0.6, echo: 0.1, minE: 0.05, ornament: true },
+      { id: 'duduk', core: true, type: 'melody', mono: 'duduk', range: [57, 76], level: 0.6, density: 0.32, rev: 0.6, echo: 0.1, minE: 0.05, ornament: true },
       { id: 'oud', type: 'arp', inst: 'oud', range: [50, 71], rate: [2, 4], patterns: ['drone'], level: 0.34, rev: 0.35, minE: 0.4, prob: 0.6 },
       { id: 'perc', type: 'perc', kit: 'desert', level: 0.45, rev: 0.3, minE: 0.3, prob: 0.85 },
       { id: 'pad', type: 'pad', timbre: 'strings', voices: 3, range: [52, 72], level: 0.14, glide: 1.4, attack: 2, rev: 0.7, minE: 0.5, prob: 0.5 },
@@ -96,7 +96,7 @@ export const STYLES = {
     prog: 'drone', chordBars: [[2, 2], [4, 2]], exts: [['power', 3], ['triad', 1]],
     reverb: 'cathedral', revLevel: 0.7, echo: { beats: 1, fb: 0.3, mix: 0.1 }, insert: { drive: 0.35 }, breath: 0.2, modulate: 0.05,
     layers: [
-      { id: 'drone', type: 'drone', timbre: 'brass', notes: [0, 7, 12], level: 0.35, rev: 0.6, sweep: true },
+      { id: 'drone', core: true, type: 'drone', timbre: 'brass', notes: [0, 7, 12], level: 0.35, rev: 0.6, sweep: true },
       { id: 'choir', type: 'pad', timbre: 'choir', voices: 3, range: [48, 64], level: 0.26, glide: 2, attack: 3, rev: 0.8, minE: 0.2, vowels: ['o', 'u', 'a'] },
       { id: 'duduk', type: 'melody', mono: 'duduk', range: [52, 70], level: 0.5, density: 0.22, rev: 0.7, minE: 0.1, ornament: true, prob: 0.8 },
       { id: 'perc', type: 'perc', kit: 'taiko', level: 0.55, rev: 0.5, minE: 0.25, prob: 0.8 },
@@ -108,7 +108,7 @@ export const STYLES = {
     prog: 'aeolian', chordBars: [[2, 3], [1, 1]], exts: [['add9', 2], ['triad', 2], ['sus2', 1], ['7', 1]],
     reverb: 'cathedral', revLevel: 0.85, echo: { beats: 0.75, fb: 0.45, mix: 0.3 }, insert: { drive: 0.1 }, breath: 0.08, modulate: 0.2,
     layers: [
-      { id: 'brass', type: 'pad', timbre: 'brass', voices: 5, range: [48, 74], level: 0.44, glide: 0.35, attack: 1.4, rev: 0.75, echo: 0.1 },
+      { id: 'brass', core: true, type: 'pad', timbre: 'brass', voices: 5, range: [48, 74], level: 0.44, glide: 0.35, attack: 1.4, rev: 0.75, echo: 0.1 },
       { id: 'sub', type: 'bass', inst: 'synthBass', style: 'long', range: [31, 43], level: 0.45, rev: 0.15, minE: 0.05 },
       { id: 'bells', type: 'arp', inst: 'bell', range: [67, 91], rate: [2, 2], patterns: ['up', 'random'], level: 0.18, rev: 0.8, echo: 0.55, minE: 0.3, prob: 0.6, sparse: 0.45 },
       { id: 'lead', type: 'melody', mono: 'cs80', range: [60, 84], level: 0.5, density: 0.28, rev: 0.8, echo: 0.35, minE: 0.35, prob: 0.7 },
@@ -121,8 +121,8 @@ export const STYLES = {
     prog: 'jazz', chordBars: [[1, 4], [2, 1]], exts: [['7', 3], ['9', 2]],
     reverb: 'room', revLevel: 0.45, echo: { beats: 0.5, fb: 0.2, mix: 0.05 }, insert: { wow: 0.35, flutter: 0.5, lp: 7200, drive: 0.25, crackle: 0.6 }, breath: 0.08, modulate: 0.3,
     layers: [
-      { id: 'rhodes', type: 'comp', inst: 'rhodes', range: [52, 72], rhythm: 'charleston', level: 0.5, rev: 0.35, minE: 0 },
-      { id: 'bass', type: 'bass', inst: 'upright', style: 'walk', range: [33, 50], level: 0.62, rev: 0.12, minE: 0 },
+      { id: 'rhodes', core: true, type: 'comp', inst: 'rhodes', range: [52, 72], rhythm: 'charleston', level: 0.5, rev: 0.35, minE: 0 },
+      { id: 'bass', core: true, type: 'bass', inst: 'upright', style: 'walk', range: [33, 50], level: 0.62, rev: 0.12, minE: 0 },
       { id: 'drums', type: 'perc', kit: 'brush', level: 0.55, rev: 0.2, minE: 0.06 },
       { id: 'vibes', type: 'melody', inst: 'vibes', range: [65, 86], level: 0.34, density: 0.55, rev: 0.4, minE: 0.35, prob: 0.6, swing: true },
       { id: 'horn', type: 'melody', mono: 'horn', range: [55, 74], level: 0.3, density: 0.3, rev: 0.4, minE: 0.65, prob: 0.4, answer: true },
@@ -134,7 +134,7 @@ export const STYLES = {
     prog: 'aeolian', chordBars: [[1, 2], [2, 3]], exts: [['add9', 3], ['triad', 2], ['sus2', 2], ['7', 1]],
     reverb: 'hall', revLevel: 0.65, echo: { beats: 0.75, fb: 0.4, mix: 0.25 }, insert: { wow: 0.7, flutter: 0.8, lp: 9000, drive: 0.2, crackle: 0.15 }, breath: 0.12, modulate: 0.2,
     layers: [
-      { id: 'pad', type: 'pad', timbre: 'warm', voices: 4, range: [48, 72], level: 0.46, glide: 0.25, attack: 1.0, rev: 0.6 },
+      { id: 'pad', core: true, type: 'pad', timbre: 'warm', voices: 4, range: [48, 72], level: 0.46, glide: 0.25, attack: 1.0, rev: 0.6 },
       { id: 'bass', type: 'bass', inst: 'synthBass', style: 'pulse', range: [33, 45], level: 0.38, rev: 0.1, minE: 0.2, prob: 0.8 },
       { id: 'arp', type: 'arp', inst: 'synthPluck', range: [60, 84], rate: [2, 4], patterns: ['updown', 'broken', 'up'], level: 0.3, rev: 0.45, echo: 0.45, minE: 0.3, prob: 0.8 },
       { id: 'lead', type: 'melody', mono: 'lead', range: [62, 81], level: 0.3, density: 0.28, rev: 0.5, echo: 0.4, minE: 0.5, prob: 0.5 },
@@ -148,7 +148,7 @@ export const STYLES = {
     prog: 'mixolydian', chordBars: [[1, 3], [2, 1]], exts: [['triad', 2], ['7', 2], ['sus4', 1], ['6', 1]],
     reverb: 'plate', revLevel: 0.5, echo: { beats: 0.75, fb: 0.35, mix: 0.2 }, insert: { wow: 0.25, drive: 0.15 }, breath: 0.1, modulate: 0.5, mediant: 0.35,
     layers: [
-      { id: 'bass', type: 'bass', inst: 'synthBass', style: 'bounce', range: [33, 50], level: 0.45, rev: 0.1, minE: 0 },
+      { id: 'bass', core: true, type: 'bass', inst: 'synthBass', style: 'bounce', range: [33, 50], level: 0.45, rev: 0.1, minE: 0 },
       { id: 'bleeps', type: 'arp', inst: 'kalimba', range: [67, 91], rate: [2, 4], patterns: ['random', 'updown'], level: 0.28, rev: 0.4, echo: 0.4, minE: 0.1, sparse: 0.35 },
       { id: 'theremin', type: 'melody', mono: 'theremin', range: [64, 86], level: 0.4, density: 0.35, rev: 0.6, echo: 0.2, minE: 0.2, prob: 0.8 },
       { id: 'pad', type: 'pad', timbre: 'pulse', voices: 3, range: [55, 72], level: 0.18, glide: 0.15, attack: 0.3, rev: 0.4, minE: 0.3, prob: 0.6 },
@@ -162,7 +162,7 @@ export const STYLES = {
     reverb: 'cathedral', revLevel: 0.85, echo: { beats: 1.5, fb: 0.4, mix: 0.2 }, insert: { wow: 0.1 }, breath: 0.4, modulate: 0.3,
     layers: [
       { id: 'drone', type: 'drone', timbre: 'drone', notes: [-12, 0], level: 0.3, rev: 0.5, sweep: true },
-      { id: 'glass', type: 'pad', timbre: 'glass', voices: 4, range: [55, 79], level: 0.2, glide: 4, attack: 4, rev: 0.9, minE: 0 },
+      { id: 'glass', core: true, type: 'pad', timbre: 'glass', voices: 4, range: [55, 79], level: 0.2, glide: 4, attack: 4, rev: 0.9, minE: 0 },
       { id: 'piano', type: 'bells', inst: 'piano', range: [40, 88], prob: 0.1, level: 0.42, rev: 0.9, echo: 0.2, minE: 0.05 },
       { id: 'bowed', type: 'melody', mono: 'bowed', range: [60, 84], level: 0.35, density: 0.15, rev: 0.9, minE: 0.25, prob: 0.5 },
       { id: 'cello', type: 'melody', mono: 'cello', range: [43, 62], level: 0.32, density: 0.18, rev: 0.7, minE: 0.5, prob: 0.4 },
@@ -174,7 +174,7 @@ export const STYLES = {
     prog: 'aeolian', chordBars: [[1, 1], [2, 3]], exts: [['triad', 3], ['add9', 1], ['sus4', 1]],
     reverb: 'cathedral', revLevel: 0.72, echo: { beats: 1, fb: 0.2, mix: 0.08 }, insert: {}, breath: 0.12, modulate: 0.25,
     layers: [
-      { id: 'strings', type: 'pad', timbre: 'strings', voices: 5, range: [43, 74], level: 0.4, glide: 0.6, attack: 1.6, rev: 0.65 },
+      { id: 'strings', core: true, type: 'pad', timbre: 'strings', voices: 5, range: [43, 74], level: 0.4, glide: 0.6, attack: 1.6, rev: 0.65 },
       { id: 'choir', type: 'pad', timbre: 'choir', voices: 4, range: [55, 74], level: 0.3, glide: 1, attack: 2.4, rev: 0.8, minE: 0.3, prob: 0.6, vowels: ['a', 'o'] },
       { id: 'horn', type: 'melody', mono: 'horn', range: [53, 72], level: 0.45, density: 0.28, rev: 0.7, minE: 0.25, prob: 0.7 },
       { id: 'arp', type: 'arp', inst: 'piano', range: [55, 84], rate: [2, 3], patterns: ['broken', 'up'], level: 0.28, rev: 0.6, minE: 0.45, prob: 0.6 },
@@ -187,7 +187,7 @@ export const STYLES = {
 // art preset key → [style, variant overrides]
 export const ART_STYLE = {
   ghibli: ['pastoral', { note: 'Hisaishi-style piano & flute' }],
-  botw: ['pastoral', { note: 'sparse Zelda field piano', breath: 0.4, bpm: [66, 78], modes: { day: ['ionian', 'lydian', 'mixolydian', 'yo'], night: ['dorian', 'yo'] },
+  botw: ['pastoral', { note: 'sparse Zelda field piano', breath: 0.3, bpm: [66, 78], modes: { day: ['ionian', 'lydian', 'mixolydian', 'yo'], night: ['dorian', 'yo'] },
     layerMod: { pad: { level: 0.1, prob: 0.3 }, arp: { inst: 'piano', rate: [2, 2], prob: 0.5, sparse: 0.4 }, mel: { density: 0.3, minE: 0.1, prob: 0.85 }, counter: { mono: 'flute', prob: 0.25 } } }],
   bierstadt: ['pastoral', { note: 'golden-hour strings & horn', layerMod: { pad: { voices: 5, level: 0.32 }, counter: { mono: 'horn', range: [55, 74], prob: 0.55, minE: 0.35 } }, reverb: 'hall' }],
   rogerdean: ['pastoral', { note: 'floating marimba & koto', modes: { day: ['lydian', 'lydianDom', 'ionian'], night: ['lydian', 'dorian'] },
