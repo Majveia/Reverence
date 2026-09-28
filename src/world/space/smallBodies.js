@@ -74,20 +74,24 @@ varying vec2 vTS;
 void main(){
   float t = vTS.x, s = vTS.y;
   float I;
+  float soft = (1.0 - s * s); soft *= soft;                   // fade to zero at the ribbon border
+  float head = smoothstep(0.0, 0.035, t);
   if (uKind < 0.5){
-    // ion tail: narrow, straight, streamers and knots drifting outward
-    float str = rv_fbm(vec3(s * 3.5, t * 2.5 - uTime * 0.04, uSeed), 4) * 0.5 + 0.5;
-    float core = exp(-s * s * 14.0);
-    float rays = pow(str, 2.5) * exp(-s * s * 3.0);
-    I = (core * 0.55 + rays * 0.8) * pow(1.0 - t, 0.9) * smoothstep(0.0, 0.02, t);
+    // ion tail: narrow, straight, bluish; streamers and knots drifting outward (disconnection events)
+    float str = rv_fbm(vec3(s * 4.0, t * 3.0 - uTime * 0.05, uSeed), 4) * 0.5 + 0.5;
+    float str2 = rv_fbm(vec3(s * 11.0 + str, t * 1.2 - uTime * 0.03, uSeed + 7.0), 3) * 0.5 + 0.5;
+    float core = exp(-s * s * 26.0);
+    float rays = pow(str, 3.0) * exp(-s * s * 5.0) * (0.6 + 0.8 * str2);
+    float knots = smoothstep(0.62, 0.85, rv_fbm(vec3(s * 2.0, t * 7.0 - uTime * 0.12, uSeed + 3.0), 3) * 0.5 + 0.5) * exp(-s * s * 8.0);
+    I = (core * 0.7 + rays * 0.9 + knots * 0.5) * pow(1.0 - t, 1.2) * head;
   } else {
-    // dust tail: broad curved fan, brightest on the leading (sunward-curving) edge, fine striae
-    float stri = 0.85 + 0.15 * sin(s * 11.0 + t * 17.0 + uSeed) * sin(s * 3.7 - t * 6.0);
-    float edge = exp(-pow(s + 0.55, 2.0) * 5.0) * 0.6;
-    float prof = exp(-s * s * 2.2) * 0.6 + edge;
-    I = prof * stri * pow(1.0 - t, 1.4) * smoothstep(0.0, 0.03, t);
+    // dust tail: broad curved fan, brightest along the leading edge, synchrone striae fanning out
+    float stri = 0.8 + 0.2 * (rv_fbm(vec3(s * 9.0 + t * 3.0, t * 0.8, uSeed), 3) * 0.5 + 0.5);
+    float edge = exp(-pow(s + 0.45, 2.0) * 7.0) * 0.7;
+    float prof = exp(-s * s * 1.6) * 0.55 + edge;
+    I = prof * stri * pow(1.0 - t, 1.8) * head * (1.0 + 1.5 * exp(-t * 12.0));
   }
-  gl_FragColor = vec4(uCol * I * uI, 1.0);
+  gl_FragColor = vec4(uCol * I * soft * uI, 1.0);
 }`;
 
 const COMA_VERT = /* glsl */ `
@@ -102,8 +106,8 @@ uniform float uI;
 void main(){
   vec2 p = gl_PointCoord - 0.5;
   float r = length(p) * 2.0;
-  float I = exp(-r * 7.0) * 1.6 + exp(-r * 2.4) * 0.35;
-  I *= 1.0 - smoothstep(0.8, 1.0, r);
+  float I = exp(-r * r * 60.0) * 3.0 + exp(-r * 6.0) * 0.9 + exp(-r * 2.2) * 0.22;   // nucleus + inner/outer coma
+  I *= 1.0 - smoothstep(0.6, 1.0, r);
   gl_FragColor = vec4(uCol * I * uI, 1.0);
 }`;
 
@@ -228,25 +232,41 @@ export class SmallBodies {
       // dust tail curves back along the orbit (trailing the motion)
       const bend = k.dust.u.uBend.value.copy(vdir).multiplyScalar(-1).addScaledVector(axis, -_v.dot(axis) * -1).normalize();
       k.dust.u.uAxis.value.copy(axis);
-      const len = 1.2e7 * Math.sqrt(act);
       const dist = Math.max(k.head.distanceTo(ctx.camLocal), 1);
+      // great-comet tails spanning tens of degrees (the system is miniaturised: tails are scaled to read
+      // like the Great Comets from wherever they are seen, within physical-ish bounds of the orbit size)
+      const len = THREE.MathUtils.clamp(dist * 0.5, Math.max(3e7, r * 0.3), r * 1.6) * Math.sqrt(act);
       const angSize = len / dist;
       const vis = angSize > 0.002 ? 1 : 0;
       const bright = Math.min(act, 1.5) * ctx.sunIll.x / 6;
       for (const tl of [k.ion, k.dust]) {
         tl.u.uHead.value.copy(k.head);
         tl.u.uLen.value = tl === k.ion ? len * 1.25 : len * 0.8;
-        tl.u.uW0.value = Math.max(len * 0.004, 2000);
-        tl.u.uW1.value = len * (tl === k.ion ? 0.035 : 0.13);
+        tl.u.uW0.value = Math.max(len * 0.006, 2000);
+        tl.u.uW1.value = len * (tl === k.ion ? 0.03 : 0.24);
         tl.u.uI.value = (tl === k.ion ? 0.55 : 0.45) * bright;
         tl.mesh.visible = !!vis;
       }
       k.coma.position.copy(k.head);
       const comaPx = (len * 0.01 / dist) / ctx.pixAng;
-      k.cu.uSize.value = THREE.MathUtils.clamp(comaPx * 6, 5, 90);
+      k.cu.uSize.value = THREE.MathUtils.clamp(comaPx * 4, 6, 110);
       k.cu.uI.value = 0.9 * bright;
       k.coma.visible = !!vis;
     }
+  }
+
+  /** Capture helper: comet i's elongation from the star (deg) and distance (m) as seen from the current
+   *  body at world time t — pick a `time=` where the tail is well displayed (elongation 60–120°). */
+  probe(i, t) {
+    const k = this.comets[i];
+    if (!k) return null;
+    const cel = this.world.celestial;
+    orbitPosition(k.c.orbit, t, _p, _vel);
+    const bp = cel.bodyInertial(this.world.body, t, new THREE.Vector3());
+    const toC = _p.clone().sub(bp), toS = bp.clone().negate();
+    const el = toC.angleTo(toS) * 180 / Math.PI;
+    const tailAng = toC.angleTo(_p) * 180 / Math.PI;   // 90 = tail seen side-on
+    return { t, elong: +el.toFixed(1), tailView: +tailAng.toFixed(1), dist: +toC.length().toExponential(2), r: +_p.length().toExponential(2) };
   }
 
   dispose() {

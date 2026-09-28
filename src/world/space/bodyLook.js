@@ -212,7 +212,6 @@ export function ringTexture(b) {
   const tex = new THREE.DataTexture(data, N, 1, THREE.RGBAFormat);
   tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = true;
   tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.anisotropy = 4;
   tex.needsUpdate = true;
   return tex;
 }

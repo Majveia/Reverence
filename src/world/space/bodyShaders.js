@@ -258,9 +258,18 @@ vec3 gasColor(vec3 p, float shift, float phaseSeed, out float stormMask){
   float n1 = rv_fbm(s3 * 0.9, 5);
   float n2 = rv_fbm(vec3(q.x * 7.0, q.y * 26.0, q.z * 7.0) + n1 * 1.8 + uSeedOff, uDetail > 0.4 ? 5 : 3);
   float n3 = uDetail > 0.3 ? rv_fbm(vec3(q.x * 22.0, q.y * 70.0, q.z * 22.0) + n2 * 2.5 + uSeedOff, 3) : 0.0;
-  float y = q.y + (n1 * 0.045 + n2 * 0.016 + n3 * 0.005) * uTurb;
+  // shear-zone eddies: small curls strung along the belt/zone boundaries (Kelvin-Helmholtz rolls)
+  float shear = abs(cos(asin(clamp(q.y, -1.0, 1.0)) * uJets * 1.0));
+  float eddy = uDetail > 0.2 ? rv_fbm(vec3(q.x * 30.0, q.y * 55.0, q.z * 30.0) + vec3(n2, n1, n2) * 3.0 + uSeedOff * 1.7, 3) : 0.0;
+  float y = q.y + (n1 * 0.045 + n2 * 0.016 + n3 * 0.008 + eddy * 0.006 * shear) * uTurb;
   vec3 col = texture2D(uBands, vec2(clamp(y * 0.5 + 0.5, 0.0, 1.0), 0.5)).rgb;
-  col *= 0.88 + 0.2 * n2 + 0.1 * n3;
+  col *= 0.86 + 0.22 * n2 + 0.14 * n3 + 0.08 * eddy * shear;
+  // small white ovals / brown barges riding the jets
+  if (uDetail > 0.3){
+    vec2 wo = rv_worley(vec3(q.x * 9.0, q.y * 20.0, q.z * 9.0) + uSeedOff * 0.37);
+    float oval = smoothstep(0.28, 0.12, wo.x) * smoothstep(0.55, 0.9, rv_vnoise(floor(vec3(q.x * 9.0, q.y * 20.0, q.z * 9.0) + uSeedOff * 0.37) * 1.3));
+    col = mix(col, mix(vec3(0.96, 0.93, 0.88), col * vec3(0.7, 0.55, 0.45), step(0.5, fract(wo.y * 7.3))), oval * 0.55 * uDetail);
+  }
   // festoons / white ovals along belt edges
   float edge = abs(texture2D(uBands, vec2(clamp(y * 0.5 + 0.5 + 0.004, 0.0, 1.0), 0.5)).g - texture2D(uBands, vec2(clamp(y * 0.5 + 0.5 - 0.004, 0.0, 1.0), 0.5)).g);
   col = mix(col, col * 1.18 + 0.05, smoothstep(0.02, 0.08, edge) * smoothstep(0.2, 0.6, n2 * 0.5 + 0.5) * 0.5);
@@ -292,7 +301,11 @@ void main(){
   // reddened terminator (sunlight through the upper haze)
   col *= mix(vec3(1.0, 0.6, 0.42), vec3(1.0), smoothstep(0.0, 0.3, NL));
   // faint ring-shine on the night side
-  if (uRingP.z > 0.5) col += albedo * uSunIll * 0.0025 * smoothstep(0.1, -0.2, NL) * (0.5 + 0.5 * abs(dot(uRingN, L)));
+  // night side: ring-shine (sunlit rings light the dark hemisphere) + a whisper of moon/star light, so the
+  // unlit disk reads as a dark silhouette rather than a hole
+  float nightW = smoothstep(0.1, -0.25, NL);
+  if (uRingP.z > 0.5) col += albedo * uSunIll * 0.006 * nightW * (0.35 + 0.65 * abs(dot(uRingN, L))) * (0.6 + 0.4 * abs(dot(N, uRingN)));
+  col += albedo * uSunIll * 0.0012 * nightW * (0.6 + 0.4 * NV);
   gl_FragColor = vec4(max(col, 0.0), 1.0);
 }`;
 
@@ -387,8 +400,15 @@ void main(){
   float r = length(vXY);
   float t = (r - uIn) / (uOut - uIn);
   if (t < 0.0 || t > 1.0) discard;
-  vec4 rt = texture2D(uRingTex, vec2(t, 0.5));
-  float fw = fwidth(t) * 2048.0;
+  // explicit anisotropic filter along the radial footprint: 4 taps across the major axis at the LOD of
+  // (major / 4) — crisp ringlets on oblique views from the ground, no aliasing when small
+  float gx = dFdx(t), gy = dFdy(t);
+  float major = max(abs(gx), abs(gy)), minor = min(abs(gx), abs(gy));
+  float fw = major * 2048.0;
+  float lod = log2(max(max(major * 0.25, minor) * 2048.0 * 1.1, 1.0));
+  vec4 rt = vec4(0.0);
+  for (int k = 0; k < 4; k++) rt += textureLod(uRingTex, vec2(t + major * (float(k) - 1.5) * 0.25, 0.5), lod);
+  rt *= 0.25;
   float fine = mix(0.62 + 0.76 * rv_vnoise(vec3(t * 6000.0, 0.5, 0.5)), 1.0, smoothstep(0.2, 1.0, fw * 3.0));
   // faint azimuthal density waves / spokes
   float az = atan(vXY.y, vXY.x);

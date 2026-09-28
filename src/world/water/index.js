@@ -12,6 +12,8 @@
 //     perspective, clouds and every transparent object (splashes, ripples, particles) composite on top.
 //   • Underwater: pipeline effect (order 130) — absorption fog, in-scatter with god rays, seabed caustics;
 //     the surface seen from below shows Snell's window and total internal reflection.
+//   • Shore (order 95): land pixels just above the sea (depth == pre-water grab depth) get the swash of the
+//     shore swell — running water sheet, foam line, dark glossy wet sand; lava seas heat their rock rims.
 //   • Lava worlds get a heat-shimmer effect (order 145).
 //
 // Public API (world.get('water'))
@@ -29,7 +31,7 @@ import { G } from '../../core/Uniforms.js';
 import { WaveSet, MAX_WAVES } from './waves.js';
 import { dataTexture, makeTexturesSync, placeholderTexture } from './textures.js';
 import { surfaceConfig } from '../planet/SurfaceGen.js';
-import { OCEAN_VERT, OCEAN_FRAG, UNDERWATER_FRAG, SHIMMER_FRAG, SNOW_VERT, SNOW_FRAG } from './shaders.js';
+import { OCEAN_VERT, OCEAN_FRAG, UNDERWATER_FRAG, SHIMMER_FRAG, SHORE_FRAG, SNOW_VERT, SNOW_FRAG } from './shaders.js';
 import { makeFullscreenMaterial, FullscreenQuad } from '../../post/Pipeline.js';
 import { registerChunk } from '../../shaders/chunks.js';
 
@@ -122,6 +124,10 @@ class Water {
     if (pipe && this.liquid !== 'ice') {
       this.underFx = this._makeUnderwaterEffect();
       this._removers.push(pipe.addEffect(this.underFx));
+    }
+    if (pipe && this.liquid !== 'ice' && tier !== 'low') {
+      this.shoreFx = this._makeShoreEffect();
+      this._removers.push(pipe.addEffect(this.shoreFx));
     }
     if (this.liquid === 'water' || this.liquid === 'acid') this._makeMarineSnow();
     if (pipe && this.liquid === 'lava' && tier !== 'low') {
@@ -392,6 +398,7 @@ class Water {
         }
       }
       u.uHasScene.value = 1;
+      this._grabbed = true;
     } catch (e) {
       this._grabOK = false;
       console.warn('[water] grab failed', e);
@@ -417,6 +424,7 @@ class Water {
   }
 
   lateUpdate(dt, t) {
+    this._grabbed = false;
     const cam = this.world.camera;
     // capture/debug: &uw=<m> puts the camera that many metres below sea level (player can't dive yet)
     const uw = +(this.world.params?.uw ?? 0);
@@ -598,6 +606,40 @@ class Water {
     };
   }
 
+  _makeShoreEffect() {
+    const self = this, su = this.u;
+    const mat = makeFullscreenMaterial(SHORE_FRAG, {
+      tColor: { value: null }, tDepth: { value: null }, tGrabDepth: { value: null },
+      tFoam: { value: this.texFoam }, tWaves: { value: this.texWaves },
+      tEnv: { value: null }, uHasEnv: { value: 0 },
+      uInvProj: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() },
+      uNearFar: { value: new THREE.Vector2() }, uCam: { value: new THREE.Vector3() }, uPC: G.uPlanetCenter,
+      uUp: su.uUp, uT1: su.uT1, uT2: su.uT2, uCamH: su.uCamH, uRs: su.uRs, uTime: su.uTime, uQN: su.uQN,
+      uShore: su.uShore, uShallow: su.uShallow, uAmbSky: G.uAmbientSky,
+      uKeyDir: { value: new THREE.Vector3(0, 1, 0) }, uKeyColor: { value: new THREE.Color(1, 1, 1) },
+      uLiquid: { value: this.liquid === 'lava' ? 2 : this.liquid === 'acid' ? 1 : 0 },
+    });
+    const quad = new FullscreenQuad(mat);
+    return {
+      name: 'water-shore', order: 95, enabled: true,
+      render(renderer, io) {
+        // needs this frame's pre-water depth (grab) to tell land from water; near the surface only
+        if (self.under || self.camH > 700 || self.camH < -1 || !self._grabbed || !self.grab || !io.depth) { io.skip = true; return; }
+        const U = mat.uniforms, cam = io.camera;
+        U.tColor.value = io.input.texture; U.tDepth.value = io.depth; U.tGrabDepth.value = self.grab.depthTexture;
+        U.tFoam.value = self.texFoam; U.tWaves.value = self.texWaves;
+        U.tEnv.value = su.tEnv.value; U.uHasEnv.value = su.uHasEnv.value;
+        U.uKeyDir.value.copy(su.uKeyDir.value); U.uKeyColor.value.copy(su.uKeyColor.value);
+        U.uInvProj.value.copy(cam.projectionMatrixInverse);
+        U.uCamWorld.value.copy(cam.matrixWorld);
+        U.uNearFar.value.set(cam.near, cam.far);
+        U.uCam.value.setFromMatrixPosition(cam.matrixWorld);
+        quad.render(renderer, io.output);
+      },
+      dispose() { mat.dispose(); quad.dispose(); },
+    };
+  }
+
   _makeShimmerEffect() {
     const self = this;
     const mat = makeFullscreenMaterial(SHIMMER_FRAG, {
@@ -679,7 +721,7 @@ class Water {
     try { this.worker?.terminate(); } catch (_) { /* ignore */ }
     this.bathyTex.dispose();
     for (const r of this._removers) try { r(); } catch (_) { /* ignore */ }
-    this.underFx?.dispose(); this.shimmerFx?.dispose();
+    this.underFx?.dispose(); this.shimmerFx?.dispose(); this.shoreFx?.dispose();
     if (this.snow) { this.world.scene.remove(this.snow); this.snow.geometry.dispose(); this.snow.material.dispose(); }
     this.world.scene.remove(this.mesh);
     this.geometry.dispose(); this.material.dispose();

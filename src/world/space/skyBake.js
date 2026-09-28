@@ -70,6 +70,10 @@ export function bakeSky(p) {
       const lon = ((i + 0.5) / W - 0.5) * Math.PI * 2;
       const dx = cl * Math.sin(lon), dy = sl, dz = cl * Math.cos(lon);
       let r = 0, gg = 0, b = 0, tauR = 0, tauG = 0, tauB = 0, tauNear = 0;
+      // closest approach of the sight line to the galactic centre (the bulge is tall: don't cut it)
+      const sStar = -(px * dx + py * dy + pz * dz);
+      const cx0 = px + dx * sStar, cy0 = py + dy * sStar, cz0 = pz + dz * sStar;
+      const passesBulge = sStar > 0 && Math.hypot(cx0, cy0, cz0) < R * 0.3;
       for (let k = 0; k < N; k++) {
         const sa = sArr[k], sb = sArr[k + 1];
         const s = (sa + sb) * 0.5, ds = sb - sa;
@@ -94,7 +98,7 @@ export function bakeSky(p) {
         // early out: far above/below the disk, moving away, outside the bulge
         const yy = py + dy * s;
         if (Math.abs(yy) > hCut && yy * dy > 0) {
-          if (s > 3000) break;
+          if (s > 3000 && (!passesBulge || s > sStar + R * 0.3)) break;
         }
       }
       const o = (j * W + i) * 4;

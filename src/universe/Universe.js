@@ -243,10 +243,11 @@ export class Universe {
     };
     // moons
     const nMoons = isMoon ? 0 : isGas ? pr.weighted([[1, 2], [2, 3], [3, 2], [4, 1]]) : pr.weighted([[0, 3], [1, 2.5], [2, 1]]);
-    let ma = radius * (isGas ? pr.range(4, 6) : pr.range(9, 14));
+    // gas giants keep their moons close (first just outside the rings) so the giant dominates the moons' skies
+    let ma = radius * (isGas ? 3.6 + pr.range(0, 1) * 1.4 : pr.range(9, 14));
     for (let m = 0; m < nMoons; m++) {
       p.moons.push(this._makeMoon(star, p, m, ma, pr));
-      ma *= pr.range(1.5, 2.1);
+      ma *= isGas ? 1.35 + pr.range(0, 1) * 0.35 : pr.range(1.5, 2.1);
     }
     return p;
   }

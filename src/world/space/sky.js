@@ -17,7 +17,7 @@ const _q = new THREE.Quaternion();
 const BAKE_FRAG = /* glsl */ `
 #include <rv_space>
 uniform sampler2D uBand;
-uniform float uFloor, uGain, uSat, uContrast, uSyn;
+uniform float uFloor, uGain, uSat, uContrast, uSyn, uCubeRes;
 uniform vec3 uNebDir[10];
 uniform vec4 uNebP[10];      // x: angular radius (rad), y: kind, z: seed, w: palette (0 natural, 1 hubble)
 uniform int uNebN;
@@ -72,43 +72,80 @@ vec4 bandSoft(vec3 d){
 }
 void main(){
   vec3 d = normalize(vDir);
-  vec4 b = mix(texture2D(uBand, bandUV(d)), bandSoft(d), 0.65);
+  // ragged dust-layer edges: warp the band lookup in latitude (the baked mid-plane edge is too straight)
+  float lw = rv_fbm(d * 7.0 + uSeed * 1.7, 4) * 0.022 + rv_fbm(d * 23.0 + uSeed, 3) * 0.008;
+  vec3 dl = normalize(d + vec3(0.0, lw, 0.0));
+  vec4 b = mix(texture2D(uBand, bandUV(dl)), bandSoft(dl), 0.5);
   vec3 e = b.rgb;
   float tau = b.a;
-  vec3 q = d * 14.0 + uSeed;
-  vec3 w = vec3(rv_fbm(q * 0.35, 4), rv_fbm(q * 0.35 + 7.3, 4), rv_fbm(q * 0.35 + 13.1, 4));
-  float clouds = rv_fbm(q * 0.9 + w * 1.1, 6) * 0.5 + 0.5;          // star clouds
-  float fine = rv_fbm(q * 7.0 + w * 2.0, 3) * 0.5 + 0.5;
-  // dust: thin branching filaments (ridged, sharpened) + a few soft dark patches
-  float lanes = pow(rv_ridged(q * 1.6 + w * 1.6, 6), 4.0);
-  float lanes2 = pow(rv_ridged(q * 4.5 + w * 2.5, 5), 5.0);
-  float patches = smoothstep(0.55, 0.85, rv_fbm(q * 0.8 + w * 1.5 + 3.0, 5) * 0.5 + 0.5);
-  float dmask = smoothstep(0.3, 2.5, tau);
-  float extra = dmask * (lanes * 1.6 + lanes2 * 0.9 + patches * 0.9);
-  float det = smoothstep(0.15, 1.2, rv_luma(e));            // structure only inside the bright band
-  e *= mix(1.0, mix(0.6, 1.4, clouds) * mix(0.95, 1.05, fine), det);
-  e *= exp(-extra * det * vec3(0.92, 1.0, 1.08));
+  float glat = asin(clamp(d.y, -1.0, 1.0));
+  // anisotropic sample space: structures are stretched along the galactic plane (dust lanes and star
+  // clouds are sheared by differential rotation), round-ish at high latitude
+  float an = mix(2.6, 1.2, smoothstep(0.1, 0.6, abs(glat)));
+  vec3 P = vec3(d.x, d.y * an, d.z);
+  vec3 q = P * 6.0 + uSeed;
+  vec3 w = vec3(rv_fbm(q * 0.5, 4), rv_fbm(q * 0.5 + 7.3, 4), rv_fbm(q * 0.5 + 13.1, 4));
+  vec3 qw = q + w * 1.4;
+  // ---- star clouds: soft clumpy regions of unresolved stars (Sagittarius / Scutum clouds)
+  float c1 = rv_fbm(qw * 0.8, 6) * 0.5 + 0.5;
+  float c2 = rv_fbm(qw * 2.6 + 5.0, 5) * 0.5 + 0.5;
+  float clouds = smoothstep(0.3, 0.75, c1 * 0.75 + c2 * 0.25);
+  float grain = rv_fbm(P * 120.0 + uSeed, 3) * 0.5 + 0.5;      // unresolved-star granularity
+  // ---- dust: optical depth = baked column × soft filamentary structure
+  float lanes = pow(rv_ridged(qw * 1.2, 5), 2.2);                       // branching dark filaments
+  float lanes2 = pow(rv_ridged(qw * 3.4 + w * 2.0, 4), 3.0);             // finer wisps
+  float globs = smoothstep(0.5, 0.85, rv_fbm(qw * 1.6 + 11.0, 5) * 0.5 + 0.5);  // dark clouds (Coalsack)
+  float tauN = clamp(tau / 4.0, 0.0, 1.5);
+  float wig = rv_fbm(vec3(d.x, d.z, 0.5) * 2.2 + uSeed, 4) * 0.06 + rv_fbm(vec3(d.x, d.z, 2.5) * 9.0 + uSeed, 3) * 0.015;
+  // the great rift: a ragged dark lane splitting the band along the mid-plane, broad toward the core
+  float riftW = 0.022 + 0.04 * smoothstep(0.3, 1.2, tauN);
+  float rift = exp(-pow((glat - wig) / riftW, 2.0)) * smoothstep(0.2, 0.75, c1 * 0.7 + lanes * 0.5 + c2 * 0.3);
+  float D = tauN * (lanes * 0.9 + lanes2 * 0.45 + globs * 0.8) + rift * (0.4 + 0.8 * tauN);
+  D *= smoothstep(0.55, 0.05, abs(glat));
+  // ---- emission modulation
+  float bandL = rv_luma(e);
+  float det = smoothstep(0.1, 0.9, bandL);                  // structure only where there is band light
+  e *= mix(1.0, mix(0.55, 1.4, clouds) * mix(0.88, 1.12, grain), det);
+  // ragged band edges: bright tongues and dark bays
+  e *= mix(1.0, 0.3 + 0.7 * smoothstep(0.15, 0.8, c1), smoothstep(0.03, 0.3, abs(glat)) * det * 0.6);
+  // reddened, brownish dust edges (extinction ∝ λ^-1)
+  e *= exp(-D * 0.75 * vec3(0.86, 0.96, 1.1));
   // contrast / black floor (true black between the band and the stars)
-  e = max(e - uFloor, 0.0);
+  float l0 = max(rv_luma(e), 1e-6);
+  float x0 = max(l0 - uFloor, 0.0);
+  e *= (x0 * x0 / (x0 + uFloor * 0.6)) / l0;      // soft toe: the diffuse halo fades out, no contour line
   // log response: the faint anticentre band stays visible while the core does not blow out
   float lin = max(rv_luma(e), 1e-6);
   float lg = log(1.0 + 12.0 * lin) / log(13.0);
   e *= pow(lg, uContrast) / lin;
-  // continuous disk band all around the sky (the local disk seen edge-on), with a dusty mid-plane rift
-  float glat = asin(clamp(d.y, -1.0, 1.0));
-  float wig = rv_fbm(vec3(d.x, d.z, 0.0) * 3.0 + uSeed, 3) * 0.035;
-  float prof = exp(-pow((glat + wig) / 0.13, 2.0)) * 0.7 + exp(-pow((glat + wig) / 0.3, 2.0)) * 0.3;
-  float rift = 1.0 - 0.75 * exp(-pow((glat + wig * 0.6) / 0.022, 2.0)) * smoothstep(0.35, 0.75, clouds + lanes * 0.6);
-  vec3 syn = vec3(1.0, 0.94, 0.86) * prof * mix(0.55, 1.35, clouds) * rift * exp(-lanes2 * 0.8 * prof);
+  // continuous disk band all around the sky (the local disk seen edge-on), with its own dusty mid-plane
+  float prof = exp(-pow((glat - wig * 0.8) / 0.11, 2.0)) * 0.72 + exp(-pow((glat - wig) / 0.26, 2.0)) * 0.28;
+  float rift2 = 1.0 - 0.6 * exp(-pow((glat - wig) / 0.026, 2.0)) * smoothstep(0.3, 0.75, c1 + lanes * 0.5);
+  vec3 syn = vec3(1.0, 0.93, 0.84) * prof * mix(0.45, 1.35, clouds) * mix(0.85, 1.15, grain) * rift2 * exp(-(lanes * 0.8 + lanes2 * 0.4 + globs * 0.7) * prof);
   e += syn * uSyn;
+  // myriad faint stars: texel-sized speckles whose density follows the band light
+  {
+    vec3 cell = floor(d * uCubeRes * 1.2);
+    float h = rv_hash13(cell + uSeed);
+    float h2 = rv_hash13(cell * 1.37 + 17.0);
+    float bl = rv_luma(e);
+    float sp = pow(h, mix(60.0, 14.0, smoothstep(0.0, 0.6, bl)));
+    e += mix(vec3(1.0, 0.82, 0.62), vec3(0.75, 0.85, 1.0), h2) * sp * (0.25 + 1.5 * bl) * 0.9;
+  }
+  // photographic colour: warm (old-population) star clouds, cooler faint outskirts
+  float lb = rv_luma(e);
+  e *= mix(vec3(0.88, 0.95, 1.14), vec3(1.05, 1.0, 0.93), smoothstep(0.05, 0.5, lb));
   float l = rv_luma(e);
   e = mix(vec3(l), e, uSat * smoothstep(0.0, 0.35, l));   // dim haze is neutral, bright star clouds keep colour
   e *= uGain;
   // nebulae (emission / pillars / planetary / remnant)
   for (int i = 0; i < 10; i++){
     if (i >= uNebN) break;
-    e += nebula(d, uNebDir[i], uNebP[i]) * (0.05 + 0.06 * dmask) * uGain;
+    e += nebula(d, uNebDir[i], uNebP[i]) * (0.05 + 0.06 * smoothstep(0.3, 2.5, tau)) * uGain;
   }
+  // faint high-latitude diffuse glow (integrated starlight / cirrus): keeps the sky from looking empty
+  float cir = smoothstep(0.55, 0.95, rv_fbm(P * 3.0 + w + 40.0, 5) * 0.5 + 0.5);
+  e += vec3(0.55, 0.6, 0.75) * cir * 0.0012 * uGain * 10.0;
   gl_FragColor = vec4(max(e, 0.0), 1.0);
 }`;
 
@@ -323,10 +360,11 @@ export class Sky {
     const mat = new THREE.ShaderMaterial({
       uniforms: {
         uBand: { value: this.bandTex },
-        uFloor: { value: (this.bandLow || 0.02) * 1.15 },
-        uGain: { value: 0.1 },
-        uSat: { value: 0.85 },
-        uContrast: { value: 1.6 },
+        uFloor: { value: (this.bandLow || 0.02) * 1.3 },
+        uGain: { value: 0.065 },
+        uSat: { value: 0.75 },
+        uContrast: { value: 1.7 },
+        uCubeRes: { value: size * 0.64 },
         uSyn: { value: 0.32 },
         uNebDir: { value: nebDir }, uNebP: { value: nebP }, uNebN: { value: Math.min(10, this.nebulae.length) },
         uSeed: { value: (this.world.star.seed % 1000) * 0.137 },

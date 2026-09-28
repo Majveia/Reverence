@@ -83,6 +83,13 @@ class Space {
     // chromatic adaptation like the atmosphere track (keep ~35% of the star tint)
     if (atm?.starColor) ctx.sunIll.set(atm.starColor.r * E, atm.starColor.g * E, atm.starColor.b * E);
     else if (sc) ctx.sunIll.set(THREE.MathUtils.lerp(1, sc.r / lum, 0.35) * E, THREE.MathUtils.lerp(1, sc.g / lum, 0.35) * E, THREE.MathUtils.lerp(1, sc.b / lum, 0.35) * E);
+    // Workaround (see docs/tracks/space.md Requests): the atmosphere track's rocky-planet cumulus shell
+    // covers a gas giant's banded cloud deck (which this track renders). Until that track declares it
+    // handles gas giants (`atmosphere.gasGiantSurface`), switch its cloud shell off for gas bodies.
+    if (!this._gasCloudsDone && body.isGas && atm) {
+      this._gasCloudsDone = true;
+      if (!atm.gasGiantSurface && atm.clouds && atm.clouds.present) { atm.clouds.present = false; atm.clouds.enabled = false; }
+    }
     if (this.sky) this._safe('sky', () => this.sky.update(dt, t, ctx));
     if (this.star) this._safe('star', () => this.star.update(dt, t, ctx));
     if (this.bodiesSys) this._safe('bodies', () => this.bodiesSys.update(dt, t, ctx));
@@ -135,6 +142,24 @@ class Space {
     const pitch = Math.asin(THREE.MathUtils.clamp(d.dot(up), -1, 1)) * 180 / Math.PI;
     const yaw = Math.atan2(d.dot(east), d.dot(north)) * 180 / Math.PI;
     return { yaw: +yaw.toFixed(1), pitch: +pitch.toFixed(1) };
+  }
+
+  /** Capture helper (view=fp/surface): turn the player camera toward a sky object ('0-2-2', 'sun',
+   *  'galcenter', 'comet0'), optionally offset by (dYawDeg, dPitchDeg). Steps: {"eval":"__rv.world.space.look('galcenter')"} */
+  look(ref, dYaw = 0, dPitch = 0) {
+    const pl = this.world.player, cam = pl?.cam;
+    if (!cam) return null;
+    const from = pl.pos || this.ctx.camLocal;
+    const a = this.aim(ref, from);
+    if (!a) return null;
+    const up = from.clone().normalize();
+    const north = new THREE.Vector3(0, 1, 0).addScaledVector(up, -up.y).normalize();
+    const east = new THREE.Vector3().crossVectors(north, up);
+    const y = (a.yaw + dYaw) * Math.PI / 180;
+    cam.fwd.copy(north).multiplyScalar(Math.cos(y)).addScaledVector(east, Math.sin(y)).normalize();
+    cam.pitch = THREE.MathUtils.clamp((a.pitch + dPitch) * Math.PI / 180, -1.45, 1.45);
+    cam.idleLook = 0;
+    return a;
   }
 
   /** Capture helper (view=orbit): put the orbit camera so the star sits `deg` degrees from the planet

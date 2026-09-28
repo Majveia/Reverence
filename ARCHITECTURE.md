@@ -261,3 +261,20 @@ visualizations). What separates AAA from "tech demo":
 * **flora** (from vehicles) — `flora.clearAround(pos, radius)` or honour `world.pois` of kind `'landing'` so
   understorey plants are culled under a parked 15 m starship.
 * **vehicles URL params** — `view=bike|rover|ship`, `speed=`, `cam=chase3q|hero`; galaxy `focus=core|local|neb:N`.
+* **atmosphere** (from water) — from orbit the haze turns oceans pale sky-blue: keep Earth-like oceans deep
+  blue under a thinner veil (compare with `&disable=atmosphere`). On volcanic worlds let lava light the low
+  haze (warm glowing fog near sea level) and thin the haze near the surface (star=7&planet=4.0 washes lava
+  pink/white). Keep `lighting.cubeRT.texture` a plain planet-local samplerCube (or expose `lighting.skyCube`).
+* **atmosphere** (from space) — for gas-giant bodies skip the cumulus shell (thin high haze at most; set
+  `world.atmosphere.gasGiantSurface = true` if you draw the deck); apply the daytime star-hiding threshold
+  (`uStarVis`) only to far-plane background, not to planets/rings with real depth; no rain streaks outside
+  the atmosphere (W4 `view=orbit`).
+* **player** (from water) — dive while swimming (descend); underwater rendering is ready
+  (`world.get('water').under`, effect 130); treat `water.solid` (ice seas) as walkable ground; lower-opacity
+  swim ripples. (from space) `view=fp` should honour `fov=` for telephoto sky shots.
+* **terrain** (from water) — thin dark seam line on the sandy seabed underwater (W1 shelf).
+* **vehicles** (from water) — hoverbike/boats: buoyancy via `water.heightAt(p)` / `water.normalAt(p)`.
+* **post** (from space) — lens flare/glare hooks on `world.space.sun` (`dir`, `screen` NDC, `onScreen`,
+  `visibility`, `color`, `angularRadius`).
+* **core (done)** — gas-giant moons now orbit at 3.6–5 R (first) with 1.35–1.7× spacing: W9's giant spans
+  ~15° of sky (was ~10°).

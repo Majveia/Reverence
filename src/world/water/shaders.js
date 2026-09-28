@@ -270,7 +270,16 @@ void main(){
   float farF = smoothstep(4000.0, 60000.0, wDist);
   N = normalize(mix(N, nS, farF));
   float alpha = clamp(sqrt(uLook.x * uLook.x + 2.0 * varS), 0.02, 0.6);
-  alpha = mix(alpha, 0.14, farF);                                // orbit: broad but bright sun glint
+  // wind slicks and streaks at kilometre scales: calm (mirror) vs. rough (matte) patches seen from altitude
+  float slick = 0.5;
+  float slF = smoothstep(120.0, 1200.0, wDist) * (1.0 - smoothstep(40000.0, 140000.0, wDist));
+  if (slF > 0.0){
+    float s1 = texture2D(tWaves, lay(vQ, 4096.0, vec2(3.0, 0.4))).a;
+    float s2 = texture2D(tWaves, lay(vQ, 1024.0, vec2(1.6, -0.3))).a;
+    slick = mix(0.5, smoothstep(0.38, 0.62, s1 * 0.8 + s2 * 0.45 - 0.125), slF);
+  }
+  alpha *= mix(0.6, 1.35, slick);
+  alpha = mix(alpha, mix(0.1, 0.2, slick), farF);                 // orbit: broad but bright sun glint
 
   // ------------------------------------------------ scene behind the surface
   vec2 suv = gl_FragCoord.xy * uInvRes;
@@ -291,31 +300,59 @@ void main(){
 
 #if defined(LIQUID_LAVA)
   {
-  // ================================================= LAVA: crusted flowing rock with incandescent cracks
-  vec2 warp = (texture2D(tWaves, lay(vQ, 90.0, vec2(0.35, 0.1))).rg - 0.5) * 0.25;
-  vec4 c0 = texture2D(tCrust, lay(vQ, 55.0, vec2(0.22, 0.07)) + warp);
-  vec4 c1 = texture2D(tCrust, layR(ROT1, vQ, 16.4, vec2(0.1, 0.0)) + warp * 0.5);
-  float crack = 1.0 - smoothstep(0.02, 0.11, c0.r);                  // big plate borders
-  float crackF = (1.0 - smoothstep(0.01, 0.035, c1.b)) * 0.35;       // fine fissures
-  float heatN = texture2D(tWaves, lay(vQ, 130.0, vec2(0.3, 0.2))).a;
-  float pool = smoothstep(0.86, 0.95, heatN);                             // rare open pools
-  float frag = 1.0 - smoothstep(0.35, 0.6, c0.g);                        // crust plates drifting in them
-  float hn2 = texture2D(tWaves, lay(vQ + warp * 30.0, 70.0, vec2(0.18, 0.05))).a;
-  float channel = 1.0 - smoothstep(0.0, 0.03, abs(hn2 - 0.5));           // sinuous glowing flow veins
-  float molten = max(pool * (1.0 - 0.9 * frag), channel * 0.75);
-  float hot = clamp(max(crack, crackF * (0.3 + heatN)) + molten * 0.7 + max(0.6 - fold, 0.0) * 0.3, 0.0, 1.0);
-  // shore: lava pooled against rock is hotter and bright
-  float shoreHot = uHasScene > 0.5 ? 1.0 - smoothstep(0.0, 1.2, thick) : 0.0;
-  hot = max(hot, shoreHot * 0.55);
-  float T = mix(1000.0, 1350.0, hot * hot);
-  vec3 emis = rv_blackbody(T) * pow(hot, 2.0) * 4.5 * vec3(1.0, 0.62, 0.38) + rv_blackbody(1000.0) * 0.03 * (0.5 + c0.g) * (1.0 - pool);
-  vec3 crustC = vec3(0.045, 0.036, 0.034) * (0.6 + 0.8 * c0.g);
-  vec3 Nl = normalize(nS - t1 * (w0.r - 0.5) * 0.6 - t2 * (w0.g - 0.5) * 0.6);
-  float NdL = max(dot(Nl, L), 0.0);
-  col = crustC * (Esun * NdL + Eamb) / RV_PI * (1.0 - hot) + emis;
-  // glassy sheen on the crust
+  // ================================================= LAVA: basalt crust rafts on an incandescent, convecting melt
+  // heat 0..1 → emitted radiance (dull red → orange → yellow-white, ~T^4 brightness)
+  #define LAVA_RAMP(t) (mix(mix(vec3(0.4, 0.012, 0.0), vec3(1.0, 0.11, 0.006), smoothstep(0.0, 0.5, t)), vec3(1.0, 0.4, 0.07), smoothstep(0.5, 1.0, t)) * (0.03 + 3.4 * t * t * t))
+  vec2 flowV = vec2(0.22, 0.07);
+  vec2 warp = (texture2D(tWaves, lay(vQ, 90.0, vec2(0.35, 0.1))).rg - 0.5) * 0.22;
+  // activity: large regions of open melt vs. solid crust fields (slowly drifting)
+  float act0 = texture2D(tWaves, lay(vQ, 610.0, flowV * 0.5)).a;
+  float act1 = texture2D(tWaves, layR(ROT2, vQ, 230.0, flowV)).a;
+  float act = smoothstep(0.3, 0.64, act0 * 0.65 + act1 * 0.55 - 0.1);
+  vec4 cM = texture2D(tCrust, layR(ROT2, vQ, 260.0, flowV * 0.6) + warp * 0.3);   // mega plates (~29 m)
+  vec4 c0 = texture2D(tCrust, lay(vQ, 55.0, flowV) + warp);                     // rafts (~6 m)
+  vec4 c1 = texture2D(tCrust, layR(ROT1, vQ, 16.4, flowV * 0.5) + warp * 0.5);  // fine fissures
+  // pixel footprint relative to the crack widths → fade fine structure to its average (no shimmer)
+  float fr0 = smoothstep(0.012, 0.05, fp / 55.0), fr1 = smoothstep(0.012, 0.05, fp / 16.4);
+  // gaps between rafts widen where the melt is active; rafts shrink into floating islands
+  float gapW = mix(0.035, 0.34, act);
+  float gap = 1.0 - smoothstep(gapW * 0.55, gapW, c0.r + (c1.a - 0.5) * 0.08);
+  gap = mix(gap, gapW * 1.6, fr0);
+  float megaCrack = 1.0 - smoothstep(0.015, 0.06 + 0.1 * act, cM.r);
+  float fis = (1.0 - smoothstep(0.01, 0.04, c1.b)) * (1.0 - fr1) + 0.06 * fr1;
+  float molten = max(gap, megaCrack);
+  // melt surface: convection cells + advected streaks — never a flat colour
+  float conv = texture2D(tWaves, layR(ROT1, vQ + warp * 40.0, 37.0, flowV * 1.6)).a;
+  float strk = texture2D(tWaves, lay(vQ * vec2(1.0, 3.0) + warp * 25.0, 48.0, flowV * 2.0)).a;
+  float meltHeat = clamp(0.55 + (conv - 0.5) * 1.1 + (strk - 0.5) * 0.6 + act * 0.2, 0.2, 1.0);
+  // crust: cooled near its centre, still glowing dull red towards its edges (cooling gradient)
+  float edgeD = c0.r / max(gapW, 0.03);
+  float rim = exp(-max(edgeD - 1.0, 0.0) * 3.5) * (0.35 + 0.65 * act) * (1.0 - fr0 * 0.5);
+  float crustHeat = rim * 0.38 + fis * (0.25 + 0.35 * act) + (1.0 - smoothstep(0.0, 0.25, cM.r)) * 0.18;
+  // shore: melt pooled against rock stays open and hot
+  float shoreHot = uHasScene > 0.5 ? 1.0 - smoothstep(0.0, 2.5, thick) : 0.0;
+  molten = max(molten, shoreHot * 0.85);
+  float heat = mix(crustHeat, meltHeat, molten);
+  vec3 emis = LAVA_RAMP(heat) * mix(0.7, 1.0, molten) * (0.85 + 0.3 * sin(uTime * 0.9 + conv * 12.0) * molten);
+  // basalt: near-black, ropy (pahoehoe) relief from the detail slopes, glassy where fresh
+  float rope = 1.0 - smoothstep(25.0, 140.0, wDist);
+  vec3 Nl = normalize(nS - t1 * ((w0.r - 0.5) * 0.7 * rope + (w1.r - 0.5) * 0.35) - t2 * ((w0.g - 0.5) * 0.7 * rope + (w1.g - 0.5) * 0.35));
+  Nl = normalize(mix(Nl, nS, farF));
+  float NdL = max(dot(Nl, L), 0.0), NdVl = max(dot(Nl, V), 1e-3);
+  vec3 crustC = vec3(0.011, 0.0095, 0.009) * (0.55 + 0.9 * c0.g) * (1.0 + 0.6 * c1.a);
+  float solid = 1.0 - molten;
+  col = crustC * (Esun * NdL + Eamb) / RV_PI * solid;
+  col += vec3(0.5, 0.05, 0.004) * (0.02 + 0.06 * act) * solid;           // glow of the surrounding melt bouncing on the crust
   vec3 H = normalize(L + V);
-  col += uKeyColor * sunVis * ggx(max(dot(Nl, H), 0.0), 0.35) * smithVis(NdL, max(dot(Nl, V), 1e-3), 0.35) * NdL * 0.04 * (1.0 - hot);
+  float aL = mix(0.45, 0.75, c0.g);
+  float Fh = 0.04 + 0.96 * pow(1.0 - max(dot(V, H), 0.0), 5.0);
+  col += Esun * ggx(max(dot(Nl, H), 0.0), aL) * smithVis(NdL, NdVl, aL) * NdL * Fh * solid * 0.6;
+  float Fl = 0.04 + 0.5 * pow(1.0 - NdVl, 5.0);
+  vec3 Rl = reflect(-V, Nl); Rl = normalize(Rl + nS * max(0.0, -dot(Rl, nS)) * 2.0);
+  col += envSky(Rl) * Fl * 0.15 * solid;
+  // the melt itself: a viscous skin with a faint sky sheen
+  col += emis + envSky(Rl) * 0.03 * molten;
+  if (uDebug > 1.5 && uDebug < 2.5) col = emis;
   float edge = uHasScene > 0.5 ? smoothstep(0.0, 0.25, thick) : 1.0;
   if (uHasScene > 0.5) col = mix(texture2D(tSceneColor, suv).rgb, col, edge);
   gl_FragColor = vec4(col, 1.0);
@@ -367,25 +404,36 @@ void main(){
   // ================================================= WATER / ACID
   if (below){
     // ---- seen from below: Snell's window, total internal reflection beyond ~48.6°
-    vec3 n = -N;
+    // seen from below the surface ripples read much stronger (refraction magnifies the slopes)
+    vec3 Nb = normalize(nS + (N - nS) * 2.2);
+    vec3 n = -Nb;
     vec3 I = -V;
     vec3 Tt = refract(I, n, 1.333);
     float cosi = max(dot(V, n), 0.0);
     vec3 under = uScatter * (Esun * 0.6 + Eamb) / RV_PI * exp(-uSigma * max(-uCamH, 0.0) * 0.5);
     vec3 c;
     if (dot(Tt, Tt) < 1e-4){
-      c = under * 1.2;                                    // TIR: mirror of the deep
+      c = under;                                    // TIR: mirror of the deep
     } else {
       float cost = max(dot(Tt, nS), 0.0);
-      float F = 0.02 + 0.98 * pow(1.0 - cost, 5.0);
-      vec3 sky = envSky(Tt) * 0.85;
+      // transmission falls off gradually towards the critical angle (soft, rippled window rim)
+      float F = max(0.02 + 0.98 * pow(1.0 - cost, 5.0), pow(1.0 - cost, 2.2));
+      // the sky through the window is strongly distorted by the ripples
+      vec3 Tw = normalize(Tt + (t1 * ((w1.r - 0.5) + (w0.g - 0.5)) + t2 * ((w1.g - 0.5) - (w0.r - 0.5))) * 0.55);
+      vec3 sky = mix(envSky(Tw), envSky(normalize(Tw + nS * 2.0)), 0.45) * 0.8;
       float sunD = pow(max(dot(Tt, L), 0.0), 900.0) * 60.0 + pow(max(dot(Tt, L), 0.0), 40.0) * 0.6;
       c = mix(sky * 0.6 + uKeyColor * sunVis * sunD, under, F);
     }
+    // bright caustic ripples of sunlight on the underside of the surface
+    vec3 cu = texture2D(tFoam, lay(vQ, 7.0, vec2(0.45, 0.1))).rgb;
+    vec3 cv = texture2D(tFoam, layR(ROT1, vQ, 9.3, vec2(0.35, -0.2))).rgb;
+    float fadeU = 1.0 - smoothstep(15.0, 90.0, wDist);
+    c += (min(cu, cv) * 1.6 + (cu + cv) * 0.12) * (Esun * 0.06 + Eamb * 0.04) * fadeU;
     // foam seen from underneath: lacy, dim silhouettes against the window
     float fwb = texture2D(tFoam, lay(vQ, 11.0, vec2(0.5, 0.0))).a;
-    float fm = smoothstep(0.5, 0.15, fold) * smoothstep(0.25, 0.75, fwb) * 0.7;
-    c = mix(c, (Esun * 0.15 + Eamb) * 0.35 / RV_PI, fm * uLook.y);
+    float fwb2 = texture2D(tFoam, layR(ROT2, vQ, 3.7, vec2(0.25, 0.0))).a;
+    float fm = smoothstep(0.45, 0.1, fold) * smoothstep(0.3, 0.8, fwb * 0.7 + fwb2 * 0.5) * 0.5;
+    c = mix(c, (Esun * 0.2 + Eamb) * 0.3 / RV_PI * (0.5 + 0.8 * fwb2), fm * uLook.y);
     gl_FragColor = vec4(c, 1.0);
     return;
   }
@@ -460,6 +508,7 @@ void main(){
   float gl2 = texture2D(tFoam, lay(vQ, 2.7 + wDist * 0.006, vec2(-0.9, 1.1))).g;
   float glit = pow(clamp(gl1 * gl2 * 3.0, 0.0, 1.0), 2.0) * (1.0 - farF);
   spec += Esun * lobe * glit * 6.0 * uLook2.w;
+  spec *= 1.0 + 2.5 * farF;                                      // orbital glint survives the aerial perspective
   spec = min(spec, vec3(3.0e4));
 
   col = mix(body, refl, F) + spec;
@@ -633,5 +682,105 @@ void main(){
   vec2 c = gl_PointCoord - 0.5;
   float a = smoothstep(0.5, 0.1, length(c)) * vA;
   gl_FragColor = vec4(uCol * a, a);
+}
+`;
+
+// ---------------------------------------------------------------- shore effect (order 95): wet sand, swash, hot rims
+// Runs before the atmosphere. Land pixels (depth identical to the pre-water grab) just above sea level get the
+// swash of the shore swell: a thin glossy water sheet that runs up the beach and drains back, a lacy foam line at
+// its front, and sand that stays dark and glossy up to the highest run-up. Lava seas instead heat their rocky rims.
+export const SHORE_FRAG = /* glsl */ `
+#include <rv_common>
+uniform sampler2D tColor, tDepth, tGrabDepth, tFoam, tWaves;
+uniform samplerCube tEnv;
+uniform float uHasEnv;
+uniform mat4 uInvProj, uCamWorld;
+uniform vec2 uNearFar;
+uniform vec3 uCam, uPC, uUp, uT1, uT2, uKeyDir, uKeyColor, uAmbSky, uShallow;
+uniform float uRs, uCamH, uTime, uLiquid;
+uniform vec2 uQN;
+uniform vec4 uShore;
+varying vec2 vUv;
+vec2 lay(vec2 q, float S, vec2 vel){ return (q + uQN) / S - vel * (uTime / S); }
+float ggxS(float NdH, float a){ float a2 = a * a; float d = NdH * NdH * (a2 - 1.0) + 1.0; return a2 / (RV_PI * d * d + 1e-7); }
+
+void main(){
+  vec3 col = texture2D(tColor, vUv).rgb;
+  gl_FragColor = vec4(col, 1.0);
+  float d = texture2D(tDepth, vUv).r;
+  float dg = texture2D(tGrabDepth, vUv).r;
+#ifdef USE_REVERSED_DEPTH_BUFFER
+  if (d <= 0.0) return;
+#else
+  if (d >= 1.0) return;
+#endif
+  if (abs(d - dg) > 1e-7 + abs(d) * 1e-5) return;                     // the water itself (or drawn after it)
+  vec4 v = uInvProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+  vec3 dirV = normalize(v.xyz / v.w);
+  float D = rv_viewZFromDepth(d, uNearFar.x, uNearFar.y) / max(-dirV.z, 1e-3);
+  if (D > 1200.0) return;
+  vec3 dir = normalize((uCamWorld * vec4(dirV, 0.0)).xyz);
+  vec3 P = uCam + dir * D;
+  vec3 nS = normalize(P - uPC);
+  float h = length(P - uPC) - uRs;
+  if (h > 2.2 || h < -1.5) return;
+  vec3 rel = P - (uCam - uUp * uCamH);
+  vec2 q = vec2(dot(rel, uT1), dot(rel, uT2));
+  float fadeD = 1.0 - smoothstep(500.0, 1150.0, D);
+  if (fadeD <= 0.0) return;
+  float n1 = texture2D(tWaves, lay(q, 23.0, vec2(0.0))).a;
+  float n2 = texture2D(tWaves, lay(q, 6.1, vec2(0.0))).a;
+  float n3 = texture2D(tWaves, lay(q, 71.0, vec2(0.0))).a;
+  vec3 L = normalize(uKeyDir);
+  vec3 V = -dir;
+  float NdL = max(dot(nS, L), 0.0);
+  float sunUp = smoothstep(-0.02, 0.08, dot(nS, L));
+  if (uLiquid > 1.5){
+    // lava: rocks at the rim glow from the heat of the melt, cooling upward
+    float g = exp(-max(h, 0.0) * (2.2 + 2.0 * n1)) * (0.55 + 0.9 * n2 * n3 * 2.0);
+    vec3 glow = vec3(1.0, 0.16, 0.012) * (0.25 + 2.2 * g * g) * g;
+    col = mix(col, col * vec3(0.25, 0.2, 0.2), g * 0.6) + glow * fadeD;
+    gl_FragColor = vec4(col, 1.0);
+    return;
+  }
+  float amp = uShore.x;
+  float runMax = 0.12 + amp * 0.85 + (n3 - 0.5) * 0.35 + (n1 - 0.5) * 0.15;
+  // swash cycle: fast run-up, slow backwash; phase drifts along the beach
+  float cyc = fract(uShore.z * uTime / RV_TAU + n3 * 1.3 + n1 * 0.3);
+  float rise = smoothstep(0.0, 0.24, cyc);
+  float fall = 1.0 - smoothstep(0.24, 0.97, cyc);
+  float front = runMax * rise * sqrt(max(fall, 0.0));
+  float frontJ = front + (n2 - 0.5) * 0.06;
+  float film = (1.0 - smoothstep(frontJ - 0.035, frontJ + 0.005, h)) * smoothstep(0.005, 0.05, front);
+  float wet = 1.0 - smoothstep(runMax + 0.02, runMax + 0.2 + 0.1 * n2, h);
+  wet = max(wet, film);
+  // darker, more saturated wet sand
+  float lu = dot(col, vec3(0.2126, 0.7152, 0.0722));
+  vec3 wetCol = max(mix(vec3(lu), col, 1.25), 0.0) * 0.52;
+  col = mix(col, wetCol, wet * fadeD);
+  // thin water sheet: slight tint, sky reflection (Fresnel), sun glint; wet sand keeps a grazing sheen
+  vec3 R = reflect(dir, nS);
+  R = normalize(R + nS * max(0.0, -dot(R, nS)) * 2.0);
+  float NdV = max(dot(nS, V), 0.02);
+  float F = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);
+  float gloss = (wet * 0.35 + film * 0.65) * fadeD;
+  vec3 sky = uHasEnv > 0.5 ? textureCube(tEnv, R).rgb : uAmbSky * 0.3;
+  col = mix(col, col * mix(vec3(1.0), uShallow * 1.6, 0.35), film * fadeD);
+  col = col * (1.0 - F * gloss) + sky * F * gloss;
+  vec3 H = normalize(L + V);
+  float a = mix(0.28, 0.05, film);
+  float NdH = max(dot(nS, H), 0.0);
+  float Fh = 0.02 + 0.98 * pow(1.0 - max(dot(V, H), 0.0), 5.0);
+  float vis = 0.25 / max(NdL * NdV + 0.05, 0.05);
+  col += uKeyColor * sunUp * ggxS(NdH, a) * vis * Fh * NdL * gloss * (0.6 + 0.8 * n2);
+  // foam lace at the swash front (bright while running up, thinning as it drains) + bubbles left behind
+  float web = texture2D(tFoam, lay(q, 4.3, vec2(0.12, 0.0))).a;
+  float web2 = texture2D(tFoam, lay(q, 1.7, vec2(0.0))).a;
+  float band = film * (1.0 - smoothstep(0.0, 0.05 + 0.07 * n1, frontJ - h));
+  float trail = film * smoothstep(0.35, 0.8, web) * 0.45 * (1.0 - rise * 0.5);
+  float foam = clamp((band * mix(1.0, 0.45, smoothstep(0.24, 0.6, cyc)) + trail) * smoothstep(0.2, 0.6, web * 0.7 + web2 * 0.5), 0.0, 1.0);
+  vec3 foamC = vec3(0.9, 0.92, 0.94) * (uKeyColor * sunUp * (0.5 + 0.5 * NdL) + uAmbSky) / RV_PI;
+  col = mix(col, foamC, foam * fadeD * (uLiquid < 0.5 ? 1.0 : 0.6));
+  gl_FragColor = vec4(max(col, 0.0), 1.0);
 }
 `;
