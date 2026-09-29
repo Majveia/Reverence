@@ -15,7 +15,8 @@
 //   window.__rv.audioSet({...})         override derived params live (night, rain, shore, city, …) for testing
 //
 // Modules: mix.js (buses, IR reverb, limiter) · music.js + styles.js + theory.js (generative composer)
-//          instruments.js (synth voices) · ambience.js (world beds) · sfx.js (foley, UI, engines) · samples.js
+//          instruments.js (synth voices) · ambience.js (world beds) · creatures.js (real-fauna voices, spatialized)
+//          sfx.js (foley, UI, engines) · samples.js
 import { G } from '../core/Uniforms.js';
 import { events } from '../core/events.js';
 import { Mixer } from './mix.js';

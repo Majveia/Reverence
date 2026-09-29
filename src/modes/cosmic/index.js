@@ -110,7 +110,7 @@ export default class CosmicMode extends Mode {
     // --- GPU sim + renderer
     this.sim = new CosmicSim(e.renderer, { N, M, sub: subGrowth });
     if (num('pm') === 0) this.sim.ok = false;
-    this.view = new CosmicRenderer(e, this.sim, { L: BOX, K, drawCount: this.cfg.drawCount, h0: this.cfg.h0, maxPx: this.cfg.maxPx, accumScale: this.cfg.accumScale, fog: 60, sph: num('sph'), kt: num('kt'), aniso: num('an'), aspect: num('asp') });
+    this.view = new CosmicRenderer(e, this.sim, { L: BOX, K, drawCount: this.cfg.drawCount, h0: this.cfg.h0, maxPx: this.cfg.maxPx, accumScale: this.cfg.accumScale, fog: 60, sph: num('sph'), kt: num('kt'), aniso: num('an') ?? (N === 64 ? 0 : 1), aspect: num('asp') });
     this.scene.add(this.view.comp);
     // look tuning (URL overrides are for art-direction iteration)
     const cu0 = this.view.compMat.uniforms, au0 = this.view.accMat.uniforms;
@@ -119,8 +119,9 @@ export default class CosmicMode extends Mode {
     this.bright = num('bright') ?? cu0.uBright.value;
     cu0.uGain.value = num('gain') ?? cu0.uGain.value;
     cu0.uHeatGain.value = num('heat') ?? cu0.uHeatGain.value;
-    cu0.uClarity.value = num('clar') ?? cu0.uClarity.value;
-    cu0.uRelief.value = num('relief') ?? cu0.uRelief.value;
+    this.clarity = num('clar') ?? cu0.uClarity.value;
+    this.relief = num('relief') ?? cu0.uRelief.value;
+    this.early = num('early') ?? 0.9;
     this.fog = this.view.U.uFog.value = num('fog') ?? this.view.U.uFog.value;
     au0.uH0.value *= num('h0') ?? 1;
     const ru0 = this.view.resolveMat.uniforms;
@@ -132,7 +133,7 @@ export default class CosmicMode extends Mode {
     this._syncSize();
 
     // --- camera: a proxy rig in comoving coordinates; the real camera stays at the origin
-    this.camera.fov = 55; this.camera.near = 0.01; this.camera.far = 2000; this.camera.updateProjectionMatrix();
+    this.camera.fov = fovFor(this.camera.aspect); this.camera.near = 0.01; this.camera.far = 2000; this.camera.updateProjectionMatrix();
     this.rigCam = new THREE.PerspectiveCamera(55, e.aspect, 0.01, 2000);
     const r0 = new OrbitRig(this.rigCam, {
       distance: num('dist') ?? 140 * BOX / 256, minDistance: 1.5, maxDistance: 420,
@@ -316,6 +317,8 @@ export default class CosmicMode extends Mode {
   }
 
   onResize(w, h) {
+    // portrait phones: a wider vertical field keeps the web's horizontal extent (55° → ~68° at 9:19.5)
+    this.camera.fov = fovFor(w / Math.max(1, h));
     super.onResize(w, h);
     if (this.rigCam) { this.rigCam.aspect = w / h; this.rigCam.updateProjectionMatrix(); }
   }
@@ -391,6 +394,11 @@ export default class CosmicMode extends Mode {
     cu.uSigma0.value = this.sigma0 * (0.8 + 0.2 * g);
     this._updateLevels(d1, g, young, dt);
     U.uSeedD.value = 0.6 * (1 - g);
+    U.uEarly.value = this.early * (1 - smooth(0.3, 0.75, d1));
+    // local contrast and relief sculpt mature structure; the young web stays soft
+    const mature = smooth(0.35, 0.8, d1);
+    cu.uClarity.value = this.clarity * mature; cu.uRelief.value = this.relief * mature;
+    cu.uNoiseSeed.value = shot ? 0 : (this._frame % 64) * 17.31;
     U.uSeedMix.value = 1 - smooth(0.1, 0.35, U.uD1.value);
     this.view.galMat.uniforms.uGalGain.value = 1.0;
 
@@ -405,7 +413,7 @@ export default class CosmicMode extends Mode {
     if (this._teleT <= 0 && this.icStage >= 1) {
       this._teleT = 0.2;
       const z = zOfA(a);
-      e.ui?.setTelemetry?.({ z: formatZ(Math.max(z, -0.99)), age: formatAge(ageGyr(a)) });
+      e.ui?.setTelemetry?.({ z: formatZ(Math.max(z, 0)), age: formatAge(ageGyr(a)) });
       e.audio?.setParam?.('cosmicGrowth', Math.min(1, D1(a)));
     }
   }
@@ -434,12 +442,24 @@ export default class CosmicMode extends Mode {
       const l995 = lq(0.995), lk = Math.min(l995, knee) + Math.max(0, l995 - knee) * 0.35;
       // close-ups: when bright structure (a cluster core) fills a large part of the frame, the highlights
       // are exposed lower so the core keeps its internal gradient and its member galaxies read against it
-      const lThr = toe + w + 1.2, sThr = s0 * (Math.pow(2, lThr / gain) - 1);
+      // (bright = hot cluster gas, drawn ~1.5× the base ramp, exceeds ~0.6 before the highlight exposure)
+      const lThr = Math.max(toe + 0.5, (Math.log2(0.6 / Math.max(1e-4, cu.uBright.value)) - 0.6) / 0.92), sThr = s0 * (Math.pow(2, lThr / gain) - 1);
       let lo = 0, hi = n;
       while (lo < hi) { const mid = (lo + hi) >> 1; if (L[mid] <= sThr) lo = mid + 1; else hi = mid; }
-      const fBright = (n - lo) / n;
-      const target = 2.0 - 1.1 * smooth(0.03, 0.2, fBright);
-      expo = Math.min(1, Math.max(0.2, target / (cu.uBright.value * Math.pow(2, 0.92 * lk))));
+      const fBright = this._fBright = (n - lo) / n;
+      expo = Math.min(1, 2.0 / (cu.uBright.value * Math.pow(2, 0.92 * lk)));
+      // (eye adaptation: the peak of the core settles near 0.9 before bloom)
+      // the headroom gained lifts the highlight knee, so the core shows its density gradient instead of a
+      // compressed plateau
+      const wAd = smooth(0.035, 0.08, fBright);
+      if (wAd > 0) {
+        const eAt = (kn) => { const lkp = Math.min(l995, kn) + Math.max(0, l995 - kn) * 0.35; return Math.min(1, 0.9 / (cu.uBright.value * Math.pow(2, 0.92 * lkp + 0.6))); };
+        const e0 = eAt(knee);
+        const knee2 = knee + wAd * Math.max(0, -Math.log2(e0) / 0.92);
+        const eClose = eAt(knee2);
+        expo = Math.max(0.12, Math.min(expo, 1 + (eClose - 1) * wAd));
+        knee = knee2;
+      }
       // never let a bad readback (NaN/Inf) reach the shader: fall back to the schedule
       if (!(Number.isFinite(toe) && Number.isFinite(w) && Number.isFinite(knee) && Number.isFinite(expo))) {
         toe = this.toe * g * (1 - 0.45 * young); w = 1.9; knee = 99; expo = 1;
@@ -601,7 +621,8 @@ export default class CosmicMode extends Mode {
     if (this.icStage >= 1 && this.view && !skip) {
       try {
         this.view.renderAccum(this.camera);
-        if (this._frame % 15 === 1 || !this.levelsSorted) this.view.measureLevels((sorted) => { if (!this.disposed) this.levelsSorted = sorted; }, !!this.engine.params.shot);
+        // (shot mode renders only on demand: measure every rendered frame so captures are deterministic)
+        if (this._frame % 15 === 1 || !this.levelsSorted || this.engine.params.shot) this.view.measureLevels((sorted) => { if (!this.disposed) this.levelsSorted = sorted; }, !!this.engine.params.shot);
       } catch (err) { if (!this._warned) { console.error('[cosmic] accum', err); this._warned = true; } }
     }
     this.view.comp.visible = this.icStage >= 1 && !skip;
@@ -648,7 +669,7 @@ export default class CosmicMode extends Mode {
     const lv = (x) => +(Math.log2(1 + x / cu.uSigma0.value) * cu.uGain.value).toFixed(2);
     return {
       D1: +D1(this.a).toFixed(3), nonFinite: bad, R: P.map((p) => pc(R, p)), l: P.map((p) => lv(pc(R, p))), heat: [0.5, 0.9, 0.99].map((p) => pc(Hh, p)),
-      toe: +cu.uToe.value.toFixed(3), toeW: +cu.uToeW.value.toFixed(3), knee: +cu.uKnee.value.toFixed(3), sigma0: +cu.uSigma0.value.toFixed(3), bright: +cu.uBright.value.toFixed(4),
+      toe: +cu.uToe.value.toFixed(3), toeW: +cu.uToeW.value.toFixed(3), knee: +cu.uKnee.value.toFixed(3), sigma0: +cu.uSigma0.value.toFixed(3), bright: +cu.uBright.value.toFixed(4), expo: +(this.lev?.expo ?? 1).toFixed(3), fBright: +(this._fBright ?? 0).toFixed(3),
     };
   }
 
@@ -664,6 +685,7 @@ export default class CosmicMode extends Mode {
   }
 }
 
+function fovFor(aspect) { return aspect > 0 && aspect < 1 ? Math.min(72, 55 + 25 * (1 - aspect)) : 55; }
 function smooth(e0, e1, x) { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); }
 // drift factor between render time and the state time (∫ da / a³E)
 function driftTo(a, aState) { return driftFactor(a, aState); }

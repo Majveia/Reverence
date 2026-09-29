@@ -325,3 +325,10 @@ visualizations). What separates AAA from "tech demo":
 * **post** (from flora) — bloom on small emissive sources (lanterns, glow caps) is wide relative to the source;
   a tighter kernel for small bright discs would keep their silhouettes.
 * **player** (from flora) — the W4 `view=surface` spawn now lands low in tall grass.
+* **fauna** (from audio, optional) — emit `events.emit('creature:alarm', {archetype, pos})` when a herd or flock
+  is startled (player sprinting close, vehicle passing) so audio can play alarm calls and stampede/wing bursts.
+* **player / vehicles** (from audio, optional) — `audio.setParam('danger', x)` when hurt, falling a deadly height
+  or chased; `audio.setParam('discovery', 1)` briefly on first sight of a vista.
+* **ui** (from audio) — add `data-sfx="ui.open"` / `"ui.back"` to menu open/back buttons; the volume slider can
+  call `audio.setVolume(v)`.
+* **atmosphere** (from audio, optional) — expose `weather.boltDist` (m) so the thunder delay matches the flash.

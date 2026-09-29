@@ -29,7 +29,9 @@ opening (the web visibly grows around you while it collapses).
 
 1. **Resolve** pass (one texel per particle): final position incl. halo orbits (virialised matter keeps
    orbiting with ω ∝ √ρ) + sub-lattice jitter (exactly one cell wide in low-density regions, which cancels
-   every Bragg harmonic of the lattice → no moiré), local density, smoothed "shock heat".
+   every Bragg harmonic of the lattice → no moiré), local density, smoothed "shock heat", and (round 3) the
+   **Lagrangian deformation** J·Jᵀ of the particle's lattice cell (central differences of the six lattice
+   neighbours' positions, 3rd MRT output + spare aux channels).
 2. **Accumulation**: each particle plus up to 3 **Lagrangian-sheet tracers** (points on the edges to its
    lattice neighbours, Abel/Hahn/Kaehler-style, with their own jitter) → additively accumulated in a float
    target: R = projected column density Σ, G = Σ·log ρ (Springel-style colour), B = Σ·T (heated gas).
@@ -41,6 +43,11 @@ opening (the web visibly grows around you while it collapses).
      on screen (> 4–8 px) kernels jump to SPH overlap (diameter 2.6 spacings) and the sheet tracers hand
      their mass back to the particle (fill rate) → cluster gas stays continuous in close-ups instead of
      breaking into discs. Void/sheet tracers stay fine dust.
+   * **Anisotropic kernels** (round 3, ASPH-style): in that resolved regime, outside virialised halos, the
+     Gaussian takes the *shape* of the particle's own Lagrangian cell projected to the screen
+     (Σ₂ = M·J·Jᵀ·Mᵀ, M = projection Jacobian): orientation and axis ratio (≤ 5:1) from the cell, area from
+     the density-based kernel, never stretched past the sprite limit. Streams and filament walls read as
+     smooth threads instead of isotropic cotton. Elliptical Gaussian splats (inverse covariance per sprite).
    * Kernels larger than the sprite limit (a clump right in front of the lens) become faint bokeh discs.
    Depth cues: fog behind the focus, near-field fade, a mild circle-of-confusion.
 3. **Levels** (round 2): every 15 frames a 128×72 thumbnail of Σ is read back (async; sync in shot mode)
@@ -48,10 +55,20 @@ opening (the web visibly grows around you while it collapses).
    ~6 % at z ≳ 10 (dim fog, deepest troughs black), ~25 % at z ≈ 3, ~45 % today (voids). A highlight knee
    above the brightest 3 % plus a highlight exposure keep a screen-filling cluster core as a gradient
    instead of a clipped disc. Smoothed over ~0.3 s (eye adaptation); NaN-guarded with a schedule fallback.
+   Round 3: **close-up eye adaptation** — when hot cluster gas fills > ~4 % of the frame, the highlights are
+   exposed down (peak ≈ 0.9 before bloom) and the headroom lifts the knee, so a screen-filling cluster core
+   shows its density gradient and its member galaxies instead of a blown-out cream disc. Levels are measured
+   on every rendered frame in shot mode (captures were depending on frame-count parity).
 4. **Composite** (in the HDR scene → post bloom/tonemap): raw column density for dense structure; only the
    sparsest pixels blend with an 8-tap golden-angle kernel rotated per pixel (IGN) — no fixed tap lattice.
    Log-density brightness with the measured toe (voids = true OLED black), 2D colour map: dark-matter
-   blue-violet → magenta filaments → TNG-style ember/orange/white-gold hot gas around clusters. IGN dither.
+   blue-violet → magenta filaments → TNG-style ember/orange/gold hot gas around clusters. IGN dither.
+   Round 3: **clarity** (local contrast of log Σ against an 8-tap ring at ~5 px of a 720p frame: filament
+   cores lift, flanks fall to black → thread-like strands) and **sculpted relief** (log Σ lit as a height
+   field from the upper left, gradient from the same ring, faded out below the toe and above the knee) —
+   the volumetric, coral-like read of TNG50 gas renders. Both fade in with structure (D1 0.35 → 0.8); the
+   ring and the sparse kernel are rotated per pixel by a white-noise hash (IGN's diagonal structure printed
+   a hatch), re-seeded every frame in live play (fixed in shot mode).
 5. **Galaxies** (9k–48k): pinpoints riding their host particles, ignite when their host collapses,
    red-sequence gold in clusters / blue cloud in the field; resolve into oriented spiral / elliptical /
    irregular discs when you fly close (morphology from `universe.galaxy(i).type` for i < 4096).
@@ -89,6 +106,9 @@ Mode `cosmic` (standard Mode contract). URL extras (all optional):
 | `s0`, `gain`, `toe`, `bright`, `heat`, `hlo`, `hhi`, `fog`, `h0`, `coc` | look tuning overrides (`toe` = fallback toe when no float readback) |
 | `qb` | fraction of the screen below the black point (overrides the epoch schedule) |
 | `sph`, `kt` | SPH kernel diameter in spacings (2.6); `kt=0` keeps sheet tracers in close-ups |
+| `an`, `asp` | anisotropic Lagrangian kernels on/off (1 on 128³, 0 on 64³) and max axis ratio (5) |
+| `clar`, `relief` | clarity (0.6) and sculpted relief (0.7) strengths; `0` disables |
+| `early` | extra kernel width while the web is young (0.9 → 0 between D1 0.3 and 0.75) |
 
 Test helpers on the mode (`__rv.mode`): `visibleCluster()`, `screenOfCluster(k)`, `hoverAt(x, y)`,
 `debugStats()` (column-density percentiles R, their log levels l, current toe/toeW/knee/bright), `getState()` → `{tau, a, z, ageGyr, pmSteps, particles,
@@ -103,15 +123,21 @@ under load; pass `--timeout 400`).
 |---|---|---|
 | Hero: mature cosmic web | `/?mode=cosmic&ct=40` | `[{"advance":1}]` |
 | Massive node, filaments converging | `/?mode=cosmic&ct=40&dist=38&pitch=10` | `[{"advance":1}]` |
-| Inside a filament (galaxies strung along it) | `/?mode=cosmic&ct=40&gal=40&dist=22&pitch=5` | `[{"advance":1}]` |
+| Inside a filament (galaxies strung along it) | `/?mode=cosmic&ct=40&gal=40&dist=40&pitch=5` | `[{"advance":1},{"advance":1}]` |
+| (closer, resolution-limited: soft gas tubes) | `/?mode=cosmic&ct=40&gal=40&dist=22&pitch=5` | `[{"advance":1},{"advance":1}]` |
 | Opening: seeds wrinkling (z ≈ 3) | `/?mode=cosmic` | `[{"advance":16}]` |
 | Opening: web crystallising (z ≈ 1) | `/?mode=cosmic` | `[{"advance":22}]` |
 | Hover ring + label (use `--ui`) | `/?mode=cosmic&ct=40` | `[{"advance":0.3},{"eval":"const v=__rv.mode.visibleCluster(); v && __rv.mode.hoverAt(v.x, v.y)"},{"advance":0.3}]` |
-| Inside the most massive node (close-up) | `/?mode=cosmic&ct=40&dist=8` | `[{"advance":1}]` |
+| Inside the most massive node (close-up) | `/?mode=cosmic&ct=40&dist=8` | `[{"advance":1},{"advance":1}]` |
+| Approaching the massive node | `/?mode=cosmic&ct=40&dist=16` | `[{"advance":1},{"advance":1}]` |
 | Low tier (64³, phones) | `/?mode=cosmic&ct=40` + `--q low` | `[{"advance":1}]` |
 | Primordial fog (z ≈ 25) | `/?mode=cosmic` | `[{"advance":3}]` |
 
-Useful for tuning: add `{"eval":"__rv.mode.debugStats()"}` to print Σ percentiles and the live levels.
+Useful for tuning: add `{"eval":"JSON.stringify(__rv.mode.debugStats())"}` to print Σ percentiles, the live
+levels (toe/knee/expo/fBright) and a non-finite pixel count. Several framings can share one (slow) load:
+move the rig with an eval step, e.g.
+`{"eval":"const m=__rv.mode;m.userMoved=true;m.rig.distance=m.rig._dist=38;1"}` then two `advance` steps
+(the second lets the levels settle).
 
 ## Known issues
 
@@ -121,7 +147,12 @@ Useful for tuning: add `{"eval":"__rv.mode.debugStats()"}` to print Σ percentil
   continuous smooth glow with embedded galaxies but has no sub-Mpc shock structure (would need a finer PM
   mesh / P³M or a zoom-in resimulation); filaments at ~20 Mpc/h read as soft gas tubes.
 - z ≈ 3 frames are physically low-contrast at this resolution (the nonlinear scale is below 2 Mpc/h): the
-  levels keep troughs black and wrinkles visible, but they read as mottled clouds more than threads.
+  levels keep troughs black and the young-web kernel keeps them smooth, but they read as soft clouds more
+  than threads (projection through ~200 Mpc/h of low-contrast web).
+- Clarity/relief are screen-space (log Σ treated as a height field) — a visualization choice like the
+  lighting in TNG50 volume renders, not a physical quantity; their estimator adds fine grain in smooth gas.
+- Anisotropic kernels only act where kernels are resolved but below the sprite limit (~15–60 Mpc/h from
+  matter at `high`); closer than that the gas is fill-rate limited and isotropic (soft tubes at 22 Mpc/h).
 - Editing files under `src/modes/cosmic/` while a capture runs can abort it (module reload).
 - Cluster ranking for hero framing uses the gathered core density; the initial frames of an opening
   use the linear-peak rank and the camera eases to the final hero at a > 0.55.
@@ -133,6 +164,20 @@ Useful for tuning: add `{"eval":"__rv.mode.debugStats()"}` to print Σ percentil
 - **audio track**: cosmic mode calls `audio.setParam('cosmicGrowth', D1 ∈ [0, 1])` every 0.2 s and
   `audio.play('whoosh')` on fly-to — hook them if useful (both optional-chained).
 - (done, thanks) ui: marker kind `'cosmic'`; cosmic now passes `sub` explicitly.
+
+## Round 3 changes (critic round 1, second pass)
+
+1. Filament close-ups (lost pair vs TNG50 shocks): anisotropic Lagrangian-cell kernels, clarity + sculpted
+   relief in the composite, and the documented filament framing moved to 40 Mpc/h (where the 2 Mpc/h
+   particle resolution holds; 22 Mpc/h is below it).
+2. Massive-node close-up: close-up eye adaptation + knee lift (gradient and member galaxies instead of a
+   blown-out disc); warmer, more saturated gold for the hottest gas (less agx white-out).
+3. Hatch/moiré: per-pixel kernel rotations now use a white-noise hash (IGN's diagonal structure printed a
+   fine hatch through any amplifying pass); low tier re-checked at 1280×720, no lattice pattern.
+4. Early universe: kernels widen while the web is young (smooth wrinkles instead of shot-noise mottling);
+   clarity/relief fade in only as structure matures.
+5. Misc: deterministic levels in shot mode, redshift readout clamps at 0.00 in the future (was "-0.01"),
+   wider vertical FOV on portrait phones, `debugStats()` reports non-finite pixels and the adaptation state.
 
 ## Round 2 changes (critic round 1)
 

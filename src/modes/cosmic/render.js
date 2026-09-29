@@ -120,6 +120,7 @@ uniform sampler2D tAux;   // heat, speed, J·Jᵀ xz, yz
 uniform sampler2D tCov;   // J·Jᵀ xx, yy, zz, xy
 uniform float uAniso;     // 0..1 anisotropic (Lagrangian-cell) kernels in the resolved regime
 uniform float uAspect;    // max axis ratio of anisotropic kernels
+uniform float uEarly;     // extra kernel width while the web is young
 uniform float uH0;        // base smoothing length, Mpc/h (mean interparticle spacing scale)
 uniform float uMaxPx;
 uniform float uMass;      // particle mass relative to the reference 2 Mpc/h lattice
@@ -165,7 +166,9 @@ void main() {
   // one pixel, so a kernel narrower than the sample spacing keeps filaments razor sharp ...
   float h = uH0 * clamp(rq, 0.14, 1.8) * pow(float(uK), -0.3333);
   // the primordial fog is silky; the universe comes into focus as structure forms
-  h *= 1.0 + 1.3 * uSeedMix;
+  // (and while the web is still young — z ≳ 2 — the render resolution follows the linear scale: smooth
+  // wrinkles instead of shot-noise mottling)
+  h *= 1.0 + 1.3 * uSeedMix + uEarly;
   // ... but once the local sample spacing is resolved on screen (close-ups, inside a cluster) the kernels
   // must overlap like a proper SPH projection (diameter ≈ 2.6 spacings), or the gas breaks into discs
   float kc = pow(float(uK), 0.3333);
@@ -286,6 +289,7 @@ uniform float uKnee;      // highlight knee (log2 units)
 uniform float uClarity;   // local contrast of log column density (thread-like filaments)
 uniform float uClarR;     // its radius, accumulation texels
 uniform float uRelief;    // strength of the sculpted (gradient-lit) relief
+uniform float uNoiseSeed; // per-frame offset of the kernel rotation noise
 varying vec2 vUv;
 // 2D colour map: brightness from log column density l, hue from mass-weighted log density t.
 // t low (voids, sheets): ink → blue-violet;  t mid (filaments): violet → magenta;
@@ -295,7 +299,7 @@ vec3 hueRamp(float t) {
   c = mix(c, vec3(0.95, 0.28, 0.85), smoothstep(0.28, 0.48, t));
   c = mix(c, vec3(1.00, 0.36, 0.22), smoothstep(0.46, 0.62, t));
   c = mix(c, vec3(1.00, 0.72, 0.36), smoothstep(0.60, 0.78, t));
-  c = mix(c, vec3(1.00, 0.95, 0.85), smoothstep(0.78, 0.95, t));
+  c = mix(c, vec3(1.00, 0.88, 0.68), smoothstep(0.78, 0.95, t));
   return c;
 }
 vec4 tap(vec2 o) { return texture2D(tAccum, vUv + o * uTexel); }
@@ -306,7 +310,9 @@ void main() {
   // are resolved with a wider kernel — an 8-tap golden-angle spiral rotated per pixel (hash), so the
   // taps never form a coherent lattice (no crosshatch) whatever the accumulation resolution
   // (white-noise rotation: IGN's diagonal structure would print a fine hatch into the relief)
-  float ang = rv_hash12(gl_FragCoord.xy) * 6.2831853;
+  // (re-seeded every frame in live play so the estimator noise averages out like film grain / under TAA
+  // instead of sitting on the screen as a fixed pattern; fixed in shot mode)
+  float ang = rv_hash12(gl_FragCoord.xy + uNoiseSeed) * 6.2831853;
   vec4 wide = vec4(0.0);
   for (int i = 0; i < 8; i++) {
     float fi = float(i) + 0.5;
@@ -343,7 +349,8 @@ void main() {
     // halos read as 3D volumes (the look of volume-rendered TNG50 gas), voids untouched
     vec3 n = normalize(vec3(-gr * uClarR * uRelief, 1.0));
     float sh = dot(n, vec3(-0.45, 0.55, 0.70)) / 0.70;
-    relief = mix(1.0, clamp(sh, 0.35, 1.9), smoothstep(uToe, uToe + 1.5, l));
+    // (fades out in the highlights: a saturated core has no relief to show, only estimator noise)
+    relief = mix(1.0, clamp(sh, 0.35, 1.9), smoothstep(uToe, uToe + 1.5, l) * (1.0 - smoothstep(uKnee - 1.5, uKnee + 0.5, l)));
   }
   float t = clamp(a.g / max(S, 1e-6), 0.0, 1.0);
   float heat = clamp(a.b / max(S, 1e-6), 0.0, 1.0);
@@ -355,7 +362,7 @@ void main() {
   vec3 col = hueRamp(clamp(t * uHeatGain, 0.0, 1.0)) * b;
   // shock-heated intracluster gas (TNG-style temperature): magenta rim → orange → gold core
   vec3 hot = mix(vec3(1.0, 0.25, 0.55), vec3(1.0, 0.55, 0.18), smoothstep(0.2, 0.6, heat));
-  hot = mix(hot, vec3(1.0, 0.82, 0.5), smoothstep(0.6, 1.0, heat));
+  hot = mix(hot, vec3(1.0, 0.77, 0.44), smoothstep(0.6, 1.0, heat));
   float hb = uStream * smoothstep(0.0, 0.5, heat) * smoothstep(uToe - 0.5, uToe + 2.5, l) * uBright * exp2(0.92 * lk + 0.6);
   col = mix(col, hot * max(b, hb), smoothstep(0.02, 0.55, heat) * 0.85);
   col *= relief;
@@ -559,7 +566,7 @@ export class CosmicRenderer {
       uWrapC: { value: new THREE.Vector3() }, uCamOff: { value: new THREE.Vector3() },
       uL: { value: opt.L }, uFade: { value: 0.48 }, uPxScale: { value: 500 }, uTime: { value: 0 },
       uOrbit: { value: 0.0035 }, uSigGlow: { value: 1 }, uSeedD: { value: 0 }, uSeedMix: { value: 1 },
-      uFog: { value: opt.fog ?? 150 }, uAniso: { value: opt.aniso ?? 1 }, uAspect: { value: opt.aspect ?? 5 },
+      uFog: { value: opt.fog ?? 150 }, uAniso: { value: opt.aniso ?? 1 }, uAspect: { value: opt.aspect ?? 5 }, uEarly: { value: 0 },
     };
     // resolved particle positions (one texel per particle)
     this.posRT = new THREE.WebGLRenderTarget(sim.W, sim.H, {
@@ -593,7 +600,7 @@ export class CosmicRenderer {
       vertexShader: COMP_VERT, fragmentShader: COMP_FRAG, depthTest: false, depthWrite: false,
       uniforms: {
         tAccum: { value: this.accum.texture }, uTexel: { value: new THREE.Vector2(1, 1) },
-        uSigma0: { value: 3.0 }, uGain: { value: 1.0 }, uHeatGain: { value: 1.0 }, uDawn: { value: 0 }, uStream: { value: 1.0 }, uToe: { value: 0.9 }, uBright: { value: 0.05 }, uWide: { value: 1 }, uToeW: { value: 1.9 }, uKnee: { value: 99 }, uClarity: { value: 0.6 }, uClarR: { value: 5 }, uRelief: { value: 0.5 },
+        uSigma0: { value: 3.0 }, uGain: { value: 1.0 }, uHeatGain: { value: 1.0 }, uDawn: { value: 0 }, uStream: { value: 1.0 }, uToe: { value: 0.9 }, uBright: { value: 0.05 }, uWide: { value: 1 }, uToeW: { value: 1.9 }, uKnee: { value: 99 }, uClarity: { value: 0.6 }, uClarR: { value: 5 }, uRelief: { value: 0.7 }, uNoiseSeed: { value: 0 },
       },
     });
     this.comp = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.compMat);

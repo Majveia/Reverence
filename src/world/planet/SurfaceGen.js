@@ -192,7 +192,9 @@ export class SurfaceGen {
     this.nF = new SNoise(s ^ 0x5d2c3e11);  // features
     this.nG = new SNoise(s ^ 0x6e3779b9);  // cellular (gullies, craters, towers)
     this.nB = new SNoise(s ^ 0x7f4a7c15);  // climate / biomes
-    this._g = new Float64Array(3);
+    this._g = new Float64Array(6);
+    this._w2 = new Float64Array(3);
+    this._mg = new Float64Array(3);
     this._d = new Float64Array(3);
     this._e = new Float64Array(1);
     this._info = {};
@@ -307,7 +309,7 @@ export class SurfaceGen {
       const bx0 = n.n3(qx * 1.7 + 1.9, qy * 1.7 + 6.1, qz * 1.7 + 2.4), by0 = n.n3(qx * 1.7 + 7.3, qy * 1.7 + 3.8, qz * 1.7 + 9.6), bz0 = n.n3(qx * 1.7 + 5.6, qy * 1.7 + 0.7, qz * 1.7 + 6.9);
       qx += w1 * ax0 + w2 * bx0; qy += w1 * ay0 + w2 * by0; qz += w1 * az0 + w2 * bz0;
     }
-    let sum = 0, a = 0.5, wgt = 1, gx = 0, gy = 0, gz = 0, ax = 0, ay = 0, az = 0;
+    let sum = 0, a = 0.5, wgt = 1, gx = 0, gy = 0, gz = 0, ax = 0, ay = 0, az = 0, tx = 0, ty = 0, tz = 0;
     const damp = st.mtnDamp;
     const gMin = st.gullyWl * 1.9;
     let dm = 1;
@@ -337,13 +339,67 @@ export class SurfaceGen {
       const s = a * wgt * dm * lw;
       sum += s * r + a * wgt * dm * (1 - lw) * 0.499;
       // only the large-scale slope drives the gully filter (LOD-independent input)
-      if (wl >= gMin) { const sf = s * f; gx += sf * rx; gy += sf * ry; gz += sf * rz; }
+      const sf = s * f;
+      if (wl >= gMin) { gx += sf * rx; gy += sf * ry; gz += sf * rz; }
+      tx += sf * rx; ty += sf * ry; tz += sf * rz;   // full (LOD-faded) slope: steep-face detection
       wgt = r * 1.7; if (wgt > 1) wgt = 1;
       a *= st.mtnGain; wl *= ILAC; f *= LAC;
       qx = qx * LAC + 3.1; qy = qy * LAC + 1.7; qz = qz * LAC + 8.3;
     }
-    g[0] = gx; g[1] = gy; g[2] = gz;
+    g[0] = gx; g[1] = gy; g[2] = gz; g[3] = tx; g[4] = ty; g[5] = tz;
     return sum;
+  }
+
+  /** Rib/chute relief for big mountain walls (metres, ~zero-mean). */
+  _buttress(x, y, z, lod) {
+    const n = this.nH;
+    let wl = 1400, sum = 0;
+    for (let o = 0; o < 4; o++) {
+      const lw = lodW(wl * 0.5, lod);
+      if (lw <= 0) break;
+      const f = this.R / wl;
+      const v = n.n3(x * f + 13.1 + o * 3.7, y * f + 5.3, z * f + 9.9 - o * 1.3);
+      // softened ridge: sharp-ish ribs, rounded chutes (no razor creases)
+      sum += 0.09 * wl * lw * ((0.35 - Math.sqrt(v * v + 0.006)) * 1.7);
+      wl *= 0.5;
+    }
+    return sum;
+  }
+
+  /** Mountain-range presence mask (0..1) at a warped point with continental value c. */
+  _mtnMask(px, py, pz, c) {
+    const st = this.st, rf = this.cf * 1.9;
+    const rn = this.nM.n3(px * rf + 5.3, py * rf + 2.1, pz * rf + 8.8) + 0.45 * this.nM.n3(px * rf * 2.3 + 1.1, py * rf * 2.3 + 4.4, pz * rf * 2.3 + 2.2);
+    const spine = 1 - Math.sqrt(rn * rn + 0.004) * 0.9;
+    let mm = sstep(st.rangeLo, st.rangeHi, spine);
+    const massif = sstep(0.3, 0.9, this.nM.n3(px * this.cf * 0.9 + 21, py * this.cf * 0.9 + 4, pz * this.cf * 0.9 + 13)) * st.massifs;
+    if (massif > mm) mm = massif;
+    mm *= sstep(0.0, 0.1, c) * st.mountains;
+    return mm > 1 ? 1 : mm;
+  }
+
+  /** Tangent gradient (per metre, world axes) of the mountain mask at unit dir (x,y,z); mm = mask there. */
+  _mgrad(x, y, z, lod, mm) {
+    const R = this.R, w = this._w2, out = this._mg;
+    const e = 60 / R;
+    // tangent basis
+    let ax, ay, az;
+    if (Math.abs(y) < 0.9) { ax = z; ay = 0; az = -x; } else { ax = 0; ay = -z; az = y; }
+    let l = 1 / Math.hypot(ax, ay, az); ax *= l; ay *= l; az *= l;
+    const bx = y * az - z * ay, by = z * ax - x * az, bz = x * ay - y * ax;
+    let d1, d2;
+    {
+      let qx = x + ax * e, qy = y + ay * e, qz = z + az * e; l = 1 / Math.hypot(qx, qy, qz); qx *= l; qy *= l; qz *= l;
+      this._warp(qx, qy, qz, w);
+      d1 = (this._mtnMask(w[0], w[1], w[2], this._continent(w[0], w[1], w[2], lod) - this.oceanBias) - mm) / 60;
+    }
+    {
+      let qx = x + bx * e, qy = y + by * e, qz = z + bz * e; l = 1 / Math.hypot(qx, qy, qz); qx *= l; qy *= l; qz *= l;
+      this._warp(qx, qy, qz, w);
+      d2 = (this._mtnMask(w[0], w[1], w[2], this._continent(w[0], w[1], w[2], lod) - this.oceanBias) - mm) / 60;
+    }
+    out[0] = ax * d1 + bx * d2; out[1] = ay * d1 + by * d2; out[2] = az * d1 + bz * d2;
+    return out;
   }
 
   /** One octave of the slope-aligned gully filter (3D, compact-support cells). (dx,dy,dz) = stripe dir. */
@@ -568,7 +624,7 @@ export class SurfaceGen {
     // ---- rolling hills (IQ derivative-damped fbm), faded at the coast
     if (st.hills > 0) {
       const d = this._d;
-      let wl = st.hillWl, f = R / wl, qx = px * f, qy = py * f, qz = pz * f;
+      let wl = st.hillWl, f = R / wl, qx = x * f, qy = y * f, qz = z * f;
       let a = 1, sum = 0, dxs = 0, dys = 0, dzs = 0;
       for (let o = 0; o < 5; o++) {
         const lw = lodW(wl, lod);
@@ -587,16 +643,9 @@ export class SurfaceGen {
     }
 
     // ---- mountain ranges
-    let mtn = 0;
+    let mtn = 0, steep = 0;
     if (st.mountains > 0) {
-      const rf = this.cf * 1.9;
-      const rn = this.nM.n3(px * rf + 5.3, py * rf + 2.1, pz * rf + 8.8) + 0.45 * this.nM.n3(px * rf * 2.3 + 1.1, py * rf * 2.3 + 4.4, pz * rf * 2.3 + 2.2);
-      const spine = 1 - Math.sqrt(rn * rn + 0.004) * 0.9;
-      let mm = sstep(st.rangeLo, st.rangeHi, spine);
-      const massif = sstep(0.3, 0.9, this.nM.n3(px * this.cf * 0.9 + 21, py * this.cf * 0.9 + 4, pz * this.cf * 0.9 + 13)) * st.massifs;
-      if (massif > mm) mm = massif;
-      mm *= sstep(0.0, 0.1, c) * st.mountains;
-      if (mm > 1) mm = 1;
+      const mm = this._mtnMask(px, py, pz, c);
       const mp0 = Math.pow(mm, 1.35);
       if (A * st.mtnHeight * mp0 > 0.02) {
         const mv = this._mountain(x, y, z, lod, g);
@@ -604,10 +653,25 @@ export class SurfaceGen {
         const mp = mp0;
         const H = A * st.mtnHeight * mp;
         let hm = H * mv;
+        const sc = H / R;
+        // slope of the range MASK (m/m): where a range rises out of the lowlands/coast over a few
+        // hundred metres, H·mv·∇mask makes kilometre-tall walls that the ridge-noise gradient
+        // knows nothing about. Finite differences of the mask (only inside its ramp) feed the
+        // steep-face detection, so those walls grow buttresses and crags instead of reading as
+        // smooth clay slabs.
+        let mgx = 0, mgy = 0, mgz = 0;
+        if (mm > 0.004 && mm < 0.996 && lod < 400) {
+          const m = this._mgrad(x, y, z, lod, mm);
+          // faded at both ends of the ramp (the mask is clamped at 1: its gradient jumps to 0 there,
+          // and a discontinuous slope would re-orient the gully stripes abruptly → seam lines)
+          const k = A * st.mtnHeight * mv * 1.35 * Math.pow(mm, 0.35) * sstep(0.004, 0.06, mm) * (1 - sstep(0.8, 0.99, mm));
+          mgx = m[0] * k; mgy = m[1] * k; mgz = m[2] * k;
+        }
         // gully erosion filter where the mountain mass is significant (strength fades continuously)
         const gs = st.erosion * sstep(0.0, 0.5, mp) * Math.min(1, H / 700);
         if (gs > 1e-4) {
-          const sc = H / R;
+          // (the gullies keep the ridge-noise slope only: steered by the mask slope, whose direction
+          //  rotates around troughs on the apron, the stripes curled into concentric rings)
           hm += this._gullies(x, y, z, lod, gxm * sc, gym * sc, gzm * sc, gs);
         }
         // glacial valleys: flatten valley floors of high cold ranges into U-shapes
@@ -619,6 +683,11 @@ export class SurfaceGen {
         }
         h += hm;
         mtn = mp * sstep(0.08, 0.35, mv);
+        // steep mountain faces (large-scale slope of the range, m/m): drives buttresses & couloirs
+        steep = sstep(0.5, 1.3, Math.hypot(g[3] * sc + mgx, g[4] * sc + mgy, g[5] * sc + mgz)) * sstep(0.2, 0.55, mp);
+        // buttresses & couloirs: relief proportional to the wall (≈9 % of each wavelength, 1.4 km →
+        // 170 m) — on a steep heightfield face, height bumps become plan-view ribs and chutes
+        if (steep > 0.01) h += steep * this._buttress(x, y, z, lod) * Math.min(1, H / 1500);
       }
     }
 
@@ -691,7 +760,7 @@ export class SurfaceGen {
       if (reg > 0.01) {
         const f = R / st.karstWl, J = this.nG.jit;
         const kh = st.karstH;
-        const t = this._cells(px * f, py * f, pz * f, f, 0.75, (d, hh) => {
+        const t = this._cells(x * f, y * f, z * f, f, 0.75, (d, hh) => {
           const rad = 0.22 + 0.16 * J[hh + 3];
           const q = d / rad;
           if (q >= 1.5) return 0;
@@ -714,7 +783,7 @@ export class SurfaceGen {
       const reg = sstep(0.0, 0.4, nF.n3(px * 2.6 + 44, py * 2.6 + 3, pz * 2.6 + 19)) * st.spires;
       if (reg > 0.01) {
         const f = R / st.spireWl, J = this.nG.jit;
-        const t = this._cells(px * f + 3.3, py * f, pz * f + 1.1, f, 0.8, (d, hh) => {
+        const t = this._cells(x * f + 3.3, y * f, z * f + 1.1, f, 0.8, (d, hh) => {
           if (J[(hh + 7) & 4095] > 0.55) return 0;
           const rad = 0.07 + 0.08 * J[hh + 3];
           const q = d / rad;
@@ -732,13 +801,13 @@ export class SurfaceGen {
       const f = R / 900, J = this.nG.jit;
       const reg = sstep(0.1, 0.5, nF.n3(px * 4 + 8, py * 4, pz * 4 + 33)) * st.kopjes;
       if (reg > 0.01) {
-        const t = this._cells(px * f + 7.7, py * f, pz * f, f, 0.7, (d, hh) => {
+        const t = this._cells(x * f + 7.7, y * f, z * f, f, 0.7, (d, hh) => {
           if (J[(hh + 9) & 4095] > 0.4) return 0;
           const q = d / (0.18 + 0.12 * J[hh + 3]);
           return q < 1 ? Math.sqrt(1 - q * q) * (0.5 + 0.5 * J[hh + 2]) : 0;
         });
         if (t > 0) {
-          const bumps = 0.6 + 0.4 * Math.abs(nF.n3(px * R / 18, py * R / 18, pz * R / 18));
+          const bumps = 0.6 + 0.4 * Math.abs(nF.n3(x * R / 18, y * R / 18, z * R / 18));
           h += 45 * reg * t * bumps;
           rock = Math.max(rock, reg * sstep(0.05, 0.3, t));
         }
@@ -751,11 +820,11 @@ export class SurfaceGen {
       if (reg > 0.01) {
         const D = st.duneDir, wl = st.duneWl;
         const f = R / wl;
-        const warpA = nF.n3(px * R / (wl * 7), py * R / (wl * 7) + 3, pz * R / (wl * 7) + 8);
-        const phase = (x * D[0] + y * D[1] + z * D[2]) * f + 1.6 * warpA + 0.35 * nF.n3(px * R / (wl * 2.2), py * R / (wl * 2.2), pz * R / (wl * 2.2));
+        const warpA = nF.n3(x * R / (wl * 7), y * R / (wl * 7) + 3, z * R / (wl * 7) + 8);
+        const phase = (x * D[0] + y * D[1] + z * D[2]) * f + 1.6 * warpA + 0.35 * nF.n3(x * R / (wl * 2.2), y * R / (wl * 2.2), z * R / (wl * 2.2));
         const s = phase - Math.floor(phase);
         const prof = s < 0.78 ? sstep(0, 1, s / 0.78) : 1 - sstep(0, 1, (s - 0.78) / 0.22);
-        const crestVar = 0.55 + 0.45 * nF.n3(px * R / (wl * 3.3) + 5, py * R / (wl * 3.3), pz * R / (wl * 3.3));
+        const crestVar = 0.55 + 0.45 * nF.n3(x * R / (wl * 3.3) + 5, y * R / (wl * 3.3), z * R / (wl * 3.3));
         const dh = st.duneH * reg * crestVar * prof * sstep(0.005, 0.05, c);
         // secondary smaller dunes
         const phase2 = (x * D[2] - y * D[0] + z * D[1]) * f * 3.1 + warpA * 2;
@@ -793,7 +862,7 @@ export class SurfaceGen {
     // ---- sea stacks and cliff-lined coasts
     if (this.hasOcean && (cliffMask > 0 || st.seastacks > 0)) {
       if (cliffMask > 0 && c > -0.004) {
-        const jag = 0.0025 * nF.n3(px * R / 420, py * R / 420, pz * R / 420);
+        const jag = 0.0025 * nF.n3(x * R / 420, y * R / 420, z * R / 420);
         const k = sstep(-0.0005, 0.0012, c + jag);
         const ch = (25 + 60 * sstep(-0.3, 0.7, nF.n3(px * 30, py * 30, pz * 30))) * cliffMask;
         h = Math.max(h, h * (1 - k) + (Math.max(h, 0) + ch) * k);
@@ -806,7 +875,7 @@ export class SurfaceGen {
         const zone = sstep(-0.05, -0.012, c) * (1 - sstep(0.004, 0.012, c));
         const reg = sstep(-0.2, 0.3, nF.n3(px * 7 + 3, py * 7, pz * 7 + 1)) * st.seastacks * zone * (1 - sstep(4, 30, h));
         if (reg > 0.01) {
-          const t = this._cells(px * f, py * f + 7, pz * f, f, 0.8, (d, hh) => {
+          const t = this._cells(x * f, y * f + 7, z * f, f, 0.8, (d, hh) => {
             if (J[(hh + 13) & 4095] > 0.5) return 0;
             const q = d / (0.13 + 0.1 * J[hh + 3]);
             if (q >= 1.3) return 0;
@@ -827,7 +896,7 @@ export class SurfaceGen {
     // ---- atolls: coral rings with lagoons in warm shallow seas
     if (st.atolls > 0 && this.hasOcean && c < 0.0 && c > -0.22) {
       const f = R / 4200, J = this.nG.jit;
-      const t = this._cells(px * f + 9, py * f + 3, pz * f + 1, f, 0.8, (d, hh) => {
+      const t = this._cells(x * f + 9, y * f + 3, z * f + 1, f, 0.8, (d, hh) => {
         if (J[(hh + 15) & 4095] > 0.45) return 0;
         const rr = 0.28 + 0.12 * J[hh + 3];
         const q = (d - rr) / 0.06;
@@ -836,7 +905,7 @@ export class SurfaceGen {
         return Math.max(ring, inside * 0.2);
       });
       if (t > 0) {
-        const bump = 2.2 + 3 * nF.n3(px * R / 300, py * R / 300, pz * R / 300);
+        const bump = 2.2 + 3 * nF.n3(x * R / 300, y * R / 300, z * R / 300);
         const target = -6 - 10 * (1 - t) + (bump + 6 + 10 * (1 - t)) * sstep(0.2, 0.32, t);
         h = Math.max(h, h + (target - h) * sstep(0.0, 0.3, t) * st.atolls);
         sand = Math.max(sand, sstep(0.2, 0.35, t));
@@ -899,7 +968,7 @@ export class SurfaceGen {
       const f = R / 1100, J = this.nG.jit;
       const reg = sstep(0.0, 0.4, nF.n3(px * 3.3 + 2, py * 3.3 + 400, pz * 3.3)) * st.sinkholes;
       if (reg > 0.02) {
-        const t = this._cells(px * f + 1, py * f + 2, pz * f + 3, f, 0.8, (d, hh) => {
+        const t = this._cells(x * f + 1, y * f + 2, z * f + 3, f, 0.8, (d, hh) => {
           if (J[(hh + 19) & 4095] > 0.35) return 0;
           const q = d / (0.08 + 0.07 * J[hh + 3]);
           return q < 1 ? Math.pow(1 - q * q * q * q * q * q, 0.5) : 0;
@@ -919,8 +988,8 @@ export class SurfaceGen {
     // ---- rock outcrops scattered through grassland & hills (BotW-style)
     if (st.outcrops > 0 && c > 0.02 && lod < 60) {
       const f = R / 70;
-      const on = this.nH.n3(px * f + 7, py * f + 3, pz * f + 5) * 0.7 + this.nH.n3(px * f * 2.3, py * f * 2.3, pz * f * 2.3) * 0.3;
-      const reg = sstep(-0.2, 0.5, this.nH.n3(px * R / 900 + 4, py * R / 900, pz * R / 900 + 8)) * st.outcrops;
+      const on = this.nH.n3(x * f + 7, y * f + 3, z * f + 5) * 0.7 + this.nH.n3(x * f * 2.3, y * f * 2.3, z * f * 2.3) * 0.3;
+      const reg = sstep(-0.2, 0.5, this.nH.n3(x * R / 900 + 4, y * R / 900, z * R / 900 + 8)) * st.outcrops;
       const t = sstep(0.42, 0.62, on) * reg * (1 - dune) * (1 - river);
       if (t > 0) { h += t * (2.2 + 3.5 * reg) * lodW(28, lod); rock = Math.max(rock, sstep(0.1, 0.5, t)); }
     }
@@ -944,16 +1013,20 @@ export class SurfaceGen {
       const roughK = st.rough * (0.35 + 2.6 * rk) * (1 - 0.6 * dune) * (1 - 0.5 * lake);
       const rr = sstep(0.15, 0.5, rk);
       // starts at 720 m: the two big octaves only exist on rock (crags & buttresses on mountain faces)
-      let wl = 720, f = R / wl, qx = px * f, qy = py * f, qz = pz * f, a = wl * 0.0072 * roughK, sum = 0;
+      let wl = 720, f = R / wl, qx = x * f, qy = y * f, qz = z * f, a = wl * 0.0072 * roughK, sum = 0;
       for (let o = 0; o < 14; o++) {
         const lw = lodW(wl, lod);
         if (lw <= 0) break;
         const v = nH.n3(qx, qy, qz);
         // crags & buttresses: the big octaves are much stronger on rock (cliff faces get real
         // plan-view relief — chutes, ribs, buttresses — instead of reading as smooth clay walls)
-        const big = wl > 200 ? rr * (o === 0 ? 2.4 : 2.0) : wl > 120 ? 1 + 0.6 * rr : wl > 60 ? 1 + 0.25 * rr : 1;
+        // on steep mountain faces the big octaves grow further (buttresses, ribs and chutes that break
+        // kilometre-tall walls into readable structure instead of smooth clay slabs)
+        const big = wl > 200 ? rr * (o === 0 ? 2.4 : 2.0) * (1 + 1.8 * steep) : wl > 120 ? (1 + 0.6 * rr) * (1 + 1.2 * steep) : wl > 60 ? (1 + 0.25 * rr) * (1 + 0.6 * steep) : 1;
         // rock gets sharper (ridged, zero-mean) micro relief, soil stays rounded
-        sum += a * lw * big * (v + ((0.342 - (v < 0 ? -v : v)) * 1.6 - v) * rr);
+        // (big octaves use a softened |v|: a razor crease of a 700 m ridged octave reads as a seam)
+        const av = wl > 120 ? Math.sqrt(v * v + 0.004) : (v < 0 ? -v : v);
+        sum += a * lw * big * (v + ((0.342 - av) * 1.6 - v) * rr);
         a *= 0.49; wl *= ILAC;
         qx = qx * LAC + 1.9; qy = qy * LAC + 7.3; qz = qz * LAC + 3.7;
       }
@@ -963,6 +1036,7 @@ export class SurfaceGen {
     if (info) {
       info.c = c; info.land = land; info.mtn = mtn; info.rock = rock; info.sand = sand;
       info.river = river; info.lake = lake; info.cliff = cliff; info.dune = dune; info.glacier = glacier;
+      info.steep = steep;
     }
     return h;
   }

@@ -88,54 +88,59 @@ export function bakeDetail(size = DETAIL_SIZE) {
     for (let i = 0; i < H.length; i++) H[i] = (H[i] - mn) * k;
   };
 
-  // ---- 0 rock: planar-faceted blocks + joint sets whose orientation changes per block (no global
-  //      parallel "wood-grain" lines) + isotropic ridged grain + lichen blotches
+  // ---- 0 rock: fractured, weathered stone. Angular facets come from per-cell planes blended with
+  //      a narrow smooth band (chipped, faceted surfaces without a dark outline around every cell —
+  //      the old voronoi borders read as dried mud tiles); only a sparse subset of borders are open
+  //      fractures. No parallel joint hatching (it aliased into "fur" at mid range). Isotropic
+  //      weathering fbm + fine pitting on top; albedo = per-block tone, lichen, mineral speckle.
   {
     const h1 = makeHash(11), h2 = makeHash(12), h3 = makeHash(13), h4 = makeHash(14);
-    const cell = [0, 0, 0, 0, 0, 0];
-    const facet = (u, v, p, seedH) => {
-      // voronoi cells, each with its own random plane → angular chunks
+    const res = [0, 0, 0, 0];
+    // smooth faceted field: sum of cell planes weighted by a steep kernel on the distance
+    const facets = (u, v, p, seedH, sharp) => {
       const x = u * p, y = v * p, ix = Math.floor(x), iy = Math.floor(y);
-      let f1 = 9, f2 = 9, hv = 0, bx = 0, by = 0, id = 0;
-      for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+      let sw = 0, sh = 0, f1 = 9, f2 = 9, id1 = 0, id2 = 0;
+      for (let j = -2; j <= 2; j++) for (let i = -2; i <= 2; i++) {
         const cx = ix + i, cy = iy + j, wx = ((cx % p) + p) % p, wy = ((cy % p) + p) % p;
-        const px = cx + 0.5 + (seedH(wx, wy) - 0.5) * 0.85, py = cy + 0.5 + (seedH(wy + 911, wx + 71) - 0.5) * 0.85;
-        const dx = x - px, dy = y - py, d = Math.hypot(dx, dy);
-        if (d < f1) {
-          f2 = f1; f1 = d;
-          const a = seedH(wx + 5, wy + 17) * Math.PI * 2, sl = 0.35 + 0.5 * seedH(wx + 29, wy + 3);
-          hv = 0.45 * seedH(wx + 313, wy + 177) + sl * (Math.cos(a) * dx + Math.sin(a) * dy);
-          bx = dx; by = dy; id = seedH(wx + 57, wy + 211);
-        } else if (d < f2) f2 = d;
+        const px = cx + 0.5 + (seedH(wx, wy) - 0.5) * 0.9, py = cy + 0.5 + (seedH(wy + 911, wx + 71) - 0.5) * 0.9;
+        const dx = x - px, dy = y - py, d2 = dx * dx + dy * dy;
+        if (d2 > 4) continue;
+        const a = seedH(wx + 5, wy + 17) * Math.PI * 2, sl = 0.25 + 0.55 * seedH(wx + 29, wy + 3);
+        const hv = 0.5 * seedH(wx + 313, wy + 177) + sl * (Math.cos(a) * dx + Math.sin(a) * dy);
+        const w = Math.exp(-sharp * d2);
+        sw += w; sh += w * hv;
+        const d = Math.sqrt(d2), id = seedH(wx + 57, wy + 211);
+        if (d < f1) { f2 = f1; id2 = id1; f1 = d; id1 = id; } else if (d < f2) { f2 = d; id2 = id; }
       }
-      cell[0] = f1; cell[1] = f2; cell[2] = hv; cell[3] = bx / p; cell[4] = by / p; cell[5] = id;
-      return cell;
+      res[0] = sh / Math.max(1e-9, sw); res[1] = f2 - f1; res[2] = id1; res[3] = id2;
+      return res;
     };
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const u = x / S, v = y / S;
-      const wu = u + 0.03 * pnoise(h2, u, v, 5), wv = v + 0.03 * pnoise(h2, u + 0.5, v + 0.3, 5);
-      facet(wu, wv, 5, h1);
-      const big = cell[2], edge = 1 - (1 - sst(0.0, 0.06, cell[1] - cell[0])) * sst(-0.15, 0.35, pnoise(h4, u + 0.4, v + 0.9, 4));
-      // joints: two fracture families whose orientation, spacing and presence belong to the block
-      // (coordinates relative to the block's seed point → exactly periodic, discontinuous per block)
-      const bdx = cell[3], bdy = cell[4], bid = cell[5];
-      const a1 = bid * Math.PI * 2, a2 = a1 + 1.1 + 0.9 * ((bid * 7.31) % 1);
-      const fq1 = 22 + 20 * ((bid * 3.7) % 1), fq2 = 16 + 18 * ((bid * 5.3) % 1);
-      const wob = 0.25 * pfbm(h4, u, v, 6, 2);
-      const j1 = Math.abs(Math.sin(Math.PI * (fq1 * (Math.cos(a1) * bdx + Math.sin(a1) * bdy) + wob)));
-      const j2 = Math.abs(Math.sin(Math.PI * (fq2 * (Math.cos(a2) * bdx + Math.sin(a2) * bdy) - wob)));
-      const pres1 = (bid * 11.7) % 1 < 0.7 ? 1 : 0, pres2 = (bid * 13.9) % 1 < 0.45 ? 1 : 0;
-      facet(u, v, 13, h3);
-      const small = cell[2], edge2 = 1 - (1 - sst(0.0, 0.05, cell[1] - cell[0])) * sst(-0.1, 0.4, pnoise(h4, u + 0.1, v + 0.6, 7));
-      const m1 = sst(0.05, 0.4, pnoise(h4, u, v, 6)) * pres1, m2 = sst(0.1, 0.45, pnoise(h4, u + 0.7, v + 0.2, 6)) * pres2;
-      const joint = 1 - (1 - sst(0.0, 0.07, j1)) * m1 * 0.8 - (1 - sst(0.0, 0.06, j2)) * m2 * 0.6;
-      let rid = 0, amp = 0.5, pp = 8;
-      for (let o = 0; o < 4; o++) { rid += amp * (1 - Math.abs(pnoise(h2, u + o * 0.17, v + o * 0.31, pp))); amp *= 0.5; pp *= 2; }
-      const pits = sst(0.55, 0.8, pfbm(h1, u + 0.21, v + 0.63, 16, 3)) * 0.12;
-      const hgt = (0.55 * big * (0.6 + 0.4 * edge) + 0.22 * small * edge2 + 0.2 * rid) * (0.7 + 0.3 * Math.max(0, joint)) - 0.15 * (1 - edge) - pits;
+      const wu = u + 0.04 * pfbm(h2, u, v, 3, 3), wv = v + 0.04 * pfbm(h2, u + 0.5, v + 0.3, 3, 3);
+      // big angular blocks (planes, soft seams)
+      facets(wu, wv, 4, h1, 6);
+      const big = res[0], bid = res[2];
+      // stepped ledges: terraced warped fbm → flat-ish planes with sharp risers (chipped / layered)
+      const base = pfbm(h3, wu + 0.2, wv + 0.7, 3, 4, 0.5) * 3.2 + big * 1.5;
+      const bi = Math.floor(base), bf = base - bi;
+      const step = bi + sst(0.55, 0.95, bf) + 0.25 * bf;
+      // long winding fractures: thin zero-crossings of low-frequency noise, masked into segments
+      const fn = pnoise(h4, wu, wv, 5) + 0.35 * pnoise(h4, wu + 0.3, wv + 0.8, 11);
+      const crack = (1 - sst(0.0, 0.035, Math.abs(fn))) * sst(0.0, 0.35, pnoise(h2, u + 0.9, v + 0.2, 3));
+      const fn2 = pnoise(h1, wu + 0.6, wv + 0.1, 9);
+      const crack2 = (1 - sst(0.0, 0.03, Math.abs(fn2))) * sst(0.1, 0.4, pnoise(h3, u + 0.2, v + 0.5, 4)) * 0.6;
+      const weath = pfbm(h2, u + 0.17, v + 0.61, 8, 4, 0.5);
+      let rid = 0, amp = 0.5, pp = 32;
+      for (let o = 0; o < 3; o++) { rid += amp * (1 - Math.abs(pnoise(h1, u + o * 0.17, v + o * 0.31, pp))); amp *= 0.5; pp *= 2; }
+      const pits = sst(0.52, 0.8, pfbm(h1, u + 0.21, v + 0.63, 20, 3)) * 0.06;
+      const hgt = 0.16 * step + 0.35 * big + 0.1 * weath + 0.035 * rid - 0.16 * crack - 0.04 * crack2 - pits;
       H[y * S + x] = hgt;
-      const lich = sst(0.3, 0.55, pfbm(h3, u, v, 5, 4)) * sst(0.4, 0.7, pnoise(h1, u, v, 24) * 0.5 + 0.5);
-      A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.22 * (big - 0.25) + 0.1 * (rid - 0.45) + 0.12 * (bid - 0.5) - 0.24 * (1 - edge) - 0.1 * (1 - edge2) - 0.14 * (1 - Math.max(0, joint)) + 0.12 * lich));
+      const lich = sst(0.35, 0.6, pfbm(h3, u, v, 6, 4)) * sst(0.45, 0.75, pnoise(h1, u, v, 28) * 0.5 + 0.5);
+      const speck = pnoise(h4, u, v, 96) * 0.5 + pnoise(h4, u + 0.3, v + 0.8, 160) * 0.5;
+      const riser = sst(0.55, 0.75, bf) * (1 - sst(0.85, 0.98, bf));
+      A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.18 * (bid - 0.5) + 0.1 * ((bi * 0.618) % 1 - 0.5) + 0.12 * weath + 0.05 * speck
+        - 0.08 * riser - 0.35 * crack - 0.08 * crack2 - 0.8 * pits + 0.1 * lich));
     }
     norm(); put(0, 0.10);
   }

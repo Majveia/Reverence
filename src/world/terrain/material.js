@@ -189,6 +189,7 @@ void rvTerrain( inout vec3 albedo ) {
   float wGround = ( 1.0 - wRock ) * ( 1.0 - wSand );
 
   vec3 gradT = vec3( 0.0 );
+  float accMdbg = 0.5;
   float hRock = 0.5, hGround = 0.5, hSand = 0.5, hSnow = 0.5, aRock = 0.5, aMacro = 0.5;
   vec4 dGround = vec4( 0.5 ), dSand = vec4( 0.5 ), dSnow = vec4( 0.5 ), dPeb = vec4( 0.5 );
 
@@ -228,7 +229,7 @@ void rvTerrain( inout vec3 albedo ) {
     hRock = mix( 0.5, accM.b, fFar );
     hRock = mix( hRock, hRock * 0.4 + accA.b * 0.6, fMid );
     hRock = mix( hRock, hRock * 0.7 + accN.b * 0.3, fNear );
-    aMacro = mix( 0.5, accM.a, fFar );
+    aMacro = mix( 0.5, accM.a, fFar ); accMdbg = accA.a;
     aRock = mix( aMacro, aMacro * 0.45 + accA.a * 0.55, fMid );
     aRock = mix( aRock, aRock * 0.7 + accN.a * 0.3, fNear );
   }
@@ -280,6 +281,7 @@ void rvTerrain( inout vec3 albedo ) {
                 * smoothstep( 0.25, 0.65, mA.a + 0.25 * n4 ) * fFar;
     streakD = st7.b * sMask;
     streakL = max( st7.a - 0.5, 0.0 ) * 2.0 * sMask;
+    if ( uRvDebug > 4.5 ) { streakD = 0.0; streakL = 0.0; }
     // strata: real ledges (layer 6 relief) aligned with the colour bands, only on layered-rock worlds
     // (only on real faces: projected onto the vertical planes, a gentle slope would stretch the
     //  layers into contour-parallel brush strokes)
@@ -300,6 +302,7 @@ void rvTerrain( inout vec3 albedo ) {
   // wind-drift relief on snowfields (64 m noise-relief slopes): shading on otherwise flat white
   gradT += vec3( mC.r - 0.5, 0.0, mC.g - 0.5 ) * 0.9 * snowPot * ( 1.0 - wRock ) * fFar;
   // ---- detail normal (surface gradient: local → world, then onto the tangent plane)
+  if ( uRvDebug > 6.5 ) gradT = vec3( 0.0 );
   gradT = Tu * gradT.x + up * gradT.y + Tv * gradT.z;
   gradT -= Ng * dot( gradT, Ng );
   rvN = normalize( Ng - gradT * 1.1 );
@@ -408,11 +411,16 @@ void rvTerrain( inout vec3 albedo ) {
   albedo = clamp( col, 0.0, 1.0 );
   // tdebug=3: unlit albedo as emissive (lighting-independent); tdebug=4: NaN finder (red normal,
   // green albedo, blue AO/roughness) as emissive
-  if ( uRvDebug > 2.5 ) {
-    rvEmis = uRvDebug < 3.5 ? albedo : vec3( any( isnan( rvN ) ) ? 1.0 : 0.0, any( isnan( col ) ) ? 1.0 : 0.0, ( isnan( rvAO ) || isnan( rvRough ) ) ? 1.0 : 0.0 ) + 0.05;
+  if ( uRvDebug > 7.5 ) {
+    int dm = int( uRvDebug + 0.5 );
+    rvEmis = dm == 8 ? vec3( aRock ) : dm == 9 ? wg : dm == 10 ? vec3( accMdbg, strA, hRock ) : dm == 11 ? abs( Tu ) : vec3( mA.a, mC.g, mC.b );
     return;
   }
-  if ( uRvDebug > 0.5 ) albedo = uRvDebug < 1.5 ? vec3( bRock, ( 1.0 - bRock ) * ( 1.0 - bSand ) * ( 1.0 - bSnow ), bSand ) + bSnow : vec3( rockA, sandA, wetA );
+  if ( uRvDebug > 2.5 && uRvDebug < 5.5 ) {
+    rvEmis = uRvDebug < 3.5 || uRvDebug > 4.5 ? albedo : vec3( any( isnan( rvN ) ) ? 1.0 : 0.0, any( isnan( col ) ) ? 1.0 : 0.0, ( isnan( rvAO ) || isnan( rvRough ) ) ? 1.0 : 0.0 ) + 0.05;
+    return;
+  }
+  if ( uRvDebug > 0.5 && uRvDebug < 2.5 ) albedo = uRvDebug < 1.5 ? vec3( bRock, ( 1.0 - bRock ) * ( 1.0 - bSand ) * ( 1.0 - bSnow ), bSand ) + bSnow : vec3( rockA, sandA, wetA );
 }
 `;
 
