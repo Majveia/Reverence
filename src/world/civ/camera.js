@@ -87,9 +87,23 @@ export function frameSite(civ, s, preset) {
     return best;
   };
   const sideOk = (x, z) => !(G && !L.water && G.wet(x, z));
+  // the vehicles track parks a starship ~34 m (and bike/rover 5-10 m) in front of the player, i.e. BEHIND
+  // the lens with camyaw=180; if that spot is cluttered by buildings it drifts into the frame. Prefer
+  // viewpoints with a flat, open patch behind the camera.
+  const parkPenalty = (x, z, fx, fz) => {
+    const bx = x - fx * 34, bz = z - fz * 34;
+    let pen = 0;
+    for (const l of L.lots) { const d = Math.hypot(l.x - bx, l.z - bz) - Math.max(l.w, l.d) / 2; if (d < 10) pen += 1; }
+    if (G) { const h = [G.g(bx - 7, bz), G.g(bx + 7, bz), G.g(bx, bz - 7), G.g(bx, bz + 7)]; pen += (Math.max(...h) - Math.min(...h)) / 3; if (!L.water && G.wet(bx, bz)) pen += 2; }
+    return pen;
+  };
   if (preset === 'plaza') {
     // stand where a main road enters the plaza, on the side opposite the landmark
-    const b = roadPoint(pr + 7, (p) => -Math.cos(Math.atan2(p.z, p.x) - landA));
+    const b = roadPoint(pr + 7, (p) => {
+      const lx = land ? land.x * 0.45 : 0, lz = land ? land.z * 0.45 : 0;
+      const dx = lx - p.x, dz = lz - p.z, dl = Math.hypot(dx, dz) || 1;
+      return -Math.cos(Math.atan2(p.z, p.x) - landA) * 1.5 - parkPenalty(p.x, p.z, dx / dl, dz / dl) * 0.6;
+    });
     const [x, z] = b ? [b.p.x, b.p.z] : [Math.cos(landA + Math.PI) * (pr + 6), Math.sin(landA + Math.PI) * (pr + 6)];
     const lx = land ? land.x : 0, lz = land ? land.z : 0;
     const gh = G ? G.g(x, z) : hC;
@@ -120,7 +134,7 @@ export function frameSite(civ, s, preset) {
         }
         // flat eye line (no looking into a hillside)
         const g0 = G ? G.g(p.x, p.z) : 0, g1 = G ? G.g(p.x + fx * 30, p.z + fz * 30) : 0;
-        const sc = Math.min(left, right) * 2 + left + right + tall * 2 - Math.abs(g1 - g0) * 0.25 + (r.type === 'avenue' || r.type === 'spoke' ? 1 : 0);
+        const sc = Math.min(left, right) * 2 + left + right + tall * 2 - Math.abs(g1 - g0) * 0.25 + (r.type === 'avenue' || r.type === 'spoke' ? 1 : 0) - parkPenalty(p.x, p.z, fx, fz) * 1.2;
         if (!best || sc > best.sc) best = { sc, p, r, fx, fz };
       }
     }
@@ -134,7 +148,26 @@ export function frameSite(civ, s, preset) {
     return frameSite(civ, s, 'plaza');
   }
   if (preset === 'hero') {
-    const a = landA + Math.PI + 0.35;
+    // around the plaza rim, pick the spot with no building in the lens' way (near the camera or between it
+    // and the plaza centre), preferring the side opposite the landmark
+    let bestA = landA + Math.PI, bestS = -Infinity;
+    for (let k = 0; k < 16; k++) {
+      const a = landA + Math.PI + (k / 16 - 0.5) * Math.PI * 1.6;
+      const cx = Math.cos(a) * (pr + 18), cz = Math.sin(a) * (pr + 18);
+      let pen = 0;
+      for (const l of L.lots) {
+        const r0 = Math.max(l.w, l.d) / 2;
+        const dc = Math.hypot(l.x - cx, l.z - cz) - r0;
+        if (dc < 16) pen += (16 - dc) / 4 * (l.type === 'tower' || l.type === 'landmark' ? 2 : 1);
+        // between the camera and a point halfway to the centre
+        const mx = cx * 0.55, mz = cz * 0.55;
+        if (Math.hypot(l.x - mx, l.z - mz) - r0 < 6) pen += 1.5;
+      }
+      const dl = Math.hypot(cx, cz) || 1;
+      const sc = -pen + Math.cos(a - landA - Math.PI) * 1.2 - parkPenalty(cx, cz, -cx / dl, -cz / dl) * 0.8;
+      if (sc > bestS) { bestS = sc; bestA = a; }
+    }
+    const a = bestA;
     const x = Math.cos(a) * (pr + 18), z = Math.sin(a) * (pr + 18);
     const gh = G ? G.g(x, z) : hC;
     const lx = land ? land.x : 0, lz = land ? land.z : 0;
@@ -154,14 +187,15 @@ export function frameSite(civ, s, preset) {
   }
   // aerial: 8 azimuths around the town; prefer an unobstructed view, lower ground under the camera, and
   // the side facing the landmark (so it stands in front of the skyline)
-  const D = R * 1.15 + 140;
+  const D = R * 0.95 + 150;
   let best = null;
   for (let k = 0; k < 12; k++) {
     const a = landA + k / 12 * Math.PI * 2;
     const x = Math.cos(a) * D, z = Math.sin(a) * D;
     const up = dirOf(s, x, z, new THREE.Vector3());
     const gh = S.height(up.x, up.y, up.z);
-    const altAbs = Math.max(hC + D * 0.32 + 30, gh + 45);
+    // stay under the cloud deck: a low, oblique establishing shot (≈ 90-200 m above the town)
+    const altAbs = Math.max(hC + Math.min(D * 0.24, 170) + 25, gh + 40);
     const eye = up.clone().multiplyScalar(s.R + altAbs);
     const bl = blocked(S, s.R, eye, pt(0, 0, hC + 15));
     const sea = S.seaLevel > -1e8 ? S.seaLevel : -Infinity;

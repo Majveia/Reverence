@@ -129,30 +129,50 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
   `.getState()` → `{style, ready, readyMs, cells:{band:"cells/jobs/ms"}, instances, drawCalls,
   trisM, top (heaviest layers), colliders}`.
 
-## Capture URLs (verified at 1280×720 unless noted)
-* W2 BotW forest meadow, daisies, golden hour: `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=-25.292&lon=-104.202&yaw=0&pitch=2&tod=0.33`
-* W2 forested hill from the air (LOD1 → impostors → far forest): `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=90&lat=-25.292&lon=-104.202&yaw=30&pitch=-8&tod=0.3`
-* W2 forest from 350 m: `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=350&lat=-11.521&lon=118.007&yaw=67.5&pitch=-14&tod=0.35` (960×540)
-* W2 noon meadow on a slope: `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=-15.355&lon=146.556&yaw=0&pitch=-3&tod=0.5` (960×540)
-* W1 golden meadow + oaks + boulder: `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=16.122&lon=5.848&yaw=0&pitch=-2&tod=0.3`
-* W1 shore with reeds/cattails: `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=-14.085&lon=103.544&yaw=270&pitch=-4&tod=0.34` (960×540)
+## Capture URLs (verified this round at 960×540 unless noted; all render in ~3–5 min under load)
+* W1 golden meadow (turf + sward shade, forked oaks, autumn trees): `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=16.122&lon=5.848&yaw=0&pitch=-2&tod=0.3`
+* W2 forested hill + lake from the air (canopy shade, LOD1 → impostors → far forest): `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=90&lat=-25.292&lon=-104.202&yaw=30&pitch=-8&tod=0.3`
+* W2 noon meadow (steep TP view onto the sward, player push): `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=-15.355&lon=146.556&yaw=0&pitch=-3&tod=0.5`
+* W4 **bioluminescent lantern-tree forest at night** (glowing lantern trees, glow-stroke grass, glow
+  mushrooms): `/?mode=system&galaxy=0&star=2&planet=0&view=surface&lat=16.36&lon=151.86&yaw=0&pitch=3&tod=0.02`
+* W4 bioluminescent meadow at night from 4 m: `/?mode=system&galaxy=0&star=2&planet=0&view=fly&alt=4&lat=16.432&lon=151.962&yaw=150&pitch=-4&tod=0.02`
 * W5 Rick & Morty jungle: `/?mode=system&galaxy=0&star=1&planet=2&view=surface&lat=31.786&lon=-28.943&yaw=22.5&pitch=-3&tod=0.42`
-* W11 Nausicaä fungus forest: `/?mode=system&galaxy=0&star=0&planet=0&view=surface&lat=7.276&lon=3.168&yaw=0&pitch=-3&tod=0.45`
-* W10 boreal meadow + spruces: `/?mode=system&galaxy=0&star=17&planet=0&view=surface&lat=-15.355&lon=146.556&yaw=0&pitch=-2&tod=0.32` (960×540)
-* W4 bioluminescent night (lantern trees, glow mushrooms, bulbs, glowing grass): `/?mode=system&galaxy=0&star=2&planet=0&view=fly&alt=4&lat=16.432&lon=151.962&yaw=150&pitch=-4&tod=0.02`
-  (the old `view=surface … yaw=202.5` framing now spawns low in tall grass after player-track spawn changes)
+* W10 noon meadow on a terraced hillside: `/?mode=system&galaxy=0&star=17&planet=0&view=surface&lat=-15.355&lon=146.556&yaw=0&pitch=-2&tod=0.5`
+* W11 Nausicaä fungus forest (shelf towers, spore trees, dense sward): `/?mode=system&galaxy=0&star=0&planet=0&view=surface&lat=7.276&lon=3.168&yaw=0&pitch=-3&tod=0.45`
+* W2 forest interior (forked BotW oaks, ferns): `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=-25.292&lon=-104.202&yaw=0&pitch=2&tod=0.33`
+  — **heaviest view in the game on software GL**: ~45 s per frame on the loaded capture box, so
+  the 4-sample shot often exceeds shoot.mjs' 180 s screenshot timeout (it did in round 1 too). Use
+  the flora lab for this framing (below) or the aerial view.
 * W2 capital clearing (ruins among the forest, civ clearings honoured): `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=140&lat=6.45&lon=25.95&pitch=-18&tod=0.35`
-* W10 noon meadow: `/?mode=system&galaxy=0&star=17&planet=0&view=surface&lat=-15.355&lon=146.556&yaw=0&pitch=-2&tod=0.5`
-* Debug: `&floradbg=nocast` (flora casts no shadows), `&floradbg=noreceive` (flora ignores shadows).
+* Debug: `&floradbg=nocast` (flora casts no shadows), `&floradbg=noreceive` (flora ignores shadows),
+  `&floradbg=sward` (sward shade painted red), `sward,nodepth`, `grassnodepth`.
 * Wind: `[{"advance":0.5},{"shot":"a.png"},{"advance":0.7},{"shot":"b.png"}]` on any view — grass and
   foliage move between frames.
 
+### Flora lab (dev only, fast iteration)
+`/src/world/flora/lab/?star=11&planet=0&lat=-25.292&lon=-104.202&yaw=0&pitch=2&h=2.2&back=4&sunel=30&sunaz=100`
+— the real flora subsystem (workers, placement, LODs, impostors, grass, shades) on the real planet
+surface; ground = biome-coloured mesh from `surface.sample`, gradient sky + PMREM, one 4096² sun
+shadow map, exp fog. Params: `galaxy, star, planet, lat, lon, yaw, pitch, h` (camera height),
+`back` (pull back along the view like the TP camera), `fov, sunel, sunaz` (sunel < −4 → night,
+moonlight), `wind, exp, env, fog, full=1` (density 1 instead of the capture profile's 0.45),
+`dens, hide=<layer name parts>` (e.g. `hide=oak-0,grass`), `atlas=1` (shows the leaf atlas).
+`__rv.state()` reports flora stats + `renderMs` (GPU-synchronised frame time) — used to profile.
+Lighting/ground differ from the game (no terrain material, no atmosphere/post), so final looks
+must still be checked in-game.
+
 ## Performance (high)
-* Flora ≈ 30–60 draw calls in the main pass. Shadow casters: canopy LOD0 < 38 m, big understory
-  LOD0 < 22 m, rock LOD0, one near-impostor depth layer (30–800 m). Grass never casts.
-* Measured at the software-capture profile (floraDensity 0.45): W1 meadow 0.86 M tris, W4 night
-  1.5 M, W5 2.0 M, W2 forest 2.4 M, W11 fungal 3.1 M before the coral LOD cut (coral LOD0 ≈ 60 %
-  fewer tris now). Grass ≈ 0.6–0.9 M of that (dense band ~40 %).
+* Flora ≈ 30–60 draw calls in the main pass (+2 this round: `flora-sward`, `flora-canopy-shade`).
+  Shadow casters: canopy LOD0 < 26 m (was 38), big understory LOD0 < 22 m, rock LOD0, one
+  near-impostor depth layer (20–800 m). Grass never casts. Canopy LOD0 < 34–44 m (was 55–70).
+* Measured at the software-capture profile (floraDensity 0.45), round 3: W1 meadow 0.96 M tris
+  (45 draws), W2 aerial 0.82 M (31), W4 lantern forest 2.2 M (44), W2 forest ≈ 2.0 M. Grass ≈ 0.75 M
+  (dense 64 tall × 7 + 150 turf tris, mid 28 × 5 + 56, far 22 × 3 + 24 per patch); the two shade
+  layers are ~20–100 k tris of trivially shaded discs.
+* Frame cost is dominated by foliage fill on software GL (lab, W2 forest interior at 960×540:
+  all flora 54 s → ~30–40 s after this round's card/LOD cuts; without the oaks 8.6 s). In-game the
+  same view: whole frame ≈ 47 s, flora ≈ 31 s of it, flora shadow casting ≈ 11 s, LOD0 ≈ 14 s
+  (measured before the LOD0/caster range cuts).
 * Startup ≈ 1 s (atlas/bark/rock textures + ~30 models + glow bake + impostor bake). Initial streaming
   ≈ 20–35 s of worker time under the shared software-GL load (≈ 3–5 s on a normal machine).
 * Everything scales with `quality.floraDensity` (spacing, grass density/radius) and
@@ -162,15 +182,26 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
 ## Known issues
 * The dithered LOD1 → impostor crossfade (140–180 m) can leave a faint stipple in stills when only a
   few TAA sub-frames are accumulated.
-* Near grass (< 3 m) still shows ground between blades on the reduced capture profile; the terrain
-  colour under grass decides how "full" meadows read (request below).
+* The sward/canopy shade discs are pulled toward the camera (≈ 0.2–0.3 m / sin(view elevation),
+  capped) to ride on the CDLOD terrain; within that distance they also darken the lowest few cm of
+  grass blades, boots and trunk bases (reads as contact AO). Large canopy-shade discs are planar,
+  so over sharp crests/valleys they can cut into or float a little above the ground (soft, subtle).
+* W10's hillside shows faint horizontal bands 5–15 m out: those are the terrain's terracettes
+  (±0.5–0.8 m ledges at ~1 m scale in the analytic surface) seen at a grazing angle, not placement
+  (instance dumps show uniform density/height there).
+* The W2 forest-interior hero view is too heavy for the 180 s screenshot timeout on the shared
+  software renderer (see Capture URLs); on a real GPU it is fine.
 * Changing the placement noise (gradient instead of value noise) re-rolled species stands: forests
   at old showcase coordinates differ from round 1 (W2 surface spot is now an oak wood).
 * Removing a clearing (`removeClear`) re-streams all cells (instances are compacted out on accept).
 
 ## Requests
-* **terrain**: a grass-coloured ground tint under dense grass (read `biome` + moisture like flora
-  does, or `flora.densityAt`) would make meadows read fuller between blades, especially < 3 m.
+* **terrain**: (done by terrain: meadow tint) — flora now also darkens the ground between stems
+  itself (sward shade). Optional: expose the rendered CDLOD height (or the vertex `lod` used near the
+  camera) so flora can root grass exactly on the drawn mesh instead of the analytic surface.
+* **tools/lead**: `shoot.mjs` screenshot timeout (180 s) is shorter than one 4-sample frame of a
+  dense forest on the loaded software renderer; a longer timeout (or `taas=1` for heavy scenes)
+  would make forest-interior captures reliable.
 * **player**: spawns sometimes land under a tree canopy; a spawn search that avoids
   `world.colliders` tagged `tree` within ~4 m would frame vistas better.
 * **atmosphere**: foliage needs soft shadows — at 1024² cascades (capture profile) the 22–130 m

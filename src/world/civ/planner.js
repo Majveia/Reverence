@@ -76,7 +76,17 @@ export function siteStats(S, frame, r, lod = 20, n = 10) {
   }
   const mean = sum / tot;
   let dev = 0; for (const h of hs) dev += (h - mean) * (h - mean);
-  return { mean, min, max, dry: dry / tot, rough: Math.sqrt(dev / tot) / Math.max(r, 1), range: max - min };
+  // civic heart: the plaza and first blocks must be on dry land (coarse rings miss lagoons / inlets there)
+  let innerDry = 0, innerN = 0;
+  for (const rf of [0.08, 0.16, 0.26]) {
+    for (let i = 0; i < 8; i++) {
+      const a = i / 8 * Math.PI * 2 + rf * 11;
+      offsetDir(site, Math.cos(a) * r * rf, Math.sin(a) * r * rf, _d);
+      const h = S.heightLod ? S.heightLod(_d.x, _d.y, _d.z, Math.max(4, lod * 0.5)) : S.height(_d.x, _d.y, _d.z);
+      innerN++; if (h > sea + 3) innerDry++;
+    }
+  }
+  return { mean, min, max, dry: dry / tot, rough: Math.sqrt(dev / tot) / Math.max(r, 1), range: max - min, center: hs[0], innerDry: innerDry / innerN };
 }
 
 function coastal(S, frame, dist) {
@@ -139,6 +149,7 @@ export function planSites(world) {
         let score = -st.rough * (hamlet ? 30 : perch ? 5 : 12) - (1 - st.dry) * (waterOK ? 0.4 : 6) - Math.abs(Math.abs(ao) - (hamlet ? 16 : 0)) / angW
           - Math.abs(dist - dists[1]) / (hamlet ? 1200 : 600) - Math.min(block, 400) * 0.01;
         if (st.mean < sea + 3 && !(waterOK && st.mean > sea - 30)) score -= 4;
+        if (!waterOK) score -= (1 - st.innerDry) * 8 + (st.center < sea + 4 ? 3 : 0);
         // cliff / hilltop styles (monasteries, citadels): reward prominence over the surroundings
         if (perch && !hamlet) {
           const ring = siteStats(S, fr, r * 2.6, 24, 10);

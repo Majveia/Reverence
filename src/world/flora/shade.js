@@ -32,7 +32,10 @@ void main(){
   vec3 sd = uSunDir - upW * el;
   float sl = length(sd);
   // fake cast shadow: the crown's shadow centre lands ~0.55 H·cot(elevation) away from the trunk
-  float shift = (1.0 - uNight) * step(0.05, el) * min(iData.x * 0.55 * sl / max(el, 0.3), iPos.w * 2.5);
+  // (only beyond the cascaded shadow maps' reach — nearer, real shadows exist and this stays pure AO)
+  float dA = length(aw.xyz - uCamPos);
+  float farK = smoothstep(70.0, 180.0, dA);
+  float shift = farK * (1.0 - uNight) * step(0.05, el) * min(iData.x * 0.55 * sl / max(el, 0.3), iPos.w * 2.5);
   vec3 off = sl > 1e-3 ? -sd / sl * shift : vec3(0.0);
   float R = iPos.w * uSize * (1.0 + 0.25 * shift / max(iPos.w, 0.1));
   vec3 lp = vec3(position.x, 0.0, position.z) * R;
@@ -40,11 +43,12 @@ void main(){
   vec4 wp = modelMatrix * vec4(p, 1.0);
   wp.xyz += off;
   float d = length(wp.xyz - uCamPos);
-  vK = iData.y * rvLodFade(d, uFade).y;
+  vK = iData.y * rvLodFade(d, uFade).y * mix(0.6, 1.0, farK);
   vec4 mv = viewMatrix * wp;
   float vl = length(mv.xyz);
   float sinT = abs(dot((wp.xyz - uCamPos) / max(d, 1e-3), upW));
-  float pull = min(0.3 / max(sinT, 0.05), 2.0) + 0.004 * vl;
+  // far away the CDLOD mesh drops octaves of metres → pull proportionally more (2 % of distance)
+  float pull = min(0.3 / max(sinT, 0.05), 2.0) + 0.02 * vl;
   mv.xyz *= max(0.1, 1.0 - pull / max(vl, 1e-3));
   gl_Position = projectionMatrix * mv;
   vL = position.xz;

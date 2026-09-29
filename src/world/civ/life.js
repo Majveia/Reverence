@@ -20,16 +20,31 @@ function figureGeo(style) {
   const skin = mat(style === 'bizarre' ? '#9be870' : style === 'hearth' ? '#3a4a6a' : '#c89a7a', 0.7);
   const dark = mat('#2a2622', 0.8);
   const robe = style === 'monastery' || style === 'nomad' || style === 'spire' || style === 'ruins';
-  // legs
-  for (const s of [-1, 1]) g.box(s * 0.1, 0, 0, 0.13, 0.86, 0.15, 0.03, dark);
-  if (robe) g.cyl(0, 0.12, 0, 0.3, 0.2, 1.3, 8, true, cloth);
-  // torso
-  g.box(0, 0.84, 0, 0.4, 0.62, 0.24, 0.06, cloth);
-  // arms
-  for (const s of [-1, 1]) g.box(s * 0.26, 0.86, 0, 0.1, 0.58, 0.12, 0.03, cloth);
-  // head
-  g.sphere(0, 1.6, 0, 0.12, 8, 5, skin);
-  if (style === 'hearth') { for (const s of [-1, 1]) g.cyl(s * 0.07, 1.62, 0.1, 0.03, 0.02, 0.12, 4, true, skin); } // four-eyed Hearthian snout
+  const hair = mat(style === 'bizarre' ? '#3a2a6a' : '#2a1c14', 0.85);
+  const pants = mat('#3a3630', 0.85);
+  // shoes + tapered legs (x = ±0.1, below 0.86 m: the gait shader swings them)
+  for (const s of [-1, 1]) {
+    g.box(s * 0.1, 0, 0.03, 0.11, 0.08, 0.24, 0.03, dark);
+    g.cyl(s * 0.1, 0.06, 0, 0.06, 0.085, 0.82, 7, false, robe ? dark : pants);
+  }
+  if (robe) g.cyl(0, 0.12, 0, 0.3, 0.2, 1.3, 10, true, cloth);
+  // hips, tapered torso (flattened front-to-back), rounded shoulders, neck
+  g.push().scale(1, 1, 0.62);
+  g.cyl(0, 0.8, 0, 0.17, 0.16, 0.14, 10, true, robe ? cloth : pants);
+  g.cyl(0, 0.9, 0, 0.16, 0.2, 0.46, 10, false, cloth);
+  g.dome(0, 1.34, 0, 0.2, 10, 4, cloth, 0.5);
+  g.pop();
+  g.cyl(0, 1.44, 0, 0.05, 0.05, 0.1, 6, false, skin);
+  // arms (|x| > 0.19 between 0.86 and 1.45 m: the gait shader swings them) + hands
+  for (const s of [-1, 1]) {
+    g.cyl(s * 0.235, 0.92, 0, 0.045, 0.06, 0.5, 6, true, cloth);
+    g.sphere(s * 0.235, 0.88, 0, 0.05, 6, 4, skin);
+  }
+  // head (slightly tall ellipsoid) + hair cap
+  g.push().translate(0, 1.6, 0).scale(1, 1.15, 1.05);
+  g.sphere(0, 0, 0, 0.105, 10, 7, skin);
+  g.dome(0, 0.0, -0.012, 0.113, 10, 4, hair);
+  g.pop();
   // hand lantern (PAT.LAMP: glows at night; only some instances carry one, see aP.w)
   if (LANTERN.has(style)) {
     g.cyl(0.33, 0.62, 0.04, 0.012, 0.012, 0.22, 4, false, dark);
@@ -123,7 +138,8 @@ export function makeNPCs(style, paths, siteUp, rng, max) {
     const p = paths[i];
     A.set([p.a.x, p.a.y, p.a.z], i * 3); B.set([p.b.x, p.b.y, p.b.z], i * 3);
     const idle = rng.next() < 0.22;
-    Pp.set([idle ? 0 : rng.range(0.9, 1.5), rng.next() * 7, rng.range(0.9, 1.08), rng.next() < 0.4 ? 1 : 0], i * 4);
+    const kid = rng.next() < 0.1;
+    Pp.set([idle ? 0 : rng.range(0.9, 1.5) * (kid ? 1.2 : 1), rng.next() * 7, kid ? rng.range(0.6, 0.72) : rng.range(0.9, 1.08), rng.next() < 0.4 ? 1 : 0], i * 4);
     const c = tints[Math.floor(rng.next() * tints.length)];
     T.set([c.r, c.g, c.b], i * 3);
   }

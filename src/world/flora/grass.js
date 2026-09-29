@@ -16,6 +16,12 @@ import { FLORA_DITHER } from './materials.js';
  * independent of the blade's position in the disc, so density thinning never shrinks a patch into
  * a clump (it removes blades uniformly over the whole patch).
  */
+// Radial blade density inside a patch is a truncated Gaussian (σ = 0.4 of the patch radius): the
+// patch grid (spacing ≈ 0.8 × radius) then sums to an almost perfectly even sward. Uniform discs
+// on a near-regular grid left overlap/gap rows that read as stripes at grazing angles.
+const SIG = 0.4, TRUNC = 1 - Math.exp(-1 / (2 * SIG * SIG));
+const gaussR = (q) => Math.min(1.05, SIG * Math.sqrt(-2 * Math.log(1 - q * TRUNC)));
+
 export function makeGrassPatch(blades, segs, seed = 3, carpet = 0) {
   const rnd = mulberry(seed);
   const vpb = segs * 2 + 1;
@@ -38,7 +44,7 @@ export function makeGrassPatch(blades, segs, seed = 3, carpet = 0) {
   };
   for (let b = 0; b < blades; b++) {
     // blue-noise-ish distribution: sunflower spiral + jitter (disc edge softened so patches blend)
-    const rr = Math.min(1.08, Math.sqrt((b + 0.5) / blades) * (0.9 + rnd() * 0.2));
+    const rr = gaussR(Math.min(0.999, (b + 0.2 + rnd() * 0.6) / blades));
     const th = b * 2.39996 + (rnd() - 0.5) * 0.9;
     const x = Math.cos(th) * rr, z = Math.sin(th) * rr;
     const ang = rnd() * Math.PI * 2;
@@ -61,7 +67,7 @@ export function makeGrassPatch(blades, segs, seed = 3, carpet = 0) {
   const cr = perm(carpet);
   const c0 = blades * vpb;
   for (let b = 0; b < carpet; b++) {
-    const rr = Math.min(1.1, Math.sqrt((b + 0.5) / carpet) * (0.92 + rnd() * 0.16));
+    const rr = gaussR(Math.min(0.999, (b + 0.2 + rnd() * 0.6) / carpet));
     const th = b * 2.39996 + 1.3 + (rnd() - 0.5) * 1.2;
     const x = Math.cos(th) * rr, z = Math.sin(th) * rr;
     const ang = rnd() * Math.PI * 2;

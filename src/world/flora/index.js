@@ -112,6 +112,7 @@ class Flora {
     try { dbg = new URL(window.location.href).searchParams.get('floradbg') || ''; } catch (_) { /* no window */ }
     if (dbg.includes('nocast')) for (const L of this.layers) L.mesh.castShadow = false;
     if (dbg.includes('noreceive')) for (const L of this.layers) L.mesh.receiveShadow = false;
+    if (dbg.includes('grassnodepth') && this.grass) for (const L of [this.grass.dense, this.grass.sparse, this.grass.far]) L.material.depthTest = false;
     this._startWorkers();
     this.ready = false;
     this.initMs = Math.round(performance.now() - this.t0);
@@ -214,7 +215,7 @@ class Flora {
     };
     // distances (m)
     const D = this.D = {
-      c0: [42 * dd, 55 * dd], c1: [140 * dd, 180 * dd], cI: [680 * dd, 800 * dd], cS: [30, 38],
+      c0: [34 * dd, 44 * dd], c1: [140 * dd, 180 * dd], cI: [680 * dd, 800 * dd], cS: [20, 26],
       u0: [20 * dd, 28 * dd], uR: 150 * dd * Math.sqrt(this.density),
       r0: [45 * dd, 60 * dd], rR: 560 * dd,
       f0: [14, 20], fR: 48 * Math.sqrt(this.density),
@@ -275,8 +276,10 @@ class Flora {
       try {
         const csR = Math.min(700, 600 * dd);
         this.cshadeGeo = makeSwardDecal(tier === 'low' ? 8 : 12);
-        const cm = makeCanopyShadeMaterial({ fade: [0, 0, csR * 0.75, csR], size: 1.25, strength: (S.canopyShade ?? 1) });
-        const LC = new InstanceLayer(this.cshadeGeo, cm.material, null, { capacity: 4096, parent: this.group, castShadow: false, receiveShadow: false, name: 'flora-canopy-shade', boundsPad: 50 });
+        let csDbg = false;
+        try { csDbg = (new URL(window.location.href).searchParams.get('floradbg') || '').includes('cshade'); } catch (_) { /* no window */ }
+        const cm = makeCanopyShadeMaterial({ fade: [0, 0, csR * 0.75, csR], size: 1.9, strength: 0.65 * (S.canopyShade ?? 1), shade: csDbg ? [1, 0.02, 0.02] : undefined });
+        const LC = new InstanceLayer(this.cshadeGeo, cm.material, null, { capacity: 4096, parent: this.group, castShadow: false, receiveShadow: false, name: 'flora-canopy-shade', boundsPad: 60 });
         LC.uniforms = cm.uniforms;
         this.layers.push(LC);
         this.cshade = LC;
@@ -301,7 +304,7 @@ class Flora {
     if (!anyGrass) return;
     const R = this.grassR = (low ? 28 : 44) * Math.sqrt(clamp(this.density, 0.3, 1.5));
     const hgt = G.height ?? 0.55;
-    const pR = spacing * 0.8;
+    const pR = spacing * 1.25; // Gaussian patches (σ = 0.5 spacing) → even coverage, see grass.js
     const common = {
       base: G.base, tip: G.tip, dry: G.dry, glowTip: G.glowTip, glowAmt: 1.6, push: this.pushU,
       height: hgt * 0.66, patchR: pR, transl: 0.9, stiff: 1,
@@ -315,8 +318,8 @@ class Flora {
     const mD = makeGrassMaterial({ ...common, fade: [0, 0, nearF[0], nearF[1]], keep: [1e6, 1, 1, 1], width: 0.029, widenK: 0.012, density: 1 });
     const mS = makeGrassMaterial({ ...common, fade: [nearF[0], nearF[1], midF[0], midF[1]], keep: [1e6, 1, 1, 1], width: 0.045, widenK: 0.018, patchR: pR * 1.05, density: 1 });
     const mF = makeGrassMaterial({ ...common, fade: [midF[0], midF[1], R * 0.72, R], keep: [1e6, 1, 1, 1], width: 0.06, widenK: 0.018, patchR: pR * 1.05, density: 1 });
-    const LD = new InstanceLayer(dense, mD.material, null, { capacity: 2048, parent: this.group, castShadow: false, name: 'flora-grass-dense', boundsPad: 2 });
-    const LS = new InstanceLayer(sparse, mS.material, null, { capacity: 4096, parent: this.group, castShadow: false, name: 'flora-grass-mid', boundsPad: 2 });
+    const LD = new InstanceLayer(dense, mD.material, null, { capacity: 2048, parent: this.group, castShadow: false, name: 'flora-grass-dense', boundsPad: 2.5 });
+    const LS = new InstanceLayer(sparse, mS.material, null, { capacity: 4096, parent: this.group, castShadow: false, name: 'flora-grass-mid', boundsPad: 2.5 });
     const LF = new InstanceLayer(far, mF.material, null, { capacity: 8192, parent: this.group, castShadow: false, name: 'flora-grass-far', boundsPad: 3 });
     LD.uniforms = mD.uniforms; LS.uniforms = mS.uniforms; LF.uniforms = mF.uniforms;
     this.layers.push(LD, LS, LF);
@@ -329,7 +332,7 @@ class Flora {
     const decal = makeSwardDecal(low ? 8 : 12);
     let swDbg = false;
     try { swDbg = (new URL(window.location.href).searchParams.get('floradbg') || '').includes('sward'); } catch (_) { /* no window */ }
-    const mW = makeSwardMaterial({ fade: [0, 0, swFar * 0.6, swFar], patchR: pR, size: 1.45, shade: swDbg ? [1, 0.02, 0.02] : shade, strength: G.shadeAmt ?? 0.8 });
+    const mW = makeSwardMaterial({ fade: [0, 0, swFar * 0.6, swFar], patchR: pR, size: 1.1, shade: swDbg ? [1, 0.02, 0.02] : shade, strength: G.shadeAmt ?? 0.8 });
     const LW = new InstanceLayer(decal, mW.material, null, { capacity: 4096, parent: this.group, castShadow: false, receiveShadow: false, name: 'flora-sward', boundsPad: 2 });
     LW.uniforms = mW.uniforms;
     if (swDbg) { try { if (new URL(window.location.href).searchParams.get('floradbg').includes('nodepth')) mW.material.depthTest = false; } catch (_) { /* ignore */ } }

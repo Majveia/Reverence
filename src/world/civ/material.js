@@ -243,15 +243,35 @@ if (rvPat == 1 || rvPat == 6 || rvPat == 15 || rvPat == 22) {
   rvH = frame * 0.6 - win * 0.8 + (1.0 - win - frame) * (nC * 0.25 + nB * 0.1);
   rvBumpK = 0.03;
   // night lights (and dim interior by day)
-  float lit = step(hsh, uLitFrac);
+  // lights come on per ROOM (runs of 2-4 windows on a floor share one light), some floors are dark
+  // offices, so a facade reads as lived-in rooms instead of a random per-window checkerboard
+  float roomW = 2.0 + floor(rv_hash11(id.y * 1.7 + seed * 3.3) * 3.0);
+  float rid = floor((id.x + floor(rv_hash11(id.y + seed) * 3.0)) / roomW);
+  float hr = rv_hash12(vec2(rid, id.y) + seed * 5.3 + 0.5);
+  float darkFloor = step(rv_hash11(id.y * 3.1 + seed * 7.7), 0.12);
+  float lit = step(mix(hsh, hr, 0.8), uLitFrac) * (1.0 - darkFloor);
   float hsh3 = rv_hash12(id * 2.71 + seed * 1.9 + 17.0);
-  vec3 wc = hsh2 > 0.82 ? uWinCol2 : (hsh2 > 0.72 ? vec3(0.75, 1.0, 0.8) : uWinCol);
-  wc *= mix(0.2, 1.25, hsh3 * hsh3);
+  vec3 wc = hr > 0.82 ? uWinCol2 : (hr > 0.72 ? vec3(0.75, 1.0, 0.8) : uWinCol);
+  wc *= mix(0.35, 1.25, hsh3 * 0.4 + hr * 0.6);
+  // TV / screen glow in a few rooms (cool flicker)
+  if (hr > 0.94) wc = vec3(0.35, 0.55, 1.0) * (0.55 + 0.3 * sin(uTimeC * 7.0 + hr * 40.0) + 0.15 * sin(uTimeC * 23.0 + hsh * 9.0));
+  // room interior silhouettes inside the pane (only when the window is resolved on screen)
+  vec4 wr = rvPat == 1 ? uWinRect : (rvPat == 6 ? vec4(0.03, 0.16, 0.97, 0.97) : vec4(0.3, 0.12, 0.7, 0.85));
+  vec2 wf = clamp((f - wr.xy) / max(wr.zw - wr.xy, vec2(0.01)), 0.0, 1.0);
+  float lampX = 0.25 + 0.5 * hsh3;
+  float hot = exp(-pow((wf.x - lampX) * 3.5, 2.0) - pow((wf.y - 0.92) * 4.0, 2.0));
+  float furnH = 0.22 + 0.22 * rv_hash11(floor(wf.x * 4.0) + hsh * 13.0);
+  float furn = step(wf.y, furnH) * step(0.35, hsh2) * (1.0 - smoothstep(0.0, 0.02, abs(fract(wf.x * 4.0) - 0.5) - 0.42));
+  float px = 0.22 + 0.56 * hsh;
+  float body = (1.0 - smoothstep(0.07, 0.07 + fw.x * 3.0, abs(wf.x - px))) * step(wf.y, 0.6);
+  float head = 1.0 - smoothstep(0.065, 0.065 + fw.x * 3.0, length((wf - vec2(px, 0.7)) * vec2(1.0, 0.8)));
+  float person = max(body, head) * step(0.78, hsh3);
+  float room = mix(1.0, (0.65 + 0.9 * hot) * (1.0 - 0.75 * furn) * (1.0 - 0.9 * person), fade);
   // blinds / curtains on some windows
   float bl = f.y * 9.0; float fwb = fwidth(bl) * 1.2;
   float blinds = hsh2 > 0.45 && hsh2 < 0.7 ? mix(0.72, 0.4 + 0.6 * smoothstep(0.4 - fwb, 0.4 + fwb, abs(fract(bl) - 0.5) * 2.0), 1.0 - smoothstep(0.25, 0.5, fwb)) : 1.0;
   // light gradient: lampshade glow in the upper part of the pane, plus a dim floor-lamp pool low
-  float grad = (0.55 + 0.6 * smoothstep(0.2, 0.95, f.y)) * blinds;
+  float grad = (0.55 + 0.6 * smoothstep(0.2, 0.95, f.y)) * blinds * room;
   float onK = mix(0.03, 1.0, night);
   rvEmi += wc * lit * win * grad * onK * uEmitK * (rvPat == 6 ? 0.9 : 1.6);
   rvAlb *= mix(1.0, blinds, win * 0.5);

@@ -455,7 +455,7 @@ class Civ {
       const bx = _w.x * (s.R + gh) - s.pos.x, by = _w.y * (s.R + gh) - s.pos.y, bz = _w.z * (s.R + gh) - s.pos.z;
       // pools are additive: overlapping skirts of many lights sum into a flat wash, so keep each dim and
       // compact (a lit disc under each lamp, dark pavement between)
-      const k = 0.022 * Math.min(1.5, 4.5 / Math.max(2, hgt));
+      const k = 0.03 * Math.min(1.5, 4.5 / Math.max(2, hgt));
       out.push({ x: bx, y: by, z: bz, nx: _w.x, ny: _w.y, nz: _w.z, r: l.r * k, g: l.g * k, b: l.b * k, rad: Math.min(5, Math.max(2, hgt * 0.95)), hgt, w: lum * k });
     }
     // over budget: keep the brightest pools (street lamps and shopfronts beat faint window spill)
@@ -902,6 +902,7 @@ class Civ {
       style: this.styleName, level: this.level, sites: this.sites.length, detail: this.sites.filter((s) => s.detail).map((s) => s.id),
       jobs: this.jobs.length, tris: this.stats.tris, trisBuilt: this.stats.trisBuilt, npcs: this.stats.npcs, traffic: this.stats.traffic, boats: this.stats.boats,
       siteTris: Object.fromEntries(this.sites.filter((s) => s.detail).map((s) => [s.id, s.detail.tris])),
+      siteLots: Object.fromEntries(this.sites.filter((s) => s.layout).slice(0, 4).map((s) => [s.id, s.layout.lots.length])),
       fails: this.stats.lotFails + this.stats.jobFails + this.stats.empty, err: this.stats.err, farVis: this.sites.filter((s) => s.far?.visible).length,
       capDist: c ? Math.round(this.world.camera.position.distanceTo(c.pos)) : 0, planMs: this.stats.planMs, ms: this.stats.ms,
       capital: c ? { name: c.name, kind: c.kind, lat: +c.lat.toFixed(4), lon: +c.lon.toFixed(4), r: Math.round(c.radius) } : null,
