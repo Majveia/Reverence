@@ -64,6 +64,12 @@ void main(){
   float w = mix(uW0, uW1, pow(t, 0.65));
   P += side * aTS.y * w;
   vTS = aTS;
+  // a camera-facing ribbon only reads as a tail seen from the side: looking along the tail (its streamers
+  // would converge to a vanishing point as long streaks across the whole view) or from inside the fan,
+  // fade it out — the real tail's low surface brightness is invisible from within
+  float along = abs(dot(tang, view));
+  float dcam = length(P - uCamLocal);
+  vDepthFade = (1.0 - smoothstep(0.7, 0.93, along)) * smoothstep(w * 1.5, w * 6.0, dcam);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(P, 1.0);
 }`;
 const TAIL_FRAG = /* glsl */ `
@@ -71,6 +77,7 @@ const TAIL_FRAG = /* glsl */ `
 uniform vec3 uCol;
 uniform float uI, uKind, uTime, uSeed;
 varying vec2 vTS;
+varying float vDepthFade;
 void main(){
   float t = vTS.x, s = vTS.y;
   float I;
@@ -91,7 +98,7 @@ void main(){
     float prof = exp(-s * s * 1.6) * 0.55 + edge;
     I = prof * stri * pow(1.0 - t, 1.8) * head * (1.0 + 1.5 * exp(-t * 12.0));
   }
-  gl_FragColor = vec4(uCol * I * soft * uI, 1.0);
+  gl_FragColor = vec4(uCol * I * soft * uI * vDepthFade, 1.0);
 }`;
 
 const COMA_VERT = /* glsl */ `

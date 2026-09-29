@@ -23,9 +23,9 @@ export function chainGenome(rng, kind, style = {}) {
   if (kind === 'bird') {
     g.span = r2(rng, 1.4, 2.6) * (1 + ex * r2(rng, 0, 1.4));
     g.bodyLen = g.span * r2(rng, 0.3, 0.4);
-    g.bodyW = g.bodyLen * r2(rng, 0.11, 0.15);
+    g.bodyW = g.bodyLen * r2(rng, 0.155, 0.19);   // stylised: a readable body mass even in silhouette
     g.neck = r2(rng, 0.05, 0.25);
-    g.headK = r2(rng, 0.8, 1.05);
+    g.headK = r2(rng, 0.95, 1.15);
     g.beak = rng.weighted([['short', 3], ['long', 1.5], ['hook', 1.5], ['crest', ex * 2]]);
     g.beakLen = g.beak === 'long' ? r2(rng, 1.2, 2.0) : r2(rng, 0.5, 0.9);
     g.chord = r2(rng, 0.2, 0.28) * g.span * 0.5;
@@ -69,6 +69,19 @@ export function chainGenome(rng, kind, style = {}) {
     g.dorsal = r2(rng, 0.4, 1);
     g.speed = r2(rng, 1.5, 2.6);
     g.nT = 3;
+  } else if (kind === 'serpent') {
+    g.L = r2(rng, 2.2, 4.2) * (1 + ex * 0.7);
+    g.R = g.L * r2(rng, 0.028, 0.04);
+    g.headK = r2(rng, 1.25, 1.6);
+    g.snout = r2(rng, 0.8, 1.2);
+    g.crest = rng.chance(0.15 + ex * 0.5);
+    g.waveLen = r2(rng, 0.42, 0.6);
+    g.amp = r2(rng, 0.42, 0.62);
+    // ground-herd interface (behavior/ground.js Herd + moveGround)
+    g.S = g.R * 2.4; g.bodyLen = g.L / g.S * 0.6;
+    g.walkSpeed = r2(rng, 0.55, 0.9); g.runSpeed = r2(rng, 2.4, 3.6);
+    g.speed = g.walkSpeed;
+    g.nT = 7;
   } else if (kind === 'jelly') {
     g.R = r2(rng, 0.8, 1.8) * (1 + ex * 0.8);
     g.H = g.R * r2(rng, 0.7, 1.15);
@@ -106,6 +119,7 @@ export function chainRig(g) {
     if (g.kind === 'bird') { L = g.bodyLen; zHead = L * 0.24; tailZ = [-L * 0.22, -L * 0.42]; }
     else if (g.kind === 'ray') { L = g.bodyLen; zHead = L * 0.25; tailZ = [-L * 0.45, -L * 0.45 - g.tailLen * 0.33, -L * 0.45 - g.tailLen * 0.66]; }
     else if (g.kind === 'whale') { L = g.L; zHead = L * 0.22; tailZ = [-L * 0.08, -L * 0.2, -L * 0.31, -L * 0.41]; }
+    else if (g.kind === 'serpent') { L = g.L; zHead = L * 0.12; tailZ = []; for (let k = 0; k < g.nT; k++) tailZ.push(-L * (0.07 + 0.66 * k / (g.nT - 1))); }
     else { L = g.L; zHead = L * 0.18; tailZ = [-L * 0.05, -L * 0.2, -L * 0.34]; }
     bone('head', 0, V(0, 0, zHead));
     let parent = 0;
@@ -134,6 +148,8 @@ export function chainRig(g) {
       rig.extra.fin2L = bone('fin2L', rig.tail[0], V(R * 0.6, -R * 0.3, -L * 0.14));
       rig.extra.fin2R = bone('fin2R', rig.tail[0], V(-R * 0.6, -R * 0.3, -L * 0.14));
       rig.length = L; rig.height = R * 2; rig.radius = L * 0.55;
+    } else if (g.kind === 'serpent') {
+      rig.length = L; rig.height = g.R * 2; rig.radius = L * 0.6;
     } else {
       rig.length = L; rig.height = g.H; rig.radius = L * 0.6;
     }
@@ -167,6 +183,7 @@ export function chainGeometry(rig, lod = 0) {
   else if (g.kind === 'whale') whaleGeo(mb, rig, hi);
   else if (g.kind === 'fish') fishGeo(mb, rig, hi);
   else if (g.kind === 'jelly') jellyGeo(mb, rig, hi);
+  else if (g.kind === 'serpent') serpentGeo(mb, rig, hi);
   return mb.build();
 }
 
@@ -239,10 +256,11 @@ function birdGeo(mb, rig, hi) {
       const x = x0 + (half - x0) * t;
       const chord = c0 * (1 - (1 - g.tipK) * Math.pow(t, 1.3)) * (t > 0.85 ? Math.sqrt(Math.max(0.02, 1 - (t - 0.85) / 0.155)) : 1) * (0.92 + 0.12 * Math.sin(Math.PI * Math.min(1, t * 2.2)));
       const zLE = rig.zA + c0 * 0.5 - g.sweep * c0 * 1.2 * Math.pow(t, 1.6);
-      const y = W * 0.35 + Math.sin(t * Math.PI * 0.9) * half * 0.03;
+      const y = W * 0.35 + Math.sin(t * Math.PI * 0.9) * half * 0.03 + t * half * 0.05;
       pts.push([side * x, y, zLE - chord * 0.5]);
       w.push(Math.max(0.004, chord * 0.5));
-      ht.push(Math.max(0.003, W * 0.28 * (1 - t * 0.85)));
+      // thick muscular root (pectoral / covert mass) tapering to thin primaries
+      ht.push(Math.max(0.004, W * (0.5 * Math.pow(1 - t, 2.2) + 0.1 * (1 - t))));
     }
     const elbow = rig.elbowX;
     const fingers = g.fingers;
@@ -436,9 +454,9 @@ function fishGeo(mb, rig, hi) {
     for (let i = 0; i <= n; i++) {
       const t = i / n;
       const rake = tf === 'fork' || tf === 'lunate' ? 1 : 0.4;
-      pts.push([0, up * H * 0.62 * t, -L * 0.4 - L * 0.14 * t * rake - (tf === 'lunate' ? L * 0.05 * t * t : 0)]);
+      pts.push([0, up * H * 0.78 * t, -L * 0.4 - L * 0.16 * t * rake - (tf === 'lunate' ? L * 0.06 * t * t : 0)]);
       w.push(W * 0.1 * (1 - t * 0.6) + 0.001);
-      ht.push(Math.max(0.002, L * 0.07 * (tf === 'fan' ? 1.1 : 0.85) * (1 - t * (tf === 'fork' ? 0.75 : 0.35))));
+      ht.push(Math.max(0.002, L * 0.1 * (tf === 'fan' ? 1.1 : 0.9) * (1 - t * (tf === 'fork' ? 0.72 : 0.35))));
     }
     mb.loft({ pts, w, ht, hb: ht, segs: hi ? 8 : 4, up: [0, 0, 1],
       skin: (i, t, out) => { out[0] = last; out[1] = last; out[2] = 1; },
@@ -446,9 +464,18 @@ function fishGeo(mb, rig, hi) {
   }
   // dorsal fin
   const dp = [], dw = [], dh = [];
-  for (let i = 0; i <= 6; i++) { const t = i / 6; dp.push([0, H * 0.45 + H * 0.35 * g.dorsal * Math.sin(Math.PI * t) * (1 - t * 0.3), L * (0.12 - t * 0.35)]); dw.push(W * 0.08 + 0.001); dh.push(Math.max(0.002, H * 0.12 * Math.sin(Math.PI * Math.min(1, t * 1.1 + 0.05)))); }
+  for (let i = 0; i <= 6; i++) { const t = i / 6; dp.push([0, H * 0.45 + H * 0.5 * g.dorsal * Math.sin(Math.PI * t) * (1 - t * 0.3), L * (0.12 - t * 0.35)]); dw.push(W * 0.08 + 0.001); dh.push(Math.max(0.002, H * 0.16 * Math.sin(Math.PI * Math.min(1, t * 1.1 + 0.05)))); }
   mb.loft({ pts: dp, w: dw, ht: dh, hb: dh, segs: hi ? 6 : 3, up: [0, 0, 1], skin: (i, t, out) => skinZ(dp[i][2], out),
     info: (i, t, s, out) => { out[0] = code(PART.FIN, MAT.MEMBRANE); out[1] = t; out[2] = 0.9; out[3] = 1; }, capStart: 0.3, capEnd: 0.3 });
+  // pectoral fins (swept back, slightly drooped) — break the torpedo silhouette mid-leap
+  if (hi) {
+    for (const side of [1, -1]) {
+      const pp = [], pw = [], ph = [];
+      for (let i = 0; i <= 5; i++) { const t = i / 5; pp.push([side * (W * 0.8 + L * 0.16 * t), -H * 0.18 - L * 0.05 * t, L * (0.2 - 0.12 * t)]); pw.push(Math.max(0.002, L * 0.045 * Math.sin(Math.PI * Math.min(1, t * 0.9 + 0.12)))); ph.push(W * 0.05 + 0.001); }
+      mb.loft({ pts: pp, w: pw, ht: ph, hb: ph, segs: 5, up: [0, 1, 0], skin: (i, t, out) => { out[0] = 0; out[1] = 0; out[2] = 1; },
+        info: (i, t, s, out) => { out[0] = code(PART.FIN, MAT.MEMBRANE); out[1] = t; out[2] = -0.2; out[3] = 0.9; }, capStart: 0.3, capEnd: 0.3 });
+    }
+  }
 }
 
 function jellyGeo(mb, rig, hi) {
@@ -513,5 +540,50 @@ function jellyGeo(mb, rig, hi) {
       skin: (i, t, out) => chainSkin(t, [0.1, 0.5], [rig.extra.bell, chain[0], chain[1]], 0.1, out),
       bulge: hi ? (i, t, c, s) => 1 + 0.35 * Math.abs(Math.sin(t * 30 + c * 3)) * Math.abs(c) : undefined,
       info: (i, t, s, out) => { out[0] = code(PART.TENTACLE, MAT.JELLY); out[1] = t; out[2] = 0; out[3] = 1; }, capEnd: true });
+  }
+}
+
+function serpentGeo(mb, rig, hi) {
+  const g = rig.g, L = g.L, R = g.R;
+  const seg = L * 0.66 / (g.nT - 1);
+  const skinZ = zSkinner(rig, seg * 0.55);
+  // tail tip → body → neck → wedge head → snout. Flattened belly, slightly keeled back.
+  const hk = g.headK, sn = g.snout;
+  const prof = [
+    [-0.8, 0.06], [-0.74, 0.2], [-0.62, 0.45], [-0.48, 0.72], [-0.32, 0.92], [-0.16, 1.0], [-0.02, 0.95], [0.08, 0.72],
+    [0.115, 0.74 * hk], [0.14, 0.98 * hk], [0.165, 0.88 * hk], [0.19, 0.58 * hk], [0.2 + 0.012 * sn, 0.28 * hk],
+  ];
+  const ctrl = prof.map(([t, w]) => ({ z: t * L, y: t > 0.1 ? R * 0.1 : 0, w: R * w, ht: R * w * (t > 0.1 ? 0.62 : 0.86), hb: R * w * (t > 0.1 ? 0.55 : 0.7) }));
+  bodyLoft(mb, ctrl, hi ? 110 : 26, hi ? 14 : 7, skinZ, (i, t, s, out, c, p) => {
+    out[0] = code(p[2] > L * 0.1 ? PART.HEAD : PART.BODY, MAT.SKIN); out[1] = t; out[2] = s; out[3] = 0.55 + 0.45 * Math.max(0, (s + 1) * 0.5);
+  }, {
+    power: 2.1,
+    // ventral scutes (belly plates) + a faint dorsal keel
+    bulge: hi ? (p, t, c, s) => 1 + (s < -0.55 ? 0.035 * Math.pow(Math.abs(Math.sin(p[2] / (R * 0.45) * Math.PI)), 0.5) : 0) + (s > 0.9 ? 0.04 : 0) : undefined,
+    capStart: 0.8, capEnd: 0.6,
+  });
+  // eyes (set high on the head, behind the snout) with brow scales
+  for (const side of [1, -1]) {
+    eye(mb, [side * R * 0.72 * hk, R * 0.42, L * 0.165], R * 0.2 * hk, [side * 0.85, 0.45, 0.3].map((v, i, a) => v / Math.hypot(...a)), 1, hi);
+    if (hi) mb.ellipsoid([side * R * 0.62 * hk, R * 0.56, L * 0.162], R * 0.24 * hk, R * 0.08, R * 0.36, 8, 4, (t, o) => { o[0] = 1; o[1] = 1; o[2] = 1; },
+      (t, s, o) => { o[0] = code(PART.HEAD, MAT.SKIN); o[1] = 0.5; o[2] = 0.9; o[3] = 0.8; });
+  }
+  // mouth line
+  if (hi) {
+    for (const side of [1, -1]) {
+      const mc = [];
+      for (let i = 0; i <= 5; i++) { const t = i / 5; mc.push({ x: side * R * hk * (0.3 + 0.5 * t), z: L * (0.2 + 0.01 * sn - t * 0.07), y: R * 0.02, w: R * 0.03, ht: R * 0.02 }); }
+      bodyLoft(mb, mc, 8, 4, (z, o) => { o[0] = 1; o[1] = 1; o[2] = 1; }, (i, t, s, out) => { out[0] = code(PART.HEAD, MAT.DARK); out[1] = 1; out[2] = 0; out[3] = 0.4; }, { capStart: 0.5, capEnd: 0.5 });
+    }
+  }
+  // exotic worlds: a low dorsal crest of membrane spines down the neck
+  if (g.crest && hi) {
+    const grid = [];
+    for (let i = 0; i <= 12; i++) {
+      const t = i / 12, z = L * (0.1 - t * 0.5);
+      const hgt = R * (0.9 * Math.sin(Math.PI * Math.min(1, t * 1.15 + 0.05))) * (1 + 0.4 * Math.abs(Math.sin(t * 40)));
+      grid.push([[0, R * 0.75, z], [0, R * 0.75 + hgt, z - R * 0.3]]);
+    }
+    mb.membrane(grid, (i, j, o) => skinZ(grid[i][0][2], o), (i, j, side, o) => { o[0] = code(PART.FIN, MAT.MEMBRANE); o[1] = j; o[2] = 1; o[3] = 1; }, R * 0.04);
   }
 }

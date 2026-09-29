@@ -192,13 +192,13 @@ void main(){
   vec2 p = vUv;
   p.y = (p.y - uShape.y) / max(uShape.x, 1e-3);
   float r = length(p);
-  float a = exp(-r * r * 3.2) * (1.0 - smoothstep(0.85, 1.0, length(vUv)));
+  float a = exp(-r * r * 3.2) * (1.0 - smoothstep(0.45, 1.0, length(vUv)));
   a *= uPower * (0.94 + 0.06 * rv_ign(gl_FragCoord.xy));
   gl_FragColor = vec4(uColor * a, 0.0);
 }`;
 /** Quad in the XZ plane (normal +Y), size×size. */
-export function makePool({ size = 4, color = [0.4, 0.9, 1.6], shape = [1, 0] } = {}) {
-  const geo = new THREE.PlaneGeometry(size, size);
+export function makePool({ size = 4, color = [0.4, 0.9, 1.6], shape = [1, 0], segs = 1 } = {}) {
+  const geo = new THREE.PlaneGeometry(size, size, segs, segs);
   geo.rotateX(-Math.PI / 2);
   const mat = new THREE.ShaderMaterial({
     vertexShader: POOL_VERT, fragmentShader: POOL_FRAG,
@@ -210,5 +210,43 @@ export function makePool({ size = 4, color = [0.4, 0.9, 1.6], shape = [1, 0] } =
   const m = new THREE.Mesh(geo, mat);
   m.frustumCulled = false;
   m.renderOrder = 3;
+  if (segs > 1) {
+    geo.attributes.position.setUsage(THREE.DynamicDrawUsage);
+    m.userData.base = Float32Array.from(geo.attributes.position.array);
+    m.userData.size = size;
+  }
   return m;
+}
+
+const _cp = new THREE.Vector3(), _cl = new THREE.Vector3();
+/**
+ * Drape a subdivided pool (makePool({segs})) over the ground: call after setting its position and
+ * quaternion. Each vertex is lifted/lowered along the pool's up so the light lies on slopes, dune
+ * crests and hollows instead of floating above them or vanishing into them. `ground.supportAt(p)`
+ * (CPU heightfield, water-aware) gives the height; throttled to when the pool moved noticeably.
+ */
+export function conformPool(m, ground, R, lift = 0.12) {
+  const base = m.userData.base;
+  if (!base || !ground) return;
+  const ud = m.userData;
+  if (ud.lp && ud.lp.distanceToSquared(m.position) < 0.04 && Math.abs(ud.lq.dot(m.quaternion)) > 0.99995) return;
+  (ud.lp || (ud.lp = new THREE.Vector3())).copy(m.position);
+  (ud.lq || (ud.lq = new THREE.Quaternion())).copy(m.quaternion);
+  const a = m.geometry.attributes.position.array;
+  const lim = ud.size * 0.5;
+  const upx = _cl.set(0, 1, 0).applyQuaternion(m.quaternion);
+  const ux = upx.x, uy = upx.y, uz = upx.z;
+  for (let i = 0; i < a.length; i += 3) {
+    _cp.set(base[i], 0, base[i + 2]).applyQuaternion(m.quaternion).add(m.position);
+    let h = 0;
+    try { h = ground.supportAt(_cp); } catch (_) { h = 0; }
+    if (!Number.isFinite(h)) continue;
+    const L = _cp.length() || 1;
+    // radial gap between the flat plane and the ground, converted to a shift along the pool's up
+    const cosU = (_cp.x * ux + _cp.y * uy + _cp.z * uz) / L;
+    const d = (R + h + lift - L) / Math.max(0.5, cosU);
+    a[i] = base[i]; a[i + 2] = base[i + 2];
+    a[i + 1] = Math.max(-lim, Math.min(lim, d));
+  }
+  m.geometry.attributes.position.needsUpdate = true;
 }

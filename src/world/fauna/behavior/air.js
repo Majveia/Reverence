@@ -7,7 +7,7 @@
 import { clamp, damp, vnoise1 } from '../math.js';
 import { tangentBasis } from './ground.js';
 
-const _e = new Float64Array(3), _n = new Float64Array(3);
+const _e = new Float64Array(3), _n = new Float64Array(3), _sp = new Float64Array(3);
 
 /** unit up at p */
 function upOf(p, out) { const l = Math.hypot(p[0], p[1], p[2]) || 1; out[0] = p[0] / l; out[1] = p[1] / l; out[2] = p[2] / l; return l; }
@@ -312,14 +312,16 @@ export class School {
     // leaping
     this.jumpT -= dt;
     if (this.jumpT <= 0) {
-      this.jumpT = this.showy ? this.rng.range(0.12, 0.4) : this.rng.range(2.5, 8);
-      for (let q = this.showy ? 3 : 1; q > 0; q--) {
+      this.jumpT = this.showy ? this.rng.range(0.25, 0.55) : this.rng.range(2.5, 8);
+      for (let q = this.showy ? 2 : 1; q > 0; q--) {
       const j = M[Math.floor(this.rng.next() * n)];
       if (j && !j.leap) {
         j.leap = true; const up = j.up;
         // launch speed to clear the surface by an apex of 0.6–1.8 m from the current depth
         const dep = Math.max(0, env.R + env.sea - Math.hypot(j.pos[0], j.pos[1], j.pos[2]));
-        const k = Math.sqrt(2 * 9.8 * (dep + 0.6 + this.rng.next() * 1.2)); j.vel[0] += up[0] * k; j.vel[1] += up[1] * k; j.vel[2] += up[2] * k; }
+        const apex = this.showy ? 1.1 + this.rng.next() * 1.4 : 0.6 + this.rng.next() * 1.2;
+        const k = Math.sqrt(2 * 9.8 * (dep + apex)); j.vel[0] += up[0] * k; j.vel[1] += up[1] * k; j.vel[2] += up[2] * k;
+        const fk = this.showy ? 1.6 : 1.2; j.vel[0] += j.fwd[0] * fk; j.vel[1] += j.fwd[1] * fk; j.vel[2] += j.fwd[2] * fk; }
       }
     }
     for (let i = 0; i < n; i++) {
@@ -327,6 +329,15 @@ export class School {
       const up = m.up;
       const rr = upOf(m.pos, up);
       const depth = env.R + env.sea - rr;     // > 0 underwater
+      // breach / re-entry → spray + foam ring on the surface (only near the camera)
+      const above = depth <= 0;
+      if (m.wasAbove !== undefined && above !== m.wasAbove && env.splash && m.dist < 260) {
+        const k = rr > 0 ? (env.R + env.sea) / rr : 1;
+        _sp[0] = m.pos[0] * k; _sp[1] = m.pos[1] * k; _sp[2] = m.pos[2] * k;
+        const vu = Math.abs(m.vel[0] * up[0] + m.vel[1] * up[1] + m.vel[2] * up[2]);
+        try { env.splash(_sp, up, this.species.genome.L * m.scale * (above ? 0.8 : 1.1) * Math.min(1.6, 0.5 + vu * 0.15)); } catch (_) { /* cosmetic */ }
+      }
+      m.wasAbove = above;
       if (m.leap) {
         // ballistic leap
         m.vel[0] -= up[0] * 9.8 * dt; m.vel[1] -= up[1] * 9.8 * dt; m.vel[2] -= up[2] * 9.8 * dt;

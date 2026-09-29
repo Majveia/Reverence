@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { Vehicle } from './Vehicle.js';
 import { buildBike } from './models/bike.js';
-import { makeFlame, makePool } from './fx/glow.js';
+import { makeFlame, makePool, conformPool } from './fx/glow.js';
 import { Ribbon } from './fx/trails.js';
 import { clamp, damp, dampF, smoothstep, orthoForward, quatFromFrame, FastRand, noise1 } from './util.js';
 import { G } from '../../core/Uniforms.js';
@@ -71,7 +71,7 @@ export class Hoverbike extends Vehicle {
     // repulsor wash on the ground (placed each frame in planet-local space)
     this.pool = makePool({ size: 5.5, color: [liv.glow[0] * 0.7, liv.glow[1] * 0.7, liv.glow[2] * 0.7], shape: [1.5, 0] });
     this.world.root.add(this.pool);
-    this.headPool = makePool({ size: 14, color: [1.0, 0.92, 0.8], shape: [1.9, 0.35] });
+    this.headPool = makePool({ size: 14, color: [1.0, 0.92, 0.8], shape: [1.9, 0.35], segs: 8 });
     this.world.root.add(this.headPool);
     // light ribbons (tail + vane tips)
     const q = this.mgr.quality;
@@ -322,6 +322,7 @@ export class Hoverbike extends Vehicle {
       grd.normalAt(_p, 3, _n, true);
       orthoForward(_n, this.heading, _f);
       quatFromFrame(_n, _f, this.headPool.quaternion);
+      conformPool(this.headPool, grd, R, 0.1);
       this.headPool.material.uniforms.uPower.value = hk * 0.6;
     }
     // ribbons

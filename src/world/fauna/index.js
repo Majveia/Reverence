@@ -28,14 +28,15 @@ import { Crowd } from './Crowd.js';
 import { moveGround, Herd, tangentBasis } from './behavior/ground.js';
 import { Flock, Pod, Swarm, School } from './behavior/air.js';
 import { cellsPerFace, cellsAround, cellDir } from './cells.js';
-import { Motes } from './particles.js';
+import { Motes, Splashes } from './particles.js';
 
 const LEGGED = new Set(['grazer', 'giant', 'hexapod', 'hopper', 'critter']);
-const SHOW = { birds: 'bird', bird: 'bird', rays: 'ray', ray: 'ray', whales: 'whale', whale: 'whale', jellies: 'jelly', jelly: 'jelly', fish: 'fish' };
+const GROUND = new Set([...LEGGED, 'serpent']);
+const SHOW = { serpents: 'serpent', snake: 'serpent', birds: 'bird', bird: 'bird', rays: 'ray', ray: 'ray', whales: 'whale', whale: 'whale', jellies: 'jelly', jelly: 'jelly', fish: 'fish' };
 // per archetype: draw distance (m), LOD0 distance, discovery distance
 const DIST = {
   grazer: [900, 95, 70], giant: [2000, 160, 220], hexapod: [900, 95, 70], hopper: [700, 70, 60], critter: [300, 40, 25],
-  bird: [750, 70, 140], ray: [1200, 140, 220], whale: [7000, 1100, 1800], jelly: [600, 90, 90], fish: [180, 30, 45],
+  serpent: [320, 45, 30], bird: [750, 70, 140], ray: [1200, 140, 220], whale: [7000, 1100, 1800], jelly: [600, 90, 90], fish: [180, 30, 45],
 };
 const _v3 = new THREE.Vector3(), _sph = new THREE.Sphere(), _mat = new THREE.Matrix4();
 const _e = new Float64Array(3), _n = new Float64Array(3), _d = new Float64Array(3);
@@ -98,11 +99,18 @@ class Fauna {
         return h;
       },
     };
-    this.animCtx = { ground: this.env.ground, sample: true, t: 0 };
+    this.animCtx = { ground: this.env.ground, sample: true, t: 0, R: this.R };
     this.showcase = String(world.params?.fauna ?? '').toLowerCase();
     this.showDist = Math.max(0.3, Math.min(4, parseFloat(world.params?.faunadist ?? 1) || 1));   // showcase distance multiplier
     this.motes = null;
     try { this.motes = new Motes(this); } catch (e) { console.warn('[fauna] motes disabled', e); }
+    this.splashes = null;
+    if (this.hasOcean) {
+      try {
+        this.splashes = new Splashes(this);
+        this.env.splash = (p, up, k) => this.splashes.burst(p, up, k, this.t);
+      } catch (e) { console.warn('[fauna] splashes disabled', e); }
+    }
   }
 
   // ------------------------------------------------------------------------------ species runtime
@@ -123,7 +131,7 @@ class Fauna {
       const jelly = sp.archetype === 'jelly';
       const crowd = new Crowd(this.root, {
         name: sp.name, bones: rig.nb, pivots: rig.pivots, lods, look: sp.look, capacity: 16,
-        castShadow: shadows && (sp.archetype === 'whale' || sp.archetype === 'bird' || sp.archetype === 'ray'),
+        castShadow: shadows && (sp.archetype === 'whale' || sp.archetype === 'bird' || sp.archetype === 'ray' || sp.archetype === 'serpent'),
         transparent: jelly, opacity: 0.72, renderOrder: jelly ? 2 : 0,
       });
       rt = { rig, animator, crowd, radius: rig.radius, height: rig.height, centerUp: rig.center || 0 };
@@ -296,14 +304,14 @@ class Fauna {
         const pl = Math.hypot(P[0], P[1], P[2]);
         const rr = this.R + this.sea - depthT;
         P[0] *= rr / pl; P[1] *= rr / pl; P[2] *= rr / pl;
-        const c = this._makeFlyer(sp, rt, P, [fx, fy, fz], rng.range(0.75, 1.25), rng);
+        const c = this._makeFlyer(sp, rt, P, [fx, fy, fz], rng.range(0.75, 1.25) * (opts.scale ?? 1), rng);
         c.index = i; c.depthT = depthT;
         c.off[0] = (_e[0] * Math.cos(a) + _n[0] * Math.sin(a)) * r * 0.5; c.off[1] = (_e[1] * Math.cos(a) + _n[1] * Math.sin(a)) * r * 0.5; c.off[2] = (_e[2] * Math.cos(a) + _n[2] * Math.sin(a)) * r * 0.5;
         c.vel[0] = fx * g.speed; c.vel[1] = fy * g.speed; c.vel[2] = fz * g.speed;
         members.push(c);
       }
       void l;
-      grp = new School(sp, members, home, rng.fork('school'), this.env, { speed: g.speed, range: opts.range ?? 22, seek: 2.5, sep: g.L * 1.1, minDepth: opts.minDepth });
+      grp = new School(sp, members, home, rng.fork('school'), this.env, { speed: g.speed, range: opts.range ?? 22, seek: 2.5, sep: g.L * 1.1 * (opts.scale ?? 1), minDepth: opts.minDepth });
     }
     if (!grp) return null;
     for (const m of members) { m.group = grp; this.creatures.push(m); }
@@ -487,13 +495,13 @@ class Fauna {
     const at = (dir, dist, side = 0) => [C.x + dir[0] * dist + rx * side, C.y + dir[1] * dist + ry * side, C.z + dir[2] * dist + rz * side];
 
     // ---- ground herd (default, or the requested legged archetype)
-    const legged = LEGGED.has(want);
+    const legged = GROUND.has(want);
     if (!want || legged) {
       let sp = legged ? this.roster.find((x) => x.archetype === want) : null;
       const probe = sp || this.roster.find((x) => x.layer === 'ground' && x.archetype === 'grazer');
       if (probe) {
         const g = probe.genome;
-        const base = Math.min(90, Math.max(12, 7 + g.S * (legged ? 7 : 10) + (probe.archetype === 'giant' ? 38 : 0))) * this.showDist;
+        const base = (probe.archetype === 'serpent' ? 5 + g.L * 1.2 : Math.min(90, Math.max(12, 7 + g.S * (legged ? 7 : 10) + (probe.archetype === 'giant' ? 38 : 0)))) * this.showDist;
         const angs = [0, 0.3, -0.3, 0.55, -0.55, 0.8, -0.8];
         let placed = false, fallback = null;
         for (const k of [1, 0.7, 1.4, 0.5]) {
@@ -503,12 +511,12 @@ class Fauna {
             if (h < this.sea + 2) continue;
             if (!fallback) fallback = Float64Array.from(_d);
             if (!this._clearView(C, _d[0], _d[1], _d[2], g.S * 1.1)) continue;
-            if (!sp) sp = this._pickGround(rng, [ux, uy, uz], h, (x) => x.archetype !== 'critter') || probe;
+            if (!sp) sp = this._pickGround(rng, [ux, uy, uz], h, (x) => x.archetype !== 'critter' && x.archetype !== 'serpent') || probe;
             // broadside to the camera: heading along the camera's right vector
             const dl = Math.hypot(_d[0], _d[1], _d[2]);
             tangentBasis(_d[0] / dl, _d[1] / dl, _d[2] / dl, _e, _n);
             const hd = Math.atan2(rx * _n[0] + ry * _n[1] + rz * _n[2], rx * _e[0] + ry * _e[1] + rz * _e[2]) + (rng.chance(0.5) ? Math.PI : 0) + 0.35;
-            mark(this._spawnHerd(sp, Float64Array.from(_d), rng.fork('welcome'), sp.archetype === 'giant' ? rng.int(3, 4) : rng.int(Math.max(5, sp.group[0]), Math.max(8, sp.group[1])), hd));
+            mark(this._spawnHerd(sp, Float64Array.from(_d), rng.fork('welcome'), sp.archetype === 'giant' ? rng.int(3, 4) : sp.archetype === 'serpent' ? rng.int(2, 3) : rng.int(Math.max(5, sp.group[0]), Math.max(8, sp.group[1])), hd));
             const hg = entry.groups[entry.groups.length - 1];
             if (hg) { hg.timer = 75; hg.tame = true; }   // stay and graze in front of the camera (until approached)
             placed = true;
@@ -518,7 +526,7 @@ class Fauna {
         }
         if (!placed && fallback) {
           if (!sp) sp = probe;
-          mark(this._spawnHerd(sp, fallback, rng.fork('welcome'), sp.archetype === 'giant' ? 3 : Math.max(6, sp.group[0])));
+          mark(this._spawnHerd(sp, fallback, rng.fork('welcome'), sp.archetype === 'giant' ? 3 : sp.archetype === 'serpent' ? 2 : Math.max(6, sp.group[0])));
           const hg = entry.groups[entry.groups.length - 1];
           if (hg) { hg.timer = 75; hg.tame = true; }
         }
@@ -567,7 +575,7 @@ class Fauna {
     if (wantSky === 'whale' || !want) {
       const sp = pick('whale');
       if (sp) {
-        const { home, agl } = wantSky ? aim((200 + sp.genome.L * 2.2) * this.showDist, 5 - 2 * (1 - Math.min(1, this.showDist)), -0.08, 14 + sp.genome.R) : aim(700, 7, 0.2, 90);
+        const { home, agl } = wantSky ? aim((200 + sp.genome.L * 2.2) * this.showDist, 9.5 - 2 * (1 - Math.min(1, this.showDist)), -0.08, 14 + sp.genome.R) : aim(700, 7, 0.2, 90);
         mark(this._spawnAir(sp, home, rng.fork('ww'), wantSky ? 3 : undefined, { agl: [agl, agl + 10], heading: across(home, -0.35) }));
       }
     }
@@ -583,7 +591,7 @@ class Fauna {
       const sp = pick('fish');
       if (sp) {
         // nearest water in front of the camera
-        for (let dist = 9; dist < 400; dist *= 1.12) {
+        for (let dist = 6; dist < 400; dist *= 1.1) {
           let done = false;
           for (const ang of [0.3, -0.3, 0.55, -0.55, 0, 0.9, -0.9]) {
             const p = at(dirAt(ang), dist);
@@ -591,8 +599,11 @@ class Fauna {
             const h = this.surface.height(p[0] / pl, p[1] / pl, p[2] / pl);
             if (h < this.sea - 0.7) {
               const r = this.R + this.sea;
-              const g = mark(this._spawnAir(sp, [p[0] / pl * r, p[1] / pl * r, p[2] / pl * r], rng.fork('wf'), 28, { range: 7, minDepth: 0.55, maxDepth: (this.sea - h) * 0.55 }));
+              // showcase fish are big leapers (≥ ~1.3 m, salmon/tarpon scale) so a breach reads at 15–30 m
+              const big = Math.max(1, 1.35 / sp.genome.L);
+              const g = mark(this._spawnAir(sp, [p[0] / pl * r, p[1] / pl * r, p[2] / pl * r], rng.fork('wf'), 22, { range: 7, minDepth: 0.55, maxDepth: (this.sea - h) * 0.55, scale: big }));
               if (g) { g.showy = true; g.jumpT = 0.2; }   // showcase school: frequent leaps so it reads above the surface
+              this.showcaseInfo = { fish: Math.round(dist) };
               done = true; break;
             }
           }
@@ -658,6 +669,7 @@ class Fauna {
     if (dt <= 0) { this._animateAll(0); return; }
     for (const g of this.groups) {
       try { g.update(dt, this.env); } catch (e) { if (!g._err) { g._err = true; console.warn('[fauna] group update failed', e); } }
+      this._alarmCheck(g);
     }
     for (const c of this.creatures) {
       if (c.air || !c.want) continue;
@@ -666,6 +678,29 @@ class Fauna {
     }
     this._animateAll(dt);
     this.motes?.update(dt, t);
+  }
+
+  /** 'creature:alarm' {archetype, species, name, pos, dist, count} when a herd bolts or a flock scatters
+   *  (audio: alarm calls, stampede / wing bursts). Rate limited. */
+  _alarmCheck(g) {
+    let on;
+    if (typeof g.state === 'number' && g.getState) on = g.state === 3;          // Herd FLEE
+    else if (typeof g.scatter === 'number') on = g.scatter > 0.5;               // Flock scatter
+    else return;
+    const fire = on && !g._alarmOn;
+    g._alarmOn = on;
+    if (!fire || this.t - (this._lastAlarm ?? -9) < 1.2) return;
+    this._lastAlarm = this.t;
+    const m = g.members?.[0];
+    if (!m) return;
+    const P = this.playerPos;
+    try {
+      this.world.events?.emit?.('creature:alarm', {
+        archetype: g.species.archetype, species: g.species.id, name: g.species.name,
+        pos: new THREE.Vector3(m.pos[0], m.pos[1], m.pos[2]),
+        dist: Math.hypot(m.pos[0] - P[0], m.pos[1] - P[1], m.pos[2] - P[2]), count: g.members.length,
+      });
+    } catch (_) { /* listeners must not break the frame */ }
   }
 
   _animateAll(dt) {
@@ -713,6 +748,7 @@ class Fauna {
     }
     for (const rt of this.rt.values()) rt.crowd.commit(O);
     this.motes?.lateUpdate();
+    this.splashes?.lateUpdate(this.t);
     if (this.frame % 15 === 0) this._discover();
   }
 
@@ -754,9 +790,10 @@ class Fauna {
       roster: this.roster.map((s) => `${s.archetype}:${s.name}`),
       groups: this.groups.length,
       creatures: this.creatures.length, byKind,
-      drawn, meshes: calls + (this.motes?.visible ? 1 : 0),
+      drawn, meshes: calls + (this.motes?.visible ? 1 : 0) + (this.splashes?.points.visible ? 1 : 0),
       motes: this.motes?.getState?.(),
       discovered: [...this.discovered].map((id) => this.roster.find((s) => s.id === id)?.name),
+      showcase: this.showcaseInfo || null,
     };
   }
 
@@ -766,6 +803,7 @@ class Fauna {
     for (const rt of this.rt.values()) rt.crowd.dispose();
     this.rt.clear();
     this.motes?.dispose();
+    this.splashes?.dispose();
     this.root.removeFromParent();
     this.groups.length = 0; this.creatures.length = 0;
   }

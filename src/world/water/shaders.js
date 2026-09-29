@@ -374,7 +374,7 @@ void main(){
   // pixel footprint relative to the crack widths → fade fine structure to its average (no shimmer)
   float fr0 = smoothstep(0.012, 0.05, fp / 55.0), fr1 = smoothstep(0.012, 0.05, fp / 16.4);
   // gaps between rafts widen where the melt is active: the crust breaks into drifting islands, then opens
-  float gapW = mix(0.035, 0.8, act * act);
+  float gapW = mix(0.055, 0.8, act * act);
   float gap = 1.0 - smoothstep(gapW * 0.55, gapW, c0.r + (c1.a - 0.5) * 0.08);
   gap = mix(gap, min(gapW * 1.6, 1.0), fr0);
   float megaCrack = 1.0 - smoothstep(0.015, 0.06 + 0.14 * act, cM.r);
@@ -591,18 +591,24 @@ void main(){
   float lobeN = clamp(aB * aB / max(dB, 1e-5), 0.0, 1.0); lobeN *= lobeN;        // GGX(NdH)/GGX(1)
   float lobeRest = smithVis(NdL, NdV, aB) * Fs * NdL / (RV_PI * aB * aB);
   if (lobeN > 0.002 && farF < 0.999){
+    // two octaves of cells (1.6–3.2 px and 3.2–6.4 px), cross-faded with the footprint so there is no size
+    // band; the second octave is rotated and every glint sits at a random spot inside its cell → no lattice rows
     float lc = log2(fp * 1.6);
-    float cs = exp2(ceil(lc));
-    vec2 cq = (vQ + uQN) / cs;
-    vec2 ci = mod(floor(cq), 1024.0);
-    float tw = mod(floor(uTime * 7.0 + rv_hash12(ci + 17.0) * 7.0), 512.0);
-    float hs = rv_hash13(vec3(ci, tw));
+    float lf = floor(lc), bl = lc - lf;
     float pr = 0.3 * lobeN * lobeN * (0.6 + 0.8 * gust);
-    // soft round glints inside the cell (no square pixels up close)
-    vec2 fc = fract(cq) - 0.5;
-    float spot = 1.0 - smoothstep(0.18, 0.5, length(fc));
-    float sp = smoothstep(1.0 - pr, 1.0 - pr * 0.7, hs) * spot;
-    spec += Esun * sp * lobeRest * 3.0 * uLook2.w * (1.0 - farF);
+    float sp = 0.0;
+    for (int j = 0; j < 2; j++){
+      float cs = exp2(lf + 1.0 + float(j));
+      vec2 cq = (j == 0 ? (vQ + uQN) : ROT1 * (vQ + uQN)) / cs;
+      vec2 ci = mod(floor(cq), 1024.0) + float(j) * 37.0;
+      float tw = mod(floor(uTime * 7.0 + rv_hash12(ci + 17.0) * 7.0), 512.0);
+      float hs = rv_hash13(vec3(ci, tw));
+      vec2 o = vec2(rv_hash12(ci + 3.1), rv_hash12(ci + 9.7)) - 0.5;
+      float rad = 0.16 + 0.12 * rv_hash12(ci + 5.3);
+      float spot = 1.0 - smoothstep(rad * 0.4, rad, length(fract(cq) - 0.5 - o * (0.9 - 2.0 * rad)));
+      sp += smoothstep(1.0 - pr, 1.0 - pr * 0.7, hs) * spot * (j == 0 ? 1.0 - bl : bl);
+    }
+    spec += Esun * sp * lobeRest * 4.5 * uLook2.w * (1.0 - farF);
   }
   spec *= 1.0 + 1.2 * farF;                                      // orbital glint survives the aerial perspective
   spec = min(spec, vec3(3.0e4));

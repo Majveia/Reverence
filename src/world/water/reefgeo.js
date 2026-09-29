@@ -154,9 +154,9 @@ function branchCoral(rng) {
       dx += rng.range(-0.15, 0.15); dz += rng.range(-0.15, 0.15); dy += 0.08;
       const l = Math.hypot(dx, dy, dz); dx /= l; dy /= l; dz /= l;
     }
-    B.tube(pts, 4, depth === 0);
+    B.tube(pts, 5, depth === 0);
     if (depth > 0) {
-      const nb = 2;
+      const nb = rng.next() < 0.45 ? 3 : 2;
       for (let b = 0; b < nb; b++) {
         const a = rng.range(0, Math.PI * 2), sp = rng.range(0.35, 0.7);
         let ndx = dx + Math.cos(a) * sp, ndy = dy + 0.15, ndz = dz + Math.sin(a) * sp;
@@ -165,12 +165,12 @@ function branchCoral(rng) {
       }
     }
   };
-  const nTrunk = rng.int(3, 4);
+  const nTrunk = rng.int(4, 6);
   for (let i = 0; i < nTrunk; i++) {
     const a = rng.range(0, Math.PI * 2), sp = rng.range(0.2, 0.7);
     let dx = Math.cos(a) * sp, dz = Math.sin(a) * sp, dy = 1;
     const l = Math.hypot(dx, dy, dz);
-    grow(Math.cos(a) * 0.05, -0.05, Math.sin(a) * 0.05, dx / l, dy / l, dz / l, rng.range(0.22, 0.32), 0.035, 2);
+    grow(Math.cos(a) * 0.05, -0.05, Math.sin(a) * 0.05, dx / l, dy / l, dz / l, rng.range(0.22, 0.32), 0.048, 2);
   }
   return B.build('reef-branch');
 }

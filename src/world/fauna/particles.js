@@ -203,3 +203,174 @@ export class Motes {
     this.mat.dispose();
   }
 }
+
+// ------------------------------------------------------------------------------------------------
+// Splashes: droplet sprays + surface foam when fish breach / re-enter the water (and anything else
+// that calls burst()). A fixed ring buffer of point sprites, one draw call; each particle's
+// ballistic path is evaluated in the vertex shader from (spawn pos, velocity, spawn time) so the
+// CPU only writes the few particles of a new burst.
+const SPLASH_VERT = /* glsl */`
+attribute vec4 aVel;       // velocity (m/s), kind (0 droplet, 1 foam)
+attribute vec4 aBirth;     // spawn time, life, size, seed
+uniform float uTime;
+uniform vec3 uCenter;      // planet centre, relative to the particle origin
+uniform vec2 uResolution;
+uniform vec3 uSunDir;
+varying float vA;
+varying float vKind;
+varying float vLit;
+void main(){
+  float age = uTime - aBirth.x;
+  float life = aBirth.y;
+  vec3 up = normalize(position - uCenter);
+  vec3 p = position;
+  float k = clamp(age / life, 0.0, 1.0);
+  if (aVel.w < 0.5) {
+    p += aVel.xyz * age - up * 4.9 * age * age;
+  } else {
+    // foam: slides outward on the surface, decelerating
+    p += aVel.xyz * (1.0 - exp(-age * 2.2)) / 2.2;
+  }
+  vKind = aVel.w;
+  vec4 mv = modelViewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mv;
+  float alive = step(0.0, age) * step(age, life);
+  // droplets must not fall far below their spawn level (they hit the water)
+  float below = dot(p - position, up);
+  alive *= step(-0.25, below + 0.25 * aVel.w);
+  vA = alive * (aVel.w < 0.5 ? (1.0 - k * k) : (1.0 - k) * 0.8);
+  vLit = 0.55 + 0.45 * max(dot(up, uSunDir), 0.0);
+  float size = aBirth.z * (aVel.w < 0.5 ? (1.0 - 0.4 * k) : (0.6 + 1.4 * k));
+  gl_PointSize = clamp(size * uResolution.y / max(-mv.z, 0.1), 1.5, 48.0);
+  if (vA < 0.004) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}`;
+const SPLASH_FRAG = /* glsl */`
+uniform vec3 uSunColor;
+uniform float uSunIntensity;
+uniform vec3 uAmbient;
+varying float vA;
+varying float vKind;
+varying float vLit;
+void main(){
+  vec2 q = gl_PointCoord * 2.0 - 1.0;
+  float r2 = dot(q, q);
+  if (r2 > 1.0) discard;
+  float a = (vKind < 0.5 ? smoothstep(1.0, 0.35, r2) : smoothstep(1.0, 0.0, r2) * 0.7) * vA;
+  vec3 light = uSunColor * min(uSunIntensity, 4.0) * 0.25 * vLit + uAmbient * 1.6 + 0.02;
+  vec3 col = vec3(0.92, 0.96, 1.0) * light;
+  gl_FragColor = vec4(col * a, a);
+}`;
+
+export class Splashes {
+  constructor(fauna, count = 480) {
+    this.f = fauna;
+    const q = fauna.q || {};
+    this.count = Math.round(count * Math.max(0.4, Math.min(1.2, q.particleScale ?? 1)));
+    this.head = 0;
+    this.origin = new Float64Array(3);
+    this.hasOrigin = false;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.count * 3), 3));
+    geo.setAttribute('aVel', new THREE.BufferAttribute(new Float32Array(this.count * 4), 4));
+    const birth = new Float32Array(this.count * 4);
+    for (let i = 0; i < this.count; i++) { birth[i * 4] = -1e6; birth[i * 4 + 1] = 1; }
+    geo.setAttribute('aBirth', new THREE.BufferAttribute(birth, 4));
+    for (const k of ['position', 'aVel', 'aBirth']) geo.attributes[k].setUsage(THREE.DynamicDrawUsage);
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+    this.geo = geo;
+    this.uniforms = {
+      uTime: G.uTime, uResolution: G.uResolution, uSunDir: G.uSunDir, uSunColor: G.uSunColor,
+      uSunIntensity: G.uSunIntensity ?? { value: 1 },
+      uAmbient: G.uAmbientSky ?? { value: new THREE.Color(0.3, 0.35, 0.4) },
+      uCenter: { value: new THREE.Vector3() },
+    };
+    this.mat = new THREE.ShaderMaterial({
+      vertexShader: SPLASH_VERT, fragmentShader: SPLASH_FRAG, uniforms: this.uniforms,
+      transparent: true, depthWrite: false, depthTest: true,
+      blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+    });
+    this.points = new THREE.Points(geo, this.mat);
+    this.points.name = 'fauna:splashes';
+    this.points.frustumCulled = false;
+    this.points.renderOrder = 6;
+    this.points.matrixAutoUpdate = false;
+    this.points.visible = false;
+    this.lastBurst = -1e9;
+    fauna.world.root.add(this.points);
+    this._dirtyLo = Infinity; this._dirtyHi = -1;
+    this._seed = 1;
+  }
+
+  _rnd() { this._seed = (this._seed * 16807) % 2147483647; return this._seed / 2147483647; }
+
+  /** planet-local position p (surface point), unit up, size k (~ body length in m), now = sim time */
+  burst(p, up, k, now) {
+    const O = this.origin;
+    if (!this.hasOrigin || Math.hypot(p[0] - O[0], p[1] - O[1], p[2] - O[2]) > 1500) {
+      O[0] = p[0]; O[1] = p[1]; O[2] = p[2]; this.hasOrigin = true;
+      // invalidate old particles (their positions were relative to the old origin)
+      const b = this.geo.attributes.aBirth.array;
+      for (let i = 0; i < this.count; i++) b[i * 4] = -1e6;
+      this._dirtyLo = 0; this._dirtyHi = this.count - 1;
+    }
+    const pos = this.geo.attributes.position.array, vel = this.geo.attributes.aVel.array, birth = this.geo.attributes.aBirth.array;
+    // tangent basis
+    let ex = up[1] * 0 - up[2] * 1, ey = up[2] * 0 - up[0] * 0, ez = up[0] * 1 - up[1] * 0;
+    if (Math.hypot(ex, ey, ez) < 0.1) { ex = 0; ey = up[2]; ez = -up[1]; }
+    const el = Math.hypot(ex, ey, ez); ex /= el; ey /= el; ez /= el;
+    const nx = up[1] * ez - up[2] * ey, ny = up[2] * ex - up[0] * ez, nz = up[0] * ey - up[1] * ex;
+    const nDrop = Math.round(10 + 22 * Math.min(2, k)), nFoam = Math.round(8 + 12 * Math.min(2, k));
+    const vUp = 1.8 + 2.4 * Math.sqrt(k);
+    for (let j = 0; j < nDrop + nFoam; j++) {
+      const i = this.head; this.head = (this.head + 1) % this.count;
+      const foam = j >= nDrop;
+      const a = this._rnd() * Math.PI * 2, rr = this._rnd();
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const r0 = (foam ? 0.15 : 0.05) * k * Math.sqrt(rr);
+      pos[i * 3] = p[0] - O[0] + (ex * ca + nx * sa) * r0 + up[0] * 0.03;
+      pos[i * 3 + 1] = p[1] - O[1] + (ey * ca + ny * sa) * r0 + up[1] * 0.03;
+      pos[i * 3 + 2] = p[2] - O[2] + (ez * ca + nz * sa) * r0 + up[2] * 0.03;
+      const hs = foam ? (0.4 + 0.9 * this._rnd()) * (0.6 + k) : (0.4 + 1.3 * this._rnd()) * (0.5 + 0.6 * k);
+      const vs = foam ? 0 : vUp * (0.45 + 0.75 * this._rnd());
+      vel[i * 4] = (ex * ca + nx * sa) * hs + up[0] * vs;
+      vel[i * 4 + 1] = (ey * ca + ny * sa) * hs + up[1] * vs;
+      vel[i * 4 + 2] = (ez * ca + nz * sa) * hs + up[2] * vs;
+      vel[i * 4 + 3] = foam ? 1 : 0;
+      birth[i * 4] = now + this._rnd() * 0.06;
+      birth[i * 4 + 1] = foam ? 1.4 + this._rnd() * 1.2 : 0.7 + this._rnd() * 0.6;
+      birth[i * 4 + 2] = foam ? 0.1 + 0.12 * k * this._rnd() : 0.035 + 0.05 * this._rnd() * (0.6 + k * 0.5);
+      birth[i * 4 + 3] = this._rnd();
+      if (i < this._dirtyLo) this._dirtyLo = i;
+      if (i > this._dirtyHi) this._dirtyHi = i;
+      if (this.head === 0) { this._dirtyLo = 0; this._dirtyHi = this.count - 1; }
+    }
+    this.lastBurst = now;
+  }
+
+  lateUpdate(now) {
+    const vis = now - this.lastBurst < 3.5 && this.hasOrigin;
+    this.points.visible = vis;
+    if (!vis) return;
+    if (this._dirtyHi >= 0) {
+      for (const k of ['position', 'aVel', 'aBirth']) {
+        const a = this.geo.attributes[k];
+        a.clearUpdateRanges?.();
+        const it = a.itemSize;
+        a.addUpdateRange?.(this._dirtyLo * it, (this._dirtyHi - this._dirtyLo + 1) * it);
+        a.needsUpdate = true;
+      }
+      this._dirtyLo = Infinity; this._dirtyHi = -1;
+    }
+    const O = this.origin;
+    this.points.position.set(O[0], O[1], O[2]);
+    this.points.updateMatrix();
+    this.points.updateMatrixWorld(true);
+    this.uniforms.uCenter.value.set(-O[0], -O[1], -O[2]);
+  }
+
+  dispose() {
+    this.points.removeFromParent();
+    this.geo.dispose();
+    this.mat.dispose();
+  }
+}

@@ -126,6 +126,7 @@ class Space {
 
   /** Camera yaw/pitch (degrees, player URL convention: yaw 0 = north, 90 = east) to look at a body from a local position. */
   aim(ref, fromLocal = this.ctx.camLocal) {
+    ref = this._resolveRef(ref);
     const e = this.bodies.find((x) => x.b.id === ref || x.b.id.endsWith('-' + ref) || x.b.name === ref);
     let target = ref === 'sun' ? _v2.copy(this.world.celestial.sunDir).multiplyScalar(1e12) : e ? e.local : null;
     const cm = /^comet(\d+)$/.exec(ref);
@@ -144,8 +145,34 @@ class Space {
     return { yaw: +yaw.toFixed(1), pitch: +pitch.toFixed(1) };
   }
 
+  /** 'parent' → the planet a moon orbits (else the body that looks biggest in the sky); 'moon' → the
+   *  biggest-looking moon; 'biggest' → the body with the largest angular size. Other refs pass through. */
+  _resolveRef(ref) {
+    if (ref !== 'parent' && ref !== 'moon' && ref !== 'biggest') return ref;
+    const cur = this.world.body, sys = this.world.system;
+    if (ref === 'parent' && cur.isMoon && sys?.planets?.[cur.parent]) return sys.planets[cur.parent].id;
+    let best = null, bestA = -1;
+    for (const e of this.bodies) {
+      if (e.isCurrent || (ref === 'moon' && !e.b.isMoon)) continue;
+      const d = Math.max(_v.copy(e.local).sub(this.ctx.camLocal).length(), 1);
+      const a = (e.b.rings ? e.b.rings.outer * 0.6 : e.b.radius) / d;
+      if (a > bestA) { bestA = a; best = e.b.id; }
+    }
+    return best || ref;
+  }
+
+  /** Angular radius (deg) and direction info of a sky object as seen from the camera: { yaw, pitch, angDeg }. */
+  skyInfo(ref) {
+    const id = this._resolveRef(ref);
+    const e = this.bodies.find((x) => x.b.id === id);
+    const a = this.aim(id);
+    if (!a || !e) return a;
+    const d = Math.max(_v.copy(e.local).sub(this.ctx.camLocal).length(), 1);
+    return { ...a, id, angDeg: +(Math.atan(e.b.radius / d) * 180 / Math.PI).toFixed(2), ringDeg: e.b.rings ? +(Math.atan(e.b.rings.outer / d) * 180 / Math.PI).toFixed(2) : 0 };
+  }
+
   /** Capture helper (view=fp/surface): turn the player camera toward a sky object ('0-2-2', 'sun',
-   *  'galcenter', 'comet0'), optionally offset by (dYawDeg, dPitchDeg). Steps: {"eval":"__rv.world.space.look('galcenter')"} */
+   *  'galcenter', 'comet0', 'parent', 'moon', 'biggest'), optionally offset by (dYawDeg, dPitchDeg). Steps: {"eval":"__rv.world.space.look('galcenter')"} */
   look(ref, dYaw = 0, dPitch = 0) {
     const pl = this.world.player, cam = pl?.cam;
     if (!cam) return null;
@@ -160,6 +187,27 @@ class Space {
     cam.pitch = THREE.MathUtils.clamp((a.pitch + dPitch) * Math.PI / 180, -1.45, 1.45);
     cam.idleLook = 0;
     return a;
+  }
+
+  /** Capture helper (view=fp/surface): frame two sky objects together, e.g. the parent giant and the
+   *  galactic core — looks at the point a fraction f of the way from refA to refB (on the sky). */
+  frame(refA, refB, f = 0.5, dYaw = 0, dPitch = 0) {
+    const pl = this.world.player, cam = pl?.cam;
+    if (!cam) return null;
+    const from = pl.pos || this.ctx.camLocal;
+    const a = this.aim(refA, from), b = this.aim(refB, from);
+    if (!a || !b) return null;
+    const toV = (o) => { const y = o.yaw * Math.PI / 180, p = o.pitch * Math.PI / 180; return new THREE.Vector3(Math.cos(p) * Math.cos(y), Math.sin(p), Math.cos(p) * Math.sin(y)); };
+    const d = toV(a).multiplyScalar(1 - f).add(toV(b).multiplyScalar(f)).normalize();
+    const yaw = Math.atan2(d.z, d.x) * 180 / Math.PI, pitch = Math.asin(THREE.MathUtils.clamp(d.y, -1, 1)) * 180 / Math.PI;
+    const up = from.clone().normalize();
+    const north = new THREE.Vector3(0, 1, 0).addScaledVector(up, -up.y).normalize();
+    const east = new THREE.Vector3().crossVectors(north, up);
+    const y = (yaw + dYaw) * Math.PI / 180;
+    cam.fwd.copy(north).multiplyScalar(Math.cos(y)).addScaledVector(east, Math.sin(y)).normalize();
+    cam.pitch = THREE.MathUtils.clamp((pitch + dPitch) * Math.PI / 180, -1.45, 1.45);
+    cam.idleLook = 0;
+    return { yaw: +yaw.toFixed(1), pitch: +pitch.toFixed(1), a, b };
   }
 
   /** Capture helper (view=orbit): put the orbit camera so the star sits `deg` degrees from the planet

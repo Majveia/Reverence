@@ -9,7 +9,7 @@
 // bank (rad), turnRate, look (target or null). Output: wq / wp (and bs for jellies).
 import { qmul, qrot, qeuler, qlook, qidentity, qaxis, clamp, damp, fract, vnoise1 } from '../math.js';
 
-const _qa = new Float64Array(4), _qb = new Float64Array(4), _v = new Float64Array(6);
+const _qa = new Float64Array(4), _qb = new Float64Array(4), _v = new Float64Array(6), _gp = new Float64Array(3);
 
 export class ChainAnimator {
   constructor(rig) {
@@ -45,12 +45,46 @@ export class ChainAnimator {
       qlook(_qa, 0, c.fwd[0], c.fwd[1], c.fwd[2], c.up[0], c.up[1], c.up[2]);
       qeuler(_qb, 0, 0, lean + Math.sin(t * 0.4) * 0.05, Math.sin(t * 0.33) * 0.06);
       qmul(_qa, 0, _qb, 0, wq, 0);
+    } else if (this.kind === 'serpent') {
+      // serpentine: absolute heading of segment k = A·sin(φ − k·Δφ), φ advancing with the distance
+      // travelled (wave speed = ground speed → every segment follows the head's path, no sliding)
+      const lam = g.waveLen * g.L * s;
+      const moving = c.speed > 0.03;
+      c.trav = (c.trav || 0) + c.speed * dt + dt * 0.08;   // a slow idle ripple even at rest
+      const speedK = clamp(c.speed / Math.max(0.1, g.walkSpeed * s), 0, 1.6);
+      const A = g.amp * (0.35 + 0.65 * Math.min(1, speedK)) * (1 - 0.3 * Math.max(0, speedK - 1)) * (1 - 0.5 * (c.alert || 0));
+      c.serpA = (c.serpA ?? A) + (A - (c.serpA ?? A)) * damp(1.5, dt);
+      const phi = Math.PI * 2 * c.trav / Math.max(0.2, lam);
+      const segL = g.L * s * 0.66 / (rig.tail.length - 1);
+      const dphi = Math.PI * 2 * segL / Math.max(0.2, lam);
+      const th = (k) => c.serpA * Math.sin(phi - k * dphi) * (k === 0 ? 0.6 : 1);
+      // alert: rear up the front of the body (cobra), head level, eyes on the threat
+      c.rear = (c.rear || 0) + (((c.alert || 0) > 0.5 && !moving ? 1 : 0) - (c.rear || 0)) * damp(2, dt);
+      qlook(_qa, 0, c.fwd[0], c.fwd[1], c.fwd[2], c.up[0], c.up[1], c.up[2]);
+      qeuler(_qb, 0, th(0), -0.55 * c.rear, 0);
+      qmul(_qa, 0, _qb, 0, wq, 0);
+      let prev = th(0);
+      for (let k = 0; k < rig.tail.length; k++) {
+        const a = th(k + 1);
+        qeuler(lq, rig.tail[k] * 4, a - prev, k === 0 ? 0.55 * c.rear : 0, 0);
+        prev = a;
+      }
+      // head: counter the body wave, look at the target, flick
+      let ly = 0;
+      if (c.look) {
+        const dx = c.look[0] - c.pos[0], dy = c.look[1] - c.pos[1], dz = c.look[2] - c.pos[2];
+        const lx = c.up[1] * c.fwd[2] - c.up[2] * c.fwd[1], lyy = c.up[2] * c.fwd[0] - c.up[0] * c.fwd[2], lz = c.up[0] * c.fwd[1] - c.up[1] * c.fwd[0];
+        ly = clamp(Math.atan2(dx * lx + dy * lyy + dz * lz, dx * c.fwd[0] + dy * c.fwd[1] + dz * c.fwd[2]), -0.9, 0.9);
+      }
+      c.hy += (ly - th(0) * 0.8 + vnoise1(t * 0.4) * 0.15 - c.hy) * damp(3, dt);
+      qeuler(lq, 4, c.hy, 0.45 * c.rear - 0.05, 0);
     } else {
       qlook(_qa, 0, c.fwd[0], c.fwd[1], c.fwd[2], c.up[0], c.up[1], c.up[2]);
       qaxis(_qb, 0, 0, 0, 1, c.bankS);
       qmul(_qa, 0, _qb, 0, wq, 0);
     }
     wp[0] = c.pos[0]; wp[1] = c.pos[1]; wp[2] = c.pos[2];
+    if (this.kind === 'serpent') { const lift = g.R * 0.62 * s; wp[0] += c.up[0] * lift; wp[1] += c.up[1] * lift; wp[2] += c.up[2] * lift; }
 
     // ------------------------------------------------ per kind local rotations
     if (this.kind === 'bird') {
@@ -60,14 +94,17 @@ export class ChainAnimator {
       const sn = Math.sin(ph), cs = Math.cos(ph);
       const gust = vnoise1(t * 0.9) * 0.05;
       const A = 0.95 * flap;
-      const r1 = A * (sn * 0.62 + 0.08) + (1 - flap) * (0.07 + gust);
-      const r2 = A * Math.sin(ph - 0.7) * 0.55 + (1 - flap) * (-0.03 + gust * 0.6);
-      const fold = flap * Math.max(0, cs) * 0.55 * (sn > 0 ? 1 : 0.4);   // wrist folds back on the upstroke
-      const twist = flap * sn * 0.12;
-      qeuler(lq, E.wL1 * 4, fold * 0.25, twist, r1);
-      qeuler(lq, E.wL2 * 4, fold, twist * 1.5, r2);
-      qeuler(lq, E.wR1 * 4, -fold * 0.25, twist, -r1);
-      qeuler(lq, E.wR2 * 4, -fold, twist * 1.5, -r2);
+      // glide = gull-wing "M": arms raised (dihedral), hands drooped & swept → a 3D silhouette under
+      // back light instead of a flat kite; per-wing gust asymmetry keeps the flock from looking stamped
+      const gustL = gust + vnoise1(t * 1.7 + 3.1) * 0.06, gustR = gust + vnoise1(t * 1.6 + 8.3) * 0.06;
+      const r1 = A * (sn * 0.62 + 0.08) + (1 - flap) * 0.16;
+      const r2 = A * Math.sin(ph - 0.7) * 0.55 + (1 - flap) * -0.26;
+      const fold = flap * Math.max(0, cs) * 0.55 * (sn > 0 ? 1 : 0.4) + (1 - flap) * 0.16;   // wrist folds back on the upstroke
+      const twist = flap * sn * 0.16;
+      qeuler(lq, E.wL1 * 4, fold * 0.25, twist, r1 + (1 - flap) * gustL);
+      qeuler(lq, E.wL2 * 4, fold, twist * 1.6 - (1 - flap) * 0.05, r2 + (1 - flap) * gustL * 0.6);
+      qeuler(lq, E.wR1 * 4, -fold * 0.25, twist, -r1 - (1 - flap) * gustR);
+      qeuler(lq, E.wR2 * 4, -fold, twist * 1.6 - (1 - flap) * 0.05, -r2 - (1 - flap) * gustR * 0.6);
       bobUp = -sn * g.span * 0.025 * flap * s;
       // tail steers & brakes
       const tpitch = clamp(-(c.climb || 0) * 0.3, -0.35, 0.35) + (1 - flap) * 0.05;
@@ -136,6 +173,22 @@ export class ChainAnimator {
       const k = s * (bs ? bs[p] : 1);
       qrot(wq, p * 4, (piv[b * 3] - piv[p * 3]) * k, (piv[b * 3 + 1] - piv[p * 3 + 1]) * k, (piv[b * 3 + 2] - piv[p * 3 + 2]) * k, _v, 0);
       wp[b * 3] = wp[p * 3] + _v[0]; wp[b * 3 + 1] = wp[p * 3 + 1] + _v[1]; wp[b * 3 + 2] = wp[p * 3 + 2] + _v[2];
+    }
+    // serpents drape over the terrain: shift each body segment to the ground under it (rotations
+    // stay; the linear blend between neighbours keeps the skin continuous)
+    if (this.kind === 'serpent' && ctx.sample && ctx.ground) {
+      const lift = g.R * 0.62 * s;
+      const base = (wp[0] - c.pos[0]) * c.up[0] + (wp[1] - c.pos[1]) * c.up[1] + (wp[2] - c.pos[2]) * c.up[2];
+      for (let k = 0; k < rig.tail.length; k++) {
+        const b = rig.tail[k];
+        const x = wp[b * 3], y = wp[b * 3 + 1], z = wp[b * 3 + 2];
+        const gh = ctx.ground(x, y, z, _gp, 0);
+        const r = Math.hypot(x, y, z) || 1;
+        const want = ctx.R + gh + Math.min(base, lift * 1.2);
+        let d = want - r;
+        d = clamp(d, -g.R * 6 * s, g.R * 6 * s);
+        wp[b * 3] += x / r * d; wp[b * 3 + 1] += y / r * d; wp[b * 3 + 2] += z / r * d;
+      }
     }
   }
 }

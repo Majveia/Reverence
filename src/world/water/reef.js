@@ -13,13 +13,13 @@ const _p = new THREE.Vector3(), _a = new THREE.Vector3(), _up = new THREE.Vector
 
 // per-type look: sway amplitude (m at the tip per metre of height), surface pattern id, roughness
 const LOOK = [
-  { sway: 0.35, pat: 0, rough: 0.7, side: THREE.DoubleSide },   // grass
-  { sway: 0.1, pat: 0, rough: 0.6, side: THREE.DoubleSide },    // kelp (unit height → tip sway = 0.1·H)
-  { sway: 0.015, pat: 1, rough: 0.85, side: THREE.FrontSide },  // branch coral (polyp dots)
-  { sway: 0, pat: 2, rough: 0.9, side: THREE.FrontSide },       // brain coral (meander grooves)
-  { sway: 0.12, pat: 3, rough: 0.8, side: THREE.DoubleSide },   // sea fan (mesh lattice)
-  { sway: 0, pat: 4, rough: 0.95, side: THREE.FrontSide },      // boulder (encrusted speckle)
-  { sway: 0.04, pat: 1, rough: 0.85, side: THREE.FrontSide },   // sponges
+  { sway: 0.35, pat: 0, rough: 0.7, side: THREE.DoubleSide, fluor: 0 },   // grass
+  { sway: 0.1, pat: 0, rough: 0.6, side: THREE.DoubleSide, fluor: 0 },    // kelp (unit height → tip sway = 0.1·H)
+  { sway: 0.015, pat: 1, rough: 0.85, side: THREE.FrontSide, fluor: 0.35 },  // branch coral (polyp dots)
+  { sway: 0, pat: 2, rough: 0.9, side: THREE.FrontSide, fluor: 0.18 },       // brain coral (meander grooves)
+  { sway: 0.12, pat: 3, rough: 0.8, side: THREE.DoubleSide, fluor: 0.3 },   // sea fan (mesh lattice)
+  { sway: 0, pat: 4, rough: 0.95, side: THREE.FrontSide, fluor: 0 },      // boulder (encrusted speckle)
+  { sway: 0.04, pat: 1, rough: 0.85, side: THREE.FrontSide, fluor: 0.22 },   // sponges
 ];
 
 export class Reef {
@@ -40,16 +40,18 @@ export class Reef {
     const hex = (h, d) => { try { return new THREE.Color(h || d); } catch (_) { return new THREE.Color(d); } };
     const fl = (pal.flora && pal.flora.length ? pal.flora : ['#3f7f35', '#6cb04a', '#e0784a']).map((h) => hex(h, '#6cb04a'));
     const accent = hex(pal.accent, '#ffcf7a');
+    // real reefs are mostly tan / olive / ochre / cream colonies with a few vivid ones (pink, violet, orange, teal)
     const reefCols = [
       hex('#ff7f6a'), hex('#ffb347'), hex('#c776d9'), hex('#f6e27a'), hex('#ff5f8f'), hex('#7fd6c8'), accent,
       ...fl.slice(2).map((c) => c.clone().offsetHSL(0, 0.15, 0.05)),
+      hex('#b89266'), hex('#8f8250'), hex('#a8745a'), hex('#d2c29a'), hex('#7f8a5c'),
     ];
     const grass = hex(pal.grass, '#78b84e').lerp(new THREE.Color(0.18, 0.32, 0.08), 0.45);
     const kelpC = new THREE.Color(0.42, 0.34, 0.1).lerp(fl[0] || new THREE.Color(0.3, 0.4, 0.1), 0.25);
     const rockC = hex(pal.rock, '#8e8676').lerp(new THREE.Color(0.35, 0.36, 0.3), 0.35);
     this.palette = { reefCols, grass, kelpC, rockC, sand: hex(pal.sand, '#eadcad') };
     this.geoms = buildReefGeometries((body.seed ?? 1) >>> 0);
-    this.uniforms = { uTime: G.uTime, uFlow: { value: new THREE.Vector3(1, 0, 0) }, uSurge: { value: 1 }, uGlowK: { value: this.glowK }, uFadeR: { value: this.R } };
+    this.uniforms = { uTime: G.uTime, uFlow: { value: new THREE.Vector3(1, 0, 0) }, uSurge: { value: 1 }, uGlowK: { value: this.glowK }, uFluorE: { value: 0 }, uFadeR: { value: this.R } };
     this.group = new THREE.Group();
     this.group.name = 'rv-reef';
     this.meshes = [];
@@ -82,7 +84,7 @@ export class Reef {
     const U = this.uniforms;
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uTime = U.uTime; sh.uniforms.uFlow = U.uFlow; sh.uniforms.uSurge = U.uSurge;
-      sh.uniforms.uGlowK = U.uGlowK; sh.uniforms.uFadeR = U.uFadeR;
+      sh.uniforms.uGlowK = U.uGlowK; sh.uniforms.uFadeR = U.uFadeR; sh.uniforms.uFluorE = U.uFluorE;
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', `#include <common>
 attribute float sway; attribute float glow;
@@ -114,7 +116,7 @@ varying float vGlow; varying vec3 vRP;
   #endif`);
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
-uniform float uGlowK, uTime; varying float vGlow; varying vec3 vRP;
+uniform float uGlowK, uTime, uFluorE; varying float vGlow; varying vec3 vRP;
 float rfHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }`)
         .replace('#include <color_fragment>', `#include <color_fragment>
   {
@@ -141,7 +143,10 @@ float rfHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.
     #endif
   }`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-  totalEmissiveRadiance += diffuseColor.rgb * vGlow * uGlowK * (0.75 + 0.25 * sin(uTime * 1.3 + vRP.y * 7.0));`);
+  totalEmissiveRadiance += diffuseColor.rgb * vGlow * uGlowK * (0.75 + 0.25 * sin(uTime * 1.3 + vRP.y * 7.0));
+  // coral fluorescence (GFP-like pigments re-emit part of the incident light): proportional to the light
+  // reaching the reef, keeps colonies saturated through the blue water
+  totalEmissiveRadiance += diffuseColor.rgb * ${L.fluor.toFixed(3)} * uFluorE;`);
     };
     mat.customProgramCacheKey = () => 'rv-reef-' + t;
     mat.userData.rvReef = t;
@@ -159,6 +164,12 @@ float rfHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.
     this.uniforms.uSurge.value = 0.6 + 0.8 * (W._amp ?? 1) * 0.6;
     const r = camLocal.length();
     _up.copy(camLocal).multiplyScalar(1 / r);
+    // irradiance scale for the fluorescence (sun above the horizon + sky), ≈ E/π
+    const kc = W.u?.uKeyColor?.value, kd = W.u?.uKeyDir?.value, a = G.uAmbientSky?.value;
+    let E = 0;
+    if (kc && kd) E += (kc.r * 0.2126 + kc.g * 0.7152 + kc.b * 0.0722) * Math.max(0, kd.dot(_up) / Math.max(kd.length(), 1e-6));
+    if (a) E += (a.r * 0.2126 + a.g * 0.7152 + a.b * 0.0722);
+    this.uniforms.uFluorE.value = Number.isFinite(E) ? E * 0.35 / Math.PI : 0;
     const moved = this.valid ? this.center.distanceTo(_up) * W.Rs : 1e9;
     if (this.pending || moved < this.R * 0.3) return;
     this.pending = true;
@@ -210,7 +221,7 @@ float rfHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.
         if (t === T_BRAIN) _c.lerp(P.sand, 0.35);
         if (t === T_SPONGE) _c.offsetHSL(0.03, -0.1, -0.05);
         // deeper colonies are paler (less light, less zooxanthellae) — the water filters the rest
-        _c.offsetHSL(0, 0.12 - Math.min(0.25, depth * 0.008), 0.02);
+        _c.offsetHSL(0, 0.1 - Math.min(0.25, depth * 0.008), 0.0);
       }
       im.setColorAt(j, _c);
     }

@@ -100,21 +100,28 @@ export function gasLook(b) {
   }[fam].map((h) => lin(h));
   // art tint: pull slightly toward the planet's art palette so every giant is art-directed
   const tint = lin(P.accent || '#ffffff');
-  const N = 256;
+  const N = 512;
+  const ph0 = r.range(0, 6);
   const data = new Uint8Array(N * 4);
   // random band layout: alternating zones (light) and belts (dark), finer sub-bands
   const edges = [];
   let y = 0;
-  while (y < 1) { edges.push(y); y += r.range(0.025, 0.09); }
+  while (y < 1) { edges.push(y); y += r.range(0.03, 0.1); }
   edges.push(1.0001);
   const bandCols = [];
   for (let i = 0; i < edges.length; i++) {
     const base = pal[r.int(0, pal.length - 1)].clone();
     const zone = i % 2 === 0;
-    base.multiplyScalar(zone ? r.range(0.95, 1.1) : r.range(0.62, 0.85));
+    // zones: bright, creamy (high ammonia clouds); belts: darker, warmer (deeper, coloured layers)
+    base.multiplyScalar(zone ? r.range(1.0, 1.14) : r.range(0.5, 0.78));
+    if (!zone && fam !== 'ice') base.lerp(new THREE.Color(base.r * 1.08, base.g * 0.86, base.b * 0.7), 0.5);
     base.lerp(tint, fam === 'exotic' ? 0.12 : 0.05);
     bandCols.push(base);
   }
+  // thin sub-belts (dark lanes) inside the broad bands
+  const lanes = [];
+  const nl = r.int(8, 16);
+  for (let i = 0; i < nl; i++) lanes.push([r.range(0.05, 0.95), r.range(0.002, 0.007), r.range(0.72, 0.9)]);
   const c = new THREE.Color();
   for (let i = 0; i < N; i++) {
     const t = i / (N - 1);
@@ -122,13 +129,17 @@ export function gasLook(b) {
     const ts = Math.abs(t - 0.5) * 2 * 0.85 + (t - 0.5) * 0.15 + 0.5 * 0.15;
     let k = 0; while (k < edges.length - 2 && edges[k + 1] <= ts) k++;
     const f = (ts - edges[k]) / Math.max(1e-4, edges[k + 1] - edges[k]);
-    const s = f * f * (3 - 2 * f);
-    c.copy(bandCols[k]).lerp(bandCols[k + 1] || bandCols[k], s * s * 0.8);
+    // crisp band edges (the flow advection in the shader tears them into ragged, curling boundaries)
+    const s = THREE.MathUtils.smoothstep(f, 0.62, 1.0);
+    c.copy(bandCols[k]).lerp(bandCols[k + 1] || bandCols[k], s);
+    // gentle gradient inside a band (brighter toward its core)
+    c.multiplyScalar(0.92 + 0.1 * Math.sin(Math.PI * f));
+    for (const [lc, lw, ld] of lanes) { const d = (ts - lc) / lw; c.multiplyScalar(1 - (1 - ld) * Math.exp(-d * d)); }
     // polar darkening/greying
     const lat = Math.abs(t - 0.5) * 2;
     const pol = THREE.MathUtils.smoothstep(lat, 0.72, 0.98);
     c.lerp(new THREE.Color(c.r * 0.55, c.g * 0.6, c.b * 0.7), pol);
-    const sub = 0.94 + 0.12 * Math.sin(t * 190 + r.range(0, 6)) * Math.sin(t * 57);
+    const sub = 0.96 + 0.08 * Math.sin(t * 190 + ph0) * Math.sin(t * 57);
     data[i * 4] = Math.min(255, c.r * sub * 255);
     data[i * 4 + 1] = Math.min(255, c.g * sub * 255);
     data[i * 4 + 2] = Math.min(255, c.b * sub * 255);
@@ -157,6 +168,7 @@ export function gasLook(b) {
     flow: r.range(0.0025, 0.006),
     turb: r.range(0.7, 1.4),
     seedOff: new THREE.Vector3(r.range(-40, 40), r.range(-40, 40), r.range(-40, 40)),
+    fest: v3(fam === 'ice' ? lin('#3d6f9e') : fam === 'exotic' ? lin(P.deep || '#3a4a66') : lin('#4f5f72')),
     haze: v3(fam === 'ice' ? lin('#9fd8ff') : lin('#f4e2c0').lerp(lin(P.sky || '#9fc8ff'), 0.4)),
     albedo: fam === 'ice' ? 0.5 : 0.45,
   };

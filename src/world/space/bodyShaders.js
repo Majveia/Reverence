@@ -222,57 +222,92 @@ uniform vec3 uStormCol;
 uniform float uJets, uFlow, uTurb;
 uniform vec3 uSeedOff;
 uniform vec3 uHaze;
+uniform vec3 uFest;
 vec3 rotY(vec3 p, float a){ float c = cos(a), s = sin(a); return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z); }
 vec3 stormDir(vec4 s, float t){
   float lon = s.y + t * uFlow * 0.4 * sin(s.x * uJets);
   return vec3(cos(s.x) * sin(lon), sin(s.x), cos(s.x) * cos(lon));
 }
-vec3 gasColor(vec3 p, float shift, float phaseSeed, out float stormMask){
+// Cloud deck = zonal band palette sampled at an ADVECTED latitude. The advection is a multi-octave,
+// anisotropic curl flow (divergence-free swirls from the gradient of simplex noise, zonal-dominant),
+// strongest in the shear zones between belts and zones and in the wake of the big vortex → ragged,
+// wind-sheared belt edges, Kelvin-Helmholtz curls, filamentary festoons instead of painted stripes.
+float bandLum(float y){ return dot(texture2D(uBands, vec2(clamp(y * 0.5 + 0.5, 0.0, 1.0), 0.5)).rgb, vec3(0.3, 0.55, 0.15)); }
+vec3 gasColor(vec3 p, float shift, float phaseSeed, int OCT, out float stormMask, out float stormIn){
   float lat = asin(clamp(p.y, -1.0, 1.0));
   float jet = sin(lat * uJets) * (1.0 - smoothstep(1.15, 1.5, abs(lat)));
   vec3 q = rotY(p, jet * shift);
-  stormMask = 0.0;
-  vec3 scol = vec3(0.0);
+  stormMask = 0.0; stormIn = 0.0;
+  float wake = 0.0;
   for (int i = 0; i < 6; i++){
     if (i >= uStormN) break;
     vec4 s = uStorm[i];
     vec3 c = stormDir(s, uTime);
-    vec3 v = q - c * dot(q, c);
-    float dist = length(v) / s.z;
-    // ellipse: storms are wider in longitude
     vec3 east = normalize(cross(vec3(0.0, 1.0, 0.0), c));
-    float de = dot(q - c, east), dn = (q - c).y;
-    float de2 = length(vec2(de / 1.6, dn)) / s.z;
-    if (de2 < 2.2){
-      float a = s.w * 0.45 * exp(-de2 * de2 * 1.6);
+    vec3 north = cross(c, east);
+    vec3 dq = q - c;
+    float de = dot(dq, east), dn = dot(dq, north);
+    float de2 = length(vec2(de / 1.7, dn)) / s.z;          // elliptical, wider in longitude
+    // turbulent wake trailing the vortex (downstream, confined to its latitude band)
+    wake = max(wake, exp(-pow((de / s.z + 3.2 * sign(s.w)) / 2.6, 2.0)) * exp(-pow(dn / (s.z * 0.9), 2.0)) * (i == 0 ? 1.0 : 0.5));
+    if (de2 < 2.4){
+      // differential rotation inside the vortex → spiral arms in the advected cloud field
+      float a = s.w * 2.4 * exp(-de2 * de2 * 1.1);
       float ca = cos(a), sa = sin(a);
-      vec3 north = cross(c, east);
-      vec2 l = vec2(dot(q - c, east), dot(q - c, north));
-      l = mat2(ca, -sa, sa, ca) * l;
+      vec2 l = mat2(ca, -sa, sa, ca) * vec2(de, dn);
       q = normalize(c + east * l.x + north * l.y);
-      float m = smoothstep(1.0, 0.45, de2) + exp(-pow((de2 - 0.95) * 5.0, 2.0)) * 0.35;
-      stormMask = max(stormMask, m * (i == 0 ? 1.0 : 0.7));
+      float m = smoothstep(1.02, 0.62, de2);
+      stormMask = max(stormMask, m * (i == 0 ? 1.0 : 0.75));
+      stormIn = max(stormIn, exp(-pow((de2 - 1.08) * 5.5, 2.0)) * (i == 0 ? 1.0 : 0.6));   // bright collar
     }
   }
-  vec3 s3 = vec3(q.x * 2.2, q.y * 11.0, q.z * 2.2) + uSeedOff + phaseSeed;
-  float n1 = rv_fbm(s3 * 0.9, 5);
-  float n2 = rv_fbm(vec3(q.x * 7.0, q.y * 26.0, q.z * 7.0) + n1 * 1.8 + uSeedOff, uDetail > 0.4 ? 5 : 3);
-  float n3 = uDetail > 0.3 ? rv_fbm(vec3(q.x * 22.0, q.y * 70.0, q.z * 22.0) + n2 * 2.5 + uSeedOff, 3) : 0.0;
-  // shear-zone eddies: small curls strung along the belt/zone boundaries (Kelvin-Helmholtz rolls)
-  float shear = abs(cos(asin(clamp(q.y, -1.0, 1.0)) * uJets * 1.0));
-  float eddy = uDetail > 0.2 ? rv_fbm(vec3(q.x * 30.0, q.y * 55.0, q.z * 30.0) + vec3(n2, n1, n2) * 3.0 + uSeedOff * 1.7, 3) : 0.0;
-  float y = q.y + (n1 * 0.045 + n2 * 0.016 + n3 * 0.008 + eddy * 0.006 * shear) * uTurb;
+  // shear zones: where the band palette changes fastest with latitude
+  float e0 = abs(bandLum(q.y + 0.012) - bandLum(q.y - 0.012));
+  float shear = smoothstep(0.015, 0.09, e0);
+  // curl-flow advection (zonal-dominant): displacement ~ feature size at each octave
+  vec3 aniso = vec3(1.0, 5.0, 1.0);
+  vec3 s3 = q;
+  float amp = 0.03 * uTurb * (0.25 + 1.7 * shear + 1.8 * wake);
+  float f = 2.6;
+  float nAcc = 0.0;
+  float yMid = q.y;
+  for (int i = 0; i < 6; i++){
+    if (i == 2) yMid = s3.y;
+    if (i >= OCT) break;
+    vec3 g;
+    float n = sp_snoiseG(s3 * aniso * f + uSeedOff + phaseSeed + float(i) * 19.7, g);
+    g *= aniso;
+    vec3 v = cross(p, g);                                   // swirl around the local vertical
+    v.y *= 0.4;                                              // meridional motion is weaker than zonal
+    s3 += v * (amp / f);
+    nAcc += n * (1.0 / f);
+    f *= 2.07; amp *= 0.78;
+  }
+  float y = s3.y;
   vec3 col = texture2D(uBands, vec2(clamp(y * 0.5 + 0.5, 0.0, 1.0), 0.5)).rgb;
-  col *= 0.86 + 0.22 * n2 + 0.14 * n3 + 0.08 * eddy * shear;
+  // layered mixing: the partially advected field shows through (filaments of one band dragged into the next)
+  vec3 colM = texture2D(uBands, vec2(clamp(yMid * 0.5 + 0.5, 0.0, 1.0), 0.5)).rgb;
+  col = mix(col, colM, 0.3 * smoothstep(-0.3, 0.5, nAcc));
+  // fine striations along the flow (cloud streets, thin dark lanes)
+  float str = uDetail > 0.15 ? rv_fbm(vec3(s3.x * 14.0, s3.y * 64.0, s3.z * 14.0) + uSeedOff * 1.3 + phaseSeed, uDetail > 0.5 ? 4 : 3) : 0.0;
+  // large-scale longitudinal variation of each band (brighter / darker segments, colour drift)
+  float lv = rv_snoise(vec3(q.x * 1.6, q.y * 9.0, q.z * 1.6) + uSeedOff * 0.7);
+  col *= 0.9 + 0.14 * lv;
+  col *= 0.86 + 0.2 * (nAcc * 1.2 + 0.5) + 0.09 * str;
+  // bright plumes / dark festoons in the shear zones: upwelling ammonia clouds vs clear blue-grey holes
+  float pl = smoothstep(0.35, 0.75, nAcc * 1.6 + str * 0.6);
+  col = mix(col, col * 0.9 + vec3(0.1, 0.095, 0.09), pl * shear * 0.55);
+  float fest = smoothstep(0.25, 0.7, -nAcc * 1.8 - str * 0.4) * shear;
+  col = mix(col, uFest * (0.7 + 0.4 * rv_luma(col)), fest * 0.5);
   // small white ovals / brown barges riding the jets
   if (uDetail > 0.3){
-    vec2 wo = rv_worley(vec3(q.x * 9.0, q.y * 20.0, q.z * 9.0) + uSeedOff * 0.37);
-    float oval = smoothstep(0.28, 0.12, wo.x) * smoothstep(0.55, 0.9, rv_vnoise(floor(vec3(q.x * 9.0, q.y * 20.0, q.z * 9.0) + uSeedOff * 0.37) * 1.3));
-    col = mix(col, mix(vec3(0.96, 0.93, 0.88), col * vec3(0.7, 0.55, 0.45), step(0.5, fract(wo.y * 7.3))), oval * 0.55 * uDetail);
+    vec3 oc = vec3(s3.x * 9.0, s3.y * 22.0, s3.z * 9.0) + uSeedOff * 0.37;
+    vec2 wo = rv_worley(oc);
+    float oval = smoothstep(0.26, 0.1, wo.x) * smoothstep(0.6, 0.9, rv_vnoise(floor(oc) * 1.3));
+    col = mix(col, mix(vec3(0.96, 0.93, 0.88), col * vec3(0.7, 0.55, 0.45), step(0.5, fract(wo.y * 7.3))), oval * 0.6 * uDetail);
   }
-  // festoons / white ovals along belt edges
-  float edge = abs(texture2D(uBands, vec2(clamp(y * 0.5 + 0.5 + 0.004, 0.0, 1.0), 0.5)).g - texture2D(uBands, vec2(clamp(y * 0.5 + 0.5 - 0.004, 0.0, 1.0), 0.5)).g);
-  col = mix(col, col * 1.18 + 0.05, smoothstep(0.02, 0.08, edge) * smoothstep(0.2, 0.6, n2 * 0.5 + 0.5) * 0.5);
+  // the vortex: storm colour with spiral texture from the advected field, pale collar around it
+  stormIn *= 0.8 + 0.4 * str;
   return col;
 }
 void main(){
@@ -280,27 +315,31 @@ void main(){
   float T = 90.0;
   vec2 ph = sp_flowPhases(uTime, T);
   float wa = 1.0 - abs(2.0 * ph.x - 1.0);
-  float sm1, sm2;
-  vec3 c1 = gasColor(p, uFlow * (ph.x - 0.5) * T, 0.0, sm1);
-  vec3 c2 = gasColor(p, uFlow * (ph.y - 0.5) * T, 7.31, sm2);
+  int OCT = uDetail > 0.6 ? 6 : uDetail > 0.25 ? 5 : uDetail > 0.05 ? 4 : 3;
+  float sm1, sm2, si1, si2;
+  vec3 c1 = gasColor(p, uFlow * (ph.x - 0.5) * T, 0.0, OCT, sm1, si1);
+  vec3 c2 = gasColor(p, uFlow * (ph.y - 0.5) * T, 7.31, OCT, sm2, si2);
   vec3 albedo = mix(c2, c1, wa);
   float sm = mix(sm2, sm1, wa);
-  albedo = mix(albedo, uStormCol * (0.85 + 0.25 * albedo.r), sm * 0.55);
+  float si = mix(si2, si1, wa);
+  float al = rv_luma(albedo);
+  albedo = mix(albedo, uStormCol * (0.7 + 0.6 * al), sm * 0.72);
+  albedo = mix(albedo, vec3(0.93, 0.9, 0.84) * (0.8 + 0.3 * al), si * 0.45);
   vec3 N = normalize(vN);
   vec3 L = uSunDir;
   vec3 V = normalize(cameraPosition - vW);
   float NL = dot(N, L);
   float NV = max(dot(N, V), 0.0);
-  // Minnaert limb darkening
-  float k = 0.82;
-  float NLw = (NL + 0.08) / 1.08;
-  float diff = pow(max(NLw, 0.0), k) * pow(max(NV, 0.02), k - 1.0) * smoothstep(-0.08, 0.2, NL);
+  // Minnaert limb darkening; the terminator is soft: sunlight grazes a deep, hazy cloud deck
+  float k = 0.8;
+  float NLw = (NL + 0.1) / 1.1;
+  float diff = pow(max(NLw, 0.0), k) * pow(max(NV, 0.02), k - 1.0) * smoothstep(-0.1, 0.28, NL);
   diff = min(diff, 1.6);
   float vis = sunVisibility(vW);
   vec3 col = albedo / RV_PI * uSunIll * vis * diff;
-  // reddened terminator (sunlight through the upper haze)
-  col *= mix(vec3(1.0, 0.6, 0.42), vec3(1.0), smoothstep(0.0, 0.3, NL));
-  // faint ring-shine on the night side
+  // reddened terminator (sunlight through the upper haze) + haze glow bleeding into the night side
+  col *= mix(vec3(1.0, 0.58, 0.4), vec3(1.0), smoothstep(-0.02, 0.32, NL));
+  col += uHaze * uSunIll * vis * 0.012 * exp(-pow((NL + 0.02) / 0.09, 2.0)) * (0.5 + 0.5 * pow(1.0 - NV, 2.0));
   // night side: ring-shine (sunlit rings light the dark hemisphere) + a whisper of moon/star light, so the
   // unlit disk reads as a dark silhouette rather than a hole
   float nightW = smoothstep(0.1, -0.25, NL);

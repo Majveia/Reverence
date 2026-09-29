@@ -127,9 +127,15 @@ float rvGlowMask(vec3 P, float u, float dors, float part, float mat){
     g = max(g, line * step(part, 1.5) * (0.6 + 0.4 * sin(u * 40.0 - rvTime * pGlow.z * 3.0)));
   } else if (type < 3.5) {                                            // tips (tail, ears, antennae)
     g = max(g, smoothstep(0.75, 0.98, u) * step(2.5, part) + smoothstep(0.1, 0.0, u) * step(part, 0.5));
-  } else {                                                            // veins over the whole body
+  } else if (type < 4.5) {                                            // veins over the whole body
     float n = abs(rvFbm(P * pPattern.y * 1.3) - 0.5);
     g = max(g, smoothstep(0.05, 0.0, n));
+  } else {                                                            // photophores: rows of dots on flanks & belly + lateral line
+    vec2 wv = rvWor(P * pPattern.y * 3.2 + 1.7);
+    float dots = 1.0 - smoothstep(0.12, 0.24, wv.x);
+    float lat = smoothstep(0.05, 0.0, abs(dors + 0.12) - 0.018);
+    g = max(g, (dots * smoothstep(0.55, -0.1, dors) + lat * 0.8) * step(part, 1.5));
+    g = max(g, dots * 0.8 * step(5.5, part) * step(part, 6.5));        // fins
   }
   return g;
 }
@@ -166,8 +172,18 @@ float rvEyeM = 0.0;
   // per-individual variation (value + slight hue)
   base *= 0.86 + 0.28 * rvSeed;
   base = mix(base, base.gbr, (rvSeed - 0.5) * 0.06);
-  // fur / skin micro albedo
-  base *= 0.9 + 0.2 * rvVN(vRest * vec3(34.0, 34.0, 11.0) * (1.0 + pSurf.w));
+  // fur / skin micro albedo — faded by pixel footprint (value noise at pixel frequency aliases
+  // into a 2x2-quad checkerboard, worst on software GL); rotated domain hides the lattice
+  {
+    vec3 mp = mat3(0.80, 0.36, -0.48, -0.60, 0.48, -0.64, 0.0, 0.80, 0.60) * (vRest * vec3(26.0, 26.0, 9.0) * (1.0 + pSurf.w));
+    float mfw = length(fwidth(mp));
+    float mfade = 1.0 - smoothstep(0.2, 0.7, mfw);
+    base *= 1.0 + (rvVN(mp) - 0.5) * 0.2 * mfade;
+    // coarser mottling that survives at mid distance (never aliases: ~5x larger cells)
+    vec3 cp = vRest * (5.0 + 4.0 * pSurf.w);
+    float cfade = 1.0 - smoothstep(0.25, 0.8, length(fwidth(cp)));
+    base *= 1.0 + (rvVN(cp + 17.0) - 0.5) * 0.14 * cfade;
+  }
   // legs: socks / darker extremities
   if (rvPart > 1.5 && rvPart < 2.5) base = mix(base, cPattern * 0.55 + cBack * 0.15, smoothstep(0.62, 0.92, rvU) * pExtra.x);
   // head: slightly darker muzzle
@@ -176,8 +192,13 @@ float rvEyeM = 0.0;
   if (rvMat > 0.5 && rvMat < 1.5) {          // keratin: horns, hooves, beaks, claws
     rvCol = mix(cKeratin, cKeratin * 0.35, smoothstep(0.2, 1.0, rvU)) * (0.9 + 0.2 * rvVN(vRest * 60.0));
     rvRough = 0.42; rvSheen = 0.0; rvBumpAmt = 0.25;
-  } else if (rvMat > 1.5 && rvMat < 2.5) {   // eyes
-    rvCol = cEye * 0.25; rvRough = 0.06; rvSheen = 0.0; rvBumpAmt = 0.0; rvEyeM = 1.0;
+  } else if (rvMat > 1.5 && rvMat < 2.5) {   // eyes: dark sclera → coloured iris → pupil (u = pole param, 1 = front)
+    float iris = smoothstep(0.86, 0.885, rvU);
+    float pupil = smoothstep(0.935, 0.952, rvU);
+    float irisN = 0.75 + 0.5 * rvVN(vec3(atan(vRest.y, vRest.x) * 3.0, rvU * 20.0, rvSeed * 7.0));
+    rvCol = mix(cBack * 0.18, cEye * irisN * mix(0.45, 0.95, smoothstep(0.935, 0.87, rvU)), iris);
+    rvCol = mix(rvCol, vec3(0.01), pupil);
+    rvRough = 0.16; rvSheen = 0.0; rvBumpAmt = 0.0; rvEyeM = 0.35 + 0.65 * pupil;
   } else if (rvMat > 2.5 && rvMat < 3.5) {   // membranes (wings, fins, frills, inner ears)
     float veins = smoothstep(0.08, 0.0, abs(fract(rvU * 9.0 + rvVN(vRest * 4.0) * 0.8) - 0.5) - 0.42);
     rvCol = mix(mix(cBelly, cAccent, 0.35 + 0.35 * rvU), cPattern * 0.6, veins * 0.5);
@@ -212,9 +233,9 @@ if (rvBumpAmt > 0.001) {
   // fur strands / skin pores / scales, faded by pixel footprint to avoid shimmer
   vec3 bp = vRest * vec3(90.0, 90.0, 30.0) * (0.6 + pSurf.w);
   float fw = length(fwidth(bp));
-  float fade = 1.0 - smoothstep(0.6, 2.4, fw);
+  float fade = 1.0 - smoothstep(0.18, 0.55, fw);
   if (fade > 0.001) {
-    float h = rvVN(bp) * 0.6 + rvVN(bp * 2.3) * 0.4;
+    float h = rvVN(bp) * 0.6 + (rvVN(bp * 2.3) - 0.5) * 0.4 * (1.0 - smoothstep(0.08, 0.24, fw)) + 0.2;
     if (rvMat > 3.5 && rvMat < 4.5) h = rvWor(vRest * 24.0).x;
     normal = normalize(mix(normal, rvBump(-vViewPosition, normal, h * rvBumpAmt * 0.012), fade));
   }
@@ -226,6 +247,18 @@ const FRAG_EMISSIVE = /* glsl */`
   float night = clamp(uNight, 0.0, 1.0);
   float pulse = 0.75 + 0.25 * sin(rvTime * pGlow.z + rvSeed * 20.0 + rvU * 6.0);
   totalEmissiveRadiance += cGlow * rvGlowM * pGlow.x * (0.08 + 1.4 * night * night) * pulse * (0.7 + 0.6 * vInst.y);
+  // bioluminescent species read as lit volumes at night, not rim outlines: a dim self-illumination
+  // of the whole body (the glow scattered under translucent skin), brighter on the belly and toward
+  // the silhouette (fresnel), mottled so it reads organic
+  if (pGlow.x > 0.0 && rvMat != 2.0 && rvMat != 7.0) {
+    vec3 Vw = normalize(vViewPosition);
+    float fr = pow(1.0 - clamp(abs(dot(normal, Vw)), 0.0, 1.0), 2.2);
+    float belly = smoothstep(0.35, -0.85, rvDors);
+    float mott = 0.65 + 0.7 * rvVN(vRest * pPattern.y * 1.7 + rvSeed * 9.0);
+    vec3 sub = mix(diffuseColor.rgb * 1.5 + 0.02, cGlow, 0.55);
+    float k = (0.04 + 0.09 * belly + 0.15 * fr) * mott * (0.8 + 0.4 * pulse);
+    totalEmissiveRadiance += sub * k * min(pGlow.x, 2.0) * night * (0.7 + 0.6 * vInst.y);
+  }
   // eyeshine: retroreflection in the dark
   totalEmissiveRadiance += cEye * rvEyeM * pGlow.w * night * 2.5;
 }
@@ -255,9 +288,9 @@ const FRAG_LIGHT = /* glsl */`
     reflectedLight.indirectSpecular += ir * pExtra.y * (amb * 2.0 + rvSunColor * 0.15) * (1.0 - ndv * 0.6);
   }
   // eye catch-light (sky reflection)
-  if (rvEyeM > 0.5) {
+  if (rvMat > 1.5 && rvMat < 2.5) {
     vec3 R = reflect(-V, N);
-    reflectedLight.indirectSpecular += (amb * 3.0 + vec3(0.02)) * pow(clamp(R.y * 0.5 + 0.5, 0.0, 1.0), 6.0);
+    reflectedLight.indirectSpecular += (amb * 1.4 + vec3(0.006)) * pow(clamp(R.y * 0.5 + 0.5, 0.0, 1.0), 8.0);
   }
 }
 `;

@@ -38,10 +38,14 @@ void main(){
   vec3 t2 = cross(uDir, t1);
   vec2 uv = vec2(dot(d, t1), dot(d, t2));          // ≈ angle components (small angles)
   float ang = length(uv);
-  float x = ang / uAng;                             // 1 = limb
+  // a sub-pixel photosphere is drawn as a ~1.5 px disk with the same flux (never falls between pixel
+  // centres: the lens-flare occlusion probe and bloom always see a real bright disc)
+  float Rd = max(uAng, uPixAng * 1.5);
+  float fluxK = (uAng * uAng) / (Rd * Rd);
+  float x = ang / Rd;                               // 1 = limb
   float phi = atan(uv.y, uv.x);
   vec3 col = vec3(0.0);
-  float aa = max(uPixAng / uAng, 0.004);           // limb anti-aliasing width (in radii)
+  float aa = max(uPixAng / Rd, 0.004);           // limb anti-aliasing width (in radii)
   // ---------------- photosphere
   if (x < 1.0 + aa){
     float xc = min(x, 1.0);
@@ -50,7 +54,7 @@ void main(){
     vec3 ld = vec3(1.0 - 0.52 * (1.0 - mu) - 0.20 * (1.0 - mu) * (1.0 - mu));
     ld *= mix(vec3(1.0, 0.72, 0.5), vec3(1.0), pow(mu, 0.35));
     // point on the visible hemisphere (rotating slowly)
-    vec3 sp = vec3(uv / uAng, mu);
+    vec3 sp = vec3(uv / Rd, mu);
     float ca = cos(uTime * 0.004), sa = sin(uTime * 0.004);
     sp.xz = mat2(ca, -sa, sa, ca) * sp.xz;
     // granulation: animated cellular pattern (only resolvable when the disk is large on screen)
@@ -66,7 +70,7 @@ void main(){
     float umbra = smoothstep(0.76, 0.82, sn) * belts * uActivity;
     float fac = smoothstep(0.55, 0.7, sn) * belts * (1.0 - mu) * 0.6;
     float spots = (1.0 - spot * 0.55) * (1.0 - umbra * 0.7) * (1.0 + fac);
-    col = uColor * ld * granulation * spots * uDisk;
+    col = uColor * ld * granulation * spots * uDisk * fluxK;
     float edge = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, x);
     col *= edge;
   }
@@ -144,7 +148,7 @@ export class Star {
     // HDR disk radiance: bright enough to bloom, not a white-out (the post track owns glare);
     // tiny disks (distant, sub-pixel) keep their flux by brightening, clamped.
     const pxR = ang / Math.max(ctx.pixAng, 1e-6);
-    u.uDisk.value = THREE.MathUtils.clamp(260 * Math.pow(Math.max(3 / Math.max(pxR, 0.3), 1), 2), 260, 6000);
+    u.uDisk.value = THREE.MathUtils.clamp(260 * Math.pow(Math.max(3 / Math.max(pxR, 1e-3), 1), 2), 260, 1e9);   // × (ang/Rd)² in the shader
     // corona visible from space / above the air; the atmosphere pass hides it by day anyway
     u.uCorona.value = 2.2 * (1 - 0.85 * ctx.inAtmo);
     u.uGlare.value = 0.9 + 0.6 * (1 - ctx.inAtmo);

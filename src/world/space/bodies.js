@@ -123,7 +123,7 @@ export class Bodies {
         Object.assign(U, {
           uBands: { value: G.tex }, uStorm: { value: G.storms.concat(Array(6 - G.storms.length).fill(0).map(() => new THREE.Vector4())) },
           uStormN: { value: G.storms.length }, uStormCol: { value: G.stormCol }, uJets: { value: G.jets }, uFlow: { value: G.flow },
-          uTurb: { value: G.turb }, uSeedOff: { value: G.seedOff }, uHaze: { value: G.haze },
+          uTurb: { value: G.turb }, uSeedOff: { value: G.seedOff }, uHaze: { value: G.haze }, uFest: { value: G.fest },
         });
         mat = new THREE.ShaderMaterial({ uniforms: U, vertexShader: BODY_VERT, fragmentShader: GAS_FRAG });
       } else {
@@ -158,10 +158,10 @@ export class Bodies {
       // ---- atmosphere limb shell (not for the current body: the atmosphere track owns that)
       const atm = b.atmosphere;
       if ((!isCurrent || e.visR > b.radius) && atm?.present) {
-        const top = b.isGas ? 1.035 : 1.045;
+        const top = b.isGas ? 1.025 : 1.045;
         const tint = new THREE.Color(b.isGas ? (e.look.haze ? new THREE.Color(e.look.haze.x, e.look.haze.y, e.look.haze.z) : 0xa0c8ff) : (b.art?.palette?.sky || '#7ab8ff'));
         const m = Math.max(tint.r, tint.g, tint.b, 1e-3);
-        const hScale = 0.28;
+        const hScale = b.isGas ? 0.22 : 0.28;
         const H = (top - 1) * hScale;
         const dens = THREE.MathUtils.clamp(atm.density ?? 1, 0.1, 2);
         const tauV = (b.isGas ? 0.1 : 0.13) * dens;
@@ -169,8 +169,8 @@ export class Bodies {
         const br = new THREE.Vector3(tint.r / m * 0.55 + 0.08, tint.g / m * 0.75 + 0.1, tint.b / m + 0.12).multiplyScalar(tauV / H);
         e.shellU = {
           uSunDir: U.uSunDir, uSunIll: U.uSunIll, uCenter: U.uCenter, uRadius: U.uRadius, uOcc: U.uOcc, uOccN: U.uOccN, uSunAng: U.uSunAng,
-          uTop: { value: top }, uBetaR: { value: br }, uBetaM: { value: (0.008 + (atm.haze ?? 0) * 0.04 + (b.isGas ? 0.02 : 0)) * dens / H },
-          uMieG: { value: atm.mieG ?? 0.76 }, uHScale: { value: hScale },
+          uTop: { value: top }, uBetaR: { value: br }, uBetaM: { value: (0.008 + (atm.haze ?? 0) * 0.04 + (b.isGas ? 0.035 : 0)) * dens / H },
+          uMieG: { value: b.isGas ? 0.84 : (atm.mieG ?? 0.76) }, uHScale: { value: hScale },
         };
         const sm = new THREE.ShaderMaterial({
           uniforms: e.shellU, vertexShader: 'varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',

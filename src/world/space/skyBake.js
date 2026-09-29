@@ -11,6 +11,7 @@ import {
   LOCAL_GRID, GLOBAL_STARS,
 } from '../../universe/GalaxyModel.js';
 
+const hashU = (i, k) => { let h = Math.imul((i | 0) ^ k, 0x9e3779b1); h ^= h >>> 15; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return (h >>> 0) / 4294967296; };
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 /** Latitude of a panorama row coordinate t ∈ [-1, 1] (t = +1 top). Inverse in GLSL (sky.js). */
@@ -118,6 +119,7 @@ export function bakeSky(p) {
   const maxStars = p.maxStars || 30000;
   const Rl = p.localRadius || 1200;
   const list = []; // [flux, dx, dy, dz, T]
+  const giantFrac = p.giantFrac ?? 0.012;
   const c = localCellOf(px, py0, pz, {});
   if (c) {
     const n = Math.ceil(Rl / 200) + 1;
@@ -129,7 +131,28 @@ export function bakeSky(p) {
         const ex = st.x - px, ey = st.y - py0, ez = st.z - pz;
         const dd = Math.hypot(ex, ey, ez);
         if (dd < 0.3 || dd > Rl) return;
-        list.push([st.luminosity / (dd * dd), ex / dd, ey / dd, ez / dd, st.temperature, dd]);
+        let L = st.luminosity, T = st.temperature;
+        // realistic IMF for the sky: the model's class weights favour hot stars (art direction for the
+        // galaxy view); in a real neighbourhood O stars are ~1e-5 and B ~1e-3 of all stars. Demote most
+        // of them to A/F dwarfs (deterministic), keeping the rare blue-white beacons.
+        if (T > 10000) {
+          const h = hashU(idx, 0x0b5e);
+          const keep = T > 30000 ? 0.012 : 0.08;
+          if (h > keep) { const v = hashU(idx, 0x3a11); T = 6400 + v * 3400; L = 2 * Math.pow(12, v); }
+        }
+        // evolved giants: the galaxy model's local population is main-sequence only, but in a real sky the
+        // luminous K/M giants (red clump, RGB, AGB) are ~1/3 of the naked-eye stars (Arcturus, Aldebaran,
+        // Antares). A small, deterministic fraction of the cool stars becomes a giant.
+        if (T < 6200) {
+          const h = hashU(idx, 0x61a7);
+          if (h < giantFrac) {
+            const u = hashU(idx, 0x2c1b), v = hashU(idx, 0x77e3);
+            const clump = u < 0.55;                           // red clump: K0-K2, L ~ 50
+            T = clump ? 4600 + v * 450 : 3500 + Math.pow(v, 0.7) * 1400;
+            L = clump ? 35 + v * 40 : 60 * Math.pow(20, Math.pow(u, 1.6));   // RGB/AGB tip ~1000 L☉
+          }
+        }
+        list.push([L / (dd * dd), ex / dd, ey / dd, ez / dd, T, dd]);
       }, sc);
     }
   }
@@ -142,7 +165,13 @@ export function bakeSky(p) {
     const ex = gs.x - px, ey = gs.y - py0, ez = gs.z - pz;
     const dd = Math.hypot(ex, ey, ez);
     if (dd < Rl) continue;
-    list.push([gs.luminosity * 0.35 / (dd * dd), ex / dd, ey / dd, ez / dd, gs.temperature, dd]);
+    let L = gs.luminosity, T = gs.temperature;
+    // same IMF correction as above: most luminous distant stars in a real sky are K/M giants
+    if (T > 10000 && hashU(i, 0x51d3) > (T > 30000 ? 0.015 : 0.1)) {
+      const v = hashU(i, 0x1f0f);
+      T = 3500 + Math.pow(v, 0.6) * 1700; L = 40 * Math.pow(25, hashU(i, 0x6d2b));
+    }
+    list.push([L * 0.35 / (dd * dd), ex / dd, ey / dd, ez / dd, T, dd]);
   }
   list.sort((a, b) => b[0] - a[0]);
   const ns = Math.min(maxStars, list.length);
@@ -159,7 +188,13 @@ export function bakeSky(p) {
     const bj = Math.min(H - 1, Math.max(0, Math.floor((1 - tOfLat(lat)) * 0.5 * H)));
     const tau = band[(bj * W + bi) * 4 + 3] * Math.min(1, L[5] / 6000);
     const ext = Math.exp(-tau * 0.8);
-    col[k * 3] = bc[0] * Math.exp(-tau * 0.55); col[k * 3 + 1] = bc[1] * Math.exp(-tau * 0.8); col[k * 3 + 2] = bc[2] * Math.exp(-tau * 1.1);
+    // colour: reddening saturates (colour excess of the few most-reddened stars stays photographic), and
+    // a slight desaturation toward white like a real exposure (stellar colours are pastel, not neon)
+    const tc = Math.min(tau, 1.2);
+    let cr = bc[0] * Math.exp(-tc * 0.55), cg = bc[1] * Math.exp(-tc * 0.8), cb = bc[2] * Math.exp(-tc * 1.1);
+    const cm = Math.max(cr, cg, cb, 1e-6); cr /= cm; cg /= cm; cb /= cm;
+    const cl = 0.3 * cr + 0.59 * cg + 0.11 * cb;
+    col[k * 3] = cl + (cr - cl) * 0.8; col[k * 3 + 1] = cl + (cg - cl) * 0.8; col[k * 3 + 2] = cl + (cb - cl) * 0.8;
     flux[k] = L[0] * ext;
   }
   const refRank = Math.min(ns - 1, p.refRank || 1200);

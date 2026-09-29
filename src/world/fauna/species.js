@@ -42,6 +42,7 @@ const HABITAT = {
   hexapod: { [B.DESERT]: 1, [B.SAVANNA]: 0.6, [B.ROCK]: 0.6, [B.JUNGLE]: 0.6, [B.TOXIC]: 1, [B.CRYSTAL]: 0.8, [B.FOREST]: 0.4, [B.VOLCANIC]: 0.6, [B.BEACH]: 0.5, [B.GRASSLAND]: 0.3 },
   hopper: { [B.GRASSLAND]: 0.8, [B.SAVANNA]: 1, [B.DESERT]: 0.7, [B.TUNDRA]: 0.5, [B.FOREST]: 0.4, [B.BEACH]: 0.3 },
   critter: { [B.GRASSLAND]: 1, [B.SAVANNA]: 0.8, [B.FOREST]: 1, [B.JUNGLE]: 1, [B.DESERT]: 0.6, [B.TUNDRA]: 0.6, [B.TAIGA]: 0.8, [B.BEACH]: 0.7, [B.ROCK]: 0.4, [B.TOXIC]: 0.5, [B.CRYSTAL]: 0.5, [B.SNOW]: 0.3 },
+  serpent: { [B.GRASSLAND]: 0.5, [B.SAVANNA]: 0.8, [B.DESERT]: 1, [B.JUNGLE]: 1, [B.FOREST]: 0.6, [B.ROCK]: 0.7, [B.TOXIC]: 0.9, [B.BEACH]: 0.4, [B.CRYSTAL]: 0.6, [B.VOLCANIC]: 0.5 },
 };
 
 // HSL is authored in sRGB (three's setHSL defaults to the linear working space → washed-out colours)
@@ -92,14 +93,15 @@ export function makeLook(rng, art, archetype, st, glowing) {
   glow = col(hg.h, Math.max(0.65, hg.s), 0.55);
   const patternType = archetype === 'hexapod' ? rng.weighted([[4, 3], [2, 2], [1, 1], [6, 1], [0, 1]])
     : archetype === 'giant' ? rng.weighted([[1, 2], [7, 1.5], [3, 1.2], [4, 2], [0, 1.2], [2, 1]])
+    : archetype === 'serpent' ? rng.weighted([[6, 2], [3, 1.5], [2, 1.2], [4, 1], [5, 0.6]])
     : rng.weighted([[0, 1.3], [1, 1.2 + exotic], [2, 1.2], [3, 0.6 + exotic * 0.6], [4, 2], [5, 1.2], [7, 0.6]]);
   const scaleByType = { 0: 1, 1: rng.range(1.4, 2.6), 2: rng.range(2.2, 4.0), 3: rng.range(1.8, 3.2), 4: rng.range(1.5, 2.5), 5: rng.range(2.5, 4.0), 6: rng.range(1.5, 3), 7: rng.range(0.9, 1.8) };
-  const sizeK = { giant: 0.35, critter: 3.5, hopper: 1.6, bird: 2.2, ray: 0.45, whale: 0.09, fish: 4, jelly: 1.2 }[archetype] ?? 1;
+  const sizeK = { giant: 0.35, critter: 3.5, hopper: 1.6, bird: 2.2, ray: 0.45, whale: 0.09, fish: 4, jelly: 1.2, serpent: 3.2 }[archetype] ?? 1;
   const fur = archetype === 'grazer' || archetype === 'hopper' || archetype === 'critter' || archetype === 'bird';
   return {
     back, belly, pattern, accent, keratin, eye, glow,
     patternParams: [patternType, scaleByType[patternType] * sizeK, rng.range(0.1, 0.45), patternType ? rng.range(0.55, 0.95) : 0],
-    glowParams: [glowing ? rng.range(1.2, 2.6) : 0, archetype === 'whale' || archetype === 'ray' ? rng.pick([1, 2, 2, 4]) : rng.int(1, 4), rng.range(0.6, 2.2), rng.range(0.4, 1.0)],
+    glowParams: [glowing ? rng.range(1.2, 2.6) : 0, archetype === 'whale' ? rng.pick([5, 4, 5, 5]) : archetype === 'ray' ? rng.pick([2, 5, 4, 5]) : rng.int(1, 5), rng.range(0.6, 2.2), rng.range(0.4, 1.0)],
     surf: [fur ? rng.range(0.72, 0.88) : rng.range(0.45, 0.7), fur ? rng.range(0.55, 0.9) : rng.range(0.1, 0.35), fur ? rng.range(0.8, 1.2) : rng.range(0.9, 1.6), fur ? rng.range(0.6, 1.3) : rng.range(0.1, 0.4)],
     extra: [rng.chance(0.5) ? rng.range(0.4, 0.95) : 0, archetype === 'hexapod' ? rng.range(0.3, 0.9) : 0, rng.range(0.6, 1.1), rng.range(0.7, 1.2)],
   };
@@ -136,6 +138,7 @@ export function makeRoster(body) {
     } else {
       sp.genome = chainGenome(r, archetype, st);
       sp.chain = true;
+      if (HABITAT[archetype]) sp.habitat = HABITAT[archetype];
     }
     sp.look = makeLook(r, art, archetype, st, glowing);
     list.push(sp);
@@ -159,6 +162,9 @@ export function makeRoster(body) {
     if (rng.chance(0.15 + st.glow * 0.7)) add('jelly', 'float', { group: [6, 14], density: 0.5, temper: 'calm', glowBias: 99 });
   }
   if (body.ocean?.present && (body.ocean.liquid ?? 'water') === 'water') add('fish', 'water', { group: [14, 30], density: 1, temper: 'skittish', glowBias: 0.6 });
+  // serpents (added last with their own RNG so every other species of existing worlds is unchanged)
+  const rs = new RNG(hashCombine(body.seed, 0x5e7e));
+  if (!cold && rs.chance(0.35 + st.exotic * 0.4)) add('serpent', 'ground', { group: [1, 3], density: 0.45, temper: rs.weighted([['skittish', 2], ['calm', 1], ['curious', 1]]) });
   return list;
 }
 

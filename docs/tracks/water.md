@@ -12,6 +12,9 @@ Owner paths: `src/world/water/**`, this file.
 | `textures.js` | THREE wrappers (mipmapped RGBA8 DataTextures), placeholders, sync fallback |
 | `water.worker.js` | module worker: texture synthesis + bathymetry grids (`SurfaceGen.heightLod`, same generator as the terrain) — nothing heavy on the main thread |
 | `shaders.js` | ocean surface vertex/fragment (water, acid, lava, ice variants), underwater effect, shore effect (wet sand / swash / hot lava rims), heat shimmer, marine snow |
+| `reef.js` | seabed life around the camera (liquid water only): 7 instanced types — seagrass, kelp, branching (staghorn) coral, brain coral, sea fans, tube sponges, boulders — swaying in the wave surge/current, palette-driven colours with coral fluorescence, bioluminescent tips on alien worlds; shrinks into the bed at the edge of its radius (no pop) |
+| `reefgeo.js` | procedural geometry for the reef types (tubes / ribbons / lumpy domes, vertex colour + sway + glow attributes) |
+| `reefplace.js` | THREE-free placement (runs in the water worker): planet-global cube-sphere lattice (deterministic, no popping when re-requested), classified by depth / temperature / sand / slope with 100 m–km patchiness |
 
 ### Rendering scheme
 * **Geometry** — one camera-centred polar grid laid directly on the sea sphere (`radius + seaLevel`):
@@ -62,6 +65,34 @@ Owner paths: `src/world/water/**`, this file.
   shimmer effect 145); `ice` (static frozen sea: pressure plates, cracks with blue subsurface glow, snow drifts,
   glossy reflections).
 
+## Round 2 changes (critic fixes)
+* **Grid / crosshatch on the water** — root causes were (a) the pipeline's screen-space AO hatching the smooth,
+  grazing water (and the underside of the surface when diving): the shore pass (95) now restores the pre-AO
+  scene colour on water pixels (and fades AO out with distance underwater); (b) detail-normal layers whose
+  tiles shrank to a few dozen pixels (visible repetition lattice): every FFT layer now fades out by its
+  pixel footprint and its lost slope variance goes into GGX roughness; (c) glitter cells on a regular lattice:
+  now two cross-faded octaves (one rotated), each glint at a random spot/size inside its cell.
+* **Swell** — the WaveSet now has 3 long, smooth swell trains (2.5–5.6 × the wind-sea wavelength, ~0.1 of
+  total steepness) under the choppier wind sea (steepness 0.048–0.1, Σ Q·k·A 0.72–0.9); amplitude floor raised
+  (0.78 + 0.6 × wind). A drifting gust field (0.4–4 km) scales the short waves and roughness → cat's paws up
+  close, calm slicks and rough streaks in the sun path from altitude; km-scale swell trains (0.7 / 2.4 km
+  tiles) keep relief visible from kilometres up; 20/61 km roughness bands mottle the glint from orbit.
+* **Glint** — stochastic micro-facet glitter inside a broad GGX lobe, energy-matched to the lobe, twinkling
+  at ~7 Hz, density follows the gust field.
+* **Lava** — a two-phase flow map advects the convection cells and flow-stretched streaks (the melt visibly
+  moves, rafts drift as rigid plates at a different velocity); open-melt zones much larger (gap width up to
+  0.8 of a raft in active regions); incandescent upwellings; slow region-wide breathing of the glow.
+* **Wet sand** — graded moisture: saturated up to the highest run-up then a long capillary damp → dry fade,
+  a mirror sheen that decays ~2 s after the backwash uncovers the sand, roughness grading from film (0.045)
+  to matte damp sand (0.42), bubble line at the top of the run-up dissolving, lacy (never solid) foam front.
+* **Caustics** — seabed caustics are the product of two dispersive caustic layers at different scales and
+  drift directions (sharp bright interference web) plus their mean; god-ray shafts use the smooth focusing
+  pattern (broad beams) with exact per-segment extinction, a near span of `SHAFT_STEPS` (8/12/16/22 by tier)
+  and a coarser far span.
+* **Seabed life** (new, `reef*.js`) so dives and clear shallows have foreground interest.
+* **Shore foam beyond the horizon** (terrain request) — land seen through a long water path is treated as deep
+  water (no spurious foam on islands behind the curvature).
+
 ## Public API (`world.get('water')`, also `world.water`)
 * `heightAt(p)` / `surfaceHeight(p)` — planet-local point → liquid surface height (m rel. `body.radius`,
   waves included, Gerstner-inverted so it matches the rendered surface). Player swimming uses it.
@@ -92,7 +123,7 @@ Owner paths: `src/world/water/**`, this file.
 | Acid sea in a storm | `/?mode=system&galaxy=0&star=3&planet=0&view=fly&alt=4&lat=-26.425&lon=-99.917&yaw=225&pitch=-6&tod=0.35` | |
 | Frozen sea in an arctic fjord (clear ice, frost cracks, pressure ridges) | `/?mode=system&galaxy=0&star=0&planet=4&view=fly&alt=3&lat=-12.764&lon=-82.965&yaw=170&pitch=-10&tod=0.35&disable=vehicles` | |
 
-URL params added by this track: `uw=<m>` puts the camera that many metres below sea level (the player
+URL params added by this track: `reef=0` disables seabed life; `uw=<m>` puts the camera that many metres below sea level (the player
 cannot dive yet); `wdebug=1` shows SSR hits (R), scene grab (G), Fresnel (B); `wdebug=2` lava emission only;
 `wdebug=5` paints the water mesh magenta. `disable=vehicles` only removes parked vehicles from the frame.
 
@@ -100,6 +131,8 @@ cannot dive yet); `wdebug=1` shows SSR hits (R), scene grab (G), Fresnel (B); `w
 * Shore pass: one full-screen pass (≈ 6 texture fetches, early-outs on sky / water / > 2 m above the sea),
   only below 700 m and not on `low`.
 * Mesh: high 190 rings × 208 segments ≈ 78k tris (1 draw call); low 110 × 128 ≈ 28k.
+* Reef: 7 instanced draw calls, ≈ 2.5k instances / ≈ 0.35–0.45 M tris at high within 85 m (×0.55 med, ×0.3 low),
+  only while the camera is within 260 m of the sea level; placement in the worker, re-requested after ~25 m of travel.
 * Fragment: 8/10/12 Gerstner normals (low/med/high), 3 detail fetches, 2 caustic + 2 foam fetches,
   SSR (20 steps, high/ultra only, < 3 km). One colour+depth blit per frame.
 * Textures synthesised once per planet in the water worker (≈ 0.5 s at 256² on a desktop core, 128² on
@@ -134,6 +167,9 @@ cannot dive yet); `wdebug=1` shows SSR hits (R), scene grab (G), Fresnel (B); `w
   `seaLevel`) instead of swimming; (3) swim ripples are very bright opaque white rings over the new water —
   consider lower opacity / additive blending so they read as ripples, and use `water.heightAt(p)` for their
   height so they ride the swell.
+* **atmosphere** — (new) the rectangular bright patch the critic saw above the sun glint in the 3 km capture is a
+  cumulus billboard with a hard, axis-aligned edge (visible with the water disabled too): please give cloud
+  impostors a soft radial / depth fade.
 * **atmosphere** — (0) from orbit the aerial perspective turns the oceans pale sky-blue (the raw ocean is a
   dark navy — compare `disable=atmosphere`); Earth-like oceans from space should stay deep blue with a
   thinner blue veil; (1) the ocean reads `world.lighting.cubeRT.texture` (raw sky cube) for reflections;

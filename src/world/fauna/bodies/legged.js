@@ -21,12 +21,12 @@ export function leggedGenome(rng, kind, style = {}) {
     g.bodyLen = r2(rng, 0.78, 1.12);
     g.depthK = r2(rng, 0.9, 1.05);
     g.widthK = r2(rng, 0.36, 0.5);
-    g.neckLen = r2(rng, 0.38, 0.72);
-    g.neckAng = r2(rng, 32, 58);
-    g.neckW = r2(rng, 0.2, 0.3);
-    g.headLen = r2(rng, 0.3, 0.42);
-    g.headW = r2(rng, 0.17, 0.24);
-    g.headH = r2(rng, 0.2, 0.27);
+    g.neckLen = r2(rng, 0.5, 0.78);
+    g.neckAng = r2(rng, 44, 64);
+    g.neckW = r2(rng, 0.18, 0.25);
+    g.headLen = r2(rng, 0.3, 0.4);
+    g.headW = r2(rng, 0.13, 0.17);
+    g.headH = r2(rng, 0.16, 0.21);
     g.headPitch = r2(rng, 30, 48);
     g.snout = r2(rng, 0.45, 0.75);
     g.tailLen = rng.pick([r2(rng, 0.12, 0.25), r2(rng, 0.3, 0.6), r2(rng, 0.55, 0.9)]);
@@ -351,18 +351,20 @@ export function leggedGeometry(rig, lod = 0) {
     C(add(add(hipP, ax, -D * 0.6), up, D * 0.02), W * 0.3, D * 0.2, D * 0.2);
     C(add(add(hipP, ax, -D * 0.5), up, D * 0.04), W * 0.62, D * 0.36, D * 0.34);
     C(add(add(hipP, ax, -D * 0.28), up, D * 0.02), W * 0.84, D * 0.46, D * 0.42);
-    C(add(hipP, ax, -D * 0.02), W * 0.92, D * 0.5, D * 0.46);
-    C(add(lerp3(hipP, shP, 0.5), up, -D * 0.05), W * 0.98, D * 0.47, D * 0.52 * (1 + belly));
+    C(add(hipP, ax, -D * 0.02), W * 0.95, D * 0.5, D * 0.46);
+    C(add(lerp3(hipP, shP, 0.42), up, -D * 0.03), W * 0.88, D * 0.46, D * 0.44 * (1 + belly));
+    C(add(lerp3(hipP, shP, 0.68), up, -D * 0.06), W * 0.98, D * 0.47, D * 0.54 * (1 + belly));
     C(add(add(shP, ax, -D * 0.2), up, hump * D * 0.12), W * 1.0, D * (0.52 + hump * 0.3), D * 0.5);
     C(add(add(shP, ax, D * 0.18), up, D * 0.08 + hump * D * 0.08), W * 0.78, D * (0.46 + hump * 0.15), D * 0.44);
   }
   // neck
   const nb = rig.neckBase, nd = rig.neckDir, Ln = rig.Ln;
-  C(add(nb, nd, -D * 0.02), nW * 1.45, nW * 1.7, nW * 1.6);
-  C(add(nb, nd, Ln * 0.3), nW * 1.12, nW * 1.35, nW * 1.25);
-  C(add(nb, nd, Ln * 0.65), nW * 0.98, nW * 1.18, nW * 1.1);
-  C(add(nb, nd, Ln * 0.98), nW * 0.9, nW * 1.08, nW * 1.02);
-  C(add(add(nb, nd, Ln), rig.headDir, rig.Lh * 0.1), nW * 0.72, nW * 0.85, nW * 0.8);
+  const thin = giant ? 1 : hexa ? 1.1 : 0.82;       // grazers: slim necks that read against the torso
+  C(add(nb, nd, -D * 0.02), nW * 1.3 * thin, nW * 1.6, nW * 1.75);
+  C(add(nb, nd, Ln * 0.28), nW * 0.98 * thin, nW * 1.18, nW * 1.3);
+  C(add(nb, nd, Ln * 0.62), nW * 0.8 * thin, nW * 0.96, nW * 1.02);
+  C(add(nb, nd, Ln * 0.95), nW * 0.7 * thin, nW * 0.86, nW * 0.84);
+  C(add(add(nb, nd, Ln), rig.headDir, rig.Lh * 0.1), nW * 0.62 * thin, nW * 0.74, nW * 0.7);
 
   const nMain = hi ? (giant ? 110 : 84) : 22;
   const sp = spline(ctrl, nMain, ['w', 'ht', 'hb']);
@@ -389,7 +391,20 @@ export function leggedGeometry(rig, lod = 0) {
       if (sArc < jTail1 || sArc > jChest) return 1;
       const seg = Math.cos((sArc - jTail1) / (jChest - jTail1) * Math.PI * 2 * (g.segments || 5));
       return 1 + 0.035 * seg * (s > -0.3 ? 1 : 0.4);
-    } : (g.spikes?.plates && hi ? null : null),
+    } : hi ? (i, t, c, s) => {
+      // anatomy: scapula / shoulder mass, haunch, rib cage and a withers ridge so the torso reads
+      // as muscle over bone under raking light instead of a uniform tube
+      const sArc = sp.s[i];
+      const flank = Math.abs(c), upper = Math.max(0, s + 0.25);
+      const gs = (mu, w) => Math.exp(-((sArc - mu) * (sArc - mu)) / (w * w));
+      let m = 1;
+      m += 0.065 * gs(jChest - D * 0.12, D * 0.3) * flank * Math.min(1, upper * 1.4);        // shoulder
+      m += 0.075 * gs(jSpine - (jChest - jSpine) * 0.9, D * 0.34) * flank * Math.min(1, upper * 1.2);   // haunch
+      m += 0.03 * gs((jSpine + jChest) * 0.5, D * 0.5) * flank * Math.max(0, 0.6 - Math.abs(s));  // rib cage
+      m += 0.04 * gs(jChest - D * 0.05, D * 0.25) * Math.max(0, s - 0.75) * 4;                    // withers
+      if (sArc > jNeck1 && sArc < jHead) m += 0.05 * Math.max(0, -s - 0.5) * 2 * Math.sin(Math.PI * (sArc - jNeck1) / (jHead - jNeck1));   // throat
+      return m;
+    } : undefined,
     capStart: 0.55, capEnd: 0.5,
   });
 
@@ -441,6 +456,11 @@ export function leggedGeometry(rig, lod = 0) {
   const hsp = spline(hc, hi ? 30 : 9, ['w', 'ht', 'hb']);
   mb.loft({
     pts: hsp.pts, w: hsp.w, ht: hsp.ht, hb: hsp.hb, segs: hi ? 20 : 8, power: 2.1, up: hUp,
+    // cheek (masseter) mass low on the sides, brow ridge above the eyes, nasal bridge
+    bulge: hi && !hexa ? (i, t, c, s) => {
+      const gs = (mu, w) => Math.exp(-((t - mu) * (t - mu)) / (w * w));
+      return 1 + 0.1 * gs(0.3, 0.13) * Math.abs(c) * Math.max(0, 0.3 - s) + 0.06 * gs(0.3, 0.08) * Math.max(0, s - 0.35) * Math.abs(c) * 2 - 0.05 * gs(0.62, 0.15) * Math.abs(c) * Math.max(0, s);
+    } : undefined,
     skin: (i, t, out) => { out[0] = B.HEAD; out[1] = B.HEAD; out[2] = 1; },
     info: (i, t, s, out) => { out[0] = code(P.HEAD, hexa && s > 0 ? M.CARAPACE : M.SKIN); out[1] = t; out[2] = s * 0.8 + 0.1; out[3] = 0.7 + 0.3 * Math.max(0, s); },
     capStart: true, capEnd: 0.9,
@@ -455,16 +475,25 @@ export function leggedGeometry(rig, lod = 0) {
   };
 
   // eyes
-  const eyeR = hh * g.eyeK * (hexa ? 1.4 : 1);
+  const eyeR = hh * g.eyeK * (hexa ? 1.4 : 1.12);
   const eyeT = hexa ? 0.42 : 0.3;
   for (const side of [1, -1]) {
     const surf = headSurf(eyeT, side * 0.72, 0.62);
     const out = norm(add(V(side, 0, 0), hUp, 0.55));
     const c = add(surf, out, -eyeR * 0.35);
+    const eb = eyeBasis(norm(add(out, hd, 0.25)));
     mb.ellipsoid(c, eyeR, eyeR * 0.92, eyeR, hi ? 12 : 5, hi ? 8 : 3,
       (t, o) => { o[0] = B.HEAD; o[1] = B.HEAD; o[2] = 1; },
       (t, s, o) => { o[0] = code(P.EYE, M.EYE); o[1] = t; o[2] = 0; o[3] = 1; },
-      eyeBasis(norm(add(out, hd, 0.25))));
+      eb);
+    if (hi && !hexa) {
+      // lids: a flattened skin ring slightly larger than the eye → the eye sits in a socket
+      const lc = add(c, eb[2], eyeR * 0.3);
+      mb.ellipsoid(lc, eyeR * 1.32, eyeR * 1.12, eyeR * 0.5, 14, 6,
+        (t, o) => { o[0] = B.HEAD; o[1] = B.HEAD; o[2] = 1; },
+        (t, s, o) => { o[0] = code(P.HEAD, M.SKIN); o[1] = 0.55; o[2] = 0.2 + 0.4 * s; o[3] = 0.45 + 0.4 * (1 - t); },
+        eb);
+    }
   }
   // nostrils / mouth line (dark) — small flattened ellipsoids at the muzzle
   if (hi && !hexa) {

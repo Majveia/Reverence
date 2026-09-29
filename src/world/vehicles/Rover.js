@@ -13,7 +13,7 @@
 import * as THREE from 'three';
 import { Vehicle } from './Vehicle.js';
 import { buildRover, ROVER } from './models/rover.js';
-import { makePool } from './fx/glow.js';
+import { makePool, conformPool } from './fx/glow.js';
 import { clamp, damp, dampF, smoothstep, orthoForward, quatFromFrame, FastRand, noise1, fmtSpeed } from './util.js';
 import { G } from '../../core/Uniforms.js';
 import { CockpitScreen } from './fx/screen.js';
@@ -84,7 +84,7 @@ export class Rover extends Vehicle {
     this.tris = m.tris;
     m.rider.visible = false;
     this.tracks = this.mgr.quality.tier === 'low' ? null : new TireTracks(this.world, { strips: 4, max: this.mgr.quality.mobile ? 60 : 130, width: 0.36, life: 50 });
-    this.headPool = makePool({ size: 26, color: [1.0, 0.9, 0.75], shape: [1.8, 0.4] });
+    this.headPool = makePool({ size: 26, color: [1.0, 0.9, 0.75], shape: [1.8, 0.4], segs: 10 });
     this.world.root.add(this.headPool);
     const sa = m.anchors.screen;
     this.screen = new CockpitScreen({ tint: [1.0, 0.75, 0.35], width: sa.w, height: sa.h, kind: 'rover' });
@@ -487,6 +487,7 @@ export class Rover extends Vehicle {
       grd.normalAt(_p, 3, _a, true);
       orthoForward(_a, this.fwdVec, _f);
       quatFromFrame(_a, _f, this.headPool.quaternion);
+      conformPool(this.headPool, grd, R);
       this.headPool.material.uniforms.uPower.value = hk * 0.75;
     }
     if (m.rider.visible) m.rider.rotation.z = clamp(this.angVel.dot(this.upVec) * 0.05, -0.08, 0.08);

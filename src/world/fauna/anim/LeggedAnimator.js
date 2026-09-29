@@ -79,14 +79,14 @@ export class LeggedAnimator {
     const muzzleY = (a) => {
       // neck1 pitch a*0.55 about nb, neck2 a*0.25 about nm, head a*0.35 about hp (pitch = rotation about X)
       const rot = (p, c, ang) => { const y = p[1] - c[1], z = p[2] - c[2]; const cs = Math.cos(ang), sn = Math.sin(ang); return [p[0], c[1] + y * cs - z * sn, c[2] + y * sn + z * cs]; };
-      let t = rot(tip, hp, a * 0.35), h = hp, m = nm;
-      t = rot(t, m, a * 0.25); h = rot(h, m, a * 0.25);
-      t = rot(t, nb, a * 0.55); h = rot(h, nb, a * 0.55); m = rot(m, nb, a * 0.55);
+      let t = rot(tip, hp, a * 0.42), h = hp, m = nm;
+      t = rot(t, m, a * 0.32); h = rot(h, m, a * 0.32);
+      t = rot(t, nb, a * 0.44); h = rot(h, nb, a * 0.44); m = rot(m, nb, a * 0.44);
       return t[1] - rig.hhAbs * 0.4;
     };
     let lo = 0, hi = 2.4;
     for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2; if (muzzleY(mid) > rig.S * 0.02) lo = mid; else hi = mid; }
-    this.grazeA = Math.min(lo, 2.2);
+    this.grazeA = Math.min(lo, 1.9);
     if (this.kind === 'giant') this.grazeA *= 0.62;   // giants browse bushes / low trees
   }
 
@@ -230,7 +230,7 @@ export class LeggedAnimator {
     const sway = moving ? Math.sin(ph) * 0.035 * (gw[0] + gw[1] * 0.5) : 0;
     const liftY = c.bodyLift + bob + hop + (c.crouch || 0) * -rig.S * s * 0.12;
     // pelvis local translation (root-local up)
-    qeuler(lq, B.PELVIS * 4, sway * 0.6 - c.turn * 0.05, c.bodyPitch + gallopRock + (c.lean || 0), sway * 0.5 + c.bodyRoll);
+    qeuler(lq, B.PELVIS * 4, sway * 0.6 - c.turn * 0.05, c.bodyPitch + gallopRock + (c.lean || 0) + c.graze * 0.05, sway * 0.5 + c.bodyRoll);
     qeuler(lq, B.SPINE * 4, -c.turn * 0.12 - sway * 0.5, -gallopRock * 0.3 + breathe * 0.4, 0);
     qeuler(lq, B.CHEST * 4, -c.turn * 0.12 - sway * 0.4, -gallopRock * 0.4 - breathe, -sway * 0.3);
     // -------------------------------------------------- neck & head (graze + look + idle)
@@ -257,9 +257,11 @@ export class LeggedAnimator {
     const chew = c.graze > 0.6 ? Math.sin(t * 9.0) * 0.04 : 0;
     const walkNod = moving ? Math.sin(ph * bobF + 0.6) * 0.05 * (gw[0] + gw[1]) : 0;
     const runNeck = gw[2] * 0.3 * (moving ? 1 : 0);
-    qeuler(lq, B.NECK1 * 4, c.hy * 0.3, g * 0.55 + c.hp * 0.3 + walkNod * 0.5 + runNeck, 0);
-    qeuler(lq, B.NECK2 * 4, c.hy * 0.3, g * 0.25 + c.hp * 0.3 + walkNod * 0.3, 0);
-    qeuler(lq, B.HEAD * 4, c.hy * 0.4, g * 0.35 + c.hp * 0.4 - walkNod * 0.6 + chew - runNeck * 0.8, -c.hy * 0.15);
+    // graze: the neck arcs down in a curve (base 44 %, mid 32 %) and the head tips toward vertical
+    // (42 %) so neck, throat and jaw stay readable as separate masses instead of one tube
+    qeuler(lq, B.NECK1 * 4, c.hy * 0.3, g * 0.44 + c.hp * 0.3 + walkNod * 0.5 + runNeck, 0);
+    qeuler(lq, B.NECK2 * 4, c.hy * 0.3, g * 0.32 + c.hp * 0.3 + walkNod * 0.3, 0);
+    qeuler(lq, B.HEAD * 4, c.hy * 0.4, g * 0.42 + c.hp * 0.4 - walkNod * 0.6 + chew - runNeck * 0.8, -c.hy * 0.15);
     // ears
     c.earT += dt;
     const flick = Math.max(0, Math.sin(c.earT * 0.9 + c.seed * 9) - 0.93) * 12;

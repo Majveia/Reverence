@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { Vehicle } from './Vehicle.js';
 import { buildShip, SHIP } from './models/ship.js';
-import { makeFlame, makePool } from './fx/glow.js';
+import { makeFlame, makePool, conformPool } from './fx/glow.js';
 import { Ribbon } from './fx/trails.js';
 import { clamp, damp, dampF, smoothstep, orthoForward, quatFromFrame, FastRand, noise1, fmtSpeed, fmtDist } from './util.js';
 import { Celestial } from '../Celestial.js';
@@ -101,9 +101,9 @@ export class Starship extends Vehicle {
     this.plasma.visible = false;
     m.root.add(this.plasma);
     // thruster wash on the ground
-    this.pool = makePool({ size: 22, color: [g[0] * 0.8, g[1] * 0.8, g[2] * 0.8], shape: [1.3, 0] });
+    this.pool = makePool({ size: 22, color: [g[0] * 0.8, g[1] * 0.8, g[2] * 0.8], shape: [1.3, 0], segs: 8 });
     this.world.root.add(this.pool);
-    this.landPool = makePool({ size: 18, color: [1.0, 0.95, 0.85], shape: [1.4, 0.3] });
+    this.landPool = makePool({ size: 18, color: [1.0, 0.95, 0.85], shape: [1.4, 0.3], segs: 8 });
     this.world.root.add(this.landPool);
     // contrails (wing tips) + engine trails
     const q = mgr.quality;
@@ -567,6 +567,7 @@ export class Starship extends Vehicle {
       grd.normalAt(this.pos, 6, _n, true);
       orthoForward(_n, this.fwdVec, _f);
       quatFromFrame(_n, _f, this.pool.quaternion);
+      conformPool(this.pool, grd, R);
       this.pool.material.uniforms.uPower.value = k * (0.2 + night * 1.2);
     }
     const lk = this.occupied && agl < 150 ? smoothstep(0.25, 0.7, night) * clamp(1 - agl / 150, 0, 1) : 0;
@@ -578,6 +579,7 @@ export class Starship extends Vehicle {
       grd.normalAt(_p, 6, _n, true);
       orthoForward(_n, this.fwdVec, _f);
       quatFromFrame(_n, _f, this.landPool.quaternion);
+      conformPool(this.landPool, grd, R);
       this.landPool.material.uniforms.uPower.value = lk * 0.6;
     }
   }

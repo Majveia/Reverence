@@ -93,8 +93,8 @@ export function reefPlacement(gen, m) {
       const sand = s.sand ?? 0, rock = Math.max(s.rock ?? 0, sstep(0.25, 0.5, s.slope ?? 0));
       w[T_GRASS] = depth < 10 ? 3.2 * grassP * sstep(0.45, 1.2, depth) * (1 - sstep(6, 10, depth)) * (1 - rock * 0.8) : 0;
       w[T_KELP] = depth > 3 && depth < 34 ? 1.6 * kelpP * (1 - warm * 0.75) * sstep(3, 7, depth) * (0.4 + rock) : 0;
-      w[T_BRANCH] = depth > 0.8 && depth < 22 ? 2.2 * reefP * (0.25 + warm) * (1 - sstep(14, 22, depth)) : 0;
-      w[T_BRAIN] = depth > 0.8 && depth < 28 ? 1.5 * reefP * (0.3 + warm) : 0;
+      w[T_BRANCH] = depth > 1.4 && depth < 22 ? 2.2 * reefP * (0.25 + warm) * sstep(1.4, 3.5, depth) * (1 - sstep(14, 22, depth)) : 0;
+      w[T_BRAIN] = depth > 1.2 && depth < 28 ? 1.5 * reefP * (0.3 + warm) * sstep(1.2, 3.0, depth) : 0;
       w[T_FAN] = depth > 3 && depth < 40 ? 0.7 * (0.3 + reefP) * (0.35 + warm * 0.65) : 0;
       w[T_ROCK] = 0.25 + rock * 1.6 + reefP * 0.3;
       w[T_SPONGE] = depth > 1.5 && depth < 42 ? 0.55 * (0.3 + reefP) : 0;
@@ -116,6 +116,10 @@ export function reefPlacement(gen, m) {
         case T_ROCK: scale = 0.5 + r2 * r2 * 3.0 * (0.5 + rock); break;
         default: scale = 0.7 + r2 * 1.2;
       }
+      // never break the surface: colonies stay ≥ ~0.5 m below the sea (unit heights: branch 0.8, brain 0.4,
+      // fan 1.0, sponge 0.7 m; kelp reaches the surface by design)
+      const hU = t === T_BRANCH ? 0.8 : t === T_BRAIN ? 0.4 : t === T_FAN ? 1.0 : t === T_SPONGE ? 0.7 : t === T_GRASS ? 1.0 : 0;
+      if (hU > 0) scale = Math.max(0.3, Math.min(scale, (depth - 0.5) / hU));
       const rr = radius + s.height;
       posL.push(d3[0] * rr, d3[1] * rr, d3[2] * rr);
       attrL.push(t, r1 * Math.PI * 2, scale, r3, depth);
