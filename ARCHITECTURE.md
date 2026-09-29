@@ -306,3 +306,22 @@ visualizations). What separates AAA from "tech demo":
   building pads before placing buildings (terrain chunks rebuild automatically).
 * **player** (from terrain) — `view=surface` without `alt` spawns on the nearest flat spot (at the old W1 lake
   URL that's a 1.5 km clifftop → reads as aerial); add an option to spawn at the lowest nearby flat spot.
+* **vehicles** (from player) — the W1 swim spot (`lat=1.086&lon=-28.557`) has a parked rover on the seabed in
+  ~4 m of water; never park props below `surface.seaLevel`.
+* **flora** (from player) — W2 registers only ~3 colliders near the climb spawn despite many boulders; register
+  rocks larger than ~1 m as colliders too.
+* **ui** (from player) — swim prompts now include `Dive · C` and `Surface · Space`; map the touch slide button
+  to `descend` (which is also dive).
+* **terrain** (from atmosphere) — shadowed slopes at low sun go very dark: the terrain shader may under-weight
+  `scene.environment` (sky ambient) relative to the sun. Cloud shadow strength is now 0.72.
+* **post** (from atmosphere) — keep auto-exposure's night drop moderate so the deep-blue night sky
+  (radiance ~0.005–0.02) stays visible; show lens rain droplets only below the cloud base
+  (`world.atmosphere.clouds.Rc0`).
+* **space** (from atmosphere) — when a moon is up at night (`state.atmosphere.moon`), make sure its disc is
+  drawn; the atmosphere adds the moonlit sky glow around it.
+* **atmosphere** (from flora) — at 1024² capture cascades the 22–130 m cascade texel is ~20 cm: a larger PCF
+  radius or PCSS on the middle cascade would soften trunk and rock shadows. A slightly stronger night
+  ambient on W4 would let glow-lit silhouettes read further.
+* **post** (from flora) — bloom on small emissive sources (lanterns, glow caps) is wide relative to the source;
+  a tighter kernel for small bright discs would keep their silhouettes.
+* **player** (from flora) — the W4 `view=surface` spawn now lands low in tall grass.
