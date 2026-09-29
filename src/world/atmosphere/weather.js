@@ -232,6 +232,8 @@ export class Weather {
       default: break;
     }
     if (storm > 0) rain = Math.max(rain, this.cold ? 0 : storm * 0.9), snow = this.cold ? Math.max(snow, storm) : snow;
+    // airless bodies have no weather at all
+    if (!this.present) return { rain: 0, snow: 0, dust: 0, fog: 0, storm: 0, aurora: 0 };
     return { rain, snow, dust, fog, storm, aurora };
   }
 

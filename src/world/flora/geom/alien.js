@@ -46,6 +46,14 @@ export function giantMushroom(rnd, P) {
       b2.p[i] = t[0] + top[0]; b2.p[i + 1] = t[1] + top[1] - capH * 0.15; b2.p[i + 2] = t[2] + top[2];
     }
     b.append(b2);
+    if (P.glow) {
+      // the glowing gill ring lights the stem and the cap rim (baked bounce light)
+      const gy = top[1] - capH * 0.2;
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * 6.2832;
+        b.emitter([top[0] + Math.cos(a) * R * 0.55, gy, top[2] + Math.sin(a) * R * 0.55], R * 0.4, P.gill);
+      }
+    }
     // ring skirts on the stem (annulus)
     for (let k = 0; k < rings && !detail; k++) {
       const t = 0.55 + k * 0.12;
@@ -124,9 +132,9 @@ export function coralTree(rnd, P) {
     const b = new PlantBuilder();
     for (const br of branches) {
       if (detail && br.depth === 0) continue;
-      b.tube(detail ? br.path.filter((_, i) => i % 2 === 0) : br.path, { segs: detail ? 4 : 8, kind: KIND.SOLID, pattern: PAT.BANDS, color: (t) => mix3(P.colA, P.colB, clamp((3 - br.depth + t) / 4, 0, 1)), phase: br.phase, capTip: true });
+      b.tube(detail ? br.path.filter((_, i) => i % 2 === 0) : br.path, { segs: detail ? (br.depth >= 2 ? 4 : 3) : [4, 5, 6, 8][br.depth] ?? 8, kind: KIND.SOLID, pattern: PAT.BANDS, color: (t) => mix3(P.colA, P.colB, clamp((3 - br.depth + t) / 4, 0, 1)), phase: br.phase, capTip: true });
     }
-    for (const t of tips) b.sphere({ c: t.p, r: t.r, wSegs: detail ? 6 : 10, hSegs: detail ? 4 : 7, kind: P.glow ? KIND.GLOW : KIND.SOLID, pattern: PAT.POLKA, color: P.tip, flex: 0.35, phase: t.phase, ao: 1 });
+    for (const t of tips) b.sphere({ c: t.p, r: t.r, wSegs: detail ? 5 : 8, hSegs: detail ? 3 : 6, kind: P.glow ? KIND.GLOW : KIND.SOLID, pattern: PAT.POLKA, color: P.tip, flex: 0.35, phase: t.phase, ao: 1 });
     return b;
   };
   return { lod0: emit(0), lod1: emit(1), height: H, crownR: H * 0.45, trunkR: r0, collider: { r: r0, h: H * 0.4 } };
@@ -291,4 +299,74 @@ export function balloonTree(rnd, P) {
     return b;
   };
   return { lod0: emit(0), lod1: emit(1), height: H * 1.3, crownR: H * 0.5, trunkR: r0, collider: { r: r0 * 1.1, h: H * 0.7 } };
+}
+
+// ---------------------------------------------------------------------- lantern tree (bioluminescent)
+// A dark, gnarled broad tree whose arching limbs carry drooping dark-teal foliage and strings of
+// hanging glow lanterns (teardrop bulbs on thin stalks) plus a faint glowing vein spiralling up the
+// trunk. The lanterns' light is baked onto the limbs, leaves and trunk (PlantBuilder emitters), so at
+// night the tree reads as a lit body with a silhouette rather than a cloud of floating orbs.
+export function lanternTree(rnd, P) {
+  const H = P.height * rnd.range(0.85, 1.2);
+  const r0 = P.trunkR * rnd.range(0.9, 1.2);
+  const lean = [rnd.range(-0.6, 0.6), rnd.range(-0.6, 0.6)];
+  const trunk = bezierPath([[0, -0.7, 0], [lean[0] * 0.3, H * 0.35, lean[1] * 0.3], [lean[0], H * 0.62, lean[1]]], 12,
+    (t) => r0 * (1 + 0.9 * Math.exp(-t * 6)) * (1 - t * 0.45), 0, { flex: (t) => t * t * 0.12, ao: (t) => 0.4 + 0.6 * smooth(0, 0.35, t) });
+  const tp = trunk[trunk.length - 1];
+  const limbs = [];
+  const n = rnd.int(5, 7);
+  const ph0 = rnd() * 6.28;
+  for (let k = 0; k < n; k++) {
+    const a = ph0 + (k / n) * 6.2832 + rnd.range(-0.3, 0.3);
+    const t0 = rnd.range(0.7, 1.0);
+    const s = trunk[Math.floor(t0 * (trunk.length - 1))];
+    const L = H * rnd.range(0.38, 0.55);
+    // arch up and out, then droop at the tip (weeping silhouette)
+    const e = [s.x + Math.cos(a) * L, s.y + L * rnd.range(0.05, 0.3), s.z + Math.sin(a) * L];
+    const m = [s.x + Math.cos(a) * L * 0.45, s.y + L * rnd.range(0.45, 0.7), s.z + Math.sin(a) * L * 0.45];
+    const path = bezierPath([[s.x, s.y, s.z], m, e], 8, s.r * 0.6, 0.05, { flex: (t) => 0.15 + t * 0.4, ao: (t) => 0.55 + 0.45 * t });
+    limbs.push({ path, a, phase: rnd() });
+  }
+  const leafA = P.leafA || [0.02, 0.05, 0.05], leafB = P.leafB || [0.03, 0.08, 0.07];
+  const emit = (detail) => {
+    const b = new PlantBuilder();
+    b.tube(detail ? trunk.filter((_, i) => i % 2 === 0 || i === trunk.length - 1) : trunk, { segs: detail ? 6 : 11, kind: KIND.BARK, color: P.trunk, vScale: 0.6 });
+    // glowing vein spiralling up the trunk
+    if (!detail) {
+      const vein = [];
+      const turns = rnd.range(1.2, 2.0), vph = rnd() * 6.28;
+      for (let k = 0; k <= 18; k++) {
+        const t = k / 18, q = trunk[Math.floor(t * (trunk.length - 1))];
+        const ang = vph + t * turns * 6.2832;
+        const rr = q.r * 1.02;
+        vein.push({ x: q.x + Math.cos(ang) * rr, y: q.y, z: q.z + Math.sin(ang) * rr, r: 0.025, flex: q.flex, ao: 1 });
+      }
+      b.tube(vein.filter((q) => q.y > 0.1), { segs: 3, kind: KIND.GLOW, color: P.colA, emit: false });
+    }
+    for (const l of limbs) {
+      b.tube(detail ? l.path.filter((_, i) => i % 2 === 0) : l.path, { segs: detail ? 4 : 7, kind: KIND.BARK, color: P.trunk, phase: l.phase, capTip: true });
+      // drooping foliage along the outer half of the limb
+      const nc = detail ? 3 : 7;
+      for (let c = 0; c < nc; c++) {
+        const q = l.path[Math.floor((0.45 + 0.55 * (c + 0.5) / nc) * (l.path.length - 1))];
+        const s = (detail ? 1.9 : 1.2) * rnd.range(0.8, 1.2);
+        const col = cv(rnd, leafA, leafB);
+        b.bcard({ c: [q.x + rnd.range(-0.3, 0.3), q.y - s * 0.25, q.z + rnd.range(-0.3, 0.3)], w: s * 0.6, h: s * 0.75, roll: rnd.range(-0.4, 0.4), rect: P.rect,
+          kind: KIND.LEAF, flex: 0.5, ao: 0.6 + rnd() * 0.3, phase: l.phase, color: col, shade: norm3(Math.cos(l.a), 0.6, Math.sin(l.a)) });
+      }
+      // hanging lanterns: teardrop bulbs on thin stalks below the limb
+      const nl = rnd.int(3, 5);
+      for (let k = 0; k < nl; k++) {
+        const q = l.path[Math.floor(rnd.range(0.4, 1.0) * (l.path.length - 1))];
+        const drop = rnd.range(0.5, 1.6);
+        const br = (P.bulbR ?? 0.3) * rnd.range(0.6, 1.1);
+        const cy = q.y - drop - br;
+        const col = cv(rnd, P.colA, P.colB);
+        if (!detail) b.tube([{ x: q.x, y: q.y, z: q.z, r: 0.02, flex: 0.5 }, { x: q.x, y: cy + br * 0.9, z: q.z, r: 0.015, flex: 0.9 }], { segs: 3, kind: KIND.SOLID, color: P.trunk, phase: l.phase });
+        b.sphere({ c: [q.x, cy, q.z], r: [br * 0.85, br * 1.2, br * 0.85], wSegs: detail ? 6 : 10, hSegs: detail ? 4 : 7, kind: KIND.GLOW, pattern: PAT.BANDS, color: col, flex: 0.9, phase: l.phase, ao: 1 });
+      }
+    }
+    return b;
+  };
+  return { lod0: emit(0), lod1: emit(1), height: H * 1.05, crownR: H * 0.5, trunkR: r0, collider: { r: r0 * 1.2, h: H * 0.6 } };
 }

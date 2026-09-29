@@ -78,11 +78,21 @@ export class Player {
     else if (this.surface && p.view !== 'fly' && p.view !== 'orbit' && !(+p.alt > 0.5) && p.flat !== '0') dir = this._flatSpot(dir, 45);
     this.up = dir.clone().normalize();
     this.pos = this.up.clone().multiplyScalar(this.R + this._terrainH(this.up));
+    if (this.heights.solidSea && this.pos.length() < this.heights.seaR) this.pos.setLength(this.heights.seaR); // on the ice
     this.vel = new THREE.Vector3();
+    this._settle = (this.view === 'surface' || this.view === 'fp') && !(+p.alt > 0.5) && p.flat !== '0' ? 2.5 : 0;
     const east = new THREE.Vector3(), north = new THREE.Vector3();
     tangentBasis(this.up, east, north);
     const yaw = (p.yaw !== undefined ? +p.yaw : 30) * DEG;
     this.forward = north.clone().multiplyScalar(Math.cos(yaw)).addScaledVector(east, Math.sin(yaw)).normalize();
+    // no explicit heading: face the capital so the first frame shows the town (civ track request)
+    if (p.yaw === undefined) {
+      const tgt = world.civ?.spawnTarget || world.get?.('civ')?.spawnTarget;
+      if (tgt?.isVector3 && tgt.distanceTo(this.pos) < 9000) {
+        const f = projectOnPlane(tgt.clone().sub(this.pos), this.up);
+        if (f.lengthSq() > 1) this.forward.copy(f.normalize());
+      }
+    }
     this.bodyFacing = this.forward; // alias (vehicles copy into it)
     this.state = 'ground';
     this.grounded = true;
@@ -99,7 +109,7 @@ export class Player {
     };
     this.climbBlend = 0;
     this.climbPush = 0;
-    this.swimT = 0;
+    this.swimT = 0; this.dive = 0;
     this.time = 0;
     this.turnRate = 0; this._prevFacing = this.forward.clone();
     this.accel = new THREE.Vector3(); this._prevVel = new THREE.Vector3(); this.accelUp = 0;
@@ -112,7 +122,7 @@ export class Player {
     this._visible = true;
     this.S = {
       state: 'ground', crouch: false, speed: 0, accelLocal: new THREE.Vector3(), accelUp: 0, turnRate: 0,
-      hardLand: 0, landImpact: 0, lookYaw: 0, lookPitch: 0, fp: false, vy: 0, airTime: 0, boost: 0, time: 0,
+      hardLand: 0, landImpact: 0, dive: 0, lookYaw: 0, lookPitch: 0, fp: false, vy: 0, airTime: 0, boost: 0, time: 0,
       glide: { pitch: 0, bank: 0, swayZ: 0, swayX: 0 }, slide: { carve: 0 }, climb: { move: 0, dirX: 0, dirY: 0, lean: 0, speed: 0, wallZ: 0.24, lunge: 0 },
     };
 
@@ -123,9 +133,18 @@ export class Player {
     this.cam.pitch = clamp((p.pitch !== undefined ? +p.pitch : -10) * DEG, -1.4, 1.4);
     if (p.zoom !== undefined) this.cam.zoom = clamp(+p.zoom, 0.3, 4);
     this.cam.fovBase = p.fov !== undefined ? clamp(+p.fov, 30, 100) : 58;
-    this.cam.fov.reset(this.view === 'fp' ? 72 : this.cam.fovBase);
+    this.cam.fpFov = p.fov !== undefined ? clamp(+p.fov, 10, 100) : 72; // fov= also drives first person (telephoto sky shots)
+    this.cam.fov.reset(this.view === 'fp' ? this.cam.fpFov : this.cam.fovBase);
     if (p.dist !== undefined) this.cam.orbit.dist = +p.dist;
     if (p.tod !== undefined) safe(() => world.celestial.setLocalTime(this.up, +p.tod));
+    // facesun=<deg>: turn the explorer toward the sun (+deg to the left) — front-lit hero portraits
+    if (p.facesun !== undefined) safe(() => {
+      const sd = projectOnPlane(world.celestial.sunDir.clone(), this.up);
+      if (sd.lengthSq() < 1e-6) return;
+      this.forward.copy(sd.normalize()).applyAxisAngle(this.up, (+p.facesun || 0) * DEG);
+      this.cam.fwd.copy(this.forward);
+      if (p.camyaw !== undefined) this.cam.fwd.applyAxisAngle(this.up, -(+p.camyaw) * DEG);
+    });
 
     // ---- presentation
     this._buildBody();
@@ -244,6 +263,59 @@ export class Player {
     this.fx?.rebase(this.pos);
   }
 
+  /** Face a planet-local target (body + camera), e.g. a creature or monument at spawn. */
+  lookAt(target) {
+    if (!target?.isVector3) return;
+    const f = projectOnPlane(_a.copy(target).sub(this.pos), this.up);
+    if (f.lengthSq() < 1e-6) return;
+    f.normalize();
+    this.forward.copy(f); this._prevFacing.copy(f);
+    this.cam.fwd.copy(f);
+    // pitch the view toward the target (keeps it framed when it is above / below the horizon)
+    const d = _b.copy(target).sub(this.pos).addScaledVector(this.up, -1.5);
+    const el = Math.asin(clamp(d.normalize().dot(this.up), -1, 1));
+    this.cam.pitch = clamp(el * 0.8 - 0.08, -0.8, 0.6);
+    this.cam.pivotInit = false; this.cam.fpInit = false;
+    if (this.scarf) this.scarf.initialized = false;
+  }
+
+  /** Early frames: step off spawn points that ended up inside / hugging a tree or rock (flora request). */
+  _spawnSettle(dt) {
+    this._settle -= dt;
+    if (this.speed > 0.2 || this.state !== 'ground' || !this.colliders.count) return;
+    const near = (p) => {
+      const list = this.colliders.query(p, 6);
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        if (c.enabled === false || c.vehicle) continue;
+        const minD = c.tag === 'tree' ? 4 : c.tag === 'rock' ? (c.radius || 1) + 1.2 : 0;
+        if (!minD) continue;
+        _x.copy(p).sub(c.pos); projectOnPlane(_x, this.up);
+        if (_x.length() < minD) return true;
+      }
+      return false;
+    };
+    if (!near(this.pos)) { this._settle = Math.min(this._settle, 0.6); return; }
+    tangentBasis(this.up, _c, _d);
+    const k = 1 / this.R;
+    for (let i = 1; i < 90; i++) {
+      const t = i * 2.39996, r = 1.5 + Math.sqrt(i) * 1.6;
+      _e.copy(this.up).addScaledVector(_c, Math.cos(t) * r * k).addScaledVector(_d, Math.sin(t) * r * k).normalize();
+      _e.multiplyScalar(this.heights.groundR(_e));
+      if (near(_e)) continue;
+      this.heights.normal(_e, _n, 0.8);
+      if (_n.dot(_v.copy(_e).normalize()) < 0.88) continue;
+      if (this.heights.water(_e) > -1e8 && _e.length() < this.R + this.heights.water(_e)) continue;
+      this.pos.copy(_e); this.up.copy(_e).normalize();
+      orthoForward(this.up, this.forward, this.forward);
+      this.cam.pivotInit = false;
+      if (this.scarf) this.scarf.initialized = false;
+      this._settle = 0;
+      return;
+    }
+    this._settle = 0;
+  }
+
   onControlLost() {
     this._setVisible(false);
     this._openGlider(false, true);
@@ -278,6 +350,7 @@ export class Player {
     this.time += dt;
     const input = this.input;
     this.colliders.sync(dt);
+    if (this._settle > 0) safe(() => this._spawnSettle(dt));
 
     if (input.down('view')) {
       if (this.view === 'surface') this.view = 'fp';
@@ -706,7 +779,7 @@ export class Player {
 
   _enterSwim(impact) {
     const wasAir = this.state === 'air' || this.state === 'glide';
-    this.state = 'swim'; this.grounded = false; this.swimT = 0;
+    this.state = 'swim'; this.grounded = false; this.swimT = 0; this.dive = 0;
     this._openGlider(false);
     if (this.fx && (impact > 1.5 || wasAir)) {
       _a.copy(this.pos).setLength(this.R + this.water);
@@ -727,14 +800,21 @@ export class Player {
     vt.lerp(_a.copy(I.wish).multiplyScalar(spd), dampF(spd > vt.length() ? 2.2 : 1.6, dt));
     if (vt.lengthSq() > 0.05) this._turnToward(vt, 3.2, dt);
     else if (this.view === 'fp') this._turnToward(this.cam.fwd, 2, dt);
-    // buoyancy spring toward the float line (gentle bob)
-    const bob = Math.sin(this.time * 1.7) * 0.035;
+    // dive (hold descend): sink toward the seabed; buoyancy brings you back up when released
+    const floorHere = this.heights.groundR(this.pos);
+    const maxDive = Math.max(0, seaR - T.float - floorHere - 0.7);
+    if (I.descend) this.dive = Math.min(maxDive, this.dive + dt * (I.sprint ? 2.6 : 1.7));
+    else this.dive = Math.max(0, this.dive - dt * (I.jumpHeld ? 2.4 : 1.1));
+    if (this.dive > maxDive) this.dive = damp(this.dive, maxDive, 4, dt);
+    const bob = Math.sin(this.time * 1.7) * 0.035 * (1 - smoothstep(0.2, 0.8, this.dive));
     const r = this.pos.length();
-    const err = (seaR - T.float + bob) - r;
+    // front crawl rides higher (back, pack and helmet break the surface); treading sits chest-deep
+    const floatD = lerp(T.float, 1.19, smoothstep(0.3, 1.6, this.speed) * (1 - smoothstep(0.1, 0.6, this.dive)));
+    const err = (seaR - floatD + bob - this.dive) - r;
     let vr = this.vel.dot(up);
     vr += (err * 14 - vr * 5) * dt;
     this.vel.copy(vt).addScaledVector(up, vr);
-    if (I.jumpDown && err > -0.3) { // dolphin hop
+    if (I.jumpDown && err > -0.3 && this.dive < 0.2) { // dolphin hop
       this.vel.addScaledVector(up, 4.6 - vr);
       this.state = 'air'; this.airTime = 0; this.usedDouble = true;
       if (this.fx) this.fx.splash(_a.copy(this.pos).setLength(seaR), up, 4, _col.setRGB(0.75, 0.85, 0.9));
@@ -925,6 +1005,7 @@ export class Player {
     const g = this.glide;
     S.glide.pitch = g.pitch; S.glide.bank = g.bank; S.glide.swayZ = g.swayZ.x; S.glide.swayX = g.swayX.x;
     S.slide.carve = this.slideS.carve;
+    S.dive = this.state === 'swim' ? clamp(this.dive / 1.2, 0, 1) : 0;
     const C = this.climbS;
     S.climb.move = C.move; S.climb.dirX = C.dx; S.climb.dirY = C.dy; S.climb.lean = C.lean;
     S.climb.speed = st === 'climb' ? C.speed : 0; S.climb.wallZ = C.wallZ; S.climb.lunge = C.lunge;
@@ -1022,6 +1103,7 @@ export class Player {
     ctx.pos = this.pos; ctx.up = this.up; ctx.vel = this.vel; ctx.state = this.state;
     ctx.heights = this.heights; ctx.colliders = this.colliders; ctx.bank = this.glide.bank;
     ctx.carve = this.slideS.carve; ctx.dive = this.glide.dive > 0.5; ctx.boost = this.boostP;
+    ctx.submerged = this.state === 'swim' && this.dive > 0.6; ctx.forward = this.forward;
     ctx.climbN = this.climbS.n; ctx.climbUp = this.climbS.up; ctx.climbSide = this.climbS.side;
     if (this.view === 'fp') {
       if (this.animator) {
@@ -1052,18 +1134,47 @@ export class Player {
       }
     }
     if (fx) {
-      // ---- slide spray
-      if (this.state === 'slide' && this.speed > 2) {
+      // ---- slide: rooster tail of sand / snow from the trailing edge, grains, and a carved furrow
+      if (this.state === 'slide' && this.speed > 1.5) {
         const soft = this.surfaceKind === 'sand' || this.surfaceKind === 'snow';
-        _a.copy(this.vel).normalize().negate();
-        _b.copy(this.pos).addScaledVector(this.forward, -0.1);
-        fx.spray(_b, _a, up, this._dustColor(), soft ? 3 : 1, 1.5 + this.speed * 0.18, 0, soft ? 0.26 : 0.16);
+        const k = smoothstep(1.5, 14, this.speed);
+        const an = this.animator;
+        _a.copy(this.vel).normalize().negate().addScaledVector(up, 0.25);
+        // lateral kick toward the outside of the carve
+        _c.crossVectors(up, this.forward).multiplyScalar(-this.slideS.carve * 0.6);
+        _a.add(_c).normalize();
+        this._slideAcc = (this._slideAcc || 0) + dt * (soft ? 52 : 22) * (0.35 + k);
+        this._grainAcc = (this._grainAcc || 0) + dt * (soft ? 90 : 30) * k;
+        const src = an ? an.footWorld.R : this.pos;
+        _col.copy(this.groundColor).lerp(WHITE, this.surfaceKind === 'snow' ? 0.75 : 0.3);
+        // the spray is thrown out sideways off the board edge and carried along with the rider (a chase
+        // camera would otherwise leave it behind the lens within a few frames)
+        const side = _c.crossVectors(up, this.forward).normalize(); // left of the body (board is sideways)
+        const rnd = fx.rand;
+        while (this._slideAcc >= 1) {
+          this._slideAcc -= 1;
+          const s = (rnd.next() < 0.5 ? 1 : -1) * (0.6 + rnd.next() * 0.8) - this.slideS.carve * 0.8;
+          _b.copy(this.vel).multiplyScalar(0.45 + rnd.next() * 0.25).addScaledVector(side, s * (1.4 + this.speed * 0.14))
+            .addScaledVector(up, 0.8 + rnd.next() * (0.9 + this.speed * 0.08));
+          _e.copy(src).addScaledVector(side, s * 0.15);
+          fx.emit(_e, _b, { kind: 0, size: (soft ? 0.34 : 0.2) * (0.6 + rnd.next() * 0.8), size1: soft ? 1.15 : 0.7, life: 0.65 + rnd.next() * 0.75, color: _col, alpha: soft ? 0.42 : 0.3, drag: 1.4, grav: 0.18, spin: (rnd.next() - 0.5) * 2 });
+        }
+        while (this._grainAcc >= 1) {
+          this._grainAcc -= 1;
+          const s = (rnd.next() < 0.5 ? 1 : -1) * (0.5 + rnd.next()) - this.slideS.carve;
+          _b.copy(this.vel).multiplyScalar(0.7).addScaledVector(side, s * (1.5 + this.speed * 0.15)).addScaledVector(up, 1.8 + rnd.next() * 2.5);
+          fx.emit(src, _b, { kind: 1, size: 0.02, size1: 0.016, life: 0.45 + rnd.next() * 0.4, color: _col, alpha: 0.9, drag: 0.4, grav: 1 });
+        }
+        if (soft && an) {
+          this._furrowD = (this._furrowD || 0) + this.speed * dt;
+          if (this._furrowD > 0.45) { this._furrowD = 0; fx.footprint(an.footWorld.L, up, this.forward); fx.footprint(an.footWorld.R, up, this.forward); }
+        }
       }
       // ---- swim ripples + wake
-      if (this.state === 'swim') {
+      if (this.state === 'swim' && this.dive < 0.5) {
         this._ripT = (this._ripT || 0) + dt;
         const moving = this.speed > 0.6;
-        if (this._ripT > (moving ? 0.28 : 0.6)) {
+        if (this._ripT > (moving ? 0.42 : 0.8)) {
           this._ripT = 0;
           _a.copy(this.pos).setLength(this.R + this.water);
           fx.ripple(_a, up, 0.25, moving ? 1.6 : 1.1, moving ? 1.4 : 1.8);
@@ -1136,6 +1247,7 @@ export class Player {
     if (this.state === 'air' && this.airTime > 0.35 && this.pos.length() - this.heights.groundR(this.pos) > 5) pr = ['Glide', 'jump'];
     else if (this.state === 'glide') pr = ['Dive · Shift   Drop · C', 'sprint'];
     else if (this.state === 'climb') pr = ['Jump off · Space   Let go · C', 'jump'];
+    else if (this.state === 'swim') pr = this.dive > 0.3 ? ['Surface · Space', 'jump'] : ['Dive · C', 'descend'];
     else if (this.state === 'ground' && this.groundN.dot(this.up) < 0.92 && this.speed > 2) pr = ['Slide · C', 'descend'];
     this._prompt(pr);
   }
@@ -1163,6 +1275,7 @@ export class Player {
       grounded: this.grounded,
       fuel: +this.jetFuel.toFixed(2),
       surface: this.surfaceKind,
+      dive: +(this.dive || 0).toFixed(2),
       tris: this.rig?.triangles | 0,
       colliders: this.colliders.count,
     };

@@ -195,7 +195,8 @@ void main(){
   } else {
     // night sky glow + moonlit sky (inside the atmosphere)
     float cz = max(dot(dir, up), 0.0);
-    float inside = 1.0 - smoothstep(uAtmoRt * 0.985, uAtmoRt, r);
+    // airless bodies: no sky glow / night sky / cloud deck (and uAtmoRt may be 0 → smoothstep(0,0) = NaN)
+    float inside = uHasAtmo > 0.5 ? 1.0 - smoothstep(uAtmoRt * 0.985, uAtmoRt, r) : 0.0;
     float airmass = 1.0 / (cz + 0.12);
     float mnu = dot(dir, uMoonDir);
     L += (uNightSky * (0.45 + 0.18 * airmass) + uMoonSky * (atmo_phaseRayleigh(mnu) * (0.6 + 0.15 * airmass) + 0.35 * atmo_phaseHG(mnu, 0.8))) * inside;
@@ -205,7 +206,9 @@ void main(){
     vec3 cl = mix(uCloudShade, uCloudLight, 0.5 + 0.5 * nu);
     L = mix(L, cl, cov);
   }
-  gl_FragColor = vec4(L, 1.0);
+  // never let a NaN/Inf reach the PMREM: it would poison scene.environment for every lit material
+  if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
+  gl_FragColor = vec4(max(L, vec3(0.0)), 1.0);
 }`;
 
 export class Lighting {

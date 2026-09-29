@@ -15,6 +15,10 @@ registerChunk('rv_flora', /* glsl */`
 #define RV_FLORA
 vec3 rvQrot(vec4 q, vec3 v){ return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 float rvIGN(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+// temporal dither: the pattern shifts every TAA sub-frame / frame so crossfades and alpha edges
+// resolve to smooth gradients instead of a fixed screen-door pattern
+uniform float uDitherF; uniform float uDitherA;
+float rvDither(vec2 p){ return rvIGN(p + 5.588238 * mod(uDitherF, 64.0)); }
 // LOD band: x..y fade in, z..w fade out (linear so neighbouring LODs are exactly complementary)
 vec2 rvLodFade(float d, vec4 f){
   float fin = f.y > f.x ? clamp((d - f.x) / (f.y - f.x), 0.0, 1.0) : 1.0;
@@ -66,12 +70,14 @@ vec3 rvWind(vec3 wp, vec3 pl, vec3 up, float flex, float phase, float flutter, f
 const PLANT_VERT_PARS = /* glsl */`
 #include <rv_flora>
 attribute vec4 iPos; attribute vec4 iRot; attribute vec4 iData;
-attribute vec4 aInfo; attribute vec3 aShade; attribute vec3 aColor; attribute vec3 aCorner;
+attribute vec4 aInfo; attribute vec3 aShade; attribute vec3 aColor; attribute vec3 aCorner; attribute vec3 aGlowL;
+varying vec3 vGlowL;
 uniform vec4 uFade; uniform vec4 uDFade; uniform vec4 uThin; uniform float uWindAmp; uniform float uBillboard;
 uniform vec3 uCamPos; uniform vec3 uPlanetCenter; uniform float uTime; uniform vec3 uWindDir; uniform float uWindStrength;
 uniform float uTintVar; uniform float uShadowPush;
 #include <rv_flora_wind>
 varying vec2 vAtlasUv; varying vec4 vInfo; varying vec3 vCol; varying vec3 vShadeN; varying vec2 vFade; varying vec3 vObjPos; varying float vSeed;
+vec3 rvCardC = vec3(0.0); float rvIsCard = 0.0;
 `;
 
 // Builds `transformed` from instance data. DEPTH_PASS is defined for shadow materials.
@@ -91,6 +97,7 @@ vec3 transformed;
   float thin = rvThin(d, iData.y, uThin);
   float sc = iPos.w * thin;
   vec3 wp = rvQrot(iRot, position * sc);
+  vec3 wp0 = wp;
   if (aCorner.z > 0.5) {
     vec3 camR = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
     vec3 camU = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
@@ -106,11 +113,18 @@ vec3 transformed;
     #endif
   }
   float kind = floor(aInfo.x / 16.0 + 0.001);
-  wp += rvWind(wp, pl, up, aInfo.y, aInfo.w, (kind > 0.5 && kind < 2.5) ? 1.0 : 0.0, sc, uWindAmp, iData.x);
+  vec3 wnd = rvWind(wp, pl, up, aInfo.y, aInfo.w, (kind > 0.5 && kind < 2.5) ? 1.0 : 0.0, sc, uWindAmp, iData.x);
+  wp += wnd;
   transformed = base + wp;
+  // card centre (with the same wind) for filtered shadow lookups, see PLANT_SHADOW_VERT
+  rvCardC = base + wp0 + wnd;
+  rvIsCard = aCorner.z;
   if (vFade.x * vFade.y <= 0.001 || sc <= 1e-4) transformed = base;
   vAtlasUv = uv;
   vInfo = aInfo;
+  #ifndef DEPTH_PASS
+  vGlowL = aGlowL;
+  #endif
   float tv = (iData.z - 0.5) * uTintVar;
   vCol = aColor * vec3(1.0 + tv * 0.6, 1.0 + tv * 0.25, 1.0 - tv * 0.35) * (1.0 + (iData.x - 0.5) * uTintVar * 0.35);
   vObjPos = position;
@@ -118,18 +132,51 @@ vec3 transformed;
 }
 `;
 
+// Leaf-card shadow lookups: sample the sun shadow around the card centre (footprint shrunk to 10%)
+// instead of per pixel. Cascade texels are several cm while cards are ~1.5 m clusters of leaves:
+// per-pixel lookups stair-step into blocky "voxel" self-shadowing; the shrunk footprint gives each
+// leaf cluster a smooth light→shade gradient (dappled, painterly canopy light).
+const PLANT_SHADOW_VERT = /* glsl */`
+#include <shadowmap_vertex>
+#if defined( USE_SHADOWMAP ) && NUM_SUN_LIGHT_SHADOWS > 0
+  if (rvIsCard > 0.5) {
+    vec3 rvCW = (modelMatrix * vec4(rvCardC, 1.0)).xyz;
+    vSunShadowWorldPosition.xyz = mix(rvCW, vSunShadowWorldPosition.xyz, 0.1);
+  }
+#endif
+`;
+
 const PLANT_FRAG_PARS = /* glsl */`
 #include <rv_flora>
 uniform sampler2D uAtlas; uniform highp sampler2DArray uBark; uniform float uBarkLayer; uniform float uBarkScale;
 uniform vec3 uTint2; uniform float uTransl; uniform float uGlowStr; uniform float uCardGlow; uniform float uNight; uniform float uTime;
 uniform vec3 uMoss; uniform float uMossAmt; uniform float uAtlasSize; uniform float uSpec;
+varying vec3 vGlowL;
 varying vec2 vAtlasUv; varying vec4 vInfo; varying vec3 vCol; varying vec3 vShadeN; varying vec2 vFade; varying vec3 vObjPos; varying float vSeed;
 float rvTransl = 0.0;
 float rvWrap = 0.0;
 float rvKind = 0.0;
 float rvBarkH = 0.5;
+vec2 rvGrad = vec2(0.0);   // height gradient in texture space (per filtered texel step)
 vec3 rvGlow = vec3(0.0);
+// Perturb a view-space normal by a texture-space height gradient using the screen-space cotangent
+// frame (Mikkelsen). Only derivatives of interpolated position/uv are used (smooth per triangle), so
+// there are no 2×2-quad blocks like dFdx(texture) bump mapping produces.
+vec3 rvPerturb(vec3 N, vec3 vpos, vec2 uv, vec2 g, float k){
+  vec3 dp1 = dFdx(vpos), dp2 = dFdy(vpos);
+  vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+  vec3 p2 = cross(dp2, N), p1 = cross(N, dp1);
+  vec3 T = p2 * du1.x + p1 * du2.x;
+  vec3 B = p2 * du1.y + p1 * du2.y;
+  float im = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
+  return normalize(N - k * (g.x * T + g.y * B) * im);
+}
 float rvPatternHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float rvH3(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.yzx + 33.33); return fract((p.x + p.y) * p.z); }
+float rvVN3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(rvH3(i), rvH3(i + vec3(1,0,0)), f.x), mix(rvH3(i + vec3(0,1,0)), rvH3(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(rvH3(i + vec3(0,0,1)), rvH3(i + vec3(1,0,1)), f.x), mix(rvH3(i + vec3(0,1,1)), rvH3(i + vec3(1,1,1)), f.x), f.y), f.z); }
+float rvSolidN = 0.5;
 vec3 rvPattern(float pat, vec2 uv, vec3 col){
   if (pat < 0.5) return col;
   if (pat < 1.5) { // spots (mushroom caps): jittered dots
@@ -181,6 +228,15 @@ if (kind < 0.5) {
   vec2 buv = vAtlasUv * vec2(1.0, uBarkScale);
   vec4 bk = texture(uBark, vec3(buv, uBarkLayer));
   rvBarkH = bk.g;
+  {
+    vec2 fw = fwidth(buv);
+    vec2 e = max(fw, vec2(1.0 / 256.0, 1.0 / 512.0));
+    float hx = texture(uBark, vec3(buv + vec2(e.x, 0.0), uBarkLayer)).g;
+    float hy = texture(uBark, vec3(buv + vec2(0.0, e.y), uBarkLayer)).g;
+    // fade relief with distance (texel footprint) → no sparkle far away
+    float nearK = 1.0 - smoothstep(0.02, 0.12, max(fw.x, fw.y));
+    rvGrad = vec2(hx - bk.g, hy - bk.g) * (0.35 + 0.65 * nearK);
+  }
   albedo = vCol * (0.5 + 0.8 * bk.r);
   albedo = mix(albedo, uMoss * (0.6 + 0.6 * bk.r), clamp(bk.b * uMossAmt * 1.5, 0.0, 1.0));
 } else if (kind < 2.5) {
@@ -189,13 +245,22 @@ if (kind < 0.5) {
   vec2 dx = dFdx(px), dy = dFdy(px);
   float mip = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
   alpha = tx.a * (1.0 + mip * 0.14);
-  albedo = mix(vCol, uTint2, tx.g) * (tx.r * 1.45);
+  albedo = mix(vCol, uTint2, tx.g) * (0.38 + tx.r * 0.95);
   rvBarkH = tx.r;
+  {
+    vec2 e = max(fwidth(vAtlasUv), vec2(1.0 / uAtlasSize)) * 1.5;
+    float hx = texture2D(uAtlas, vAtlasUv + vec2(e.x, 0.0)).r;
+    float hy = texture2D(uAtlas, vAtlasUv + vec2(0.0, e.y)).r;
+    rvGrad = vec2(hx - tx.r, hy - tx.r) * (1.0 - smoothstep(1.5, 4.0, mip) * 0.7);
+  }
   rvTransl = tx.b * uTransl * (kind > 1.5 ? 1.3 : 1.0);
   rvWrap = 0.5;
   if (uCardGlow > 0.0 && kind > 1.5) rvGlow = albedo * uCardGlow * (0.05 + uNight) * (0.8 + 0.2 * sin(uTime * 1.3 + vSeed * 20.0));
 } else {
   albedo = rvPattern(pat, vAtlasUv, vCol);
+  // material breakup on solids (caps, stalks, bulbs): mottling + fine grain, drives roughness too
+  rvSolidN = rvVN3(vObjPos * 2.3 + vSeed * 17.0) * 0.6 + rvVN3(vObjPos * 9.0 + 3.1) * 0.4;
+  albedo *= 0.8 + 0.38 * rvSolidN;
   if (kind > 3.5 && kind < 4.5) {
     float pulse = 0.85 + 0.15 * sin(uTime * (0.8 + vSeed) + vSeed * 30.0 + vObjPos.y * 0.5);
     rvGlow = albedo * uGlowStr * (0.08 + 0.92 * uNight) * pulse;
@@ -208,8 +273,12 @@ if (kind < 0.5) {
   }
   rvWrap = 0.2;
 }
-// LOD crossfade (complementary dither)
-float dth = rvIGN(gl_FragCoord.xy);
+// bounce light from the plant's own glowing parts (baked per vertex, see PlantBuilder._bakeGlow)
+if (uGlowStr > 0.0 && kind < 3.5) rvGlow += (albedo + 0.05) * vGlowL * uGlowStr * 0.6 * (0.03 + 0.97 * uNight);
+// LOD crossfade (complementary dither, temporally shifted so TAA resolves it)
+float dth = rvDither(gl_FragCoord.xy);
+// soft alpha-tested leaf edges: jitter the coverage threshold (TAA averages it into a soft edge)
+if (uDitherA > 0.0 && kind > 0.5 && kind < 2.5) alpha += (dth - 0.5) * uDitherA;
 // dissolve foliage/branches right in front of the camera so they never smother the view
 { float cd = length(vViewPosition); if (cd < 3.2 && dth > smoothstep(1.0, 3.2, cd)) discard; }
 if (vFade.y < 0.999 && dth >= vFade.y) discard;
@@ -223,21 +292,9 @@ const PLANT_NORMAL = /* glsl */`
 if (rvKind > 0.5 && rvKind < 2.5) {
   // crown-level (spherified) normal + per-leaf relief from the atlas luminance: sunlit vs shaded leaves
   normal = normalize(vShadeN);
-  float hx = dFdx(rvBarkH), hy = dFdy(rvBarkH);
-  vec3 vpos = -vViewPosition;
-  vec3 dpdx = dFdx(vpos), dpdy = dFdy(vpos);
-  vec3 r1 = cross(dpdy, normal), r2 = cross(normal, dpdx);
-  float det = dot(dpdx, r1);
-  vec3 grad = sign(det) * (hx * r1 + hy * r2);
-  normal = normalize(abs(det) * normal - 0.9 * grad);
+  normal = rvPerturb(normal, -vViewPosition, vAtlasUv, rvGrad, 2.2);
 } else if (rvKind < 0.5) {
-  vec3 vpos = -vViewPosition;
-  vec3 dpdx = dFdx(vpos), dpdy = dFdy(vpos);
-  float hx = dFdx(rvBarkH), hy = dFdy(rvBarkH);
-  vec3 r1 = cross(dpdy, normal), r2 = cross(normal, dpdx);
-  float det = dot(dpdx, r1);
-  vec3 grad = sign(det) * (hx * r1 + hy * r2);
-  normal = normalize(abs(det) * normal - 1.6 * grad);
+  normal = rvPerturb(normal, -vViewPosition, vAtlasUv * vec2(1.0, uBarkScale), rvGrad, 5.0);
 } else {
   normal = normalize(mix(normal, normalize(vShadeN), 0.5));
 }
@@ -280,7 +337,7 @@ const PLANT_ROUGH = /* glsl */`
 #include <roughnessmap_fragment>
 if (rvKind < 0.5) roughnessFactor = 0.92;
 else if (rvKind < 2.5) roughnessFactor = 0.62;
-else if (rvKind < 4.5) roughnessFactor = 0.5;
+else if (rvKind < 4.5) roughnessFactor = 0.38 + 0.4 * rvSolidN;
 else roughnessFactor = 0.1;
 `;
 
@@ -300,8 +357,13 @@ export function linkCommon(shader, u) {
   shader.uniforms.uCamPos = G.uCameraPos;
   shader.uniforms.uPlanetCenter = G.uPlanetCenter;
   shader.uniforms.uNight = G.uNight;
+  shader.uniforms.uDitherF = FLORA_DITHER.frame;
+  shader.uniforms.uDitherA = FLORA_DITHER.amt;
   for (const k in u) shader.uniforms[k] = u[k];
 }
+
+/** shared temporal-dither state (updated per draw from the TAA sub-frame index, see index.js) */
+export const FLORA_DITHER = { frame: { value: 0 }, amt: { value: 0 } };
 
 /**
  * Plant material pair for one (model, LOD) layer.
@@ -331,6 +393,7 @@ export function makePlantMaterials(p) {
     vs = vs.replace('#include <common>', '#include <common>\n' + PLANT_VERT_PARS);
     vs = vs.replace('#include <beginnormal_vertex>', 'vec3 objectNormal = rvQrot(iRot, normal);\n#ifdef USE_TANGENT\nvec3 objectTangent = vec3(tangent.xyz);\n#endif');
     vs = vs.replace('#include <begin_vertex>', PLANT_BEGIN + '\nvShadeN = normalize(normalMatrix * rvQrot(iRot, aShade));');
+    vs = vs.replace('#include <shadowmap_vertex>', PLANT_SHADOW_VERT);
     shader.vertexShader = vs;
     let fs = shader.fragmentShader;
     fs = fs.replace('#include <common>', '#include <common>\n' + PLANT_FRAG_PARS);
@@ -339,10 +402,12 @@ export function makePlantMaterials(p) {
     fs = fs.replace('#include <lights_physical_pars_fragment>', PLANT_LIGHT_PARS);
     fs = fs.replace('#include <roughnessmap_fragment>', PLANT_ROUGH);
     fs = fs.replace('#include <aomap_fragment>', PLANT_AO);
-    fs = fs.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += rvGlow;');
+    // glowing solids: brightest facing the viewer, dimmer toward the rim → lanterns read as round,
+    // translucent bodies with form instead of flat bloom discs
+    fs = fs.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n{ float fr = (rvKind > 3.5 && rvKind < 4.5) ? mix(0.3, 1.0, pow(clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 1.3)) : 1.0; totalEmissiveRadiance += rvGlow * fr; }');
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-flora-plant-v1';
+  mat.customProgramCacheKey = () => 'rv-flora-plant-v4';
 
   const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide });
   depth.name = 'flora-plant-depth';
@@ -362,15 +427,16 @@ float rvIGNd(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.
   if (vFade.y < 0.999 && rvIGNd(gl_FragCoord.xy) >= vFade.y) discard;
   float kind = floor(vInfo.x / 16.0 + 0.001);
   if (kind > 0.5 && kind < 2.5) {
-    float a = texture2D(uAtlas, vAtlasUv).a;
-    vec2 px = vAtlasUv * uAtlasSize; vec2 dx = dFdx(px), dy = dFdy(px);
-    float mip = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
-    if (a * (1.0 + mip * 0.14) < 0.5) discard;
+    // Shadow casters use a coarse mip of the leaf coverage (clump-level blobs, not individual
+    // leaves): per-leaf holes are far below the cascade texel size and alias into blocky
+    // "voxel" self-shadowing on canopies; blobby clump shadows read like real soft canopy shade.
+    float a = texture(uAtlas, vAtlasUv, 3.5).a;
+    if (a < 0.42) discard;
   }
 }`);
     shader.fragmentShader = fs;
   };
-  depth.customProgramCacheKey = () => 'rv-flora-plant-depth-v1';
+  depth.customProgramCacheKey = () => 'rv-flora-plant-depth-v2';
   return { material: mat, depth, uniforms: u };
 }
 
@@ -408,7 +474,7 @@ vec4 rvTri(vec3 p, vec3 w){ return texture2D(uRockTex, p.yz) * w.x + texture2D(u
 `;
 const ROCK_MAP = /* glsl */`
 {
-  float dth = rvIGN(gl_FragCoord.xy);
+  float dth = rvDither(gl_FragCoord.xy);
   if (vFade.y < 0.999 && dth >= vFade.y) discard;
   if (vFade.x < 0.999 && (1.0 - dth) >= vFade.x) discard;
   vec3 bw = pow(abs(normalize(vObjN)), vec3(4.0)); bw /= (bw.x + bw.y + bw.z);

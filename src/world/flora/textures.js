@@ -482,12 +482,14 @@ export function makeBarkTexture(w = 256, h = 512, seed = 7) {
       for (let x = 0; x < w; x++) {
         const u = x / w;
         let alb = 0.5, ht = 0.5, moss = 0;
-        if (L === 0) { // deep vertical furrows, rough plates
-          const warp = N.fbm(u, v, 4, 2, 3) * 0.35;
-          const ridge = 1 - Math.abs(N.fbm(u + warp, v, 9, 3, 4) * 2 - 1);
-          const plate = N.fbm(u, v, 12, 8, 3);
-          ht = Math.pow(ridge, 1.6) * 0.8 + plate * 0.2;
-          alb = 0.35 + ht * 0.55 + (N.noise(u * 64, v * 64, 64, 64) - 0.5) * 0.12;
+        if (L === 0) { // deep vertical furrows that split and merge (oak/ash), fibrous ridges
+          const warp = N.fbm(u, v, 4, 2, 3) * 0.3 + N.fbm(u, v, 8, 3, 2) * 0.08;
+          const ridge = 1 - Math.abs(N.fbm(u + warp, v, 10, 2, 4) * 2 - 1);
+          const plate = N.cells(u + warp * 0.6, v, 12, 3);
+          const pe = Math.min(1, (plate[1] - plate[0]) * 2.2);
+          const fib = N.noise(u * 128, v * 12, 128, 12) * 0.6 + N.noise(u * 64, v * 24, 64, 24) * 0.4;
+          ht = Math.pow(ridge, 1.3) * 0.55 + pe * 0.3 + fib * 0.15;
+          alb = 0.3 + ht * 0.55 + (fib - 0.5) * 0.16 + (plate[2] - 0.5) * 0.08;
           moss = Math.max(0, 1 - ht * 1.8) * N.fbm(u, v, 3, 3, 3);
         } else if (L === 1) { // birch: white, horizontal dark lenticels + black patches
           const len = N.noise(u * 8, v * 64, 8, 64);
@@ -506,12 +508,17 @@ export function makeBarkTexture(w = 256, h = 512, seed = 7) {
           const pore = N.cells(u, v, 16, 24)[0];
           ht = fib * 0.7 + Math.min(1, pore * 1.4) * 0.3;
           alb = 0.55 + (fib - 0.5) * 0.3 + (pore < 0.12 ? -0.2 : 0);
-        } else if (L === 4) { // conifer flaky plates (reddish-brown scales)
-          const c = N.cells(u, v, 6, 10);
-          const edge = Math.min(1, (c[1] - c[0]) * 3.5);
-          ht = edge * (0.6 + c[2] * 0.4);
-          alb = 0.3 + ht * 0.5 + c[2] * 0.15;
-          moss = Math.max(0, 0.4 - edge) * N.fbm(u, v, 2, 2, 2) * 1.5;
+        } else if (L === 4) { // conifer bark: long vertical plates split by deep dark furrows, flaky
+          const warp = N.fbm(u, v, 3, 2, 3) * 0.28;
+          const c = N.cells(u + warp, v + warp * 0.3, 9, 4);
+          const edge = Math.min(1, (c[1] - c[0]) * 2.6);
+          const furrow = Math.pow(edge, 0.55);
+          const fib = N.noise(u * 128, v * 16, 128, 16) * 0.55 + N.noise(u * 32, v * 64, 32, 64) * 0.45;
+          const flake = N.cells(u, v, 32, 24);
+          const fl = Math.min(1, (flake[1] - flake[0]) * 3);
+          ht = furrow * (0.6 + c[2] * 0.25) + fib * 0.12 + fl * 0.1 * furrow;
+          alb = 0.18 + furrow * (0.45 + c[2] * 0.2) + (fib - 0.5) * 0.14 + (flake[2] - 0.5) * 0.08 * furrow;
+          moss = Math.max(0, 0.45 - furrow) * N.fbm(u, v, 2, 2, 2) * 1.5;
         } else { // organic alien scales
           const c = N.cells(u, v, 8, 14);
           const edge = Math.min(1, (c[1] - c[0]) * 5);
@@ -548,8 +555,11 @@ export function makeRockTexture(size = 512, seed = 11) {
     for (let x = 0; x < size; x++) {
       const u = x / size;
       const base = N.fbm(u, v, 4, 4, 6);
-      const c = N.cells(u, v, 7, 7);
-      const crack = Math.max(0, 1 - (c[1] - c[0]) * 9);
+      // warped, broken cracks (not a regular cell net → no tortoise-shell/cobblestone look)
+      const wu = u + (N.fbm(u, v, 3, 3, 3) - 0.5) * 0.18, wv = v + (N.fbm(u + 0.37, v, 3, 3, 3) - 0.5) * 0.18;
+      const c = N.cells(wu, wv, 5, 5);
+      const brk = N.fbm(u, v, 6, 6, 3);
+      const crack = Math.max(0, 1 - (c[1] - c[0]) * 11) * (brk > 0.5 ? Math.min(1, (brk - 0.5) * 5) : 0);
       const grain = N.noise(u * 128, v * 128, 128, 128);
       const ht = base * 0.75 + grain * 0.12 - crack * 0.35 + 0.15;
       const alb = 0.45 + (base - 0.5) * 0.7 + (grain - 0.5) * 0.18 - crack * 0.25 + (c[2] - 0.5) * 0.12;

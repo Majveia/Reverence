@@ -13,7 +13,8 @@ A BotW / Journey / Outer Wilds-style explorer that plays on a spherical planet.
 | `Camera.js` | camera rig: third-person spring arm, first person, fly, orbit |
 | `Explorer.js` | procedurally modelled character (24-bone skeleton, 5 skinned meshes / draw calls, art-directed palette per world) |
 | `geo.js` | modelling toolkit (lofts, armour patches with bevels, lathe/tube helpers, skin-weight assembler) |
-| `textures.js` | procedural panel / fabric normal maps and wear roughness (canvas, cached) |
+| `textures.js` | procedural panel normal + panel albedo (panel lines, grime streaks) / fabric normal maps and wear roughness (canvas, cached) |
+| `bake.js` | one-time surface bake of the suit: voxel AO (14 hemisphere rays / vertex), convex-edge paint wear, height + cavity grime tinted with the planet's dust colour → vertex colours + `aWear` (roughness / clearcoat / metalness per vertex) |
 | `Animator.js` | procedural animation: effector-space layer blending + analytic two-bone IK |
 | `Cloth.js` | verlet scarf (2 tails, wind + relative airflow, body collision spheres) |
 | `Glider.js` | paraglider (arched cellular canopy, lines, deploy/stow, flutter, backlit translucency) |
@@ -22,12 +23,16 @@ A BotW / Journey / Outer Wilds-style explorer that plays on a spherical planet.
 | `util.js` | springs, frames, noise, helpers |
 
 ### Character
-Stylish explorer: off-white armoured shell plates with bevelled edges and panel grooves over a dark
-technical-fabric undersuit (quilted normal + sheen), accent colour blocking derived from the world's
-art palette (`heroPalette(body)`: warm worlds get a teal accent / blue scarf, etc.), gold-film visor
-with a procedural sky/horizon/sun reflection layered on the PBR env reflection, ear pods with glow
-rings, antenna (spring-jiggled), jetpack with twin thrusters, emissive trims, scarf wrap + two
-simulated tails. ≈38k triangles, 5 draw calls (+ scarf 2, glider 3, FX ≈7).
+Stylish explorer: off-white armoured shell plates with bevelled edges, panel lines (normal + albedo
+atlas) and grime streaks over a dark technical-fabric undersuit (quilted normal, low sheen), accent
+piping along the side / arm / leg seams, a front zip, accent colour blocking derived from the world's
+art palette (`heroPalette(body)`), amber **gold-metal visor** (gold F0 under a glass clearcoat, thin-film
+rim, sky glint) , ear pods with glow rings, antenna (spring-jiggled), jetpack with twin thrusters,
+emissive trims, scarf wrap + two simulated tails. Round 2: a one-time **surface bake** (`bake.js`) adds
+AO in every gap between plates / fabric / pack, dust from the planet's ground palette on boots and
+shins and in crevices, chipped paint on convex plate edges, albedo mottling; the per-vertex wear drives
+roughness / clearcoat / metalness in the material patch. ≈42k triangles, 5 draw calls (+ scarf 2,
+glider 3, FX ≈7).
 
 ### Animation (procedural, no clips)
 Idle breathing + weight shift, walk/run/sprint gait with cadence/duty/stride from speed, IK foot
@@ -35,6 +40,14 @@ placement on the heightfield (pelvis drop, foot tilt to the slope normal), arm c
 into acceleration and turns, jump tuck / fall / long-fall pedal, landing squash spring, superhero
 hard landing, glide hang with pendulum sway, surf stance while sliding (carve), swim crawl / treading,
 four-limb climb cycle, head look toward the camera view or a nearby POI, backpack + antenna jiggle.
+Climb (round 2): the whole body frame aligns with the rock (up the wall, facing into it), the chest
+anchor is re-projected onto the heightfield along the wall normal every frame, 8 body-front probes
+(toes → visor) push the body out of any bulge (no interpenetration), and every hand / foot is
+**ray-planted on the heightfield** (`HeightSampler.ray`); the four-limb gait (diagonal pairs) is
+world-planted — the phase advances with the distance climbed. Chest arches away from the rock, head
+looks up the route; Space+up = lunge (animated), camera swings to a ¾ view of the wall.
+Swim: front crawl rides at the surface; **hold C to dive** (streamlined underwater glide, profile
+camera under water, Space / release to surface); ice and lava seas are walkable (`water.solid`).
 
 ### Moveset
 * walk / run / sprint (Shift) — no stamina, momentum-preserving acceleration, wider sprint turns.
@@ -44,7 +57,9 @@ four-limb climb cycle, head look toward the camera view or a nearby POI, backpac
 * paraglider: Space in the air (>2 m up) — steer with the stick (coordinated banking), Shift = dive,
   pull back = flare, Space / C = release. Thermals (visible as rising motes) and ridge lift from wind.
 * slide: hold C on slopes / at speed (auto on slopes > ~54°) — gravity along the surface, friction by
-  surface (sand/snow slick), carve with A/D, launch off crests, jump out with Space.
+  surface (sand/snow slick), carve with A/D, launch off crests, jump out with Space. Deep speed-scaled
+  crouch, sand/snow spray thrown off the board edge (carried with the rider), grains, furrow marks,
+  camera pitched down the fall line.
 * climb: push into rock steeper than ~50° — BotW-style; Space+W = climb jump, Space = kick off, C = let go,
   mantles over the top.
 * swim: at `surface.seaLevel` (flat sea, or the water track's `heightAt(p)` if it exists); Shift =
@@ -61,14 +76,16 @@ glide roll. First person (V) from the animated eye (stabilised), head hidden, bo
 
 ## Public API
 
-* `world.player` : `.pos` `.forward` (= `.bodyFacing`) `.up` `.vel` `.view` `.state`
+* `world.player` : `.pos` `.forward` (= `.bodyFacing`) `.up` `.vel` `.view` `.state` `.lookAt(pos)` (face a
+  target, body + camera, e.g. fauna showcases)
   (`ground|air|glide|slide|swim|climb|fly`) `.grounded` `.teleport(pos)` `.physics {heights, colliders, air}`
   `.onControlLost()` / `.onControlGained()` (hide / show the body for vehicles), `.inputScheme='character'`.
 * Events: `player:jump {pos, speed, double?}`, `player:land {pos, speed, hard}`.
 * Audio: `setParam('speed'|'altitude'|'wind'|'glide'|'swim'|'boost')`,
   `play('step'|'jump'|'land'|'boost'|'glider'|'splash', {surface, intensity…})`.
 * UI: one contextual prompt id `'player'` (Glide / Dive·Drop / Slide / Jump off).
-* `physics.heights.groundR(p)`, `.normal(p, out)`, `.water(p)`; `physics.colliders.raycast(o, dir, max, pad)`,
+* `physics.heights.groundR(p)` (includes walkable ice / lava crust), `.normal(p, out)`, `.water(p)`,
+  `.inside(p)`, `.ray(o, dir, max)` (heightfield ray march), `.pushOut(p, dir, max)`; `physics.colliders.raycast(o, dir, max, pad)`,
   `.resolveCapsule(pos, up, r, h)`; `physics.air.wind(p, out)`, `.updraft(p, alt, sunElev)`.
 
 ## URL params (spawn)
@@ -76,55 +93,66 @@ glide roll. First person (V) from the animated eye (stabilised), head hidden, bo
 * `alt>6` with `view=surface` → spawns airborne with the glider open (glide captures).
 * `act=slide` → spawns sliding downhill; `act=glide` → glider even at low alt.
 * `camyaw=<deg>` → camera orbits the hero (150 ≈ front three-quarter portrait).
+* `facesun=<deg>` → the explorer faces the sun (+deg to the left) — front-lit hero portraits.
+* no `yaw` → faces `world.civ.spawnTarget` (the capital) when it is < 9 km away.
+* `fov=` applies to first person too (telephoto sky shots).
+* spawns step away from tree / boulder colliders during the first frames (flora request).
 * `zoom=<k>` arm multiplier (0.5 = close-up), `fov=<deg>`.
 * Surface/fp spawns snap to the nearest walkable spot within 45 m (`flat=0` disables).
 
-## Best captures (all verified; 1280x720 finals)
+## Best captures (round 2, all verified at 1280x720)
 
 | view | URL | steps |
 |---|---|---|
-| W1 golden-hour run (core use) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.27&pitch=-7` | `[{"advance":1},{"move":[0.05,1],"sec":2.5},{"advance":1.3}]` |
+| W1 golden-hour run toward the capital | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.27&pitch=-7` | `[{"advance":1},{"move":[0.05,1],"sec":2.5},{"advance":1.3}]` |
+| hero portrait (front ¾, sun-lit, gold visor) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.3&facesun=-46&camyaw=151&zoom=0.5&pitch=2` | `[{"advance":1.5}]` |
+| hero portrait (backlit, vista) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.3&yaw=210&camyaw=155&zoom=0.5&pitch=2` | `[{"advance":1.5}]` |
 | W2 paraglider banking over the valley | `/?mode=system&galaxy=0&star=11&planet=0&view=surface&alt=60&lat=18.18&lon=-50.80&yaw=22&pitch=-14&tod=0.3` | `[{"advance":1.5},{"move":[0.7,0.6],"sec":2},{"advance":1.4}]` |
-| W3 surfing a desert sand slope | `/?mode=system&galaxy=0&star=9&planet=2&view=surface&lat=22.571&lon=56.286&act=slide&tod=0.68` | `[{"hold":"KeyC","sec":4},{"move":[0.5,0],"sec":1.2},{"advance":1.6}]` |
-| W3 first person | `/?mode=system&galaxy=0&star=9&planet=2&view=fp&lat=22.571&lon=56.286&yaw=200&pitch=-8&tod=0.68` | `[{"advance":1},{"move":[0,0.4],"sec":1.5},{"advance":1.2}]` (add `{"look":[0,-50]}` to see the body) |
-| hero portrait (front ¾, gold visor) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.3&camyaw=150&zoom=0.55&pitch=-3` | `[{"advance":1.5}]` |
-| W2 climbing a rock face | `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=18.3733&lon=-51.0533&yaw=90&pitch=0&tod=0.35` | `[{"advance":1},{"move":[0,1],"sec":5},{"advance":3.5}]` |
-| swimming (W1 shallows) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=1.086&lon=-28.557&yaw=0&pitch=-8&tod=0.3` | `[{"advance":1},{"move":[0,1],"sec":3},{"advance":2}]` |
+| W2 climbing a rock face (¾ view) | `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=18.3733&lon=-51.0533&yaw=90&pitch=0&tod=0.35` | `[{"advance":1},{"move":[0,1],"sec":5.2},{"advance":5.2},{"advance":1.8}]` (drop the last advance for a mid-stroke frame) |
+| W3 surfing a desert sand slope | `/?mode=system&galaxy=0&star=9&planet=2&view=surface&lat=22.571&lon=56.286&act=slide&tod=0.68` | `[{"hold":"KeyC","sec":4},{"advance":2.6},{"move":[0.5,0],"sec":1.2},{"advance":1.4}]` |
+| W3 first person | `/?mode=system&galaxy=0&star=9&planet=2&view=fp&lat=22.571&lon=56.286&yaw=200&pitch=-8&tod=0.68` | `[{"advance":1},{"move":[0,0.4],"sec":1.5},{"advance":1.2}]` |
+| W1 swimming (front crawl) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=1.086&lon=-28.557&yaw=0&pitch=-8&tod=0.3` | `[{"advance":1},{"move":[0.3,1],"sec":5},{"advance":5}]` |
+| W1 diving over the sand (underwater) | same URL | `[{"advance":1},{"move":[0,1],"sec":6},{"advance":3},{"move":[0,0.8],"sec":4},{"hold":"KeyC","sec":2.5},{"advance":3.5}]` |
 | jetpack double jump | W1 default spawn | `[{"advance":1},{"hold":"ShiftLeft","sec":3},{"move":[0.3,1],"sec":3},{"advance":2},{"press":"Space"},{"advance":0.35},{"press":"Space"},{"advance":0.3}]` |
 
-`window.__rv.world.player.getState()` → `{view, state, alt, speed, grounded, fuel, surface, tris, colliders}`.
+Note: `move` / `hold` only schedule input — the following `advance` consumes it.
+
+`window.__rv.world.player.getState()` → `{view, state, alt, speed, grounded, fuel, surface, dive, tris, colliders}`.
 
 ## Performance
-Explorer ≈38k tris / 5 draw calls (+2 scarf, +3 glider when open, ≤7 FX); tessellation scales with
+Explorer ≈42k tris / 5 draw calls (+2 scarf, +3 glider when open, ≤7 FX); tessellation scales with
 `quality.tier` (low 0.6×, med 0.8×); `low` uses MeshStandard instead of MeshPhysical. Particle pool
 scales with `particleScale`. Hot paths are allocation-free (module temps, pooled FX); heightfield
 queries go through a lazily filled 0.4 m cache grid around the player; the collider hash appends
 incrementally and rebuilds time-sliced (5k/frame). Scarf: 75 verlet particles × 2–3 substeps.
+Suit bake: one-time at build (voxel grid 0.7 MB, AO cached per tessellation level across world loads).
+Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (a few hundred lookups).
 
 ## Known issues
-* No water surface is rendered yet (no water track in the tree), so swimming floats over the visible
-  seabed; ripples/splashes are drawn at `surface.seaLevel`. Swim uses `water.heightAt(p)` automatically
-  once the water track exposes it.
-* Flora rocks / trees register no `world.colliders`, so the player walks through boulders and the camera
-  can end up inside big props (heightfield collision works everywhere). The camera ignores colliders
-  smaller than 2.2 m on purpose (BotW-style), so parked vehicles don't yank the arm.
-* Climbing works on the heightfield only (not on building colliders); mantling is a simple hop.
-* The URL on-foot spot from the terrain notes (`lat=3.96&lon=-29.58`) is a cliff edge: walking forward
-  drops you off (the camera follows the fall; press Space to glide).
+* Climbing works on the heightfield only (not on building / boulder colliders); the mantle is a hop,
+  not an animated vault.
+* Flora rocks on some worlds (W2) register few colliders, so the player can walk through small boulders;
+  the camera ignores colliders < 2.2 m on purpose (BotW-style).
+* The first-person view shows the body only when looking down / moving the arms (no held tool).
 * The explorer's physical materials (sheen / clearcoat / iridescence) cost a noticeable one-time shader
   compile on software GL.
 
 ## Requests
-* **flora** — register `world.addCollider({type:'sphere'|'capsule', pos, radius, height})` for boulders
-  > ~1 m and tree trunks (the player's `ColliderIndex` hashes them; step-up and camera avoidance follow).
+* **flora** — thanks for the tree / rock colliders (W1: 738). W2 (Hyrule Echo) registers only ~3 near the
+  climb spawn although it has many boulders — please register rocks > ~1 m there too.
 * **civ** — box colliders for buildings (`halfExtents` + `quaternion`, local Y ≈ up): the player can
   stand on roofs / walls block movement and the camera; large boxes also block the camera.
-* **water** — expose `heightAt(p)` (planet-local point → water surface height in m rel. radius, waves
-  included); the player floats and splashes on it automatically.
+* **water** — `heightAt(p)` is used (thanks). The player dives with C; `world.get('water').under` drives the
+  underwater look. Ice / lava seas are treated as walkable ground (`liquid === 'ice' | 'lava'`).
 * **audio** — one-shots used: `step {surface: ground|sand|snow|rock, speed, side}`, `jump`, `land
   {intensity}`, `boost`, `glider {open}`, `splash {intensity}`; params `speed, altitude, wind, glide, swim, boost`.
-* **ui** — the player uses prompt id `'player'` (text only, e.g. "Glide", "Dive · Shift   Drop · C");
-  a touch "glide/jump" button can map to the `jump` action, "slide" to `descend`.
+* **ui** — the player uses prompt id `'player'` (text only, e.g. "Glide", "Dive · Shift   Drop · C",
+  "Dive · C" / "Surface · Space" while swimming); a touch "glide/jump" button can map to the `jump`
+  action, "slide / dive" to `descend`.
 * **vehicles** — parked vehicles' sphere colliders are treated as dynamic (tested every query), thanks
   for the `vehicle: true` flag. The parked bike shows a rider mannequin while unoccupied.
-* **core** — none required. (Lead inbox item done: `view=orbit` now looks at the planet; spawns never roll.)
+* **vehicles** — the W1 swim spot (`lat=1.086&lon=-28.557`) has a parked rover sitting on the seabed in
+  ~4 m of water: please don't park props below `surface.seaLevel`.
+* **core** — none required. Inbox items done this round: face `civ.spawnTarget` with no `yaw` (civ),
+  step off tree / boulder colliders at spawn (flora), dive while swimming + walkable `water.solid` +
+  softer ripples (water), `view=fp` honours `fov=` (space), `world.player.lookAt(pos)` (fauna).

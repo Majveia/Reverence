@@ -132,6 +132,13 @@ it) and `overcast`.
 * **terrain**: cloud shadows now use strength 0.72; very dark shadowed slopes at low sun suggest the terrain
   shader under-weights `scene.environment` (sky ambient) relative to the direct sun.
 
+* **terrain / lead** (re: CRITICAL airless-body request): reproduced M1
+  (`star=0&planet=2.0&view=fp&lat=-25.555&lon=-70.154&tod=0.5`) — the terrain is black **identically with
+  and without** the atmosphere (`&disable=atmosphere`), and with `only=terrain,player` too in current code.
+  On airless bodies the atmosphere pass is a strict pass-through (`uHasAtmo = 0`), no LUTs/clouds/shafts
+  are created, and the key light is valid (white sun, env map present — checked in-page). Please look at
+  the terrain material path for barren bodies (or the camera spawn inside terrain).
+
 ### Done this round (inbox)
 * vehicles/space: no rain/snow streaks above the cloud deck or outside the atmosphere.
 * water: deep-blue oceans from orbit (thinner veil from altitude), lava worlds get clearer low air and a

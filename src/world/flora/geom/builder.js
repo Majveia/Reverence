@@ -16,7 +16,11 @@ export class PlantBuilder {
     this.p = []; this.n = []; this.uv = []; this.info = []; this.sh = []; this.c = []; this.cr = []; this.idx = [];
     this.count = 0;
     this.maxCard = 0;
+    this.emitters = [];   // glow emitters {c:[x,y,z], r, col:[r,g,b]} → baked bounce light (aGlowL)
   }
+
+  /** register a glow emitter (sphere/tube glow parts do this automatically) */
+  emitter(c, r, col) { this.emitters.push({ c: [c[0], c[1], c[2]], r: Math.max(0.05, r), col: [col[0], col[1], col[2]] }); }
 
   vert(px, py, pz, nx, ny, nz, u, v, kind, flex, ao, phase, sx, sy, sz, r, g, b) {
     this.p.push(px, py, pz); this.n.push(nx, ny, nz); this.uv.push(u, v);
@@ -77,6 +81,14 @@ export class PlantBuilder {
     let vAcc = 0;
     const base = this.count;
     const uOff = opts.uOffset ?? 0;
+    if ((opts.kind === KIND.GLOW || opts.kind === KIND.CRYSTAL) && opts.emit !== false) {
+      const step = Math.max(1, Math.floor(n / 4));
+      for (let k = 0; k < n; k += step) {
+        const q = pts[k];
+        const col = typeof opts.color === 'function' ? opts.color(k / (n - 1), q) : (q.color || opts.color || [0.5, 0.5, 0.5]);
+        this.emitter([q.x, q.y, q.z], Math.max(0.12, q.r * 2.5), col);
+      }
+    }
     // bark: wrap the tiling texture several times around thick trunks so features keep a real-world size
     const uRep = (opts.kind ?? KIND.BARK) === KIND.BARK ? Math.max(1, Math.round((Math.PI * 2 * pts[0].r) / 0.75)) : 1;
     for (let k = 0; k < n; k++) {
@@ -166,6 +178,10 @@ export class PlantBuilder {
     const kind = (o.kind ?? KIND.SOLID) * 16 + (o.pattern ?? 0);
     const [cx, cy, cz] = o.c;
     const r = Array.isArray(o.r) ? o.r : [o.r, o.r, o.r];
+    if ((o.kind === KIND.GLOW || o.kind === KIND.CRYSTAL) && o.emit !== false) {
+      const col = typeof o.color === 'function' ? o.color(0, 0, 1) : (o.color || [0.5, 0.5, 0.5]);
+      this.emitter(o.c, Math.max(r[0], r[1], r[2]), col);
+    }
     const base = this.count;
     for (let j = 0; j <= H; j++) {
       const th = (j / H) * Math.PI;
@@ -222,6 +238,7 @@ export class PlantBuilder {
     this.p.push(...other.p); this.n.push(...other.n); this.uv.push(...other.uv);
     this.info.push(...other.info); this.sh.push(...other.sh); this.c.push(...other.c); this.cr.push(...other.cr);
     this.maxCard = Math.max(this.maxCard, other.maxCard);
+    if (other.emitters?.length) this.emitters.push(...other.emitters);
     for (let i = 0; i < other.idx.length; i++) this.idx.push(other.idx[i] + off);
     this.count += other.count;
   }
@@ -238,6 +255,35 @@ export class PlantBuilder {
     return { min: [x0, y0, z0], max: [x1, y1, z1] };
   }
 
+  /**
+   * Bounce light from glow emitters onto the plant's own non-glowing surfaces (trunk, leaves,
+   * caps): inverse-square falloff from each emitter, colour-weighted. Lets bioluminescent plants
+   * read as lit bodies at night instead of floating light orbs.
+   */
+  _bakeGlow() {
+    const n = this.count, out = new Float32Array(n * 3);
+    const E = this.emitters;
+    if (!E.length) return out;
+    const em = E.length > 96 ? E.filter((_, i) => i % Math.ceil(E.length / 96) === 0) : E;
+    const p = this.p, info = this.info;
+    for (let i = 0; i < n; i++) {
+      const kind = Math.floor(info[i * 4] / 16 + 0.001);
+      if (kind === KIND.GLOW) continue;
+      const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
+      let r = 0, g = 0, b = 0;
+      for (const e of em) {
+        const dx = x - e.c[0], dy = y - e.c[1], dz = z - e.c[2];
+        const rr = e.r * e.r * 1.6;
+        const f = rr / (rr + dx * dx + dy * dy + dz * dz);
+        r += e.col[0] * f; g += e.col[1] * f; b += e.col[2] * f;
+      }
+      const m = Math.max(r, g, b);
+      const k = m > 1.5 ? 1.5 / m : 1;
+      out[i * 3] = r * k; out[i * 3 + 1] = g * k; out[i * 3 + 2] = b * k;
+    }
+    return out;
+  }
+
   build() {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
@@ -247,6 +293,7 @@ export class PlantBuilder {
     g.setAttribute('aShade', new THREE.Float32BufferAttribute(this.sh, 3));
     g.setAttribute('aColor', new THREE.Float32BufferAttribute(this.c, 3));
     g.setAttribute('aCorner', new THREE.Float32BufferAttribute(this.cr, 3));
+    g.setAttribute('aGlowL', new THREE.Float32BufferAttribute(this._bakeGlow(), 3));
     g.setIndex(this.count > 65535 ? new THREE.Uint32BufferAttribute(this.idx, 1) : new THREE.Uint16BufferAttribute(this.idx, 1));
     g.computeBoundingSphere();
     g.computeBoundingBox();

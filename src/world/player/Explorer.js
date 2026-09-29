@@ -161,7 +161,7 @@ function patchLighting(mat, { rim = 0.0, wear = 1, key = 'x' } = {}) {
           vec3 V = normalize(vViewPosition);
           float ndv = clamp(dot(normal, -V), 0.0, 1.0);
           float rimT = pow(1.0 - ndv, 3.0) * uRimStrength;
-          outgoingLight += rimT * (totalDiffuse + 0.35) * 0.35;
+          outgoingLight += rimT * (totalDiffuse * 0.6 + diffuseColor.rgb * 0.08);
         }
         #include <opaque_fragment>`);
   };
@@ -196,7 +196,11 @@ function patchVisor(mat, P) {
           env += (uVSun * 0.12 + uVSky * 0.6) * exp(-abs(h) * 16.0);
           float sd = max(dot(Rw, normalize(uVSunDir)), 0.0);
           vec3 spec = uVSun * (pow(sd, 1200.0) * 40.0 + pow(sd, 60.0) * 0.5);
-          outgoingLight += (env * fres) * uVTint * 0.6 + spec * uVTint;
+          outgoingLight += (env * fres) * uVTint * 0.32 + spec * uVTint;
+          // soft studio-window glint (reads as a curved glass dome at any distance)
+          vec3 Rvn = normalize(Rv);
+          float win = smoothstep(0.35, 0.75, Rvn.y) * smoothstep(0.55, 0.1, abs(Rvn.x + 0.25));
+          outgoingLight += uVTint * (uVSky * 1.6 + uVSun * 0.05) * win * 0.55;
           // warm gold interference band near the rim of the dome
           float rimG = pow(1.0 - clamp(dot(normal, Vv), 0.0, 1.0), 4.0);
           outgoingLight += vec3(1.0, 0.62, 0.2) * rimG * (uVSky * 0.9 + uVSun * 0.08);
@@ -212,9 +216,9 @@ export function makeMaterials(renderer, P, quality) {
   const hi = quality?.tier !== 'low';
   const Std = hi ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial;
   const fabric = new Std({ vertexColors: true, roughness: 0.86, metalness: 0.0, normalMap: tex.fabricNormal, normalScale: new THREE.Vector2(0.55, 0.55) });
-  if (hi) { fabric.sheen = 0.55; fabric.sheenRoughness = 0.55; fabric.sheenColor = new THREE.Color(0.55, 0.58, 0.62); }
+  if (hi) { fabric.sheen = 0.3; fabric.sheenRoughness = 0.6; fabric.sheenColor = new THREE.Color(P.suit).lerp(new THREE.Color(0.5, 0.52, 0.56), 0.35); }
   if (tex.fabricNormal) tex.fabricNormal.repeat.set(9, 9);
-  const hard = new Std({ vertexColors: true, roughness: 0.52, metalness: 0.0, normalMap: tex.panelNormal, normalScale: new THREE.Vector2(0.9, 0.9), roughnessMap: tex.wearRough });
+  const hard = new Std({ vertexColors: true, roughness: 0.52, metalness: 0.0, map: tex.panelAlbedo || null, normalMap: tex.panelNormal, normalScale: new THREE.Vector2(0.9, 0.9), roughnessMap: tex.wearRough });
   if (hi) { hard.clearcoat = 0.22; hard.clearcoatRoughness = 0.4; }
   if (tex.wearRough) tex.wearRough.repeat.set(3, 3);
   const metal = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0.92, roughnessMap: tex.wearRough });
@@ -222,10 +226,10 @@ export function makeMaterials(renderer, P, quality) {
   const visor = hi
     ? new THREE.MeshPhysicalMaterial({
       // gold-film sun visor: gold metal F0 under a glass clearcoat, thin-film sheen at grazing angles
-      color: new THREE.Color(0.62, 0.4, 0.13), roughness: 0.1, metalness: 1.0, clearcoat: 1, clearcoatRoughness: 0.03,
-      iridescence: 0.25, iridescenceIOR: 1.35, iridescenceThicknessRange: [300, 480], envMapIntensity: 1.35,
+      color: new THREE.Color(0.5, 0.31, 0.09), roughness: 0.1, metalness: 1.0, clearcoat: 1, clearcoatRoughness: 0.03,
+      iridescence: 0.25, iridescenceIOR: 1.35, iridescenceThicknessRange: [300, 480], envMapIntensity: 1.0,
     })
-    : new THREE.MeshStandardMaterial({ color: new THREE.Color(0.62, 0.4, 0.13), roughness: 0.1, metalness: 1.0, envMapIntensity: 1.35 });
+    : new THREE.MeshStandardMaterial({ color: new THREE.Color(0.5, 0.31, 0.09), roughness: 0.1, metalness: 1.0, envMapIntensity: 1.0 });
   patchVisor(visor, P);
   patchLighting(fabric, { rim: 0.6, key: 'fabric' });
   patchLighting(hard, { rim: 0.8, key: 'hard' });

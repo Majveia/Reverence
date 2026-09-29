@@ -84,7 +84,13 @@ export class CameraRig {
     // ---- auto recenter behind motion (never fights the player: waits after manual look)
     const vt = _d.copy(ctx.vel); projectOnPlane(vt, up);
     const sp = vt.length();
-    if (this.idleLook > 0.9 && sp > 1.5 && st !== 'climb') {
+    if (ctx.submerged && this.idleLook > 0.9) {
+      // underwater: drift to a level ¾ profile of the diver (reads far better than the soles of the boots)
+      _a.copy(sp > 0.4 ? vt : ctx.forward || this.fwd);
+      projectOnPlane(_a, up);
+      if (_a.lengthSq() > 1e-6) { _a.normalize().applyAxisAngle(up, 0.75); this.recenter(up, _a, 0.9, dt, 3.1); }
+      this.pitch = damp(this.pitch, -0.04, 1.0, dt);
+    } else if (this.idleLook > 0.9 && sp > 1.5 && st !== 'climb') {
       const k = st === 'glide' ? 1.1 : st === 'slide' ? 1.3 : st === 'swim' ? 0.6 : 0.55;
       this.recenter(up, vt, k * smoothstep(1.5, 7, sp), dt, st === 'glide' || st === 'slide' ? 3.0 : 2.3);
     }
@@ -99,7 +105,7 @@ export class CameraRig {
       this.pitch = damp(this.pitch, 0.02, 1.2, dt);
     } else if (this.idleLook > 0.9 && sp > 2.5 && (st === 'slide' || st === 'ground')) {
       // follow the grade of the motion: look down the slope you're surfing / running down
-      const target = clamp(-0.13 + Math.atan2(vyC, sp) * 0.75, -0.95, 0.25);
+      const target = clamp(-0.13 + Math.atan2(vyC, sp) * 0.75 - (st === 'slide' ? 0.16 : 0), -0.95, 0.25);
       this.pitch = damp(this.pitch, target, 1.6 * smoothstep(2.5, 9, sp), dt);
     } else if (this.idleLook > 2.2) {
       const target = st === 'glide' ? -0.2 : st === 'swim' ? -0.1 : st === 'slide' ? -0.2 : sp > 7 ? -0.16 : -0.12;
@@ -112,7 +118,7 @@ export class CameraRig {
     arm *= 1 - 0.35 * smoothstep(0.05, 0.9, this.pitch);
     arm *= this.zoom;
     // ---- pivot (critically damped; looser in the air so jumps don't jerk the frame)
-    const pivotH = st === 'swim' ? 1.6 : st === 'slide' ? 1.2 : st === 'glide' ? 1.75 : 1.45;
+    const pivotH = st === 'swim' ? 1.6 : st === 'slide' ? 1.05 : st === 'glide' ? 1.75 : 1.45;
     this.pivot.omega = st === 'glide' ? 10 : st === 'air' ? 12 : st === 'slide' ? 14 : 18;
     // velocity feed-forward cancels the spring's steady-state lag (2v/ω): fast falls / glides / sprints stay
     // framed, while small hops (|vy| < 4 m/s) keep their vertical smoothing
@@ -172,7 +178,7 @@ export class CameraRig {
     if (H) {
       const gr = H.groundR(pos) + 0.28;
       if (pos.length() < gr) pos.setLength(gr);
-      if (H.hasOcean) { // the lens never dips under the sea surface
+      if (H.hasOcean && !H.solidSea && !ctx.submerged) { // the lens stays above the sea unless we dive
         const sea = H.R + H.sea + (st === 'swim' ? 0.25 : 0.2);
         if (pos.length() < sea) pos.setLength(sea);
       }
@@ -225,7 +231,7 @@ export class CameraRig {
     if (Math.abs(this.roll) > 1e-5) { _q.setFromAxisAngle(_u.set(0, 0, 1), this.roll); this.cam.quaternion.multiply(_q); }
     if (tr > 1e-4) { _q.setFromAxisAngle(_u.set(1, 0, 0), fbm1(this.t * 21, 5) * 0.02 * tr); this.cam.quaternion.multiply(_q); }
     const sp = Math.hypot(ctx.vel.x, ctx.vel.y, ctx.vel.z);
-    const fovT = 72 + 6 * smoothstep(6.5, 11, sp) + (ctx.state === 'glide' ? 8 : 0) + ctx.boost * 4;
+    const fovT = (this.fpFov || 72) + 6 * smoothstep(6.5, 11, sp) + (ctx.state === 'glide' ? 8 : 0) + ctx.boost * 4;
     this._setFov(this.fov.update(fovT, dt));
     this.hideBody = false;
     this.pivotInit = false;

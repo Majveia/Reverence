@@ -337,10 +337,12 @@ export class Animator {
     // surfing stance: body sideways to the motion, knees bent, arms out for balance
     const c = clamp(S.slide.carve, -1, 1);
     const sp = smoothstep(2, 14, S.speed);
-    L.hipsPos.y = -0.24 - 0.06 * sp;
+    // low centre of mass that deepens with speed (surfing a dune, not standing on it)
+    L.hipsPos.y = -0.34 - 0.1 * sp;
+    L.hipsPos.z = -0.04;
     L.hipsRot.y = 0.85;
     L.spine.y = 0.1; L.chest.y = -0.55; L.neck.y = -0.25; L.head.y = -0.2;
-    L.spine.x = 0.28; L.chest.x = 0.12; L.head.x = -0.3;
+    L.spine.x = 0.36 + 0.08 * sp; L.chest.x = 0.14; L.head.x = -0.42 - 0.08 * sp;
     L.hipsRot.z = -c * 0.1;
     // feet: wide stance along the motion (lead foot = left)
     L.footL.set(0.07, DIM.ankle, 0.34); L.footR.set(-0.08, DIM.ankle, -0.3);
@@ -356,13 +358,15 @@ export class Animator {
   }
 
   _swim(L, S, dt) {
-    const mv = smoothstep(0.3, 1.6, S.speed);
+    const dv = S.dive || 0;
+    // underwater the body always streamlines (no upright treading), even when drifting
+    const mv = Math.max(smoothstep(0.3, 1.6, S.speed), dv);
     const fast = smoothstep(2.5, 4.0, S.speed);
     this.swimPhase += dt * lerp(0.55, 0.62 + fast * 0.25, mv) ;
     const ph = this.swimPhase;
     // body attitude: upright treading → horizontal crawl (pivot at the chest, which stays at the surface)
     L.pivot.set(0, 1.28, 0);
-    L.rootRot.x = lerp(0.12, 1.32, mv);
+    L.rootRot.x = lerp(lerp(0.12, 1.42, mv), 1.66, dv); // diving: pitched down, gliding toward the seabed
     L.rootRot.z = Math.sin(ph * TAU) * 0.28 * mv; // body roll with the stroke
     L.head.x = lerp(0.05, -0.9, mv); L.neck.x = lerp(0, -0.35, mv);
     L.head.y = Math.max(0, Math.sin(ph * TAU)) * 0.5 * mv; // breathe to the side

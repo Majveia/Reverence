@@ -49,7 +49,7 @@ void main(){
     float n = rv_hash12(floor(vUv * 9.0) + vCol.a * 13.0) * 0.18;
     a = smoothstep(1.0, 0.25 + n, r);
     float lit = 0.55 + 0.45 * clamp(dot(vWorldN, uSunDir), 0.0, 1.0);
-    col = col * (uSunColor * 0.32 * lit + uAmbientSky * 0.9 + 0.02);
+    col = col * (uSunColor * 0.5 * lit + uAmbientSky * 0.9 + 0.02);
   } else if (vKind < 1.5) {
     a = smoothstep(1.0, 0.1, r);
     col = col * (uSunColor * 0.35 + uAmbientSky * 1.1) + pow(max(0.0, 1.0 - r), 3.0) * uSunColor * 0.15;
@@ -125,10 +125,10 @@ export class FX {
         uniform vec3 uSunColor; uniform vec3 uAmbientSky; varying vec2 vP; varying vec2 vM;
         void main(){
           float d = length(vP);
-          float ring = smoothstep(0.86, 0.93, d) * smoothstep(1.0, 0.95, d) + 0.3 * smoothstep(0.6, 0.66, d) * smoothstep(0.72, 0.68, d);
+          float ring = smoothstep(0.8, 0.93, d) * smoothstep(1.0, 0.95, d) + 0.2 * smoothstep(0.58, 0.66, d) * smoothstep(0.74, 0.67, d);
           float a = ring * vM.y;
           if (a < 0.004) discard;
-          gl_FragColor = vec4(uSunColor * 0.2 + uAmbientSky * 1.1 + 0.05, a * 0.13);
+          gl_FragColor = vec4(uSunColor * 0.2 + uAmbientSky * 1.1 + 0.05, a * 0.08);
         }`,
     });
     this.ripples = new THREE.Mesh(rg, this.rMat);
@@ -284,14 +284,14 @@ export class FX {
     }
   }
   /** Directional spray (sand/snow while sliding, water wake). */
-  spray(pos, dir, up, color, count, speed, kind = 0, size = 0.18) {
+  spray(pos, dir, up, color, count, speed, kind = 0, size = 0.18, alpha = 0) {
     const r = this.rand, v = this._w;
     this._tangent(up);
     for (let k = 0; k < count; k++) {
       v.copy(dir).multiplyScalar(speed * (0.5 + r.next() * 0.7))
         .addScaledVector(up, speed * (0.35 + r.next() * 0.5))
         .addScaledVector(this._t1, (r.next() - 0.5) * speed * 0.6).addScaledVector(this._t2, (r.next() - 0.5) * speed * 0.6);
-      this.emit(pos, v, { kind, size: size * (0.6 + r.next() * 0.8), size1: kind === 0 ? size * 3 : size * 0.8, life: 0.6 + r.next() * 0.7, color, alpha: kind === 0 ? 0.45 : 0.85, drag: kind === 0 ? 1.8 : 0.4, grav: kind === 0 ? 0.3 : 1 });
+      this.emit(pos, v, { kind, size: size * (0.6 + r.next() * 0.8), size1: kind === 0 ? size * 3 : size * 0.8, life: 0.6 + r.next() * 0.7, color, alpha: alpha || (kind === 0 ? 0.45 : 0.85), drag: kind === 0 ? 1.8 : 0.4, grav: kind === 0 ? 0.3 : 1 });
     }
   }
   splash(pos, up, strength, waterColor) {

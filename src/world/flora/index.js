@@ -21,7 +21,8 @@ import { surfaceConfig } from '../planet/SurfaceGen.js';
 import { mulberry, h01, clamp } from './util.js';
 import { levelFor, forEachCellInCap, cellKey } from './cells.js';
 import { InstanceLayer } from './layer.js';
-import { FloraShared, makePlantMaterials, makeRockMaterials } from './materials.js';
+import { FloraShared, makePlantMaterials, makeRockMaterials, FLORA_DITHER } from './materials.js';
+import { G as GU } from '../../core/Uniforms.js';
 import { makeLeafAtlas, makeBarkTexture, makeRockTexture } from './textures.js';
 import { buildStyle } from './styles.js';
 import { flowerPatch } from './geom/plants.js';
@@ -59,6 +60,9 @@ class Flora {
     this.colliderCells = new Set();
     this.poiKeys = new Set();
     this.visible = true;
+    this.clears = [];               // [dx,dy,dz,cosR,keep,angR,source] clearings (civ, landings, clearAround)
+    this.clearSig = '';
+    this.flatGen = 0;               // bumps when flatten stamps change (stale worker jobs are dropped)
   }
 
   // ================================================================== setup
@@ -93,6 +97,20 @@ class Flora {
     this._buildLayers(S, tier);
     this._buildGrass(S, tier);
     this._bands(tier);
+    // temporal dither index: follows the TAA sub-frame (shot stills render N jittered sub-frames in
+    // one engine frame) so dithered crossfades / leaf edges average out instead of freezing
+    const pipe = this.engine?.pipeline;
+    const obr = () => {
+      const taa = pipe?.stats?.taa && pipe.taa;
+      FLORA_DITHER.frame.value = taa ? taa.index : (GU.uFrame?.value || 0);
+      FLORA_DITHER.amt.value = taa ? 0.3 : 0;
+    };
+    for (const L of this.layers) L.mesh.onBeforeRender = obr;
+    // debug: ?floradbg=nocast (no flora shadow casters) | noreceive (flora ignores shadows)
+    let dbg = '';
+    try { dbg = new URL(window.location.href).searchParams.get('floradbg') || ''; } catch (_) { /* no window */ }
+    if (dbg.includes('nocast')) for (const L of this.layers) L.mesh.castShadow = false;
+    if (dbg.includes('noreceive')) for (const L of this.layers) L.mesh.receiveShadow = false;
     this._startWorkers();
     this.ready = false;
     this.initMs = Math.round(performance.now() - this.t0);
@@ -195,7 +213,7 @@ class Flora {
     };
     // distances (m)
     const D = this.D = {
-      c0: [55 * dd, 70 * dd], c1: [190 * dd, 240 * dd], cI: [680 * dd, 800 * dd], cS: [30, 38],
+      c0: [55 * dd, 70 * dd], c1: [140 * dd, 180 * dd], cI: [680 * dd, 800 * dd], cS: [30, 38],
       u0: [20 * dd, 28 * dd], uR: 150 * dd * Math.sqrt(this.density),
       r0: [45 * dd, 60 * dd], rR: 560 * dd,
       f0: [14, 20], fR: 48 * Math.sqrt(this.density),
@@ -258,34 +276,45 @@ class Flora {
     const anyGrass = G.cover && Array.from(G.cover).some((v) => v > 0);
     this.grass = null;
     const dens = this.density * (G.density ?? 1);
+    // near-field grass keeps most of its density on reduced profiles (it is what the eye reads);
+    // the patch count scales gently and the disc radius follows the spacing so patches overlap
+    const spacing = 0.8 / Math.pow(clamp(dens, 0.3, 1.3), 0.4);
     this.table.grass = {
-      cover: Array.from(G.cover || new Float32Array(14)), spacing: 0.72 / Math.sqrt(clamp(dens, 0.3, 1.3)),
+      cover: Array.from(G.cover || new Float32Array(14)), spacing,
       dryAmount: G.dryAmount ?? 0.2, flowerAmt: 0.3, flowers: this.flowerList, flowerWsum: this.flowerList.reduce((a, f) => a + f.freq, 0),
     };
     if (!anyGrass) return;
     const R = this.grassR = (low ? 28 : 44) * Math.sqrt(clamp(this.density, 0.3, 1.5));
     const hgt = G.height ?? 0.55;
+    const pR = spacing * 0.74;
     const common = {
       base: G.base, tip: G.tip, dry: G.dry, glowTip: G.glowTip, glowAmt: 1.6, push: this.pushU,
-      height: hgt * 0.62, patchR: 0.6, transl: 0.9, stiff: 1,
+      height: hgt * 0.66, patchR: pR, transl: 0.9, stiff: 1,
     };
-    const dense = makeGrassPatch(low ? 30 : 60, 3, 11);
-    const sparse = makeGrassPatch(low ? 14 : 24, 2, 23);
-    const nearF = [9, 13];
-    const mD = makeGrassMaterial({ ...common, fade: [0, 0, nearF[0], nearF[1]], keep: [1e6, 1, 1, 1], width: 0.048, widenK: 0.008, density: 1 });
-    const mS = makeGrassMaterial({ ...common, fade: [nearF[0], nearF[1], R * 0.72, R], keep: [1e6, 1, 1, 1], width: 0.1, widenK: 0.014, patchR: 0.72, density: 1 });
+    const dense = makeGrassPatch(low ? 48 : 92, 4, 11);
+    const sparse = makeGrassPatch(low ? 18 : 32, 3, 23);
+    const far = makeGrassPatch(low ? 14 : 26, 2, 37);
+    const nearF = low ? [6, 9] : [8, 11.5];
+    const midF = low ? [12, 15] : [17, 21];
+    const mD = makeGrassMaterial({ ...common, fade: [0, 0, nearF[0], nearF[1]], keep: [1e6, 1, 1, 1], width: 0.04, widenK: 0.01, density: 1 });
+    const mS = makeGrassMaterial({ ...common, fade: [nearF[0], nearF[1], midF[0], midF[1]], keep: [1e6, 1, 1, 1], width: 0.06, widenK: 0.016, patchR: pR * 1.05, density: 1 });
+    const mF = makeGrassMaterial({ ...common, fade: [midF[0], midF[1], R * 0.72, R], keep: [1e6, 1, 1, 1], width: 0.075, widenK: 0.016, patchR: pR * 1.05, density: 1 });
     const LD = new InstanceLayer(dense, mD.material, null, { capacity: 2048, parent: this.group, castShadow: false, name: 'flora-grass-dense', boundsPad: 2 });
-    const LS = new InstanceLayer(sparse, mS.material, null, { capacity: 8192, parent: this.group, castShadow: false, name: 'flora-grass-sparse', boundsPad: 2 });
-    LD.uniforms = mD.uniforms; LS.uniforms = mS.uniforms;
-    this.layers.push(LD, LS);
-    this.grass = { dense: LD, sparse: LS, nearR: nearF[1] + 3, geoD: dense, geoS: sparse };
+    const LS = new InstanceLayer(sparse, mS.material, null, { capacity: 4096, parent: this.group, castShadow: false, name: 'flora-grass-mid', boundsPad: 2 });
+    const LF = new InstanceLayer(far, mF.material, null, { capacity: 8192, parent: this.group, castShadow: false, name: 'flora-grass-far', boundsPad: 3 });
+    LD.uniforms = mD.uniforms; LS.uniforms = mS.uniforms; LF.uniforms = mF.uniforms;
+    this.layers.push(LD, LS, LF);
+    this.grass = {
+      dense: LD, sparse: LS, far: LF, nearR: nearF[1] + 1.5, farMin2: Math.max(0, nearF[0] - 2) ** 2,
+      midMax2: (midF[1] + 3) ** 2, far0: Math.max(0, midF[0] - 3) ** 2, geoD: dense, geoS: sparse, geoF: far,
+    };
   }
 
   _bands() {
     const R = this.R, dd = this.dd;
     const lv = (m) => levelFor(R, m);
     this.bands = [
-      { name: 'grass', kind: 'grass', L: lv(18), radius: this.grassR || 0, step: 2.5, enabled: !!this.grass, maxAlt: 250 },
+      { name: 'grass', kind: 'grass', L: lv(18), radius: this.grassR || 0, step: 1.5, enabled: !!this.grass, maxAlt: 250 },
       { name: 'under', kind: 'layer', layer: 'under', L: lv(64), radius: this.D.uR + 20, step: 4, enabled: this.table.layers.under.species.length > 0, maxAlt: 600 },
       { name: 'rock', kind: 'layer', layer: 'rock', L: lv(128), radius: this.D.rR + 40, step: 8, enabled: true, maxAlt: 2500 },
       { name: 'canopy', kind: 'layer', layer: 'canopy', L: lv(160), radius: this.D.cI[1] + 40, step: 8, enabled: this.table.layers.canopy.species.length > 0, maxAlt: 3000 },
@@ -309,6 +338,128 @@ class Flora {
         this.workers.push(rec);
       } catch (e) { console.warn('[flora] workers unavailable, using main thread', e); break; }
     }
+    // terrain flatten stamps (civ plazas, pads): keep worker surfaces in sync, re-place nearby cells
+    try {
+      const fl = this.surface.flats || this.surface.gen?.flats;
+      if (fl?.length) this._sendFlats(fl);
+      this._offFlat = this.surface.onFlattenChange?.((f, all) => this._onFlatten(f, all));
+    } catch (e) { console.warn('[flora] flatten hook failed', e); }
+    try { this._offClear = this.world.events?.on?.('civ:clearings', () => this._refreshClears(true)); } catch (_) { /* optional */ }
+  }
+
+  _sendFlats(all) {
+    const flats = (all || []).map((f) => ({ id: f.id, x: f.x, y: f.y, z: f.z, radius: f.radius, falloff: f.falloff, height: f.height }));
+    for (const w of this.workers) if (!w.dead) { try { w.w.postMessage({ type: 'flats', flats }); } catch (_) { /* ignore */ } }
+  }
+
+  _onFlatten(f, all) {
+    this.flatGen++;
+    this._sendFlats(all);
+    if (!f || !this.bands) return;
+    // drop cells overlapping the stamp so they are re-placed on the graded ground
+    const ang = (f.radius + f.falloff) / this.R;
+    for (const b of this.bands) {
+      const cellAng = (Math.PI / 2) / (1 << b.L) * 0.8 + ang;
+      const cosA = Math.cos(Math.min(Math.PI, cellAng));
+      for (const [k, c] of b.cells) {
+        const d = c.dir;
+        if (d[0] * f.x + d[1] * f.y + d[2] * f.z > cosA) { this._dropCell(c); b.cells.delete(k); b.dirty = true; }
+      }
+    }
+  }
+
+  // ================================================================== clearings
+  /**
+   * Public: cull vegetation in a disc around a planet-local position (e.g. a parked starship).
+   * keep = fraction of instances kept (0 = bare). Returns an id for removeClear().
+   */
+  clearAround(pos, radius, keep = 0) {
+    if (!pos || !(radius > 0)) return 0;
+    const l = Math.hypot(pos.x, pos.y, pos.z) || 1;
+    this._dynClears = this._dynClears || [];
+    const id = (this._clearId = (this._clearId || 0) + 1);
+    this._dynClears.push({ id, c: [pos.x / l, pos.y / l, pos.z / l, Math.cos(radius / this.R), keep] });
+    this._refreshClears(true);
+    return id;
+  }
+  removeClear(id) {
+    if (!this._dynClears) return;
+    const n = this._dynClears.length;
+    this._dynClears = this._dynClears.filter((d) => d.id !== id);
+    if (this._dynClears.length !== n) this._refreshClears(true, true);
+  }
+
+  /** gather clearings from civ, 'landing' POIs and clearAround(); re-filter cells when they change */
+  _refreshClears(force = false, removed = false) {
+    const list = [];
+    try {
+      const C = this.world.civ?.clearings || this.world.get?.('civ')?.clearings;
+      if (Array.isArray(C)) for (const c of C) if (c && c.length >= 4) list.push([c[0], c[1], c[2], c[3], c[4] ?? 0]);
+    } catch (_) { /* civ optional */ }
+    try {
+      const P = this.world.pois;
+      if (Array.isArray(P)) for (const p of P) {
+        if (p?.kind !== 'landing' || !p.pos) continue;
+        const l = Math.hypot(p.pos.x, p.pos.y, p.pos.z) || 1;
+        list.push([p.pos.x / l, p.pos.y / l, p.pos.z / l, Math.cos(Math.max(8, p.radius || 12) / this.R), 0]);
+      }
+    } catch (_) { /* ignore */ }
+    if (this._dynClears) for (const d of this._dynClears) list.push(d.c);
+    let sig = '' + list.length;
+    for (const c of list) sig += '|' + c[0].toFixed(5) + ',' + c[2].toFixed(5) + ',' + c[3].toFixed(9) + ',' + c[4];
+    if (sig === this.clearSig && !force) return;
+    const grew = sig !== this.clearSig;
+    this.clearSig = sig;
+    this.clears = list.map((c) => [c[0], c[1], c[2], c[3], c[4], Math.acos(Math.max(-1, Math.min(1, c[3])))]);
+    if (!this.bands) return;
+    if (removed) {
+      // a clearing went away: re-place affected cells from scratch (instances were compacted out)
+      for (const b of this.bands) { for (const c of b.cells.values()) this._dropCell(c); b.cells.clear(); b.dirty = true; }
+      return;
+    }
+    if (!grew) return;
+    for (const b of this.bands) {
+      for (const c of b.cells.values()) {
+        if (this._filterCell(c)) {
+          if (c.colliders) { this._removeColliders(c.colliders); c.colliders = null; }
+          b.dirty = true;
+        }
+      }
+    }
+  }
+
+  /** compact a cell's instances against the clearings; returns true if anything was removed */
+  _filterCell(c) {
+    const C = this.clears;
+    if (!C.length || !c.res) return false;
+    const b = c.band, d = c.dir;
+    const cellAng = (Math.PI / 2) / (1 << b.L) * 0.8;
+    let rel = null;
+    for (const q of C) {
+      if (d[0] * q[0] + d[1] * q[1] + d[2] * q[2] > Math.cos(Math.min(Math.PI, q[5] + cellAng))) (rel || (rel = [])).push(q);
+    }
+    if (!rel) return false;
+    const r = c.res, A = r.anchor;
+    const run = (I, M, n) => {
+      let w = 0;
+      for (let i = 0; i < n; i++) {
+        const o = i * STRIDE;
+        const px = A[0] + I[o], py = A[1] + I[o + 1], pz = A[2] + I[o + 2];
+        const il = 1 / (Math.hypot(px, py, pz) || 1);
+        let keep = true;
+        for (const q of rel) {
+          if ((px * q[0] + py * q[1] + pz * q[2]) * il > q[3] && I[o + 8] >= q[4]) { keep = false; break; }
+        }
+        if (!keep) continue;
+        if (w !== i) { I.copyWithin(w * STRIDE, o, o + STRIDE); if (M) M[w] = M[i]; }
+        w++;
+      }
+      return w;
+    };
+    const n0 = r.n, f0 = r.fn || 0;
+    r.n = run(r.inst, r.model, r.n);
+    if (r.finst) r.fn = run(r.finst, r.fmodel, r.fn || 0);
+    return r.n !== n0 || (r.fn || 0) !== f0;
   }
 
   _onMsg(rec, m) {
@@ -329,8 +480,10 @@ class Flora {
   // ================================================================== streaming
   _accept(j, res) {
     const b = j.band;
+    if (j.gen !== undefined && j.gen !== this.flatGen) { b.dirty = true; return; } // terrain changed meanwhile: re-request
     if (!res) res = { n: 0, anchor: [0, 0, 0], inst: new Float32Array(0), model: new Uint16Array(0) };
     const c = { key: j.key, band: b, res, dir: j.dir, colliders: null };
+    if (this.clears.length) this._filterCell(c);
     b.ms = (b.ms || 0) + (res.ms || 0); b.jobs = (b.jobs || 0) + 1;
     if (b.name === 'canopy') this._legendary(c);
     b.cells.set(j.key, c);
@@ -351,7 +504,14 @@ class Flora {
       if (this.poiKeys.has(key)) continue;
       this.poiKeys.add(key);
       const names = { oak: 'Elder Oak', spruce: 'Grandfather Spruce', pine: 'Ancient Pine', birch: 'White Sentinel', giant: 'World Tree', shroom: 'Spore Titan', tower: 'Fungal Spire', palm: 'Sky Palm', lollipop: 'Candy Colossus', umbrella: 'Parasol Ancient', acacia: 'Lone Acacia', deadtree: 'Bone Tree', lanterntree: 'Lantern Elder', crystal: 'Singing Spire' };
-      try { this.world.addPOI?.({ kind: 'wonder', name: names[m.sp.id] || 'Ancient Tree', pos, radius: 40 + m.height * 2, data: { flora: m.sp.id } }); } catch (_) { /* ui optional */ }
+      // unique, deterministic names ("Elder Oak of Varneth") so markers/toasts never repeat
+      const syl = ['va', 'mor', 'eth', 'lin', 'ka', 'sul', 'or', 'wen', 'dra', 'thi', 'bel', 'ny', 'ros', 'cai', 'um', 'fal'];
+      let hsh = (hashCombine(this.seed, key) >>> 0);
+      let nm = '';
+      for (let q = 0; q < 2 + (hsh & 1); q++) { nm += syl[(hsh >>> (q * 4 + 1)) & 15]; }
+      nm = nm.charAt(0).toUpperCase() + nm.slice(1);
+      const title = `${names[m.sp.id] || 'Ancient Tree'} of ${nm}`;
+      try { this.world.addPOI?.({ kind: 'wonder', name: title, pos, radius: 40 + m.height * 2, minor: true, data: { flora: m.sp.id } }); } catch (_) { /* ui optional */ }
     }
   }
 
@@ -376,7 +536,7 @@ class Flora {
         });
         list.sort((p, q) => p.a - q.a);
         for (const c of list) {
-          const job = { key: c.key, band: b, dir: [c.cx, c.cy, c.cz], ang: c.a, msg: b.kind === 'grass'
+          const job = { key: c.key, band: b, dir: [c.cx, c.cy, c.cz], ang: c.a, gen: this.flatGen, msg: b.kind === 'grass'
             ? { kind: 'grass', cell: { L: b.L, f: c.f, i: c.i, j: c.j } }
             : { kind: 'layer', layer: b.layer, cell: { L: b.L, f: c.f, i: c.i, j: c.j }, opt: b.opt || {} } };
           this.pending.set(c.key, job);
@@ -468,8 +628,12 @@ class Flora {
     for (const name of ['canopy', 'rock']) {
       const b = this.bands.find((x) => x.name === name);
       if (!b) continue;
+      const cl = camLocal.length();
       for (const c of b.cells.values()) {
-        const d = _v.set(c.res.anchor[0], c.res.anchor[1], c.res.anchor[2]).distanceTo(camLocal);
+        // anchors sit on the base sphere (radius R): compare at the camera's radius so high
+        // terrain (anchor hundreds of metres below the ground) still registers nearby colliders
+        _v.set(c.res.anchor[0], c.res.anchor[1], c.res.anchor[2]);
+        const d = _v.multiplyScalar(cl / (_v.length() || 1)).distanceTo(camLocal);
         if (d < lim && !c.colliders) this._cellColliders(c);
         else if (d > lim * 1.6 && c.colliders) { this._removeColliders(c.colliders); c.colliders = null; }
       }
@@ -482,7 +646,7 @@ class Flora {
     const D = this.D;
     if (b.name === 'grass') {
       const G = this.grass;
-      G.dense.begin(cx, cy, cz); G.sparse.begin(cx, cy, cz);
+      G.dense.begin(cx, cy, cz); G.sparse.begin(cx, cy, cz); G.far.begin(cx, cy, cz);
       for (const m of this.bandLayers.flower) { m.L0.begin(cx, cy, cz); m.L1.begin(cx, cy, cz); }
       const nr2 = G.nearR * G.nearR, fl0 = (D.f0[1] + 3) ** 2, fl1 = (D.f0[0] - 3) ** 2;
       for (const c of b.cells.values()) {
@@ -492,10 +656,14 @@ class Flora {
           const px = A[0] + I[o], py = A[1] + I[o + 1], pz = A[2] + I[o + 2];
           const d2 = (px - cx) ** 2 + (py - cy) ** 2 + (pz - cz) ** 2;
           if (d2 < nr2) G.dense.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], I[o + 3], I[o + 8], I[o + 9], I[o + 10], I[o + 11]);
-          if (d2 > 100) {
+          if (d2 > G.farMin2) {
             // distance thinning: fewer, larger patches far away (keeps the silhouette, cuts triangles)
             const keep = d2 < 400 ? 1 : Math.max(0.22, Math.pow(400 / d2, 0.75));
-            if (I[o + 8] < keep) G.sparse.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], I[o + 3] / Math.sqrt(keep), I[o + 8], I[o + 9], I[o + 10], I[o + 11]);
+            if (I[o + 8] < keep) {
+              const sc = I[o + 3] / Math.sqrt(keep);
+              if (d2 < G.midMax2) G.sparse.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], sc, I[o + 8], I[o + 9], I[o + 10], I[o + 11]);
+              if (d2 > G.far0) G.far.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], sc, I[o + 8], I[o + 9], I[o + 10], I[o + 11]);
+            }
           }
         }
         const F = r.finst;
@@ -509,7 +677,7 @@ class Flora {
           if (d2 > fl1) m.L1.push(px, py, pz, F[o + 4], F[o + 5], F[o + 6], F[o + 7], F[o + 3], F[o + 8], F[o + 9], F[o + 10], F[o + 11]);
         }
       }
-      G.dense.end(1); G.sparse.end(1);
+      G.dense.end(1); G.sparse.end(1); G.far.end(1);
       for (const m of this.bandLayers.flower) { m.L0.end(1.5); m.L1.end(1.5); }
       return;
     }
@@ -565,6 +733,7 @@ class Flora {
     const alt = _cam.length() - this.R - (this.surface.height ? 0 : 0);
     const altG = this._groundAlt(alt);
     this._streamT = (this._streamT || 0) + dt;
+    if (!this._streamed) { try { this._refreshClears(); } catch (_) { /* ignore */ } }
     if (this._streamT > (this.shot ? 0 : 0.2) || !this._streamed) {
       this._streamT = 0; this._streamed = true;
       this._stream(_cam, altG);
@@ -586,7 +755,11 @@ class Flora {
       }
     }
     const now = performance.now();
-    if (!(now - (this._colT || 0) < 500)) { this._colT = now; this._updateColliders(_cam); }
+    if (!(now - (this._colT || 0) < 500)) {
+      this._colT = now;
+      try { this._refreshClears(); } catch (e) { console.warn('[flora] clearings failed', e); }
+      this._updateColliders(_cam);
+    }
     if (!this.ready) { this.ready = this._checkReady(altG); if (this.ready) this.readyMs = Math.round(now - this.t0); }
     // deterministic captures: don't pay for rendering half-streamed vegetation
     if (this.shot) this.group.visible = this.visible && this.ready;
@@ -642,12 +815,14 @@ class Flora {
   }
 
   dispose() {
+    try { this._offFlat?.(); } catch (_) { /* ignore */ }
+    try { if (typeof this._offClear === 'function') this._offClear(); } catch (_) { /* ignore */ }
     for (const w of this.workers) { try { w.w.terminate(); } catch (_) {} }
     this.workers.length = 0;
     for (const b of this.bands || []) for (const c of b.cells.values()) this._dropCell(c);
     for (const L of this.layers) { L.dispose(); L.material?.dispose?.(); L.depthMaterial?.dispose?.(); }
     for (const m of this.models) { m.geo0?.dispose(); m.geo1?.dispose(); }
-    this.grass?.geoD?.dispose(); this.grass?.geoS?.dispose();
+    this.grass?.geoD?.dispose(); this.grass?.geoS?.dispose(); this.grass?.geoF?.dispose();
     this.impQuad?.dispose();
     this.impBake?.albedo.dispose(); this.impBake?.normal.dispose();
     this.atlas?.texture?.dispose(); this.bark?.dispose(); this.rockTex?.dispose();

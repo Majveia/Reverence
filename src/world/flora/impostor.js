@@ -37,7 +37,7 @@ void main(){
   else if (kind < 2.5) {
     vec4 tx = texture2D(uAtlas, vUv);
     if (tx.a < 0.5) discard;
-    col = mix(vCol, uTint2, tx.g) * (tx.r * 1.45);
+    col = mix(vCol, uTint2, tx.g) * (0.38 + tx.r * 0.95);
     if (kind > 1.5) glow = uCardGlow;
   } else if (kind > 3.5) glow = uGlow;
   float ao = vInfo.z;
@@ -218,7 +218,7 @@ float rvImpAlpha(sampler2D t, vec2 uv){
 `;
 const IMP_MAP = /* glsl */`
 {
-  float dth = rvIGN(gl_FragCoord.xy);
+  float dth = rvDither(gl_FragCoord.xy);
   if (vFade.y < 0.999 && dth >= vFade.y) discard;
   if (vFade.x < 0.999 && (1.0 - dth) >= vFade.x) discard;
   bool top = fract(dth * 7.31 + 0.37) < vTopW;

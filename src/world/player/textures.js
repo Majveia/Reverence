@@ -11,6 +11,7 @@ let _cache = null;
 function canvas(w, h) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
+  c.getContext('2d', { willReadFrequently: true }); // generated on the CPU and read back (height → normal)
   return c;
 }
 
@@ -117,7 +118,44 @@ function panelAtlas() {
   ctx.filter = 'blur(0.6px)';
   ctx.drawImage(c, 0, 0);
   ctx.filter = 'none';
-  return heightToNormal(c, 2.2, false);
+  return { normal: heightToNormal(c, 2.2, false), albedo: panelAlbedo(c, rnd) };
+}
+
+/**
+ * Albedo multiplier for the plates from the panel height: dark panel lines / vent slots (they read at
+ * game distance where the normal detail does not), grime settling under ridges, rain/dust streaks running
+ * down each plate, a few light scuffs. Linear values around 1.0 (multiplied with the vertex colour).
+ */
+function panelAlbedo(hsrc, rnd) {
+  const S = hsrc.width;
+  const hd = hsrc.getContext('2d').getImageData(0, 0, S, S).data;
+  const out = canvas(S, S);
+  const ctx = out.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const d = img.data;
+  // vertical streak field (per column), stronger toward the bottom of each quadrant
+  const streak = new Float32Array(S);
+  for (let x = 0; x < S; x++) streak[x] = 0;
+  for (let k = 0; k < 90; k++) {
+    const x0 = rnd.next() * S | 0, w = 1 + rnd.next() * 5, a = 0.04 + rnd.next() * 0.09;
+    for (let x = Math.max(0, x0 - w | 0); x < Math.min(S, x0 + w); x++) streak[x] += a * (1 - Math.abs(x - x0) / w);
+  }
+  const Q = S / 2;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const i = (y * S + x) * 4;
+    const h = hd[i] / 255;
+    const hu = hd[Math.max(0, y - 3) * S * 4 + x * 4] / 255; // height a little above (grime pools under ridges)
+    let a = 1;
+    if (h < 0.42) a *= 0.42 + 0.58 * Math.max(0, (h - 0.12) / 0.3); // grooves, vents
+    if (hu > h + 0.12) a *= 0.86;
+    const qy = (y % Q) / Q; // 0 top → 1 bottom of the plate (atlas v is flipped by the texture upload)
+    a *= 1 - streak[x] * (0.25 + 0.75 * qy);
+    if (h > 0.62) a *= 1.04; // raised emboss catches less dirt
+    const v = Math.max(0, Math.min(255, a * 248)) | 0;
+    d[i] = v; d[i + 1] = v; d[i + 2] = Math.min(255, v + 2); d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return out;
 }
 
 function fabric() {
@@ -190,10 +228,14 @@ export function getTextures(renderer) {
     t.needsUpdate = true;
     return t;
   };
-  let panel, fab, wr;
-  try { panel = mk(panelAtlas(), { channel: 0 }); } catch (e) { panel = null; }
+  let panel, panelA, fab, wr;
+  try {
+    const pa = panelAtlas();
+    panel = mk(pa.normal, { channel: 0 });
+    panelA = mk(pa.albedo, { channel: 0, srgb: true });
+  } catch (e) { panel = null; panelA = null; }
   try { fab = mk(fabric(), { repeat: true, channel: 1 }); } catch (e) { fab = null; }
   try { wr = mk(wear(), { repeat: true, channel: 1 }); } catch (e) { wr = null; }
-  _cache = { panelNormal: panel, fabricNormal: fab, wearRough: wr };
+  _cache = { panelNormal: panel, panelAlbedo: panelA, fabricNormal: fab, wearRough: wr };
   return _cache;
 }

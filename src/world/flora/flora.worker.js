@@ -12,6 +12,9 @@ self.onmessage = (ev) => {
       gen = new SurfaceGen(m.cfg);
       table = m.table;
       self.postMessage({ type: 'init', ok: true });
+    } else if (m.type === 'flats') {
+      // terrain flatten stamps (civ plazas/pads) so trees sit on graded ground
+      if (gen?.setFlattens) gen.setFlattens(m.flats || []);
     } else if (m.type === 'job') {
       if (!gen) throw new Error('flora worker not initialised');
       const t0 = performance.now();

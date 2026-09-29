@@ -415,7 +415,8 @@ void main(){
   float nu = dot(dir, uLightDir);
   float ph = mix(cl_hg(nu, 0.7), cl_hg(nu, -0.2), 0.3);
   vec3 sunT = atmo_sunTransmittance(r, dot(n, uLightDir)) * uLightIll;
-  vec3 Lc = sunT * (exp(-od) * ph * 3.2 + exp(-od * 0.25) * 0.2) + mix(uAmbBot, uAmbTop, 0.6) * uShape3.w;
+  vec3 sunTd = mix(sunT, vec3(dot(sunT, vec3(0.2126, 0.7152, 0.0722))), 0.45);
+  vec3 Lc = sunT * exp(-od) * ph * 3.2 + sunTd * (exp(-od * 0.25) * 0.12 + exp(-od * 0.08) * 0.16) + mix(uAmbBot, uAmbTop, 0.6) * uShape3.w;
   vec3 L = Lc * (1.0 - T);
   vec2 ta = atmo_raySphere(ro, dir, uAtmoRt);
   vec3 Tair = mix(vec3(1.0), pow(atmo_transSegment(ro + dir * max(ta.x, 0.0), p), vec3(uAPScale)), 0.85);

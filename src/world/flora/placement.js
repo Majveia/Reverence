@@ -12,23 +12,39 @@ import { cellPoint, cellSize } from './cells.js';
 export const STRIDE = 12;
 const B = { OCEAN: 0, BEACH: 1, DESERT: 2, SAVANNA: 3, GRASSLAND: 4, FOREST: 5, JUNGLE: 6, TAIGA: 7, TUNDRA: 8, SNOW: 9, ROCK: 10, VOLCANIC: 11, CRYSTAL: 12, TOXIC: 13 };
 
-// ------------------------------------------------------------------ cheap 3D value noise (meters)
-function vnoise(seed, x, y, z) {
+// ------------------------------------------------------------------ 3D gradient noise (meters)
+// Gradient (Perlin) noise on a rotated domain: value noise on an axis-aligned lattice showed up as
+// a faint grid/diamond pattern in grass coverage and forest edges; gradient noise has no lattice
+// plateaus and the per-octave rotation hides the remaining axis alignment.
+const GX = [1, -1, 1, -1, 1, -1, 1, -1, 0, 0, 0, 0], GY = [1, 1, -1, -1, 0, 0, 0, 0, 1, -1, 1, -1], GZ = [0, 0, 0, 0, 1, 1, -1, -1, 1, 1, -1, -1];
+function grad(seed, i, j, k, x, y, z) {
+  let h = Math.imul(i, 0x27d4eb2d) ^ Math.imul(j, 0x165667b1) ^ Math.imul(k, 0x6c8e9cf5) ^ seed;
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d); h = Math.imul(h ^ (h >>> 12), 0x297a2d39); h ^= h >>> 15;
+  const g = ((h >>> 0) % 12);
+  return GX[g] * x + GY[g] * y + GZ[g] * z;
+}
+function gnoise(seed, x, y, z) {
   const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
   const fx = x - xi, fy = y - yi, fz = z - zi;
-  const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy), uz = fz * fz * (3 - 2 * fz);
-  const c = (i, j, k) => h01(seed, (xi + i) | 0, (yi + j) | 0, (zi + k) | 0);
-  const x00 = c(0, 0, 0) + (c(1, 0, 0) - c(0, 0, 0)) * ux;
-  const x10 = c(0, 1, 0) + (c(1, 1, 0) - c(0, 1, 0)) * ux;
-  const x01 = c(0, 0, 1) + (c(1, 0, 1) - c(0, 0, 1)) * ux;
-  const x11 = c(0, 1, 1) + (c(1, 1, 1) - c(0, 1, 1)) * ux;
+  const ux = fx * fx * fx * (fx * (fx * 6 - 15) + 10), uy = fy * fy * fy * (fy * (fy * 6 - 15) + 10), uz = fz * fz * fz * (fz * (fz * 6 - 15) + 10);
+  const n000 = grad(seed, xi, yi, zi, fx, fy, fz), n100 = grad(seed, xi + 1, yi, zi, fx - 1, fy, fz);
+  const n010 = grad(seed, xi, yi + 1, zi, fx, fy - 1, fz), n110 = grad(seed, xi + 1, yi + 1, zi, fx - 1, fy - 1, fz);
+  const n001 = grad(seed, xi, yi, zi + 1, fx, fy, fz - 1), n101 = grad(seed, xi + 1, yi, zi + 1, fx - 1, fy, fz - 1);
+  const n011 = grad(seed, xi, yi + 1, zi + 1, fx, fy - 1, fz - 1), n111 = grad(seed, xi + 1, yi + 1, zi + 1, fx - 1, fy - 1, fz - 1);
+  const x00 = n000 + (n100 - n000) * ux, x10 = n010 + (n110 - n010) * ux;
+  const x01 = n001 + (n101 - n001) * ux, x11 = n011 + (n111 - n011) * ux;
   const y0 = x00 + (x10 - x00) * uy, y1 = x01 + (x11 - x01) * uy;
-  return y0 + (y1 - y0) * uz;
+  return y0 + (y1 - y0) * uz; // ≈ [-1, 1]
 }
-/** 2-octave value noise at planet-local meters p/scale */
+/** 2-octave gradient noise at planet-local meters p/scale, mapped to ≈[0,1] (mean 0.5) */
 export function fieldNoise(seed, px, py, pz, scale) {
   const s = 1 / scale;
-  return vnoise(seed, px * s, py * s, pz * s) * 0.65 + vnoise(seed + 17, px * s * 2.7 + 5.3, py * s * 2.7, pz * s * 2.7) * 0.35;
+  const x = px * s, y = py * s, z = pz * s;
+  // two fixed rotations (orthonormal) so octaves never share lattice axes
+  const a = gnoise(seed, 0.80 * x + 0.36 * y - 0.48 * z, -0.60 * x + 0.48 * y - 0.64 * z, 0.80 * y + 0.60 * z);
+  const b = gnoise(seed + 17, 2.7 * (0.36 * x - 0.48 * y + 0.80 * z) + 5.3, 2.7 * (0.93 * x + 0.24 * y - 0.28 * z), 2.7 * (0.0 * x + 0.84 * y + 0.54 * z) + 1.7);
+  const v = 0.5 + (a * 0.72 + b * 0.36);
+  return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
 // ------------------------------------------------------------------ LOD-aware surface sample
@@ -201,11 +217,14 @@ export function placeGrass(gen, T, cell) {
       const px = dx * R, py = dy * R, pz = dz * R;
       let cov = G.cover[s.biome];
       if (cov <= 0.01) continue;
-      // patchiness: bare spots, lush swales, thinning on steep slopes and rock
+      // patchiness: mostly continuous meadow with swales of taller/denser grass and a few bare
+      // spots; steep slopes, rock and sand thin it out
       const pn = fieldNoise(seed + 3, px, py, pz, 9);
       const pn2 = fieldNoise(seed + 4, px, py, pz, 31);
-      let dens = cov * smooth(0.18, 0.52, pn * 0.6 + pn2 * 0.4 + cov * 0.35) * (1 - smooth(0.3, 0.55, s.slope)) * (1 - smooth(0.35, 0.7, s.rock));
+      const pat = pn * 0.55 + pn2 * 0.45;
+      let dens = cov * (0.58 + 0.42 * smooth(0.12, 0.5, pat + cov * 0.3)) * (1 - smooth(0.3, 0.55, s.slope)) * (1 - smooth(0.35, 0.7, s.rock));
       dens *= 1 - smooth(0.4, 0.8, s.sand);
+      if (cov < 0.999 && pat < 0.3 * (1 - cov)) dens *= 0.3; // sparse biomes keep real bare ground
       if (dens < 0.04) continue;
       const moist = s.moisture;
       const dry = saturate(G.dryAmount + (0.45 - moist) * 0.9 + (pn2 - 0.5) * 0.6);

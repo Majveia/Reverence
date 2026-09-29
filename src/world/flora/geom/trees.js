@@ -29,10 +29,13 @@ function leafClump(b, rnd, cl, o) {
     const ol = Math.hypot(ox, oy, oz) || 1;
     const depth = clamp(ol / (o.crownR || 1), 0, 1.3);
     ox /= ol; oy /= ol; oz /= ol;
-    const sh = norm3(dx * 0.45 + ox * 0.65, dy * 0.45 + oy * 0.65 + 0.18, dz * 0.45 + oz * 0.65);
-    // AO: deep inside and underneath the crown is darker
+    // clump-level normal dominates (each clump reads as its own lit volume, like painted canopies),
+    // the crown direction keeps the overall silhouette shading coherent
+    const sh = norm3(dx * 0.62 + ox * 0.48, dy * 0.62 + oy * 0.48 + 0.15, dz * 0.62 + oz * 0.48);
+    // AO: deep inside and underneath the crown is darker, and so is the core of each clump
     const under = smooth(-0.9, 0.5, sh[1]);
-    const ao = clamp((0.25 + 0.75 * smooth(0.15, 1.0, depth)) * (0.55 + 0.45 * under), 0.12, 1);
+    const inner = 0.55 + 0.45 * smooth(0.2, 0.95, rr / Math.max(1e-3, cl.r));
+    const ao = clamp((0.25 + 0.75 * smooth(0.15, 1.0, depth)) * (0.5 + 0.5 * under) * inner, 0.1, 1);
     // sun-kissed tops are warmer/lighter
     const top = smooth(-0.2, 0.9, sh[1]);
     const col = colorVar(rnd, o.colA, o.colB, 0.92 + top * 0.18, clamp(0.1 + top * 0.6 + rnd() * 0.2, 0, 1));
@@ -131,7 +134,7 @@ export function broadleaf(rnd, P) {
   const emit = (detail) => {
     const b = new PlantBuilder();
     const seg = detail ? 5 : 10;
-    b.tube(detail ? trunk.filter((_, i) => i % 2 === 0 || i === trunk.length - 1) : trunk, { segs: seg, color: P.bark, capTip: true });
+    b.tube(detail ? trunk.filter((_, i) => i % 2 === 0 || i === trunk.length - 1) : trunk, { segs: detail ? 6 : 12, color: P.bark, capTip: true });
     for (const l of limbs) {
       b.tube(detail ? l.path.filter((_, i) => i % 2 === 0) : l.path, { segs: detail ? 3 : 6, color: P.bark, phase: l.phase, capTip: true });
       if (!detail && l.subs) for (const sp of l.subs) b.tube(sp, { segs: 4, color: P.bark, phase: l.phase, capTip: true });
@@ -187,7 +190,7 @@ export function conifer(rnd, P) {
   const colA = P.leafA, colB = P.leafB;
   const emit = (detail) => {
     const b = new PlantBuilder();
-    b.tube(detail ? trunk.filter((_, i) => i % 3 === 0 || i === trunk.length - 1) : trunk, { segs: detail ? 5 : 8, color: P.bark, capTip: true });
+    b.tube(detail ? trunk.filter((_, i) => i % 3 === 0 || i === trunk.length - 1) : trunk, { segs: detail ? 6 : 11, color: P.bark, capTip: true });
     const r2 = mulberryFork(rnd, detail + 11);
     whorls.forEach((w, wi) => {
       if (detail && wi % 2 === 1) return;
@@ -273,7 +276,7 @@ export function slender(rnd, P) {
   const crown = [tp.x, H * 0.66, tp.z];
   const emit = (detail) => {
     const b = new PlantBuilder();
-    b.tube(detail ? trunk.filter((_, i) => i % 2 === 0 || i === trunk.length - 1) : trunk, { segs: detail ? 5 : 8, color: P.bark, capTip: true, vScale: 1.4 });
+    b.tube(detail ? trunk.filter((_, i) => i % 2 === 0 || i === trunk.length - 1) : trunk, { segs: detail ? 6 : 10, color: P.bark, capTip: true, vScale: 1.4 });
     for (const br of branches) b.tube(detail ? br.path.filter((_, i) => i % 2 === 0) : br.path, { segs: detail ? 3 : 4, color: P.bark, phase: br.phase, capTip: true });
     const r2 = mulberryFork(rnd, detail + 21);
     const lo = { detail, density: P.leafDensity ?? 8, size: P.leafSize ?? 1.1, crown, crownR: crownR * 1.2, crownFlat: 1.6, colA: P.leafA, colB: P.leafB, rect: () => P.rect, flat: 1.1, upBias: 0.1 };
@@ -307,7 +310,7 @@ export function umbrella(rnd, P) {
   const crown = [tp.x, H - 0.3, tp.z];
   const emit = (detail) => {
     const b = new PlantBuilder();
-    b.tube(trunk, { segs: detail ? 5 : 9, color: P.bark });
+    b.tube(trunk, { segs: detail ? 6 : 11, color: P.bark });
     for (const l of limbs) b.tube(detail ? l.path.filter((_, i) => i % 2 === 0) : l.path, { segs: detail ? 3 : 6, color: P.bark, phase: l.phase, capTip: true });
     const r2 = mulberryFork(rnd, detail + 31);
     const lo = { detail, density: P.leafDensity ?? 7, size: P.leafSize ?? 1.5, crown, crownR, crownFlat: 0.35, colA: P.leafA, colB: P.leafB, rect: () => P.rect, flat: 0.38, upBias: 0.5 };
@@ -334,7 +337,7 @@ export function palm(rnd, P) {
   }
   const emit = (detail) => {
     const b = new PlantBuilder();
-    b.tube(detail ? trunk.filter((_, i) => i % 2 === 0) : trunk, { segs: detail ? 5 : 9, color: P.bark, vScale: 0.6 });
+    b.tube(detail ? trunk.filter((_, i) => i % 2 === 0) : trunk, { segs: detail ? 6 : 11, color: P.bark, vScale: 0.6 });
     const r2 = mulberryFork(rnd, detail + 41);
     for (const f of fronds) {
       if (detail && f.el < 0.05) continue;
@@ -393,7 +396,7 @@ export function deadTree(rnd, P) {
   }
   const emit = (detail) => {
     const b = new PlantBuilder();
-    b.tube(trunk, { segs: detail ? 5 : 9, color: P.bark, capTip: true });
+    b.tube(trunk, { segs: detail ? 6 : 11, color: P.bark, capTip: true });
     for (const br of branches) {
       if (detail && br.depth < 1) continue;
       b.tube(br.path, { segs: detail ? 3 : br.depth >= 2 ? 6 : 4, color: P.bark, phase: br.phase, capTip: true });
