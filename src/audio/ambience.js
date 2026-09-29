@@ -47,7 +47,17 @@ export class Ambience {
   _g(v = 0) { const g = this.ctx.createGain(); g.gain.value = v; return g; }
   _f(type, f, q = 0.7) { const n = this.ctx.createBiquadFilter(); n.type = type; n.frequency.value = f; n.Q.value = q; return n; }
   _noise(kind, t) { const s = this.ctx.createBufferSource(); s.buffer = noiseBuffer(this.ctx, kind); s.loop = true; s.start(t, this.r() * 3.5); return s; }
-  _lvl(bed, v, t, tc = 0.5) { if (!bed || bed.dead) return; if (Math.abs((bed.v ?? -1) - v) < 0.002) return; bed.v = v; bed.gain.gain.setTargetAtTime(v, t, tc); }
+  _lvl(bed, v, t, tc = 0.5) {
+    if (!bed || bed.dead) return;
+    if (t < this.fastUntil) tc = Math.min(tc, 0.3);    // scene cut: settle to the new world fast
+    if (Math.abs((bed.v ?? -1) - v) < 0.002) return;
+    bed.v = v; bed.gain.gain.cancelScheduledValues(t); bed.gain.gain.setTargetAtTime(v, t, tc);
+  }
+  /** Scene cut / surface⇄orbit flip: for `sec` seconds every bed converges fast (tc ≤ 0.3 s). */
+  cut(t, sec = 1.5) {
+    this.fastUntil = Math.max(this.fastUntil || 0, t + sec);
+    for (const b of Object.values(this.beds)) b.v = -1;   // force re-targeting with the fast time constant
+  }
   _every(name, t, lo, hi) { const n = this.timers[name]; if (n === undefined) { this.timers[name] = t + this.r.range(lo, hi) * 0.5; return false; } if (t >= n) { this.timers[name] = t + this.r.range(lo, hi); return true; } return false; }
   _count(name) { this.counts[name] = (this.counts[name] || 0) + 1; }
 
@@ -91,7 +101,7 @@ export class Ambience {
     const shore = P.shore * dry;
     if (shore > 0.01 || this.beds.ocean) {
       const O = this._bed('ocean', () => {
-        const gain = this._g(0); gain.connect(this.out); const send = this._g(0.25); gain.connect(send); send.connect(this.rev);
+        const gain = this._g(0); const pan = this.ctx.createStereoPanner(); gain.connect(pan); pan.connect(this.out); const send = this._g(0.25); gain.connect(send); send.connect(this.rev);
         const roar = this._noise('brown', t), rf = this._f('lowpass', 380, 0.5), rg = this._g(0.6); roar.connect(rf); rf.connect(rg); rg.connect(gain);
         const mk = (pan) => {
           const s = this._noise('pink', t), f = this._f('lowpass', 400, 0.8), g = this._g(0), p = this.ctx.createStereoPanner(); p.pan.value = pan;
@@ -99,9 +109,10 @@ export class Ambience {
           s.connect(f); f.connect(g); g.connect(p); w.connect(wf); wf.connect(wg); wg.connect(p); p.connect(gain);
           return { f, g, wg };
         };
-        return { gain, ch: [mk(-0.45), mk(0.4)], k: 0 };
+        return { gain, pan, ch: [mk(-0.45), mk(0.4)], k: 0 };
       });
       this._lvl(O, shore * 0.55, t, 1.2);
+      setT(O.pan.pan, clamp((P.shorePan || 0) * 0.65, -0.65, 0.65), t, 0.6, 0.01);   // the sea is over there
       if (shore > 0.02 && this._every('wave', t, 4.5, 10)) {
         const c = O.ch[O.k++ % 2], big = r.range(0.5, 1) * (0.6 + P.wind * 0.6);
         const rise = r.range(1.6, 3), crash = t + rise;
@@ -169,7 +180,8 @@ export class Ambience {
     if (birds > 0.05 && this.species && this._every('bird', t, 2.4 / (0.3 + birds), 8 / (0.3 + birds))) this._bird(t + 0.05, birds);
 
     // ---------------- distant creatures
-    if (P.fauna > 0.05 && dry > 0.5 && this._every('creature', t, 22, 60)) this._creature(t + 0.1, P);
+    // (fallback when no fauna subsystem feeds real animals — otherwise creatures.js voices them in place)
+    if (P.fauna > 0.05 && dry > 0.5 && this._every('creature', t, 22, 60) && !this.host.creatures?.live) this._creature(t + 0.1, P);
 
     // ---------------- settlements
     const city = P.city * dry;
@@ -254,7 +266,7 @@ export class Ambience {
   _city(t, dt, city, P) {
     const r = this.r, st = P.cityStyle || 'village';
     const C = this._bed('city', () => {
-      const gain = this._g(0); gain.connect(this.out);
+      const gain = this._g(0); const pan = this.ctx.createStereoPanner(); gain.connect(pan); pan.connect(this.out);
       const voices = [];
       for (let i = 0; i < 3; i++) {
         const s = this._noise('pink', t), f = this._f('bandpass', 380 + i * 260, 1.8), g = this._g(0), p = this.ctx.createStereoPanner(); p.pan.value = (i - 1) * 0.6;
@@ -264,8 +276,9 @@ export class Ambience {
       // neon / electrical hum (only audible on neon & industrial styles)
       const hum = this.ctx.createOscillator(); hum.type = 'sawtooth'; hum.frequency.value = st === 'industrial' ? 50 : 60;
       const hf = this._f('lowpass', 420, 2), hg = this._g(0); hum.connect(hf); hf.connect(hg); hg.connect(gain); hum.start(t);
-      return { gain, voices, hg };
+      return { gain, pan, voices, hg };
     });
+    setT(C.pan.pan, clamp((P.cityPan || 0) * 0.6, -0.6, 0.6), t, 0.8, 0.01);
     const murmur = (1 - P.night * 0.6) * (st === 'ruins' ? 0 : 1);
     this._lvl(C, city * 0.4, t, 1.5);
     if (this._every('syll', t, 0.09, 0.22)) for (const v of C.voices) { v.g.gain.setTargetAtTime(r.chance(0.3) ? 0.02 : r.range(0.05, 0.28) * murmur, t, 0.05); v.f.frequency.setTargetAtTime(r.range(300, 1100), t, 0.1); }
@@ -301,16 +314,20 @@ export class Ambience {
       const hum = [55, 55.35, 82.6].map((f, i) => { const o = ctx.createOscillator(); o.frequency.value = f; const g = this._g(i === 2 ? 0.18 : 0.26); o.connect(g); g.connect(gain); o.start(t); return o; });
       const rad = this._noise('pink', t), rf = this._f('bandpass', 1400, 14), rg = this._g(0.9); rad.connect(rf); rf.connect(rg); rg.connect(gain);
       const cab = this._noise('brown', t), cf = this._f('lowpass', 140, 0.6), cg = this._g(0); cab.connect(cf); cf.connect(cg); cg.connect(gain);
-      return { gain, hum, rf, cg };
+      // radio events ride their own gate so they cut with the bed (a pulsar train can last 13 s)
+      const radio = this._g(0); radio.connect(this.out); const radioRev = this._g(0); radioRev.connect(this.rev);
+      return { gain, hum, rf, cg, radio, radioRev };
     });
     this._lvl(S, sp * 0.22, t, 2);
+    const gate = clamp((sp - 0.15) * 4, 0, 1), gtc = t < this.fastUntil ? 0.2 : 1;
+    setT(S.radio.gain, gate, t, gtc); setT(S.radioRev.gain, gate, t, gtc);
     setT(S.cg.gain, P.inShip ? 0.7 : 0, t, 1);
     if (this._every('radioSweep', t, 3, 8)) S.rf.frequency.setTargetAtTime(r.range(700, 3200), t, r.range(1, 3));
     if (sp < 0.3) return;
     if (this._every('radioEvt', t, 9, 26)) {
       const kind = r.pick(['whistler', 'morse', 'pulsar', 'whistler']);
       const g = this._g(0.05 * sp), p = ctx.createStereoPanner(); p.pan.value = r.range(-0.7, 0.7);
-      const bp = this._f('bandpass', 1500, 1.5); g.connect(bp); bp.connect(p); p.connect(this.out); const send = this._g(0.6); p.connect(send); send.connect(this.rev);
+      const bp = this._f('bandpass', 1500, 1.5); g.connect(bp); bp.connect(p); p.connect(S.radio); const send = this._g(0.6); p.connect(send); send.connect(S.radioRev);
       if (kind === 'whistler') { // VLF whistler: falling tone (plasma dispersion)
         const o = ctx.createOscillator(); o.frequency.setValueAtTime(r.range(5000, 7500), t); o.frequency.exponentialRampToValueAtTime(r.range(400, 900), t + r.range(1, 2.2));
         const eg = this._g(0); eg.gain.setValueAtTime(0, t); eg.gain.linearRampToValueAtTime(1, t + 0.1); eg.gain.setTargetAtTime(0, t + 1.2, 0.4);
@@ -330,7 +347,9 @@ export class Ambience {
   }
 
   debug() {
-    const beds = {}; for (const [k, b] of Object.entries(this.beds)) beds[k] = b.dead ? 'dead' : +(b.v ?? 0).toFixed(3);
+    // live context: the actual (automated) bed gain, so a fading bed reads as fading; offline: its target
+    const live = !this.host.offline;
+    const beds = {}; for (const [k, b] of Object.entries(this.beds)) beds[k] = b.dead ? 'dead' : +(live ? b.gain.gain.value : Math.max(0, b.v ?? 0)).toFixed(3);
     return { beds, events: { ...this.counts }, species: this.species?.map((s) => s.kind), creature: this.creature?.kind };
   }
 }

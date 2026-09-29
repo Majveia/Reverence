@@ -68,14 +68,33 @@ const OFF = 'gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0;';
 // Runs once per rendered frame so the (many) sprites only need one or two texel fetches each.
 const RESOLVE_FRAG = HEAD + /* glsl */`
 uniform float uHeatLo, uHeatHi;
+uniform float uAniso;
 layout(location = 0) out vec4 o;
-layout(location = 1) out vec4 oAux;   // heat, speed
+layout(location = 1) out vec4 oAux;   // heat, speed, J·Jᵀ xz, yz
+layout(location = 2) out vec4 oCov;   // J·Jᵀ xx, yy, zz, xy (lattice spacings²)
+// Lagrangian edge: central difference of the positions of two lattice neighbours (box units per step)
+vec3 cwEdge(ivec3 L, ivec3 e) {
+  ivec3 Lp = (L + e) % uN, Lm = (L - e + uN) % uN;
+  vec4 A1, B1;
+  vec3 d = cwPosition(cwAtlas(Lp), Lp, A1, B1) - cwPosition(cwAtlas(Lm), Lm, A1, B1);
+  return 0.5 * (d - floor(d + 0.5));
+}
 void main() {
   ivec2 tc = ivec2(gl_FragCoord.xy);
   ivec3 L = cwLatticeFromTexel(tc);
   vec4 A, B;
   vec3 x = cwPosition(tc, L, A, B);
   float rho = cwDensity(x, A);
+  // Lagrangian deformation J = ∂x/∂q of this particle's lattice cell (the dark-matter sheet): its image
+  // J·Jᵀ is the covariance of the cell in Eulerian space — needle-thin across a filament, long along it.
+  // The accumulation uses it for anisotropic smoothing kernels in close-ups (Shapiro+ 1996 ASPH in spirit).
+  vec3 Cd = vec3(1.0), Co = vec3(0.0);
+  if (uAniso > 0.0) {
+    vec3 ex = cwEdge(L, ivec3(1, 0, 0)) * float(uN), ey = cwEdge(L, ivec3(0, 1, 0)) * float(uN), ez = cwEdge(L, ivec3(0, 0, 1)) * float(uN);
+    Cd = vec3(ex.x * ex.x + ey.x * ey.x + ez.x * ez.x, ex.y * ex.y + ey.y * ey.y + ez.y * ez.y, ex.z * ex.z + ey.z * ey.z + ez.z * ez.z);
+    Co = vec3(ex.x * ex.y + ey.x * ey.y + ez.x * ez.y, ex.x * ex.z + ey.x * ey.z + ez.x * ez.z, ex.y * ex.z + ey.y * ey.z + ez.y * ez.z);
+  }
+  oCov = vec4(Cd, Co.x);
   x += cwOrbit(L, rho);
   // sub-lattice jitter (render only) hides the Lagrangian grid in voids
   // (a uniform jitter of exactly one cell cancels every Bragg harmonic of the lattice: no moiré)
@@ -90,14 +109,17 @@ void main() {
   rs = uFieldOn > 0.5 ? (rs / 6.0) * 0.6 + rho * 0.4 : rho;
   float heat = smoothstep(uHeatLo, uHeatHi, rs);
   vec3 P = texelFetch(tP, tc, 0).xyz;
-  oAux = vec4(heat, clamp(length(P) * 60.0, 0.0, 1.0), 0.0, 0.0);
+  oAux = vec4(heat, clamp(length(P) * 60.0, 0.0, 1.0), Co.y, Co.z);
 }
 `;
 
 const ACC_VERT = HEAD + /* glsl */`
 uniform int uK;           // sprites per particle: 1 = particle only, 2-4 adds points on the Lagrangian sheet
 uniform sampler2D tPos;   // resolved positions (xyz) + density (w)
-uniform sampler2D tAux;   // heat, speed
+uniform sampler2D tAux;   // heat, speed, J·Jᵀ xz, yz
+uniform sampler2D tCov;   // J·Jᵀ xx, yy, zz, xy
+uniform float uAniso;     // 0..1 anisotropic (Lagrangian-cell) kernels in the resolved regime
+uniform float uAspect;    // max axis ratio of anisotropic kernels
 uniform float uH0;        // base smoothing length, Mpc/h (mean interparticle spacing scale)
 uniform float uMaxPx;
 uniform float uMass;      // particle mass relative to the reference 2 Mpc/h lattice
@@ -109,7 +131,7 @@ uniform float uSph;       // kernel diameter / sample spacing once the lattice i
 uniform float uDpr;       // accumulation px per CSS px
 uniform float uKt;        // 1: sheet tracers hand their mass back to the particle in close-ups (fill rate)
 out vec3 vW;
-out vec2 vK;              // sprite half-size / kernel radius (px), 1 / kernel radius (px)
+out vec4 vQ;              // sprite half-size (px), inverse screen covariance (xx, xy, yy) in px⁻²
 void main() {
   int id = gl_VertexID / uK;
   int sub = gl_VertexID - id * uK;
@@ -157,25 +179,65 @@ void main() {
   // at that point the Lagrangian sheet tracers are redundant: their mass returns to the parent particle
   // (saves most of the fill rate of big close-up sprites)
   float kt = smoothstep(6.0, 12.0, spPx) * smoothstep(2.0, 8.0, rho) * uKt;
-  h = max(h, sp * mix(1.0, kc, kt) * uSph * res);
+  float hIso = max(h, sp * mix(1.0, kc, kt) * uSph * res);
   float mw = sub > 0 ? 1.0 - kt : 1.0 + float(uK - 1) * kt;
   if (mw <= 0.001) { ${OFF} return; }
-  float px = h * uPxScale / d;
+  float f = uPxScale / d;
   float coc = uCoc * abs(1.0 - uFocus / d);
-  float R = 0.5 * sqrt(px * px + coc * coc);       // kernel radius, px
+  // screen covariance (px²) of the Gaussian kernel exp(-½ xᵀΣ⁻¹x); a kernel of diameter h has σ = h/(2√6)
+  float sIso = hIso * f * hIso * f / 24.0;
+  vec3 S2 = vec3(sIso, 0.0, sIso);
+  // resolved filaments and sheets: the kernel takes the shape of the particle's own Lagrangian cell (J·Jᵀ),
+  // projected to the screen — matter streams become crisp threads instead of isotropic cotton. Virialised
+  // halos (multi-stream, J meaningless) keep the isotropic SPH kernel.
+  float an = uAniso * res * (1.0 - smoothstep(25.0, 110.0, rho));
+  if (an > 0.001) {
+    vec4 c1 = texelFetch(tCov, tc, 0);
+    vec2 c2 = texelFetch(tAux, tc, 0).zw;
+    mat3 J = mat3(c1.x, c1.w, c2.x, c1.w, c1.y, c2.y, c2.x, c2.y, c1.z);
+    float sc = 0.2 * uSph * uSpacing * mix(1.0 / kc, 1.0, kt);
+    mat3 R3 = mat3(viewMatrix);
+    vec3 m0 = (vec3(1.0, 0.0, v.x / d) * f) * R3;
+    vec3 m1 = (vec3(0.0, 1.0, v.y / d) * f) * R3;
+    vec3 Jm0 = J * m0, Jm1 = J * m1;
+    vec3 Sa = sc * sc * vec3(dot(m0, Jm0), dot(m0, Jm1), dot(m1, Jm1));
+    // ASPH-style: the cell supplies the *shape* (orientation, axis ratio ≤ uAspect); the area stays that of
+    // the density-based isotropic kernel (multi-stream cells can be much larger than the matter they carry)
+    float hd = h * f;
+    float sMin = max(hd * hd / 24.0, 0.2025);
+    float tr = 0.5 * (Sa.x + Sa.z), df = sqrt(0.25 * (Sa.x - Sa.z) * (Sa.x - Sa.z) + Sa.y * Sa.y);
+    float l1 = tr + df, l2 = max(tr - df, 1e-3 * (tr + df) + 1e-12);
+    vec2 e1 = abs(Sa.y) > 1e-9 * (abs(Sa.x) + abs(Sa.z) + 1e-20) ? normalize(vec2(Sa.y, l1 - Sa.x)) : (Sa.x >= Sa.z ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
+    // (never stretch past the sprite limit: a clamped kernel would lose flux to the bokeh dimming)
+    float sLim = (uMaxPx - 1.0) / 5.88; sLim *= sLim;
+    float asp = clamp(sqrt(l1 / l2), 1.0, clamp(sLim / max(sIso, 1e-6), 1.0, uAspect));
+    l1 = sIso * asp;
+    l2 = max(sIso / asp, sMin);
+    vec3 Sb = vec3(l1 * e1.x * e1.x + l2 * e1.y * e1.y, (l1 - l2) * e1.x * e1.y, l1 * e1.y * e1.y + l2 * e1.x * e1.x);
+    S2 = mix(S2, Sb, an);
+  }
+  float sc2 = coc * coc / 24.0;
+  S2.xz += sc2;
   // anti-aliased splat: the Gaussian is evaluated in true sub-pixel distance and never narrower than
   // σ ≈ 0.45 px, so every sprite deposits the same flux wherever it lands (no lattice moiré, no shimmer)
-  R = max(R, 1.1);
-  float sz = min(2.0 * 1.2 * R + 1.0, uMaxPx);
+  float tr2 = 0.5 * (S2.x + S2.z), df2 = sqrt(0.25 * (S2.x - S2.z) * (S2.x - S2.z) + S2.y * S2.y);
+  float L1 = max(tr2 + df2, 0.2025), L2 = max(tr2 - df2, 0.2025);
+  if (L2 >= L1 * 0.999) { S2 = vec3(L1, 0.0, L1); }
+  else {
+    vec2 e = abs(S2.y) > 1e-12 ? normalize(vec2(S2.y, tr2 + df2 - S2.x)) : (S2.x >= S2.z ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
+    S2 = vec3(L1 * e.x * e.x + L2 * e.y * e.y, (L1 - L2) * e.x * e.y, L1 * e.y * e.y + L2 * e.x * e.x);
+  }
+  float sz = min(2.0 * 2.94 * sqrt(L1) + 1.0, uMaxPx);
   // flux of a sample ∝ mass/d² (surface brightness is distance invariant); per-pixel peak of a unit-flux
-  // Gaussian exp(-3 r²/R²) is 3 / (π R² (1 − e⁻³))
-  float w = uMass * (uPxScale / d) * (uPxScale / d) * mw / float(uK) * 3.0 / (3.1415927 * R * R * 0.9502);
+  // Gaussian is 1 / (2π √det Σ) (0.9502: historical truncation constant, part of the calibrated exposure)
+  float w = uMass * f * f * mw / float(uK) / (6.2831853 * sqrt(L1 * L2) * 0.9502);
   // a kernel larger than the sprite limit (a clump right in front of the lens) becomes a faint bokeh disc:
   // drawn at the limit with its surface brightness further dimmed by the size ratio
-  float Rc = (sz - 1.0) / 2.4;
-  if (R > Rc) { w *= Rc / R; R = Rc; }
+  float Lc = (sz - 1.0) / 5.88; Lc *= Lc;
+  if (L1 > Lc) { float k = Lc / L1; w *= sqrt(k); S2 *= k; }
+  float det = max(S2.x * S2.z - S2.y * S2.y, 1e-8);
   gl_PointSize = sz;
-  vK = vec2(0.5 * sz, 1.0 / R);
+  vQ = vec4(0.5 * sz, S2.z / det, -S2.y / det, S2.x / det);
   // fade: distance attenuation, the wrap sphere edge, and foreground matter in front of the focus
   w *= exp(-max(0.0, d - 0.75 * uFocus) / uFog) * smoothstep(uFade, uFade * 0.72, wv.w) * smoothstep(0.3, 3.0, d) * smoothstep(0.08, 0.4, d / uFocus);
   // voids are nearly empty in reality; tracer particles left there are dimmed further (OLED black)
@@ -190,14 +252,15 @@ void main() {
 `;
 const ACC_FRAG = S.GLSL_HEAD + /* glsl */`
 in vec3 vW;
-in vec2 vK;
+in vec4 vQ;
 layout(location = 0) out vec4 o;
 void main() {
-  // exact sub-pixel offset of this fragment from the (unsnapped) sprite centre, in kernel radii
-  vec2 c = (gl_PointCoord * 2.0 - 1.0) * vK.x * vK.y;
-  float r2 = dot(c, c);
-  if (r2 > 1.44) discard;
-  o = vec4(vW * exp(-3.0 * r2), 0.0);
+  // exact sub-pixel offset of this fragment from the (unsnapped) sprite centre (px, y up)
+  vec2 c = (gl_PointCoord * 2.0 - 1.0) * vQ.x;
+  c.y = -c.y;
+  float m = vQ.y * c.x * c.x + 2.0 * vQ.z * c.x * c.y + vQ.w * c.y * c.y;
+  if (m > 8.64) discard;
+  o = vec4(vW * exp(-0.5 * m), 0.0);
 }
 `;
 
@@ -220,6 +283,9 @@ uniform float uBright;
 uniform float uWide;      // sparse-region kernel radius scale (accumulation texels)
 uniform float uToeW;      // width of the toe (log2 units)
 uniform float uKnee;      // highlight knee (log2 units)
+uniform float uClarity;   // local contrast of log column density (thread-like filaments)
+uniform float uClarR;     // its radius, accumulation texels
+uniform float uRelief;    // strength of the sculpted (gradient-lit) relief
 varying vec2 vUv;
 // 2D colour map: brightness from log column density l, hue from mass-weighted log density t.
 // t low (voids, sheets): ink → blue-violet;  t mid (filaments): violet → magenta;
@@ -237,9 +303,10 @@ void main() {
   // splats are anti-aliased at deposit time, so dense filaments and nodes use the raw column density
   vec4 a = tap(vec2(0.0));
   // density-adaptive smoothing: only the sparsest regions (void tracers, the faint outskirts of sheets)
-  // are resolved with a wider kernel — an 8-tap golden-angle spiral rotated per pixel (IGN), so the
+  // are resolved with a wider kernel — an 8-tap golden-angle spiral rotated per pixel (hash), so the
   // taps never form a coherent lattice (no crosshatch) whatever the accumulation resolution
-  float ang = rv_ign(gl_FragCoord.xy) * 6.2831853;
+  // (white-noise rotation: IGN's diagonal structure would print a fine hatch into the relief)
+  float ang = rv_hash12(gl_FragCoord.xy) * 6.2831853;
   vec4 wide = vec4(0.0);
   for (int i = 0; i < 8; i++) {
     float fi = float(i) + 0.5;
@@ -251,6 +318,33 @@ void main() {
   a = mix(wide, a, smoothstep(uToe - 0.2, uToe + 1.4, la));
   float S = max(a.r, 0.0);
   float l = log2(1.0 + S / uSigma0) * uGain;
+  // local contrast ("clarity") in log column density: every filament is compared with its surroundings
+  // on the scale of its own width — cores lift, flanks fall toward black, so strands read as crisp
+  // threads and cluster haloes show their internal density gradient instead of a flat glow
+  // (ring rotated per pixel like the sparse kernel: no tap lattice)
+  float relief = 1.0;
+  if (uClarity > 0.0 || uRelief > 0.0) {
+    float lb = 0.0;
+    vec2 gr = vec2(0.0);
+    for (int i = 0; i < 8; i++) {
+      float fi = float(i) + 0.5;
+      float th = ang + fi * 0.7853982 + 0.4;
+      vec2 dir = vec2(cos(th), sin(th));
+      float rr = uClarR * (0.75 + 0.5 * fract(fi * 0.618034));
+      float li = log2(1.0 + max(tap(dir * rr).r, 0.0) / uSigma0);
+      lb += li;
+      gr += dir * (li / rr);
+    }
+    lb *= uGain / 8.0;
+    gr *= uGain * 0.25;      // ∇l per accumulation texel (ring estimator; rotation-invariant, unbiased)
+    float gate = smoothstep(uToe - 0.2, uToe + 1.2, max(l, lb));
+    l = max(0.0, l + uClarity * gate * clamp(l - lb, -1.5, 1.5));
+    // sculpted relief: log density treated as a height field lit from the upper left — gas clouds and
+    // halos read as 3D volumes (the look of volume-rendered TNG50 gas), voids untouched
+    vec3 n = normalize(vec3(-gr * uClarR * uRelief, 1.0));
+    float sh = dot(n, vec3(-0.45, 0.55, 0.70)) / 0.70;
+    relief = mix(1.0, clamp(sh, 0.35, 1.9), smoothstep(uToe, uToe + 1.5, l));
+  }
   float t = clamp(a.g / max(S, 1e-6), 0.0, 1.0);
   float heat = clamp(a.b / max(S, 1e-6), 0.0, 1.0);
   // brightness: soft toe to pure black, then ~exponential in l (HDR highlights feed the bloom)
@@ -264,6 +358,7 @@ void main() {
   hot = mix(hot, vec3(1.0, 0.82, 0.5), smoothstep(0.6, 1.0, heat));
   float hb = uStream * smoothstep(0.0, 0.5, heat) * smoothstep(uToe - 0.5, uToe + 2.5, l) * uBright * exp2(0.92 * lk + 0.6);
   col = mix(col, hot * max(b, hb), smoothstep(0.02, 0.55, heat) * 0.85);
+  col *= relief;
   // cosmic dawn: before the first stars the whole fog glows a faint ember
   col *= mix(vec3(1.0), vec3(1.9, 0.95, 0.55), uDawn);
   col += (rv_ign(gl_FragCoord.xy) - 0.5) * 0.0025;
@@ -464,11 +559,11 @@ export class CosmicRenderer {
       uWrapC: { value: new THREE.Vector3() }, uCamOff: { value: new THREE.Vector3() },
       uL: { value: opt.L }, uFade: { value: 0.48 }, uPxScale: { value: 500 }, uTime: { value: 0 },
       uOrbit: { value: 0.0035 }, uSigGlow: { value: 1 }, uSeedD: { value: 0 }, uSeedMix: { value: 1 },
-      uFog: { value: opt.fog ?? 150 },
+      uFog: { value: opt.fog ?? 150 }, uAniso: { value: opt.aniso ?? 1 }, uAspect: { value: opt.aspect ?? 5 },
     };
     // resolved particle positions (one texel per particle)
     this.posRT = new THREE.WebGLRenderTarget(sim.W, sim.H, {
-      type: sim.floatRT ? THREE.FloatType : THREE.HalfFloatType, depthBuffer: false, count: 2,
+      type: sim.floatRT ? THREE.FloatType : THREE.HalfFloatType, depthBuffer: false, count: 3,
       minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false,
     });
     this.resolveMat = new THREE.RawShaderMaterial({
@@ -477,6 +572,7 @@ export class CosmicRenderer {
     });
     U.tPos = { value: this.posRT.textures[0] };
     U.tAux = { value: this.posRT.textures[1] };
+    U.tCov = { value: this.posRT.textures[2] };
     // accumulation layer
     this.accMat = new THREE.RawShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader: ACC_VERT, fragmentShader: ACC_FRAG, ...ADD,
@@ -497,7 +593,7 @@ export class CosmicRenderer {
       vertexShader: COMP_VERT, fragmentShader: COMP_FRAG, depthTest: false, depthWrite: false,
       uniforms: {
         tAccum: { value: this.accum.texture }, uTexel: { value: new THREE.Vector2(1, 1) },
-        uSigma0: { value: 3.0 }, uGain: { value: 1.0 }, uHeatGain: { value: 1.0 }, uDawn: { value: 0 }, uStream: { value: 1.0 }, uToe: { value: 0.9 }, uBright: { value: 0.05 }, uWide: { value: 1 }, uToeW: { value: 1.9 }, uKnee: { value: 99 },
+        uSigma0: { value: 3.0 }, uGain: { value: 1.0 }, uHeatGain: { value: 1.0 }, uDawn: { value: 0 }, uStream: { value: 1.0 }, uToe: { value: 0.9 }, uBright: { value: 0.05 }, uWide: { value: 1 }, uToeW: { value: 1.9 }, uKnee: { value: 99 }, uClarity: { value: 0.6 }, uClarR: { value: 5 }, uRelief: { value: 0.5 },
       },
     });
     this.comp = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.compMat);
@@ -577,6 +673,8 @@ export class CosmicRenderer {
     const aw = Math.max(4, Math.round(w * s)), ah = Math.max(4, Math.round(h * s));
     this.accum.setSize(aw, ah);
     this.compMat.uniforms.uTexel.value.set(1 / aw, 1 / ah);
+    // clarity radius: ~5 px of a 720p frame whatever the resolution
+    this.compMat.uniforms.uClarR.value = Math.max(2, 5 * ah / 720);
     this.accW = aw; this.accH = ah;
   }
 

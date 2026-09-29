@@ -23,6 +23,7 @@ import { Composer } from './music.js';
 import { resolveStyle } from './styles.js';
 import { Ambience } from './ambience.js';
 import { Sfx } from './sfx.js';
+import { Creatures } from './creatures.js';
 import { VOICES } from './instruments.js';
 import { clamp, smooth, hashStr, setT } from './dsp.js';
 
@@ -37,7 +38,7 @@ export class Audio {
     this.params = { speed: 0, altitude: 0, wind: 0, engine: 0, boost: 0, glide: 0, swim: 0, danger: 0, discovery: 0, cosmicGrowth: 0, volume: 1 };
     this.scene = null; this.sceneParams = {};
     this.over = {};            // test overrides of derived params
-    this.P = { scene: 'cosmic', wind: 0.3, rush: 0, altitude: 0, rain: 0, snow: 0, storm: 0, flash: 0, night: 0, shore: 0, city: 0, cityStyle: 'village', underwater: 0, swim: 0, wading: 0, flora: 0, fauna: 0, hot: 0, cold: false, wet: 0, space: 0, inShip: false, dawn: 0 };
+    this.P = { scene: 'cosmic', wind: 0.3, rush: 0, altitude: 0, rain: 0, snow: 0, storm: 0, flash: 0, night: 0, shore: 0, city: 0, cityStyle: 'village', shorePan: 0, cityPan: 0, underwater: 0, swim: 0, wading: 0, flora: 0, fauna: 0, hot: 0, cold: false, wet: 0, space: 0, inShip: false, dawn: 0 };
     this.offline = opts.offline || null;
     this._vt = 0; this.flow = 0; this.discoveryPulse = 0; this.sub = null; this._worldT = 0; this._dist = null;
     this.volume = 1;
@@ -68,6 +69,7 @@ export class Audio {
     this.music = new Composer(this);
     this.amb = new Ambience(this);
     this.sfx = new Sfx(this);
+    this.creatures = new Creatures(this);
     this._styleKey = null;
     this._applyScene();
   }
@@ -79,7 +81,12 @@ export class Audio {
     try {
       events.on('mode:leaving', (p) => { if (p?.from) this.play('warp', { intensity: p.to === 'system' ? 1 : 0.8 }); });
       events.on('mode:enter', () => { this._arrivePending = 0.35; });
-      events.on('discovery', (p) => { this.play('discover', { kind: p?.kind }); this.discoveryPulse = 1; });
+      events.on('discovery', (p) => {
+        this.play('discover', { kind: p?.kind, source: p?.source });
+        this.discoveryPulse = 1;
+        // a newly discovered species answers the sting with its own call, from where it stands
+        if (p?.archetype && this.creatures && this.ctx) { try { this.creatures.call(p.archetype, this.now() + 0.9, { loud: 1.6 }); } catch (_) { /* optional */ } }
+      });
       events.on('vehicle:enter', () => { this.discoveryPulse = Math.max(this.discoveryPulse, 0.4); });
       if (typeof document !== 'undefined') {
         document.addEventListener('pointerdown', (e) => {
@@ -99,6 +106,7 @@ export class Audio {
 
   // ------------------------------------------------------------------ API
   setScene(name, params = {}) {
+    if (name !== this.scene && this.amb) this.amb.cut(this.now(), 1.6);   // scene cut: beds settle fast
     this.scene = name; this.sceneParams = params || {};
     this.sub = null;
     if (this.ctx) this._applyScene();
@@ -144,6 +152,7 @@ export class Audio {
       flora: life.flora ?? 0, fauna: life.fauna ?? 0,
     });
     this._staticWorld(body);
+    this.creatures?.setWorld(seed);
     this._dist = null;
   }
 
@@ -163,12 +172,16 @@ export class Audio {
     const mode = this.engine?.director?.currentName;
     const world = this.engine?.director?.current?.world;
     this._worldT -= dt;
+    // scene cut (director mode change): derived params must not glide across the cut — the warp
+    // whoosh covers the transition, so the new world's beds start at their true levels.
+    if (mode !== this._mode) { this._mode = mode; this._cutT = 1.2; this.amb?.cut(this.now(), 1.6); }
+    const cut = this._cutT > 0; if (cut) this._cutT -= dt;
     if (mode === 'system' && world) {
       if (world.body && world.body !== this._lastBody) this._staticWorld(world.body);
       const atmoH = Math.max(1, (G.uAtmosphereRadius.value - G.uPlanetRadius.value) || 5000);
       const camAlt = G.uCameraAltitude.value || 0;
       const sp = clamp((camAlt / atmoH - 0.55) / 0.4, 0, 1);
-      P.space = smooth(P.space, sp, 1.5, dt);
+      P.space = cut ? sp : smooth(P.space, sp, 1.5, dt);
       P.night = G.uNight.value || 0;
       P.wind = G.uWindStrength.value ?? 0.3;
       P.wet = G.uWetness.value || 0;
@@ -195,6 +208,7 @@ export class Audio {
       P.underwater = smooth(P.underwater, water?.under ? 1 : 0, 6, dt);
     } else {
       P.space = mode === 'galaxy' ? 0.35 : mode === 'cosmic' ? 0.2 : 0; P.rush = 0; P.underwater = 0; P.inShip = false;
+      if (this.creatures) this.creatures.live = false;
       this.flow = smooth(this.flow, clamp(p.cosmicGrowth || 0, 0, 1), 0.2, dt);
     }
     P.dawn = clamp(1 - Math.abs(P.night - 0.35) / 0.25, 0, 1);
@@ -217,36 +231,49 @@ export class Audio {
       let tx = -dz, ty = 0, tz = dx; let tl = Math.hypot(tx, ty, tz); if (tl < 1e-6) { tx = 1; tz = 0; tl = 1; } tx /= tl; tz /= tl;
       const bx = dy * tz - dz * ty, by = dz * tx - dx * tz, bz = dx * ty - dy * tx;
       const here = S.height(dx, dy, dz) - S.seaLevel;
+      let sx = 0, sy = 0, sz = 0;   // direction toward the water (→ ocean bed pan)
       for (const dist of [60, 180, 480]) {
         const a = dist / R;
         for (let k = 0; k < 6; k++) {
           const th = (k / 6) * Math.PI * 2 + dist;
           const ox = Math.cos(th) * tx + Math.sin(th) * bx, oy = Math.cos(th) * ty + Math.sin(th) * by, oz = Math.cos(th) * tz + Math.sin(th) * bz;
           let x = dx + ox * a, y = dy + oy * a, z = dz + oz * a; const l = Math.hypot(x, y, z); x /= l; y /= l; z /= l;
-          if (S.height(x, y, z) < S.seaLevel) under += dist < 100 ? 1.6 : dist < 300 ? 1.2 : 0.7;
+          if (S.height(x, y, z) < S.seaLevel) { const w = dist < 100 ? 1.6 : dist < 300 ? 1.2 : 0.7; under += w; sx += ox * w; sy += oy * w; sz += oz * w; }
           n++;
         }
       }
       const alt = len - R - Math.max(0, here);
       P.shore = clamp(under / (n * 0.55), 0, 1) * clamp(1 - Math.max(0, here - 20) / 140, 0, 1) * clamp(1 - alt / 250, 0, 1);
       P.wading = here < 0.4 && here > -1.5 ? 1 : 0;
+      P.shorePan = this._panOf(world.camera, sx, sy, sz);
     } else { P.shore = 0; P.wading = 0; }
     // settlements
-    let best = 0, style = null;
+    let best = 0, style = null, bestPoi = null;
     for (const poi of world.pois || []) {
       if (!poi?.pos || !(poi.kind === 'city' || poi.kind === 'village')) continue;
       const d = poi.pos.distanceTo ? poi.pos.distanceTo(pos) : Infinity;
       const rad = poi.radius || 200;
       const f = clamp(1 - (d - rad * 0.6) / (rad * 1.6 + 250), 0, 1) * (poi.kind === 'city' ? 1 : 0.7);
-      if (f > best) { best = f; style = poi.data?.style || null; }
+      if (f > best) { best = f; style = poi.data?.style || null; bestPoi = poi; }
     }
+    // settlement direction: the murmur comes from the town, fully enveloping once inside it
+    if (bestPoi) { const q = bestPoi.pos, cp = world.camera?.position || pos; const inside = clamp(1 - (q.distanceTo(cp) - (bestPoi.radius || 200) * 0.3) / ((bestPoi.radius || 200) * 1.2), 0, 1); P.cityPan = this._panOf(world.camera, q.x - cp.x, q.y - cp.y, q.z - cp.z) * (1 - inside); }
     P.city = best; if (style) P.cityStyle = style;
+    // real animals around the camera (fauna track) → spatialized creature voices
+    if (this.creatures) this.creatures.sense(world.get?.('fauna'), world.camera);
     // local biome (temperature/flora proxy)
     try {
       const s = S.sample(dx, dy, dz, this._samp || (this._samp = {}));
       if (s && Number.isFinite(s.temperature)) P.hot = clamp((s.temperature - 0.5) * 2.5 + (HOT_ART.has(body?.art?.key) ? 0.3 : 0), 0, 1);
       if (s && Number.isFinite(s.snow)) P.cold = s.snow > 0.4 || P.cold;
     } catch (_) { /* optional */ }
+  }
+
+  /** Stereo position (-1..1) of a planet-local direction relative to the camera. */
+  _panOf(cam, x, y, z) {
+    const e = cam?.matrixWorld?.elements, l = Math.hypot(x, y, z);
+    if (!e || l < 1e-6) return 0;
+    return clamp((x * e[0] + y * e[1] + z * e[2]) / l, -1, 1);
   }
 
   // ------------------------------------------------------------------ frame
@@ -262,7 +289,11 @@ export class Audio {
       // sub-scene: planet surface ⇄ space (hysteresis)
       if (this.scene === 'surface' || this.scene === 'city' || this.scene === 'underwater' || this.scene === 'system') {
         const want = P.space > 0.85 ? 'space' : P.space < 0.5 ? 'surface' : this.sub;
-        if (want !== this.sub) { this.sub = want; this._applyScene(); }
+        if (want !== this.sub) {
+          // surface ⇄ orbit: fade the outgoing world's beds quickly instead of letting them bleed
+          if (this.sub && want) this.amb.cut(t, want === 'surface' ? 1.2 : 0.8);
+          this.sub = want; this._applyScene();
+        }
       }
       if (this._arrivePending > 0) { this._arrivePending -= dt; if (this._arrivePending <= 0) this.play('arrive'); }
       // energy for the composer
@@ -276,6 +307,7 @@ export class Audio {
       M.tick(t);
       this.mix.setMuffle(P.underwater, t);
       this.amb.update(t, dt, P);
+      this.creatures.update(t, dt, P);
       // vehicles (doppler from camera ↔ vehicle radial velocity)
       const world = this.engine?.director?.current?.world;
       const c = world?.controller;
@@ -307,7 +339,7 @@ export class Audio {
     const P = {}; for (const [k, v] of Object.entries(this.P)) P[k] = typeof v === 'number' ? +v.toFixed(3) : v;
     return {
       ...base, sampleRate: this.ctx.sampleRate, time: +this.now().toFixed(2), baseLatency: this.ctx.baseLatency,
-      flow: +this.flow.toFixed(2), derived: P, music: this.music.debug(), ambience: this.amb.debug(), sfx: this.sfx.debug(),
+      flow: +this.flow.toFixed(2), derived: P, music: this.music.debug(), ambience: this.amb.debug(), creatures: this.creatures?.debug(), sfx: this.sfx.debug(),
       voices: { ...VOICES },
       mix: { reverb: this.mix.reverbName, reverbSeconds: +(this.mix.reverbSeconds || 0).toFixed(2), echo: this.mix.echo, insert: this.mix.insert, muffle: this.mix._muffle, volume: this.volume, levels: this.offline ? null : this.mix.levels() },
     };
@@ -347,10 +379,12 @@ export class Audio {
     Object.assign(a.params, opts.params || {});
     a.over = { ...(opts.over || {}) };
     for (const [bus, v] of Object.entries(opts.buses || {})) a.mix.setBus(bus, v, 0, 0.001);
+    if (opts.creatures) a.creatures.setStatic(opts.creatures);
     const evs = (opts.events || []).map((e) => ({ ...e })).sort((x, y) => x.t - y.t);
     const timeline = [];
     const dt = 1 / 30;
-    let nextStep = 0.5, side = 1;
+    let nextStep = 0.5, side = 1, nextTrace = 0;
+    const trace = [];   // ambience bed targets every 0.5 s (scene-cut regressions, bed automation checks)
     for (let t = 0; t < seconds; t += dt) {
       a._vt = t;
       for (const e of evs) {
@@ -360,12 +394,16 @@ export class Audio {
         if (e.param) a.setParam(e.param, e.value);
         if (e.over) Object.assign(a.over, e.over);
         if (e.scene) a.setScene(e.scene, e.art ? { body: { ...body, art: { key: e.art } } } : a.sceneParams);
-        timeline.push([+t.toFixed(2), e.play || e.param || e.scene || 'over']);
+        if (e.creatures) a.creatures.setStatic(e.creatures);
+        if (e.call) a.creatures.call(e.call, t + 0.02, e.opts || {});
+        timeline.push([+t.toFixed(2), e.play || e.param || e.scene || (e.call ? 'call:' + e.call : e.creatures ? 'creatures' : 'over')]);
       }
       if (opts.walk && t >= nextStep) { a.play('step', { surface: opts.surface || 'grass', speed: opts.params?.speed ?? 3, side }); side = -side; nextStep += 1 / opts.walk; }
       a.update(dt);
+      if (t >= nextTrace) { nextTrace += 0.5; const bd = {}; for (const [k, bb] of Object.entries(a.amb.beds)) bd[k] = +Math.max(0, bb.v ?? 0).toFixed(3); trace.push([+t.toFixed(2), bd]); }
     }
     const debug = a.debug();
+    debug.trace = trace;
     const buf = await ctx.startRendering();
     return { sampleRate: sr, channels: [buf.getChannelData(0), buf.getChannelData(1)], debug, timeline, notes: a.music.log || null };
   }
@@ -373,7 +411,7 @@ export class Audio {
   _senseOffline(dt) {
     const P = this.P, p = this.params;
     P.scene = this.scene === 'surface' ? 'surface' : this.scene;
-    if (this.scene !== 'surface') { P.space = this.scene === 'space' ? 1 : this.scene === 'galaxy' ? 0.35 : 0.2; }
+    P.space = this.scene === 'space' ? 1 : this.scene === 'galaxy' ? 0.35 : this.scene === 'cosmic' ? 0.2 : 0;
     const act = (p.glide ? 0.65 : 0) + clamp((p.speed || 0) / 14, 0, 0.5) + (p.engine ? 0.3 : 0);
     this.flow = smooth(this.flow, clamp(this.scene === 'cosmic' ? p.cosmicGrowth || 0 : act, 0, 1), 0.2, dt);
     P.rush = clamp(((p.speed || 0) - 8) / 60, 0, 1);

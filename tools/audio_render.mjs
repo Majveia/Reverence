@@ -11,7 +11,8 @@
 //   node tools/audio_render.mjs --scene surface --art bebop --seconds 30 --over '{"night":1,"city":0.8}' \
 //        --params '{"speed":4}' --walk 2 --surface grass --events '[{"t":5,"play":"discover"}]' --name test --out dir
 //   node tools/audio_render.mjs --list
-// Options: --music-only (mute ambience/sfx) --only a,b,c (subset of --all) --seconds (default 20) --rate (44100) --seed --quality low|med|high --base <dev server url>
+//   node tools/audio_render.mjs --preset fauna --buses '{"music":0}' --name fauna-dry --out dir   (creatures without music)
+// Options: --music-only (mute ambience/sfx) --buses '{"music":0,"amb":1}' --creatures '[{"archetype":"whale","dist":800,"az":30}]' --only a,b,c (subset of --all) --seconds (default 20) --rate (44100) --seed --quality low|med|high --base <dev server url>
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -47,6 +48,19 @@ export const PRESETS = {
   friedrich: { art: 'friedrich', type: 'arctic', over: { wind: 0.8, snow: 0.6, cold: true } },
   'shore-night': { art: 'ghibli', over: { night: 1, shore: 1, wind: 0.4, flora: 0.8 } },
   'bike-ride': { art: 'botw', params: { engine: 0.9, engineType: 'bike', speed: 45, boost: 0 }, events: [{ t: 4, param: 'boost', value: 1 }, { t: 4, play: 'boost' }, { t: 7, param: 'boost', value: 0 }, { t: 10, param: 'speed', value: 15 }] },
+  // real-fauna voices (creatures.js): a bird flock sweeping past, a grazer herd answering, a giant walking
+  // close (footfalls), a sky-whale pod singing far away, rays and jellies; ends with a species discovery
+  fauna: { art: 'bierstadt', seconds: 30, over: { wind: 0.25, flora: 0.8, fauna: 0.8 }, creatures: [
+    { archetype: 'bird', dist: 24, az: -70, az1: 60, speed: 9, n: 14, species: 3 },
+    { archetype: 'grazer', dist: 60, az: 35, n: 8, size: 1.6, species: 1 },
+    { archetype: 'giant', dist: 140, az: -25, n: 3, size: 6, speed: 1.2, species: 2 },
+    { archetype: 'whale', dist: 1400, az: 50, n: 3, size: 1, species: 5 },
+    { archetype: 'ray', dist: 300, az: -50, n: 2, species: 6 },
+    { archetype: 'hexapod', dist: 40, az: 80, n: 5, species: 7 },
+  ], events: [{ t: 1, call: 'whale' }, { t: 3, call: 'grazer' }, { t: 7, call: 'giant' }, { t: 12, call: 'ray' }, { t: 20, play: 'discover', opts: { kind: 'creature' } }, { t: 20.9, call: 'hopper', opts: { loud: 1.6 } },
+    { t: 18, creatures: [{ archetype: 'hopper', dist: 18, az: 20, n: 4, species: 8 }, { archetype: 'whale', dist: 900, az: -30, n: 3, species: 5 }, { archetype: 'jelly', dist: 30, az: 0, n: 6, species: 9 }, { archetype: 'critter', dist: 6, az: -40, n: 2, species: 10 }] }] },
+  // scene cut regression: galaxy (space bed) → landed pastoral surface; the space bed must be gone within ~1 s
+  landing: { scene: 'galaxy', seconds: 12, events: [{ t: 5, play: 'warp' }, { t: 6, scene: 'surface', art: 'bierstadt' }, { t: 6.2, over: { wind: 0.3, flora: 0.8, hot: 0.8 } }] },
   'sfx-tour': { art: 'ghibli', seconds: 16, over: { wind: 0.2 }, events: [
     { t: 0.5, play: 'step', opts: { surface: 'grass' } }, { t: 0.9, play: 'step', opts: { surface: 'rock' } }, { t: 1.3, play: 'step', opts: { surface: 'sand' } }, { t: 1.7, play: 'step', opts: { surface: 'snow' } },
     { t: 2.2, play: 'jump' }, { t: 3.0, play: 'land', opts: { intensity: 0.8 } }, { t: 3.6, play: 'glider', opts: { open: true } }, { t: 4.5, play: 'splash', opts: { intensity: 0.7 } },
@@ -63,8 +77,9 @@ const J = (s, d) => (s ? JSON.parse(s) : d);
 
 let jobs = [];
 if (flag('all')) jobs = Object.entries(PRESETS).map(([name, p]) => ({ name, ...p }));
-else if (opt('preset')) { const n = opt('preset'); if (!PRESETS[n]) { console.error('unknown preset', n); process.exit(1); } jobs = [{ name: n, ...PRESETS[n] }]; }
-else jobs = [{ name: opt('name', `${opt('scene', 'surface')}-${opt('art', 'ghibli')}`), scene: opt('scene', 'surface'), art: opt('art', 'ghibli'), over: J(opt('over'), {}), params: J(opt('params'), {}), events: J(opt('events'), []), walk: +opt('walk', 0), surface: opt('surface', 'grass'), type: opt('type') }];
+else if (opt('preset')) { const n = opt('preset'); if (!PRESETS[n]) { console.error('unknown preset', n); process.exit(1); } jobs = [{ ...PRESETS[n], name: opt('name', n) }]; }
+else jobs = [{ name: opt('name', `${opt('scene', 'surface')}-${opt('art', 'ghibli')}`), scene: opt('scene', 'surface'), art: opt('art', 'ghibli'), over: J(opt('over'), {}), params: J(opt('params'), {}), events: J(opt('events'), []), walk: +opt('walk', 0), surface: opt('surface', 'grass'), type: opt('type'), creatures: J(opt('creatures'), undefined) }];
+if (opt('buses')) for (const j of jobs) j.buses = J(opt('buses'), {});   // e.g. '{"music":0}' → ambience/creatures/sfx only
 if (flag('music-only')) for (const j of jobs) { j.buses = { amb: 0, sfx: 0, ui: 0 }; j.walk = 0; j.name += '-music'; }
 if (opt('only')) { const keep = opt('only').split(','); jobs = jobs.filter((j) => keep.some((k) => j.name === k || j.name.startsWith(k + '-music'))); }
 for (const j of jobs) { j.log = true; j.seconds = j.seconds ?? seconds; j.sampleRate = +opt('rate', 44100); j.seed = +opt('seed', j.seed ?? 1234); j.quality = opt('quality', 'high'); j.scene = j.scene || 'surface'; }
@@ -180,7 +195,8 @@ for (const job of jobs) {
   for (let i = 0; i < res.n; i++) { L[i] = i16[i * 2]; R[i] = i16[i * 2 + 1]; }
   const base = path.join(outDir, job.name);
   wav(base + '.wav', L, R, res.sampleRate);
-  const info = { name: job.name, job, metrics: res.metrics, timeline: res.timeline, debug: res.debug, notes: res.notes };
+  const trace = res.debug?.trace; if (res.debug) delete res.debug.trace;
+  const info = { name: job.name, job, metrics: res.metrics, timeline: res.timeline, debug: res.debug, bedTrace: trace, notes: res.notes };
   fs.writeFileSync(base + '.json', JSON.stringify(info, null, 1));
   const py = spawnSync('python3', [pyFile, base + '.wav', base + '.png', base + '.json'], { encoding: 'utf8' });
   const pngOk = py.status === 0;

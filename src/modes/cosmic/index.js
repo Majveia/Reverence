@@ -110,7 +110,7 @@ export default class CosmicMode extends Mode {
     // --- GPU sim + renderer
     this.sim = new CosmicSim(e.renderer, { N, M, sub: subGrowth });
     if (num('pm') === 0) this.sim.ok = false;
-    this.view = new CosmicRenderer(e, this.sim, { L: BOX, K, drawCount: this.cfg.drawCount, h0: this.cfg.h0, maxPx: this.cfg.maxPx, accumScale: this.cfg.accumScale, fog: 60, sph: num('sph'), kt: num('kt') });
+    this.view = new CosmicRenderer(e, this.sim, { L: BOX, K, drawCount: this.cfg.drawCount, h0: this.cfg.h0, maxPx: this.cfg.maxPx, accumScale: this.cfg.accumScale, fog: 60, sph: num('sph'), kt: num('kt'), aniso: num('an'), aspect: num('asp') });
     this.scene.add(this.view.comp);
     // look tuning (URL overrides are for art-direction iteration)
     const cu0 = this.view.compMat.uniforms, au0 = this.view.accMat.uniforms;
@@ -119,6 +119,8 @@ export default class CosmicMode extends Mode {
     this.bright = num('bright') ?? cu0.uBright.value;
     cu0.uGain.value = num('gain') ?? cu0.uGain.value;
     cu0.uHeatGain.value = num('heat') ?? cu0.uHeatGain.value;
+    cu0.uClarity.value = num('clar') ?? cu0.uClarity.value;
+    cu0.uRelief.value = num('relief') ?? cu0.uRelief.value;
     this.fog = this.view.U.uFog.value = num('fog') ?? this.view.U.uFog.value;
     au0.uH0.value *= num('h0') ?? 1;
     const ru0 = this.view.resolveMat.uniforms;
@@ -430,7 +432,14 @@ export default class CosmicMode extends Mode {
       knee = Math.max(toe + w + 1.2, lq(0.97) + 0.5);
       // (hot cluster gas is drawn ~1.5× the base ramp)
       const l995 = lq(0.995), lk = Math.min(l995, knee) + Math.max(0, l995 - knee) * 0.35;
-      expo = Math.min(1, Math.max(0.3, 1.0 / (cu.uBright.value * Math.pow(2, 0.92 * lk))));
+      // close-ups: when bright structure (a cluster core) fills a large part of the frame, the highlights
+      // are exposed lower so the core keeps its internal gradient and its member galaxies read against it
+      const lThr = toe + w + 1.2, sThr = s0 * (Math.pow(2, lThr / gain) - 1);
+      let lo = 0, hi = n;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (L[mid] <= sThr) lo = mid + 1; else hi = mid; }
+      const fBright = (n - lo) / n;
+      const target = 2.0 - 1.1 * smooth(0.03, 0.2, fBright);
+      expo = Math.min(1, Math.max(0.2, target / (cu.uBright.value * Math.pow(2, 0.92 * lk))));
       // never let a bad readback (NaN/Inf) reach the shader: fall back to the schedule
       if (!(Number.isFinite(toe) && Number.isFinite(w) && Number.isFinite(knee) && Number.isFinite(expo))) {
         toe = this.toe * g * (1 - 0.45 * young); w = 1.9; knee = 99; expo = 1;
@@ -630,13 +639,15 @@ export default class CosmicMode extends Mode {
     this.view.renderAccum(this.camera);
     r.readRenderTargetPixels(v.accum, 0, 0, w, h, buf);
     const R = [], Hh = [];
+    let bad = 0;
+    for (let i = 0; i < w * h; i++) if (!Number.isFinite(buf[i * 4]) || !Number.isFinite(buf[i * 4 + 2])) bad++;
     for (let i = 0; i < w * h; i += 7) { R.push(buf[i * 4]); Hh.push(buf[i * 4 + 1] / Math.max(1e-6, buf[i * 4])); }
     R.sort((x, y) => x - y); Hh.sort((x, y) => x - y);
     const pc = (A, p) => +A[Math.min(A.length - 1, Math.floor(p * A.length))].toPrecision(3);
     const cu = v.compMat.uniforms, P = [0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 0.99, 0.999];
     const lv = (x) => +(Math.log2(1 + x / cu.uSigma0.value) * cu.uGain.value).toFixed(2);
     return {
-      D1: +D1(this.a).toFixed(3), R: P.map((p) => pc(R, p)), l: P.map((p) => lv(pc(R, p))), heat: [0.5, 0.9, 0.99].map((p) => pc(Hh, p)),
+      D1: +D1(this.a).toFixed(3), nonFinite: bad, R: P.map((p) => pc(R, p)), l: P.map((p) => lv(pc(R, p))), heat: [0.5, 0.9, 0.99].map((p) => pc(Hh, p)),
       toe: +cu.uToe.value.toFixed(3), toeW: +cu.uToeW.value.toFixed(3), knee: +cu.uKnee.value.toFixed(3), sigma0: +cu.uSigma0.value.toFixed(3), bright: +cu.uBright.value.toFixed(4),
     };
   }

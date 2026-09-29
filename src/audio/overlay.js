@@ -70,6 +70,7 @@ export class AudioOverlay {
       const over = {}; for (const k of ['night', 'wind', 'rain', 'snow', 'storm', 'shore', 'city', 'cityStyle', 'flora', 'fauna', 'hot', 'cold', 'wet', 'space', 'dawn', 'altitude', 'underwater']) over[k] = P[k];
       if (scene !== 'surface') { delete over.space; }
       const res = await h.constructor.renderOffline({ seconds: 15, sampleRate: 22050, scene, art: body?.art?.key, seed: body?.seed ?? 1234, type: body?.type, over, params: { ...h.params, cosmicGrowth: h.params.cosmicGrowth || (scene === 'cosmic' ? 0.6 : 0) }, quality: 'med', walk: 0 });
+      if (h.ctx) return;   // unlocked while the preview rendered: the live analyser owns the panel now
       this.info = res.debug; this._paintOffline(res);
       this.el.querySelector('.s').textContent = 'offline render · deterministic';
       this._text(res.debug);
@@ -116,7 +117,8 @@ export class AudioOverlay {
       ['chords', (m.recentChords || []).slice(-6).join(' → ') || '—'],
       ['layers', `<span class="chips">${(m.layers || []).map((l) => `<span class="${l.on ? 'on' : ''}">${l.id}:${l.inst}</span>`).join('')}</span>`],
       ['ambience', `<span class="chips">${beds || '<span>—</span>'}</span> ${evs}`],
-      ['mix', d.mix ? `${d.mix.reverb} ${d.mix.reverbSeconds}s IR · echo ${(d.mix.echo?.time || 0).toFixed(2)}s · voices ${d.voices?.created ?? 0}${d.mix.levels ? ` · ${d.mix.levels.rmsDb} dB RMS` : ''}` : '—'],
+      ['fauna', (() => { const c = d.creatures; if (!c?.live) return '—'; const near = Object.entries(c.near || {}).map(([k, v]) => `<span class="amb">${k} ${v.d}m${v.n > 1 ? '×' + v.n : ''}</span>`).join(''); const calls = Object.entries(c.calls || {}).map(([k, v]) => `${k}×${v}`).join(' '); return `<span class="chips">${near || '<span>none in earshot</span>'}</span> ${calls}`; })()],
+      ['mix', d.mix ? `${d.mix.reverb} ${d.mix.reverbSeconds}s IR · echo ${(d.mix.echo?.time || 0).toFixed(2)}s · voices ${d.voices?.active ?? 0}/${d.voices?.max ?? 0}${d.mix.levels ? ` · ${d.mix.levels.rmsDb} dB RMS` : ''}` : '—'],
     ];
     this.el.querySelector('.g').innerHTML = rows.map(([k, v]) => `<div class="k">${k}</div><div>${v}</div>`).join('');
   }
