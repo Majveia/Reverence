@@ -84,9 +84,14 @@ class VehicleManager {
     const glow = makeGlowMaterial();
     const decal = makeDecalMaterial({ wear: 0.25 + wth.wear * 0.35, seed: (opts.seed ?? 1.7) * 3.1 });
     const glass = makeGlassMaterial(liv.glass);
-    const mats = { body, glow, decal, glass };
+    // the pilot gets its own clean material: crisp suit colours, grime only on the boots
+    const rider = makeUberMaterial({
+      clearcoat: hi, panelScale: 0.12, dirt: Math.min(0.35, wth.dirt * 0.6), wear: 0.25, rust: 0,
+      dirtColor: pal.sand || '#8a7a60', edgeColor: '#c8c8c8', seed: (opts.seed ?? 1.7) + 9.1, dirtLow: -1, dirtHigh: -0.4,
+    });
+    const mats = { body, glow, decal, glass, rider };
     (this._mats ||= []).push(mats);
-    if (this._envTex) for (const m of [body, glass, decal]) { m.envMap = this._envTex; m.needsUpdate = true; }
+    if (this._envTex) for (const m of [body, glass, decal, rider]) { m.envMap = this._envTex; m.needsUpdate = true; }
     return mats;
   }
 
@@ -415,7 +420,7 @@ class VehicleManager {
     if (sceneEnv) {
       if (this._envState !== 'scene') {
         this._envState = 'scene';
-        for (const ms of this._mats || []) for (const m of [ms.body, ms.glass, ms.decal]) { m.envMap = null; m.needsUpdate = true; }
+        for (const ms of this._mats || []) for (const m of [ms.body, ms.glass, ms.decal, ms.rider]) { if (!m) continue; m.envMap = null; m.needsUpdate = true; }
       }
       return;
     }
@@ -426,7 +431,7 @@ class VehicleManager {
       const first = this._envState !== 'probe';
       this._envState = 'probe';
       this._envTex = tex;
-      for (const ms of this._mats || []) for (const m of [ms.body, ms.glass, ms.decal]) { m.envMap = tex; if (first) m.needsUpdate = true; }
+      for (const ms of this._mats || []) for (const m of [ms.body, ms.glass, ms.decal, ms.rider]) { if (!m) continue; m.envMap = tex; if (first) m.needsUpdate = true; }
     }
   }
 
@@ -512,6 +517,8 @@ class VehicleManager {
     if (v.onWater || v.inWater) v.wet = 1;
     v.wet = Math.max(rain, (v.wet ?? 0) - dt * 0.03);
     u.uWet.value = v.wet;
+    const ru = v.mats?.rider?.userData?.u;
+    if (ru) ru.uWet.value = v.wet * 0.8;
     if (v.occupied && v.speed > 3 && !v.onWater && v.type !== 'ship') u.uDirt.value = Math.min(1, u.uDirt.value + dt * v.speed * 0.00035);
     if (v.dustColor) u.uDirtColor.value.lerp(v.dustColor, dampF01(dt * 0.05));
   }

@@ -495,6 +495,21 @@ export const LIVERIES = {
   jade: { primary: '#2f6b5a', secondary: '#d8d2c0', accent: '#f2b43a', trim: '#1a1e1c', glow: [0.4, 1.5, 1.1], glass: '#10201c', decal: '#f2e8d0', edge: '#a0aaa4' },
 };
 
+// Pilot suits per livery: shell = glossy armour/helmet, under = pressure-suit fabric, under2 = quilted
+// panels/pockets, accent = bands/canisters, boot = gloves/boots, visor = mirror tint (metallic).
+export const SUITS = {
+  nasapunk: { shell: '#f2f0ea', under: '#34373d', under2: '#4a4e55', accent: '#ff6a1a', boot: '#2a2622', visor: '#d09a36' },
+  expedition: { shell: '#e4d6b4', under: '#454334', under2: '#5c5946', accent: '#e5572b', boot: '#3a2b20', visor: '#c88a32' },
+  racer: { shell: '#f4f1ea', under: '#23262c', under2: '#3a3e46', accent: '#d12a1e', boot: '#1d1b1a', visor: '#b8862a' },
+  hauler: { shell: '#f0b81c', under: '#2a2b2d', under2: '#3e4043', accent: '#f4f1ea', boot: '#231f1b', visor: '#c07a24' },
+  retro: { shell: '#f3ead6', under: '#2d4e4a', under2: '#3f6660', accent: '#e0553a', boot: '#3a2a20', visor: '#c89a3c' },
+  stealth: { shell: '#494d56', under: '#17181b', under2: '#26282d', accent: '#ff2e88', boot: '#141416', visor: '#5a2848' },
+  pulp: { shell: '#f4ead2', under: '#2a3a5c', under2: '#3a4e78', accent: '#e8742a', boot: '#2c2320', visor: '#d0a040' },
+  frontier: { shell: '#e2cfab', under: '#3e2c24', under2: '#57402f', accent: '#ffb04a', boot: '#2a1e17', visor: '#c8903a' },
+  arctic: { shell: '#f6f7f8', under: '#2a2d33', under2: '#40444c', accent: '#c33a2c', boot: '#1f1d1c', visor: '#d6a040' },
+  jade: { shell: '#e2dccb', under: '#1f3d35', under2: '#2f574b', accent: '#f2b43a', boot: '#2a241e', visor: '#c89a3c' },
+};
+
 const ART_LIVERY = {
   ghibli: ['retro', 'arctic', 'racer'], moebius: ['retro', 'arctic', 'pulp'], villeneuve: ['expedition', 'frontier', 'nasapunk'],
   bladerunner: ['hauler', 'stealth', 'hauler'], stalenhag: ['expedition', 'hauler', 'arctic'], rogerdean: ['jade', 'pulp', 'retro'],
