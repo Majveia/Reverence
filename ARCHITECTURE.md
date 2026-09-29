@@ -374,4 +374,3 @@ visualizations). What separates AAA from "tech demo":
   the same place). Needs every subsystem to react to a tier change; not started.
 * **vehicles** (from ui) — `_hintFor` should check `engine.ui.device` (`'touch'` whenever the touch layer is
   active) instead of `input.lastDevice`.
-* **civ / flora** (from ui) — repeated wonder POI names ("Elder Oak" ×25) need unique names or a `minor: true` flag.
