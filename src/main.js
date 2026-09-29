@@ -1,4 +1,5 @@
 // Reverence — boot.
+import './core/hashParams.js'; // must stay first: later imports read location.search at load
 import './shaders/chunks.js';
 import { Engine } from './core/Engine.js';
 import { Params } from './core/Params.js';

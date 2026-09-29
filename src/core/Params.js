@@ -1,5 +1,6 @@
 // URL parameter parsing. Every scene/state that a critic or tester needs to reach
-// must be addressable by URL so screenshots are reproducible.
+// must be addressable by URL so screenshots are reproducible. The same parameters also work in
+// the hash (#mode=galaxy&focus=core) for hosts that drop the query string (core/hashParams.js).
 //
 //   ?mode=cosmic|galaxy|system         which scale to boot into (default: cosmic)
 //   &seed=<int>                        universe seed (default 1)
