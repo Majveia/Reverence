@@ -501,7 +501,7 @@ class Fauna {
       const probe = sp || this.roster.find((x) => x.layer === 'ground' && x.archetype === 'grazer');
       if (probe) {
         const g = probe.genome;
-        const base = (probe.archetype === 'serpent' ? 5 + g.L * 1.2 : Math.min(90, Math.max(12, 7 + g.S * (legged ? 7 : 10) + (probe.archetype === 'giant' ? 38 : 0)))) * this.showDist;
+        const base = (probe.archetype === 'serpent' ? 5 + g.L * 1.2 : probe.archetype === 'critter' ? 4.5 + g.S * 6 : Math.min(90, Math.max(12, 7 + g.S * (legged ? 7 : 10) + (probe.archetype === 'giant' ? 38 : 0)))) * this.showDist;
         const angs = [0, 0.3, -0.3, 0.55, -0.55, 0.8, -0.8];
         let placed = false, fallback = null;
         for (const k of [1, 0.7, 1.4, 0.5]) {
