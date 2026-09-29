@@ -360,11 +360,12 @@ export function leggedGeometry(rig, lod = 0) {
   // neck
   const nb = rig.neckBase, nd = rig.neckDir, Ln = rig.Ln;
   const thin = giant ? 1 : hexa ? 1.1 : 0.82;       // grazers: slim necks that read against the torso
-  C(add(nb, nd, -D * 0.02), nW * 1.3 * thin, nW * 1.6, nW * 1.75);
-  C(add(nb, nd, Ln * 0.28), nW * 0.98 * thin, nW * 1.18, nW * 1.3);
-  C(add(nb, nd, Ln * 0.62), nW * 0.8 * thin, nW * 0.96, nW * 1.02);
-  C(add(nb, nd, Ln * 0.95), nW * 0.7 * thin, nW * 0.86, nW * 0.84);
-  C(add(add(nb, nd, Ln), rig.headDir, rig.Lh * 0.1), nW * 0.62 * thin, nW * 0.74, nW * 0.7);
+  const tk = giant ? 1 : hexa ? 1.1 : 0.84;         // neck depth factor (grazers: clearly thinner than the chest)
+  C(add(nb, nd, -D * 0.02), nW * 1.3 * thin, nW * 1.55 * tk, nW * 1.7 * tk);
+  C(add(nb, nd, Ln * 0.28), nW * 0.95 * thin, nW * 1.1 * tk, nW * 1.2 * tk);
+  C(add(nb, nd, Ln * 0.62), nW * 0.78 * thin, nW * 0.9 * tk, nW * 0.95 * tk);
+  C(add(nb, nd, Ln * 0.95), nW * 0.68 * thin, nW * 0.8 * tk, nW * 0.78 * tk);
+  C(add(add(nb, nd, Ln), rig.headDir, rig.Lh * 0.1), nW * 0.6 * thin, nW * 0.7 * tk, nW * 0.66 * tk);
 
   const nMain = hi ? (giant ? 110 : 84) : 22;
   const sp = spline(ctrl, nMain, ['w', 'ht', 'hb']);

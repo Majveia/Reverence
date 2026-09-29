@@ -5,7 +5,7 @@
 //   distant creature calls (whale-like moans, herd bellows) · settlement murmur + per-style city
 //   flavour (bells, chimes, neon hum & spinner fly-bys, industrial clanks, horns) · underwater
 //   (bubbles, pressure rumble) · space (beating deep hum, radio shimmer, whistlers, morse, pulsars)
-import { noiseBuffer, rng, clamp, mtof, setT } from './dsp.js';
+import { noiseBuffer, rng, clamp, mtof, setT, sstep } from './dsp.js';
 import { sample } from './samples.js';
 import { pluck, Strip } from './instruments.js';
 
@@ -47,17 +47,27 @@ export class Ambience {
   _g(v = 0) { const g = this.ctx.createGain(); g.gain.value = v; return g; }
   _f(type, f, q = 0.7) { const n = this.ctx.createBiquadFilter(); n.type = type; n.frequency.value = f; n.Q.value = q; return n; }
   _noise(kind, t) { const s = this.ctx.createBufferSource(); s.buffer = noiseBuffer(this.ctx, kind); s.loop = true; s.start(t, this.r() * 3.5); return s; }
-  _lvl(bed, v, t, tc = 0.5) {
+  /**
+   * Bed level target. Beds are smoothed in JS by a one-pole filter (time constant `tc`, attack and
+   * release) every frame, so every level — including across scene changes — is a continuous glide
+   * and the debug trace reports what is actually heard.
+   */
+  _lvl(bed, v, t, tc = 1.5) {
     if (!bed || bed.dead) return;
-    if (t < this.fastUntil) tc = Math.min(tc, 0.3);    // scene cut: settle to the new world fast
-    if (Math.abs((bed.v ?? -1) - v) < 0.002) return;
-    bed.v = v; bed.gain.gain.cancelScheduledValues(t); bed.gain.gain.setTargetAtTime(v, t, tc);
+    bed.target = v; bed.tc = Math.max(0.05, tc);
+    if (bed.cur === undefined) bed.cur = 0;
   }
-  /** Scene cut / surface⇄orbit flip: for `sec` seconds every bed converges fast (tc ≤ 0.3 s). */
-  cut(t, sec = 1.5) {
-    this.fastUntil = Math.max(this.fastUntil || 0, t + sec);
-    for (const b of Object.values(this.beds)) b.v = -1;   // force re-targeting with the fast time constant
+  _smoothBeds(t, dt) {
+    for (const b of Object.values(this.beds)) {
+      if (b.dead || b.target === undefined) continue;
+      b.cur += (b.target - b.cur) * (1 - Math.exp(-dt / b.tc));
+      if (b.cur < 1e-4 && b.target === 0) b.cur = 0;
+      b.v = b.cur;
+      setT(b.gain.gain, b.cur, t, 0.05, 0.004);
+    }
   }
+  /** Kept for API compatibility: beds are continuous now (no hard cuts on scene changes). */
+  cut() {}
   _every(name, t, lo, hi) { const n = this.timers[name]; if (n === undefined) { this.timers[name] = t + this.r.range(lo, hi) * 0.5; return false; } if (t >= n) { this.timers[name] = t + this.r.range(lo, hi); return true; } return false; }
   _count(name) { this.counts[name] = (this.counts[name] || 0) + 1; }
 
@@ -67,9 +77,11 @@ export class Ambience {
     const land = P.scene === 'surface' ? 1 - P.space : 0;
     const under = P.underwater;
     const dry = land * (1 - under);
+    const air = clamp(P.air ?? 1, 0, 1);
+    const airK = Math.sqrt(air), jet = 4 * air * (1 - air);   // high thin air: the jet-stream band
 
-    // ---------------- wind
-    const windAmt = clamp((0.25 + P.wind * 0.75) * (0.55 + clamp(P.altitude / 600, 0, 1) * 0.6) * dry + P.space * 0 , 0, 1.3);
+    // ---------------- wind (by wind strength, altitude and air density)
+    const windAmt = clamp((0.25 + P.wind * 0.75) * (0.55 + Math.max(clamp(P.altitude / 600, 0, 1), jet) * 0.6) * dry * airK, 0, 1.3);
     const W = this._bed('wind', () => {
       const gain = this._g(0); gain.connect(this.out);
       const low = this._noise('brown', t), lowF = this._f('lowpass', 300, 0.5), lowG = this._g(0.9); low.connect(lowF); lowF.connect(lowG); lowG.connect(gain);
@@ -91,7 +103,7 @@ export class Ambience {
         w.p.pan.setTargetAtTime(r.range(-0.9, 0.9), t, 2);
       });
     }
-    this._lvl(W, windAmt * 0.32, t, 0.8);
+    this._lvl(W, windAmt * 0.32, t, 2.2);
     // speed / glide / fall rush (air over the ears) — also in vehicles
     const rush = clamp(P.rush, 0, 1);
     setT(W.rushG.gain, rush * rush * 0.35 * (1 - under), t, 0.25);
@@ -111,7 +123,7 @@ export class Ambience {
         };
         return { gain, pan, ch: [mk(-0.45), mk(0.4)], k: 0 };
       });
-      this._lvl(O, shore * 0.55, t, 1.2);
+      this._lvl(O, shore * 0.55, t, 2);
       setT(O.pan.pan, clamp((P.shorePan || 0) * 0.65, -0.65, 0.65), t, 0.6, 0.01);   // the sea is over there
       if (shore > 0.02 && this._every('wave', t, 4.5, 10)) {
         const c = O.ch[O.k++ % 2], big = r.range(0.5, 1) * (0.6 + P.wind * 0.6);
@@ -139,9 +151,9 @@ export class Ambience {
       const drops = rain * 18 * dt * clamp(this.host.quality, 0.4, 1);
       if (r() < drops) { this._oneshot('drip', t + r() * 0.05, r.range(0.05, 0.25) * rain, r.range(-0.9, 0.9), r.range(0.8, 1.3)); }
     }
-    // thunder on lightning flashes (with distance delay)
+    // thunder on lightning flashes (fallback when the weather does not emit 'weather:lightning' with a distance)
     const flash = P.flash || 0;
-    if (flash > 0.5 && this.lastFlash <= 0.5 && land > 0.5) {
+    if (flash > 0.5 && this.lastFlash <= 0.5 && land > 0.5 && !this._boltEv) {
       const delay = r.range(0.4, 3.5);
       this._oneshot('thunder', t + delay, clamp(0.5 + P.storm * 0.5, 0.3, 1) * (1.2 - delay / 4), r.range(-0.4, 0.4), r.range(0.75, 1.1), 900 + (1 - delay / 4) * 3000);
       this.mix.duck('music', 0.25, t + delay, 0.2, 2, 3);
@@ -150,7 +162,7 @@ export class Ambience {
     this.lastFlash = flash;
 
     // ---------------- insects & frogs (night), cicadas (hot days), birds (day)
-    const lifeOK = dry * (1 - P.snow) * (1 - clamp(P.altitude / 400, 0, 1)) * (1 - rain * 0.8);
+    const lifeOK = dry * sstep(0.45, 0.95, air) * (1 - P.snow) * (1 - clamp(P.altitude / 400, 0, 1)) * (1 - rain * 0.8);
     const crickets = lifeOK * P.night * clamp(P.flora * 1.5, 0, 1) * (P.cold ? 0.1 : 1);
     if (crickets > 0.05) {
       if (!this.crickets) this.crickets = Array.from({ length: 5 }, (_, i) => ({ next: t + r() * 2, per: r.range(0.45, 1.1), rate: r.range(0.85, 1.2), pan: r.range(-0.9, 0.9), v: r.range(0.3, 1), var: i }));
@@ -194,13 +206,51 @@ export class Ambience {
         const s = this._noise('brown', t), f = this._f('lowpass', 160, 0.7); s.connect(f); f.connect(gain);
         return { gain };
       });
-      this._lvl(U, under * 0.45, t, 0.3);
+      this._lvl(U, under * 0.45, t, 0.25);
       if (under > 0.5 && this._every('bubble', t, 0.25, 1.6)) { const n = r.int(1, 5); for (let i = 0; i < n; i++) this._oneshot('bubble', t + i * r.range(0.03, 0.12), 0.15, r.range(-0.7, 0.7), r.range(0.7, 1.4), 0, r.int(0, 5), this.mix.pre); }
     }
 
+    // ---------------- re-entry: the air thickening around a falling ship
+    if ((P.reentry || 0) > 0.01 || this.beds.reentry) this._reentry(t, P.reentry || 0, air);
+
     // ---------------- space
     const sp = P.space;
-    if (sp > 0.02 || this.beds.space) this._space(t, sp, P);
+    if (sp > 0.02 || this.beds.space) this._space(t, sp, P, air);
+
+    this._smoothBeds(t, dt);
+  }
+
+  /** Band-passed roar whose resonance tightens as the air thickens, over a low buffeting rumble. */
+  _reentry(t, k, air) {
+    const r = this.r;
+    const B = this._bed('reentry', () => {
+      const gain = this._g(0); gain.connect(this.out);
+      const send = this._g(0.35); gain.connect(send); send.connect(this.rev);
+      const n = this._noise('pink', t), bp = this._f('bandpass', 1800, 1), bpG = this._g(0.9); n.connect(bp); bp.connect(bpG); bpG.connect(gain);
+      const b = this._noise('brown', t), lp = this._f('lowpass', 220, 0.7), buf = this._g(0.8); b.connect(lp); lp.connect(buf); buf.connect(gain);
+      const crk = this._noise('white', t), hp = this._f('bandpass', 4200, 0.8), lp9 = this._f('lowpass', 9000, 0.7), cg = this._g(0); crk.connect(hp); hp.connect(lp9); lp9.connect(cg); cg.connect(gain);
+      return { gain, bp, lp, buf, cg };
+    });
+    this._lvl(B, k * 0.34, t, 0.6);
+    // thin air: a high, hollow hiss; thick air: a low roar with a tight resonance (Q 1 → 12)
+    setT(B.bp.frequency, 2400 * Math.pow(0.18, air), t, 0.4, 0.01);
+    setT(B.bp.Q, 1 + 11 * clamp(air * 1.4, 0, 1), t, 0.5, 0.01);
+    setT(B.lp.frequency, 120 + 380 * k, t, 0.3, 0.01);
+    if (k > 0.05 && this._every('buffet', t, 0.12, 0.45)) {
+      B.buf.gain.setTargetAtTime(0.4 + r() * 0.9 * k, t, 0.05);
+      B.cg.gain.setTargetAtTime(r.chance(0.3) ? r.range(0.05, 0.22) * k : 0, t, 0.03);
+    }
+  }
+
+  /** Thunder at the real strike distance (called from the 'weather:lightning' event). */
+  thunder(t, dist, pan, P) {
+    this._boltEv = true;
+    const r = this.r;
+    const delay = clamp(dist / 343, 0.05, 20);
+    const near = clamp(1 - dist / 9000, 0, 1);
+    this._oneshot('thunder', t + delay, clamp(0.35 + (P.storm || 0) * 0.4, 0.3, 1) * (0.45 + 0.75 * near), clamp(pan * 0.7, -0.8, 0.8), r.range(0.78, 1.08), 700 + near * near * 5000);
+    if (near > 0.6) this.mix.duck('music', 0.2 * near, t + delay, 0.1, 1.5, 3);
+    this._count('thunder');
   }
 
   _oneshot(name, t, vel, pan = 0, rate = 1, lp = 0, variant = -1, dest = null) {
@@ -307,20 +357,24 @@ export class Ambience {
     }
   }
 
-  _space(t, sp, P) {
+  _space(t, sp, P, air = 0) {
     const r = this.r, ctx = this.ctx;
     const S = this._bed('space', () => {
-      const gain = this._g(0); gain.connect(this.out);
+      const gain = this._g(0); const lp = this._f('lowpass', 18000, 0.6); gain.connect(lp); lp.connect(this.out); gain.lpf = lp;
       const hum = [55, 55.35, 82.6].map((f, i) => { const o = ctx.createOscillator(); o.frequency.value = f; const g = this._g(i === 2 ? 0.18 : 0.26); o.connect(g); g.connect(gain); o.start(t); return o; });
       const rad = this._noise('pink', t), rf = this._f('bandpass', 1400, 14), rg = this._g(0.9); rad.connect(rf); rf.connect(rg); rg.connect(gain);
       const cab = this._noise('brown', t), cf = this._f('lowpass', 140, 0.6), cg = this._g(0); cab.connect(cf); cf.connect(cg); cg.connect(gain);
       // radio events ride their own gate so they cut with the bed (a pulsar train can last 13 s)
       const radio = this._g(0); radio.connect(this.out); const radioRev = this._g(0); radioRev.connect(this.rev);
-      return { gain, hum, rf, cg, radio, radioRev };
+      const radioLp = this._f('lowpass', 18000, 0.6); radio.disconnect(); radio.connect(radioLp); radioLp.connect(this.out);
+      return { gain, lp, radioLp, hum, rf, cg, radio, radioRev };
     });
-    this._lvl(S, sp * 0.22, t, 2);
-    const gate = clamp((sp - 0.15) * 4, 0, 1), gtc = t < this.fastUntil ? 0.2 : 1;
-    setT(S.radio.gain, gate, t, gtc); setT(S.radioRev.gain, gate, t, gtc);
+    this._lvl(S, sp * 0.22, t, 2.5);
+    // as the air thickens the vacuum hum is swallowed: low-pass 18 kHz → 300 Hz over the first third of the air column
+    const fc = 18000 * Math.pow(300 / 18000, clamp(air / 0.35, 0, 1));
+    setT(S.lp.frequency, fc, t, 0.25, 0.01); setT(S.radioLp.frequency, fc, t, 0.25, 0.01);
+    const gate = clamp((sp - 0.15) * 4, 0, 1);
+    setT(S.radio.gain, gate, t, 1.5); setT(S.radioRev.gain, gate, t, 1.5);
     setT(S.cg.gain, P.inShip ? 0.7 : 0, t, 1);
     if (this._every('radioSweep', t, 3, 8)) S.rf.frequency.setTargetAtTime(r.range(700, 3200), t, r.range(1, 3));
     if (sp < 0.3) return;

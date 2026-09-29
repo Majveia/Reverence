@@ -42,6 +42,7 @@ export const lerp = (a, b, t) => a + (b - a) * t;
 export const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 export const dbToGain = (db) => Math.pow(10, db / 20);
 export const smooth = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
+export const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
 // ------------------------------------------------------------------ caches per context
 const CACHE = new WeakMap();

@@ -274,6 +274,9 @@ export class Herd {
       m.want[0] = wx; m.want[1] = wy; m.want[2] = wz;
       m.wantSpeed = wantSpeed;
       m.grazeTarget = graze;
+      // small critters sit up on their haunches to look around (meerkat / prairie-dog sentinel):
+      // during the look-up phase of grazing and whenever the herd is alert
+      if (sp.archetype === 'critter') m.rearTarget = wantSpeed < 0.05 && ((this.state === GRAZE && m.mode === 1) || this.state === ALERT) ? 1 : 0;
     }
   }
 

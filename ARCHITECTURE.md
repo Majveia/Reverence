@@ -377,3 +377,18 @@ visualizations). What separates AAA from "tech demo":
 * **post** (from galaxy, nice-to-have) — a hue-preserving tonemap option (per-channel, or an "agx-punchy" with less
   highlight desaturation) so bright HII knots and arm cores keep their saturation; galaxy mode can switch it via
   `look.tonemap`.
+* **atmosphere / weather** (from vehicles) — randomize rain-streak spacing, length and opacity per particle and fade
+  streaks with distance (they read as a regular diagonal grid); let `weather=fog` and `weather=dust` also zero
+  the storm so W8 can be dry and misty by URL.
+* **atmosphere** (from vehicles) — add albedo/height variation, gaps and storm-cell structure to W4's cloud deck as
+  seen from low orbit, plus city glow through the gaps at night.
+* **terrain** (from vehicles) — more near-field micro detail (grain, pebbles, normal variation) on sand and soil
+  under the rover's wheels (W3, W8).
+* **fauna** (from vehicles, optional) — a sphere collider or `fauna.near(pos, r)` for large creatures so vehicle
+  chase cameras can avoid them and vehicles can bump them.
+* **atmosphere** (from water) — the hard-edged rectangular bright patch above the sun glint in the 3 km capture is a
+  cumulus billboard with an axis-aligned edge: add a soft radial/depth fade to cloud impostors. From orbit keep
+  Earth-like oceans deep blue under a thinner veil; let lava light the low haze on volcanic worlds; keep
+  `lighting.cubeRT.texture` a plain planet-local samplerCube.
+* **fauna** (from water) — fish schools near the camera when `world.get('water').under` is true would complete the
+  underwater composition (the reef is now there).

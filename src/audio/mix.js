@@ -109,8 +109,9 @@ export class Mixer {
     const useB = this.activeConv === this.convA;
     const conv = useB ? this.convB : this.convA, gIn = useB ? this.revGB : this.revGA, gOut = useB ? this.revGA : this.revGB;
     conv.buffer = ir;
-    gIn.gain.cancelScheduledValues(t); gIn.gain.setTargetAtTime(1, t, 0.6);
-    gOut.gain.cancelScheduledValues(t); gOut.gain.setTargetAtTime(0, t, 0.6);
+    // wet/dry crossfade between the two convolvers (≈ 3 s): the old space's tail keeps ringing under the new one
+    gIn.gain.cancelScheduledValues(t); gIn.gain.setTargetAtTime(1, t, 0.9);
+    gOut.gain.cancelScheduledValues(t); gOut.gain.setTargetAtTime(0, t, 1.2);
     this.activeConv = conv; this.reverbName = name; this.reverbSeconds = ir.duration;
   }
   setReverbLevel(v, t = this.ctx.currentTime) { this.revOut.gain.setTargetAtTime(v, t, 1); }

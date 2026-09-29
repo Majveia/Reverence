@@ -79,9 +79,9 @@ export class LeggedAnimator {
     const muzzleY = (a) => {
       // neck1 pitch a*0.55 about nb, neck2 a*0.25 about nm, head a*0.35 about hp (pitch = rotation about X)
       const rot = (p, c, ang) => { const y = p[1] - c[1], z = p[2] - c[2]; const cs = Math.cos(ang), sn = Math.sin(ang); return [p[0], c[1] + y * cs - z * sn, c[2] + y * sn + z * cs]; };
-      let t = rot(tip, hp, a * 0.42), h = hp, m = nm;
-      t = rot(t, m, a * 0.32); h = rot(h, m, a * 0.32);
-      t = rot(t, nb, a * 0.44); h = rot(h, nb, a * 0.44); m = rot(m, nb, a * 0.44);
+      let t = rot(tip, hp, a * 0.4), h = hp, m = nm;
+      t = rot(t, m, a * 0.18); h = rot(h, m, a * 0.18);
+      t = rot(t, nb, a * 0.55); h = rot(h, nb, a * 0.55); m = rot(m, nb, a * 0.55);
       return t[1] - rig.hhAbs * 0.4;
     };
     let lo = 0, hi = 2.4;
@@ -228,9 +228,11 @@ export class LeggedAnimator {
     c.breath += dt * (moving ? 1.8 + speed * 0.1 : 1.1);
     const breathe = Math.sin(c.breath) * 0.012;
     const sway = moving ? Math.sin(ph) * 0.035 * (gw[0] + gw[1] * 0.5) : 0;
-    const liftY = c.bodyLift + bob + hop + (c.crouch || 0) * -rig.S * s * 0.12;
+    const liftY = c.bodyLift + bob + hop + (c.crouch || 0) * -rig.S * s * 0.12 - (c.rear || 0) * rig.S * s * 0.1;
     // pelvis local translation (root-local up)
-    qeuler(lq, B.PELVIS * 4, sway * 0.6 - c.turn * 0.05, c.bodyPitch + gallopRock + (c.lean || 0) + c.graze * 0.05, sway * 0.5 + c.bodyRoll);
+    c.rear = (c.rear || 0) + ((c.rearTarget || 0) - (c.rear || 0)) * damp((c.rearTarget || 0) > (c.rear || 0) ? 4 : 6, dt);
+    const rear = c.rear * c.rear * (3 - 2 * c.rear);
+    qeuler(lq, B.PELVIS * 4, sway * 0.6 - c.turn * 0.05, c.bodyPitch + gallopRock + (c.lean || 0) + c.graze * 0.05 - rear * 1.2, sway * 0.5 + c.bodyRoll);
     qeuler(lq, B.SPINE * 4, -c.turn * 0.12 - sway * 0.5, -gallopRock * 0.3 + breathe * 0.4, 0);
     qeuler(lq, B.CHEST * 4, -c.turn * 0.12 - sway * 0.4, -gallopRock * 0.4 - breathe, -sway * 0.3);
     // -------------------------------------------------- neck & head (graze + look + idle)
@@ -257,11 +259,11 @@ export class LeggedAnimator {
     const chew = c.graze > 0.6 ? Math.sin(t * 9.0) * 0.04 : 0;
     const walkNod = moving ? Math.sin(ph * bobF + 0.6) * 0.05 * (gw[0] + gw[1]) : 0;
     const runNeck = gw[2] * 0.3 * (moving ? 1 : 0);
-    // graze: the neck arcs down in a curve (base 44 %, mid 32 %) and the head tips toward vertical
-    // (42 %) so neck, throat and jaw stay readable as separate masses instead of one tube
-    qeuler(lq, B.NECK1 * 4, c.hy * 0.3, g * 0.44 + c.hp * 0.3 + walkNod * 0.5 + runNeck, 0);
-    qeuler(lq, B.NECK2 * 4, c.hy * 0.3, g * 0.32 + c.hp * 0.3 + walkNod * 0.3, 0);
-    qeuler(lq, B.HEAD * 4, c.hy * 0.4, g * 0.42 + c.hp * 0.4 - walkNod * 0.6 + chew - runNeck * 0.8, -c.hy * 0.15);
+    // graze: the (slim) neck swings down from the withers almost straight (base 55 %, mid 18 %) and
+    // the head tips toward vertical (40 %): neck, throat and jaw read as separate masses, not one tube
+    qeuler(lq, B.NECK1 * 4, c.hy * 0.3, g * 0.55 + c.hp * 0.3 + walkNod * 0.5 + runNeck + rear * 0.55, 0);
+    qeuler(lq, B.NECK2 * 4, c.hy * 0.3, g * 0.18 + c.hp * 0.3 + walkNod * 0.3 + rear * 0.3, 0);
+    qeuler(lq, B.HEAD * 4, c.hy * 0.4, g * 0.4 + c.hp * 0.4 - walkNod * 0.6 + chew - runNeck * 0.8 + rear * 0.3, -c.hy * 0.15);
     // ears
     c.earT += dt;
     const flick = Math.max(0, Math.sin(c.earT * 0.9 + c.seed * 9) - 0.93) * 12;
@@ -271,7 +273,7 @@ export class LeggedAnimator {
     // tail
     c.tailSw += dt * (moving ? 2.2 + speed * 0.3 : 1.2);
     const swish = Math.max(0, Math.sin(c.tailSw * 0.37 + c.seed * 5) - 0.7) * 2.5;
-    const tailLift = gw[2] * 0.55 + (c.alert || 0) * 0.3;
+    const tailLift = gw[2] * 0.55 + (c.alert || 0) * 0.3 - rear * 0.9;
     const tA = (moving ? 0.18 : 0.08) + swish * 0.3;
     for (let k2 = 0; k2 < 3; k2++) {
       const lag = k2 * 0.9;
@@ -347,10 +349,18 @@ export class LeggedAnimator {
     // ankle target = contact - footRot * (contact - ankle)
     const fv = R.foot;
     qrot(_qc, 0, fv[0] * s, fv[1] * s, fv[2] * s, _v, 0);
-    const ax = st.cur[0] - _v[0], ay = st.cur[1] - _v[1], az = st.cur[2] - _v[2];
+    let ax = st.cur[0] - _v[0], ay = st.cur[1] - _v[1], az = st.cur[2] - _v[2];
     // hip world
     const ui = L.upper, li = L.lower, fi = L.foot;
     const hx = wp[ui * 3], hy = wp[ui * 3 + 1], hz = wp[ui * 3 + 2];
+    const rk = c.rear || 0;
+    if (rk > 0.01 && L.k > 0.6) {
+      // sitting up: front paws tucked against the chest (chest frame: down-and-forward of the shoulder)
+      const reach = (L.L1 + L.L2) * s;
+      qrot(wq, B.CHEST * 4, 0, -0.55 * reach, 0.35 * reach, _v, 6);
+      const k = rk * rk * (3 - 2 * rk);
+      ax += (hx + _v[6] - ax) * k; ay += (hy + _v[7] - ay) * k; az += (hz + _v[8] - az) * k;
+    }
     let dx = ax - hx, dy = ay - hy, dz = az - hz;
     let dist = Math.hypot(dx, dy, dz);
     const L1 = L.L1 * s, L2 = L.L2 * s;

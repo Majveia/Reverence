@@ -100,8 +100,8 @@ float rvPattern(vec3 P, float u, float dors, float part){
     m *= smoothstep(-0.95, -0.4, dors);
   } else if (type < 4.5) {    // dorsal saddle + flank band
     float band = smoothstep(0.35, 0.55, dors + (rvFbm(P * sc) - 0.5) * 0.4);
-    float flank = smoothstep(0.05, 0.0, abs(dors + 0.1 + (rvVN(P * sc * 2.0) - 0.5) * 0.15) - 0.07);
-    m = max(band, flank * 0.9);
+    float flank = smoothstep(0.07, 0.0, abs(dors + 0.1 + (rvVN(P * sc * 2.0) - 0.5) * 0.15) - 0.05);
+    m = max(band, flank * 0.75);
   } else if (type < 5.5) {    // dapples (fawn spots)
     vec2 wv = rvWor(P * sc * 1.6);
     m = (1.0 - smoothstep(0.16, 0.24, wv.x)) * smoothstep(0.0, 0.5, dors) ;

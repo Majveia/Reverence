@@ -18,7 +18,7 @@ uniform float uTemperature, uTint, uLookPower, uLookSat;
 uniform float uVignette, uChromatic, uBlackPoint, uLutSize, uUseLUT; uniform int uTonemap;
 uniform vec2 uRes;
 uniform vec2 uSunUv; uniform vec3 uSunCol; uniform float uFlare, uGhosts, uStarburst, uStreak, uHalo, uDirt, uSSGhost, uHasDirt, uFlareRot;
-uniform float uPurkinje;
+uniform float uPurkinje, uTonemapHue;
 varying vec2 vUv;
 
 vec3 agxContrast(vec3 x){
@@ -42,6 +42,17 @@ vec3 agx(vec3 c){
   c = l + uLookSat * (c - l);
   c = mi * c;
   return pow(max(c, 0.0), vec3(2.2));
+}
+// 'agx-punchy': blend AgX with a hue/saturation-preserving curve (the max channel goes through the
+// same AgX tone curve, the colour keeps its scene-referred ratios) so bright saturated emitters
+// (HII knots, neon, lava) keep their colour instead of sliding to white.
+vec3 agxHue(vec3 c){
+  vec3 a = agx(c);
+  float m = max(c.r, max(c.g, c.b));
+  if (m <= 1e-6) return a;
+  float tm = agx(vec3(m)).g;
+  vec3 h = c * (tm / m);
+  return mix(a, h, uTonemapHue);
 }
 vec3 aces(vec3 x){ const float a=2.51,b=0.03,c2=2.43,d=0.59,e=0.14; return clamp((x*(a*x+b))/(x*(c2*x+d)+e),0.0,1.0); }
 vec3 linearToSRGB(vec3 c){ return mix(c * 12.92, 1.055 * pow(c, vec3(1.0/2.4)) - 0.055, step(0.0031308, c)); }
@@ -95,7 +106,9 @@ void main(){
   vec2 dc = uv - 0.5;
   vec3 col;
   if (uChromatic > 0.0) {
-    vec2 caOff = dc * uChromatic * (0.5 + dot(dc, dc) * 2.0);
+    // lateral CA grows with field height: nearly none in the centre, ramping in over the outer ~25 %
+    float fh = dot(dc, dc) * 2.0;                                  // 0 centre .. 1 corner
+    vec2 caOff = dc * uChromatic * (0.15 + 1.85 * fh * fh);
     col.r = texture2D(tColor, uv - caOff).r;
     col.g = texture2D(tColor, uv).g;
     col.b = texture2D(tColor, uv + caOff).b;
@@ -156,6 +169,7 @@ void main(){
   }
 
   if (uTonemap == 0) col = agx(col);
+  else if (uTonemap == 4) col = agxHue(col);
   else if (uTonemap == 1) col = aces(col * 0.8);
   else if (uTonemap == 2) col = col / (1.0 + col);
   col = clamp(col, 0.0, 1.0);

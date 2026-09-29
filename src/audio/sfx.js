@@ -114,21 +114,8 @@ export class Sfx {
         this.lastWhoosh = t;
         break;
       }
-      case 'warp': {
-        const k = o.intensity ?? 1;
-        const soft = t - this.lastWhoosh < 2;
-        this.sweep(t, 2.2, 120, 8000, { vel: (soft ? 0.18 : 0.4) * k, q: 1.4, curve: 'rise', rev: 0.6 });
-        this.sweep(t + 0.2, 2.0, 60, 400, { vel: 0.35 * k, q: 0.7, kind: 'brown', curve: 'rise', rev: 0.2 });
-        this.tone(t, 2.1, 110, 880, { vel: 0.08 * k, type: 'triangle', attack: 1.6, rev: 0.7 });
-        m.duck('music', 0.45, t + 0.3, 0.6, 1.4, 2.5); m.duck('amb', 0.6, t + 0.5, 0.5, 1.2, 2);
-        break;
-      }
-      case 'arrive': {
-        this.tone(t, 2.5, 70, 38, { vel: 0.4, rev: 0.4 });
-        this.sweep(t, 2.8, 6000, 300, { vel: 0.14, q: 0.8, curve: 'decay', rev: 0.8 });
-        this.host.music?.sting?.(this.stingStrip, t, 'arrive');
-        break;
-      }
+      case 'warp': this._warp(t, o.intensity ?? 1); break;
+      case 'arrive': this._arrive(t); break;
       case 'select': case 'ui.select': case 'ui.click':
         this.buf('tick', t, { vel: 0.35, rate: r.range(0.97, 1.03), dest: m.uiIn, rev: 0.1 });
         this.tone(t, 0.5, mtof(this._keyNote(84)), mtof(this._keyNote(84)), { vel: 0.05, dest: m.uiIn, rev: 0.4 });
@@ -149,6 +136,89 @@ export class Sfx {
         if (sample(this.ctx, name)) this.buf(name, t, { vel: o.gain ?? 0.5 });
         else this._log('?' + name);
     }
+  }
+
+  // ------------------------------------------------------------------ warp transition
+  /**
+   * Warp (director 'mode:leaving'): three layers that swell into a sustained tunnel until the arrival.
+   *   1. reversed-envelope noise riser — band-pass Q 1 → 12, cutoff 200 Hz → 8 kHz, 12 dB/oct low-pass at 9 kHz
+   *   2. detuned 3-saw stack on an exponential pitch curve (55 → 440 Hz), filter opening with it
+   *   3. sub swell under both; the impact (40 Hz thump + convolved hit) lands on 'arrive'
+   * The music bus is side-chained −6 dB for ~1.2 s; the composer re-keys to the new world on the cut.
+   */
+  _warp(t, k = 1) {
+    const ctx = this.ctx, m = this.mix, R = 1.5;
+    if (this.warpState) this._warpRelease(t, 0.05);
+    const soft = t - this.lastWhoosh < 2 ? 0.55 : 1;
+    const vel = 0.42 * k * soft;
+    const out = this._g(1); const lp9 = this._f('lowpass', 9000, 0.707); out.connect(lp9); lp9.connect(m.sfxIn);
+    const send = this._g(0.45); out.connect(send); send.connect(m.ambRev);
+    const nodes = [out, lp9, send], srcs = [];
+    // 1. noise riser
+    const n = ctx.createBufferSource(); n.buffer = noiseBuffer(ctx, 'pink'); n.loop = true;
+    const bp = this._f('bandpass', 200, 1), ng = this._g(0.0001);
+    bp.frequency.setValueAtTime(200, t); bp.frequency.exponentialRampToValueAtTime(8000, t + R);
+    bp.Q.setValueAtTime(1, t); bp.Q.linearRampToValueAtTime(12, t + R);
+    ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(vel * 1.6, t + R);   // reverse-decay swell
+    // tunnel: after the peak the riser settles into a resonant, slowly drifting rush
+    bp.frequency.setTargetAtTime(2600, t + R, 0.5); bp.Q.setTargetAtTime(5, t + R, 0.5); ng.gain.setTargetAtTime(vel * 0.55, t + R, 0.35);
+    n.connect(bp); bp.connect(ng); ng.connect(out); n.start(t, this.r() * 3); srcs.push(n); nodes.push(bp, ng);
+    // 2. detuned saw stack
+    const sg = this._g(0.0001), slp = this._f('lowpass', 300, 1.2);
+    slp.frequency.setValueAtTime(300, t); slp.frequency.exponentialRampToValueAtTime(5200, t + R);
+    sg.gain.setValueAtTime(0.0001, t); sg.gain.exponentialRampToValueAtTime(vel * 0.22, t + R * 0.9); sg.gain.setTargetAtTime(vel * 0.07, t + R, 0.4);
+    for (const det of [-14, 0, 11]) {
+      const o = ctx.createOscillator(); o.type = 'sawtooth'; o.detune.value = det;
+      o.frequency.setValueAtTime(55, t); o.frequency.exponentialRampToValueAtTime(440, t + R); o.frequency.setTargetAtTime(470, t + R, 1.5);
+      o.connect(slp); o.start(t); srcs.push(o);
+    }
+    slp.connect(sg); sg.connect(out); nodes.push(sg, slp);
+    // 3. sub swell
+    const sub = ctx.createOscillator(); sub.type = 'sine'; sub.frequency.setValueAtTime(32, t); sub.frequency.exponentialRampToValueAtTime(58, t + R);
+    const subG = this._g(0.0001); subG.gain.setValueAtTime(0.0001, t); subG.gain.exponentialRampToValueAtTime(vel * 0.7, t + R); subG.gain.setTargetAtTime(vel * 0.2, t + R, 0.4);
+    sub.connect(subG); subG.connect(m.sfxIn); sub.start(t); srcs.push(sub); nodes.push(subG);
+    m.duck('music', 0.5, t + 0.1, 0.25, 1.2, 2.4); m.duck('amb', 0.55, t + 0.3, 0.4, 1.2, 2);
+    this.warpState = { t0: t, peak: t + R, srcs, nodes, gains: [ng, sg, subG], bp, vel };
+    // no arrival within ~6 s (load stalled, or a warp inside one mode): fade the tunnel out on its own
+    this.warpState.auto = t + R + 4.5;
+    this._warpRelease(t + R + 4.5, 1.5, true);
+  }
+
+  _warpRelease(t, tc = 0.08, scheduledOnly = false) {
+    const W = this.warpState; if (!W) return;
+    for (const g of W.gains) { if (!scheduledOnly) g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(0, t, tc); }
+    const end = t + tc * 7 + 0.05;
+    for (const s of W.srcs) { try { s.stop(end); } catch (_) { /* ignore */ } }
+    if (!scheduledOnly) {
+      const nodes = W.nodes; W.srcs[0].onended = () => { for (const nd of nodes) try { nd.disconnect(); } catch (_) { /* ignore */ } };
+      this.warpState = null;
+    } else W.srcs[0].onended = () => { for (const nd of W.nodes) try { nd.disconnect(); } catch (_) { /* ignore */ } if (this.warpState === W) this.warpState = null; };
+  }
+
+  /** Arrival ('mode:enter'): the tunnel makes one last swell, then the impact lands ~100 ms after its peak. */
+  _arrive(t) {
+    const ctx = this.ctx, m = this.mix, W = this.warpState;
+    let hit = t + 0.05;
+    if (W && t < W.auto) {
+      const pk = t + 0.22;
+      for (const g of W.gains) { g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(W.vel * (g === W.gains[0] ? 1.4 : g === W.gains[2] ? 0.8 : 0.2), t, 0.07); }
+      W.bp.frequency.cancelScheduledValues(t); W.bp.frequency.setTargetAtTime(7000, t, 0.1);
+      this._warpRelease(pk, 0.05);
+      hit = pk + 0.1;
+    }
+    // sub thump (≈ 40 Hz) + convolved impact + a dark, 9 kHz-limited noise bloom fading exponentially over ~1.5 s
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(72, hit); o.frequency.exponentialRampToValueAtTime(36, hit + 0.45);
+    const og = this._g(0); og.gain.setValueAtTime(0, hit); og.gain.linearRampToValueAtTime(0.75, hit + 0.012); og.gain.setTargetAtTime(0, hit + 0.02, 0.32);
+    o.connect(og); og.connect(m.sfxIn); o.start(hit); o.stop(hit + 2.2); o.onended = () => { try { og.disconnect(); } catch (_) { /* ignore */ } };
+    this.buf('impact', hit, { vel: 0.55, rate: 0.55, rev: 0.9, lp: 5000 });
+    const nb = ctx.createBufferSource(); nb.buffer = noiseBuffer(ctx, 'pink'); nb.loop = true;
+    const f1 = this._f('lowpass', 9000, 0.707), f2 = this._f('lowpass', 9000, 0.707), ngn = this._g(0);
+    f1.frequency.setValueAtTime(9000, hit); f1.frequency.exponentialRampToValueAtTime(350, hit + 1.5);
+    ngn.gain.setValueAtTime(0, hit); ngn.gain.linearRampToValueAtTime(0.22, hit + 0.02); ngn.gain.setTargetAtTime(0, hit + 0.03, 0.3);
+    const sd = this._g(0.6); nb.connect(f1); f1.connect(f2); f2.connect(ngn); ngn.connect(m.sfxIn); ngn.connect(sd); sd.connect(m.ambRev);
+    nb.start(hit, this.r() * 3); nb.stop(hit + 1.8); nb.onended = () => { for (const nd of [f1, f2, ngn, sd]) try { nd.disconnect(); } catch (_) { /* ignore */ } };
+    m.duck('music', 0.5, hit, 0.02, 0.6, 2.5);
+    this.host.music?.sting?.(this.stingStrip, hit + 0.15, 'arrive');
   }
 
   _keyNote(near) { const h = this.host.music?.h; return h ? h.snap(near) : near; }
@@ -227,6 +297,6 @@ export class Sfx {
 
   debug() {
     const eng = {}; for (const [k, E] of Object.entries(this.engines)) eng[k] = +E.g.gain.value.toFixed(3);
-    return { recent: this.recent.slice(), engines: eng };
+    return { recent: this.recent.slice(), engines: eng, warp: this.warpState ? 'tunnel' : null };
   }
 }

@@ -32,13 +32,15 @@ import { CameraFX } from './camera.js';
 import { buildLUT, gradeSignature, LUT_SIZE } from './grade.js';
 import { COMPOSITE_FRAG, FINAL_FRAG } from './composite.js';
 import { LegacyPipeline } from './legacy.js';
+import { SMAA } from './smaa.js';
 
 export { makeFullscreenMaterial, FullscreenQuad };
 
 export const DEFAULT_POST = {
   exposure: 1.0,
-  bloom: { strength: 0.6, radius: 0.85, threshold: 1.0, knee: 0.6, mode: 'auto', scatter: 0.06, highlightBoost: 4 },
-  tonemap: 'agx',          // 'agx' | 'aces' | 'reinhard' | 'none'
+  bloom: { strength: 0.6, radius: 0.85, threshold: 1.0, knee: 0.6, mode: 'auto', scatter: 0.06, highlightBoost: 4, spread: 0.55, skyThreshold: 3 },
+  tonemap: 'agx',          // 'agx' | 'agx-punchy' (hue-preserving highlights) | 'aces' | 'reinhard' | 'none'
+  tonemapHue: 0.6,         // 'agx-punchy': share of the hue/saturation-preserving curve
   filmLook: 'auto',        // 'auto' | 'neutral' | 'film' | 'punchy' | { power, saturation }
   saturation: 1.0,
   contrast: 1.0,
@@ -52,25 +54,26 @@ export const DEFAULT_POST = {
   highlights: null,        // optional split-tone [r,g,b] added to highlights
   vignette: 0.25,
   grain: 0.02,
-  chromatic: 0.0015,
+  chromatic: 0.002,        // lateral CA at the frame corners (ramps in over the outer ~25 %)
   blackPoint: 0.0,         // keep 0 for true OLED blacks
-  aa: 'auto',              // 'auto' | 'taa' | 'fxaa' | 'none'
+  aa: 'auto',              // 'auto' | 'taa' | 'smaa' | 'fxaa' | 'none'  (auto: TAA high/ultra, SMAA low/med)
   taa: { feedback: 0.9, sharpen: 0.35, shotSamples: 'auto' },
   ssao: { enabled: 'auto', radius: 2.0, intensity: 1.7, fadeFar: 900, debug: false },
-  autoExposure: { enabled: 'auto', key: 'auto', strength: 0.7, min: 0.4, max: 4.0, speedUp: 2.5, speedDown: 1.1, floor: 0.004 },
+  autoExposure: { enabled: 'auto', key: 'auto', strength: 0.7, min: 0.4, max: 4.0, nightMax: 6.0, nightDrop: 0.32, speedUp: 2.5, speedDown: 1.1, floor: 0.004 },
   flare: { enabled: 'auto', intensity: 1.0, ghosts: 1.0, starburst: 1.0, halo: 1.0, streak: 0.3, dirt: 0.3, ssGhosts: 0.05 },
   clarity: 'auto',         // local contrast (0..0.5), system default 0.22
   purkinje: 0.35,
   motionBlur: { enabled: 'auto', strength: 0.3 },
-  dof: { enabled: false, focus: 0, aperture: 1.0, maxCoc: 12 },  // enabled: true | false | 'photo'
+  dof: { enabled: false, focus: 0, aperture: 1.0, maxCoc: 28, bokeh: 3 },  // enabled: true | false | 'photo'; maxCoc px @1080p
 };
 
 // Mode-dependent defaults for 'auto' settings.
 const PROFILES = {
   system: { aa: 'taa', ssao: true, autoExposure: true, flare: true, film: 'film', bloomMode: 'mix', motionBlur: true, key: 0.28, dof: 'photo', clarity: 0.25 },
-  default: { aa: 'fxaa', ssao: false, autoExposure: false, flare: false, film: 'neutral', bloomMode: 'add', motionBlur: false, key: 0.2, dof: false, clarity: 0 },
+  default: { aa: 'smaa', ssao: false, autoExposure: false, flare: false, film: 'neutral', bloomMode: 'add', motionBlur: false, key: 0.2, dof: false, clarity: 0 },
 };
 const FILM_LOOKS = { neutral: [1, 1], film: [1.22, 1.22], punchy: [1.4, 1.45] };
+const TONEMAPS = { agx: 0, aces: 1, reinhard: 2, none: 3, 'agx-punchy': 4, hue: 4 };
 
 const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0);
 const _v3 = new THREE.Vector3(), _v3b = new THREE.Vector3(), _q = new THREE.Quaternion(), _m4 = new THREE.Matrix4();
@@ -102,6 +105,8 @@ export class Pipeline {
     this.pongRT = hdrRT(this.width, this.height);
     this.postA = hdrRT(this.width, this.height);  // post-TAA scratch (DOF / motion blur)
     this.ldrRT = hdrRT(this.width, this.height);   // graded, display-encoded (half float: no banding before dither)
+    this.ldrB = null;                               // SMAA output (lazy)
+    this.smaa = null;
 
     this._sunUv = new THREE.Vector2(0.5, 0.5);
     this._sunCol = new THREE.Color(1, 1, 1);
@@ -175,6 +180,7 @@ export class Pipeline {
     this.width = w; this.height = h;
     this.sceneRT.setSize(w, h);
     this.pingRT.setSize(w, h); this.pongRT.setSize(w, h); this.ldrRT.setSize(w, h); this.postA.setSize(w, h);
+    this.ldrB?.setSize(w, h); this.smaa?.setSize(w, h);
     this._resizeBloom();
     this.taa?.setSize(w, h);
     this.ssao?.setSize(w, h);
@@ -188,7 +194,8 @@ export class Pipeline {
     this.bloomMips = [];
     this.bloomPrefilter = makeFullscreenMaterial(/* glsl */`
       #include <rv_common>
-      uniform sampler2D tSrc; uniform vec2 uTexel; uniform float uThreshold, uKnee, uBoost, uBoostT;
+      #include <rv_post>
+      uniform sampler2D tSrc, tDepth; uniform vec2 uTexel; uniform float uThreshold, uKnee, uBoost, uBoostT, uSkyT, uHasDepth;
       varying vec2 vUv;
       vec3 samp(vec2 o){ return texture2D(tSrc, vUv + o * uTexel).rgb; }
       float karis(vec3 c){ return 1.0 / (1.0 + rv_luma(c)); }
@@ -208,9 +215,13 @@ export class Pipeline {
         rq = (rq * rq) / (4.0 * uKnee + 1e-5);
         float w = uThreshold <= 0.0 ? 1.0 : max(rq, br - uThreshold) / max(br, 1e-5);
         // highlight boost (mix mode): emitters/sun glints glow like strong halation, dim content only veils
-        w *= 1.0 + uBoost * smoothstep(uBoostT, uBoostT * 4.0, br);
+        // far-plane pixels (sky, cloud silver linings) need a higher boost threshold: only the sun
+        // itself should halate there, not every bright cloud edge
+        float bt = uBoostT;
+        if (uHasDepth > 0.5 && rvp_isSky(texture2D(tDepth, vUv).r)) bt *= uSkyT;
+        w *= 1.0 + uBoost * smoothstep(bt, bt * 4.0, br);
         gl_FragColor = vec4(col * w, 1.0);
-      }`, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uThreshold: { value: 1 }, uKnee: { value: 0.5 }, uBoost: { value: 0 }, uBoostT: { value: 1 } });
+      }`, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uThreshold: { value: 1 }, uKnee: { value: 0.5 }, uBoost: { value: 0 }, uBoostT: { value: 1 }, tDepth: { value: null }, uSkyT: { value: 1 }, uHasDepth: { value: 0 } });
 
     this.bloomDown = makeFullscreenMaterial(/* glsl */`
       uniform sampler2D tSrc; uniform vec2 uTexel; varying vec2 vUv;
@@ -259,6 +270,9 @@ export class Pipeline {
     this.bloomPrefilter.uniforms.uKnee.value = Math.max(1e-3, s.knee ?? 0.5);
     this.bloomPrefilter.uniforms.uBoost.value = mix ? (s.highlightBoost ?? 4) : 0;
     this.bloomPrefilter.uniforms.uBoostT.value = Math.max(0.05, s.threshold ?? 1);
+    this.bloomPrefilter.uniforms.tDepth.value = this.depthTexture;
+    this.bloomPrefilter.uniforms.uHasDepth.value = mix ? 1 : 0;
+    this.bloomPrefilter.uniforms.uSkyT.value = Math.max(1, s.skyThreshold ?? 3);
     this.quad.draw(r, this.bloomPrefilter, mips[0]);
     for (let i = 1; i < mips.length; i++) {
       this.bloomDown.uniforms.tSrc.value = mips[i - 1].texture;
@@ -269,7 +283,7 @@ export class Pipeline {
     // energy-conserving: dst = lerp(dst, up, 0.5)-style via constant alpha blend
     bu.blendSrc = mix ? THREE.SrcAlphaFactor : THREE.OneFactor;
     bu.blendDst = mix ? THREE.OneMinusSrcAlphaFactor : THREE.OneFactor;
-    bu.uniforms.uMix.value = mix ? 0.6 : 1.0;
+    bu.uniforms.uMix.value = mix ? THREE.MathUtils.clamp(s.spread ?? 0.55, 0.2, 0.9) : 1.0;
     bu.needsUpdate = false;
     const prevAuto = r.autoClear; r.autoClear = false;
     for (let i = mips.length - 1; i > 0; i--) {
@@ -297,7 +311,7 @@ export class Pipeline {
       uSunUv: { value: this._sunUv }, uSunCol: { value: new THREE.Vector3(1, 1, 1) }, uFlare: { value: 0 },
       uGhosts: { value: 1 }, uStarburst: { value: 1 }, uStreak: { value: 0.3 }, uHalo: { value: 1 }, uDirt: { value: 0.5 },
       uSSGhost: { value: 0 }, uHasDirt: { value: this.lens.dirt ? 1 : 0 }, uFlareRot: { value: 0.2 },
-      uPurkinje: { value: 0 },
+      uPurkinje: { value: 0 }, uTonemapHue: { value: 0.6 },
     });
     this.finalMat = makeFullscreenMaterial(FINAL_FRAG, {
       tSrc: { value: this.ldrRT.texture }, uInvRes: { value: new THREE.Vector2(1 / this.width, 1 / this.height) },
@@ -456,8 +470,9 @@ export class Pipeline {
 
     // ---- feature resolution
     let aa = this._resolve(s.aa, prof.aa);
-    if (aa === 'taa' && (!(q.tier === 'high' || q.tier === 'ultra') || !persp)) aa = 'fxaa';
-    if (aa === 'fxaa' && q.msaa > 0 && prof.aa !== 'taa') aa = 'none';
+    // TAA needs a perspective camera and a high/ultra tier (explicit aa:'taa' also allows med)
+    if (aa === 'taa' && (!persp || !(q.tier === 'high' || q.tier === 'ultra' || (q.tier === 'med' && s.aa === 'taa')))) aa = 'smaa';
+    if ((aa === 'fxaa' || aa === 'smaa') && q.msaa > 0 && prof.aa !== 'taa') aa = 'none';
     const useTAA = aa === 'taa';
     const ssaoOn = !!this._resolve(s.ssao?.enabled, prof.ssao) && !!q.ssao && persp && this.floatRT && !this._ssaoBroken;
     const aeOn = !!this._resolve(s.autoExposure?.enabled, prof.autoExposure);
@@ -518,7 +533,7 @@ export class Pipeline {
     // ---- camera effects
     if (dofOn) {
       const out = hdr === this.postA ? this.pingRT : this.postA;
-      this.cam.dof(r, this.quad, hdr.texture, this.depthTexture, out, this.motion, s.dof || {}, this.width, this.height);
+      this.cam.dof(r, this.quad, hdr.texture, this.depthTexture, out, this.motion, s.dof || {}, this.width, this.height, aeOn ? this.ae.texture : null);
       hdr = out;
     }
     st.hist = historyOK; st.gap = gap;
@@ -534,7 +549,9 @@ export class Pipeline {
     const aes = s.autoExposure || {};
     // night keeps a lower key (the eye adapts, but night must still read as night)
     const night = modeName === 'system' ? THREE.MathUtils.clamp(G.uNight.value || 0, 0, 1) : 0;
-    const aeKey = this._resolve(aes.key, prof.key) * (1 - (aes.nightDrop ?? 0.45) * night);
+    // (moderate drop: the deep-blue night sky and moonlit ground must stay readable; OLED black
+    //  stays black because exposure is multiplicative and the meter ignores black pixels)
+    const aeKey = this._resolve(aes.key, prof.key) * (1 - (aes.nightDrop ?? 0.32) * night);
     if (aeOn) {
       const o = this._aeOpts || (this._aeOpts = {});
       Object.assign(o, aes); o.key = aeKey;
@@ -567,14 +584,21 @@ export class Pipeline {
     u.uBloomScatter.value = THREE.MathUtils.clamp((s.bloom?.scatter ?? 0.05), 0, 0.5);
     u.uExposure.value = s.exposure;
     u.uAuto.value = aeOn ? 1 : 0; u.tAdapt.value = this.ae.texture;
-    u.uAEKey.value = aeKey; u.uAEMin.value = aes.min ?? 0.4; u.uAEMax.value = THREE.MathUtils.lerp(aes.max ?? 4.0, Math.min(aes.max ?? 4.0, aes.spaceMax ?? 1.1), this._spaceK(modeName)); u.uAEStrength.value = aes.strength ?? 0.7;
+    u.uAEKey.value = aeKey; u.uAEMin.value = aes.min ?? 0.4;
+    // the dark-adapted eye opens further at night (a thin ambient floor keeps silhouettes readable)
+    const aeMax = THREE.MathUtils.lerp(aes.max ?? 4.0, Math.max(aes.max ?? 4.0, aes.nightMax ?? 6.0), night);
+    const spaceK = this._spaceK(modeName);
+    u.uAEMax.value = THREE.MathUtils.lerp(aeMax, Math.min(aeMax, aes.spaceMax ?? 1.1), spaceK); u.uAEStrength.value = aes.strength ?? 0.7;
     u.uTemperature.value = s.temperature ?? 0; u.uTint.value = s.tint ?? 0;
     let look = this._resolve(s.filmLook, prof.film);
     look = typeof look === 'object' ? [look.power ?? 1, look.saturation ?? 1] : (FILM_LOOKS[look] || FILM_LOOKS.neutral);
     u.uLookPower.value = look[0]; u.uLookSat.value = look[1];
-    u.uVignette.value = s.vignette ?? 0; u.uChromatic.value = s.chromatic ?? 0;
+    // vignette: an optical falloff reads on lit content; over black space it only thins the star field
+    u.uVignette.value = (s.vignette ?? 0) * (modeName === 'system' ? 1 - 0.6 * spaceK : 1);
+    u.uChromatic.value = s.chromatic ?? 0;
     u.uBlackPoint.value = Math.min(0.5, s.blackPoint ?? 0);
-    u.uTonemap.value = { agx: 0, aces: 1, reinhard: 2, none: 3 }[s.tonemap] ?? 0;
+    u.uTonemap.value = TONEMAPS[s.tonemap] ?? 0;
+    u.uTonemapHue.value = THREE.MathUtils.clamp(s.tonemapHue ?? 0.6, 0, 1);
     u.uRes.value.set(this.width, this.height);
     const f = s.flare || {};
     u.uFlare.value = flareOn ? (f.intensity ?? 1) : 0;
@@ -586,15 +610,32 @@ export class Pipeline {
     u.uPurkinje.value = aeOn ? (s.purkinje ?? 0) : 0;
     this.quad.draw(r, this.compositeMat, this.ldrRT);
 
-    // ---- final: AA / sharpen, grain, dither, fade → screen
-    const fu = this.finalMat.uniforms;
+    // ---- spatial AA (display-encoded): SMAA 1x on low/med; on TAA tiers SMAA cleans up a young
+    //      history (first frames after a cut) and the shot-mode sub-frame accumulation, then CAS
+    let ldr = this.ldrRT;
     let mode = 0;
-    if (aa === 'fxaa') mode = 1;
-    else if (aa === 'taa') mode = (this.taa && this.taa.age >= 2) || samples > 1 ? 2 : 1;
+    const taaConverged = aa === 'taa' && this.taa && this.taa.age >= 2 && samples === 1;
+    let wantSmaa = aa === 'smaa' || (aa === 'taa' && !taaConverged);
+    if (wantSmaa) {
+      if (!this.smaa) {
+        try { this.smaa = new SMAA(this.width, this.height, q.tier); this.ldrB = hdrRT(this.width, this.height); }
+        catch (e) { console.error('[pipeline] smaa init failed', e); this.smaa = null; this._smaaBroken = true; }
+      }
+      if (this.smaa?.ready && !this._smaaBroken) {
+        try { this.smaa.render(r, this.quad, this.ldrRT.texture, this.ldrB); ldr = this.ldrB; }
+        catch (e) { console.error('[pipeline] smaa failed', e); this._smaaBroken = true; wantSmaa = false; }
+      } else wantSmaa = false;
+    }
+    if (aa === 'taa') mode = taaConverged || samples > 1 ? 2 : (wantSmaa ? 0 : 1);
+    else if (aa === 'fxaa' || (aa === 'smaa' && !wantSmaa)) mode = 1;   // FXAA until SMAA's lookup textures decode
+    st.smaa = wantSmaa;
+
+    // ---- final: sharpen / FXAA, grain, dither, fade → screen
+    const fu = this.finalMat.uniforms;
     fu.uMode.value = mode;
     fu.uSharpen.value = s.taa?.sharpen ?? 0.35;
     fu.uGrain.value = s.grain ?? 0;
-    fu.tSrc.value = this.ldrRT.texture;
+    fu.tSrc.value = ldr.texture;
     this.quad.draw(r, this.finalMat, null);
 
     st.taa = useTAA; st.ssao = this._ssaoOn; st.ae = aeOn; st.flare = +flareVis.toFixed(3); st.samples = samples;
@@ -630,7 +671,7 @@ export class Pipeline {
     this.sceneRT.dispose(); this.pingRT.dispose(); this.pongRT.dispose(); this.ldrRT.dispose(); this.postA.dispose();
     for (const rt of this.bloomMips) rt.dispose();
     for (const e of this.effects) e.dispose?.();
-    this.taa?.dispose(); this.ssao?.dispose(); this.ae.dispose(); this.lens.dispose(); this.cam.dispose();
+    this.taa?.dispose(); this.ssao?.dispose(); this.smaa?.dispose(); this.ldrB?.dispose(); this.ae.dispose(); this.lens.dispose(); this.cam.dispose();
     this.lut?.dispose();
     this.compositeMat.dispose(); this.finalMat.dispose(); this.bloomPrefilter.dispose(); this.bloomDown.dispose(); this.bloomUp.dispose();
     this._copyMat.dispose();
