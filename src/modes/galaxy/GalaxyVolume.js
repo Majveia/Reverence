@@ -20,10 +20,15 @@ export function galaxyPalette(S) {
   const mix = (a, b, t) => a.map((v, i) => v * (1 - t) + b[i] * t);
   const norm = (c) => { const l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; return c.map((v) => v / Math.max(1e-4, l)); };
   const c = S.colors || { core: [1, 0.7, 0.4], arms: [0.5, 0.65, 1], hii: [1, 0.3, 0.5], dust: [0.3, 0.2, 0.1] };
-  const bulge = norm(mix([1.0, 0.72, 0.46], c.core, 0.35));
-  const old = norm(mix([1.0, 0.84, 0.68], c.core, 0.15));
-  const young = norm(mix([0.4, 0.58, 1.0], c.arms, 0.25));
-  const hii = norm(mix([1.0, 0.28, 0.46], c.hii, 0.35));
+  // Integrated population colours as Hubble composites render them (B/V/I + Hα): old bulge ≈ K-giant
+  // gold, old disk slightly paler, young disk ≈ OB-association blue, HII ≈ Hα + [NII] magenta-red.
+  // Saturated on purpose — mixing along each ray (old + young + dust reddening) desaturates them.
+  // early types (E / S0) are pale cream: old metal-rich light without the arms' blue to contrast against
+  const early = S.type === 'lenticular' || S.type === 'elliptical';
+  const bulge = norm(mix(early ? [1.0, 0.8, 0.6] : [1.0, 0.64, 0.36], c.core, 0.2));
+  const old = norm(mix(early ? [1.0, 0.86, 0.72] : [1.0, 0.74, 0.5], c.core, 0.15));
+  const young = norm(mix([0.22, 0.44, 1.0], c.arms, 0.12));
+  const hii = norm(mix([1.0, 0.12, 0.34], c.hii, 0.2));
   return { bulge, old, young, hii };
 }
 
@@ -63,15 +68,15 @@ export class GalaxyVolume {
       const bc = S.bulgeComp;
       bulgeA = new THREE.Vector4(S.nucA * K, bc[0].a * K * 1.2, bc[1].a * K * 1.1, bc[2].a * K * 2.2);
       bulgeW = new THREE.Vector4(0.03, 0.26, 0.5, 0.0);
-      bulgeH = S.dustRing ? new THREE.Vector2(R * 0.11, 1.1) : new THREE.Vector2(bc[2].a * K * 0.9, type === 'lenticular' ? 0.7 : 0.4);
+      bulgeH = S.dustRing ? new THREE.Vector2(R * 0.14, 2.6) : new THREE.Vector2(bc[2].a * K * 0.9, type === 'lenticular' ? 0.7 : S.barA > 0 ? 0.15 : 0.4);
       bulgeS = new THREE.Vector3(1, S.bulgeQ, 1);
       const fb = galaxy.bulgeFrac;
-      bulgeL = (type === 'lenticular' ? (S.dustRing ? 60 : 20) : 24) * (fb / 0.14) * (S.barA > 0 ? 0.6 : 1);
+      bulgeL = (type === 'lenticular' ? (S.dustRing ? 60 : 20) : 24) * (fb / 0.14) * (S.barA > 0 ? 0.45 : 1);
     }
     this.uniforms = {
       ...gu,
       tMap: { value: null }, tNoise: { value: null },
-      uMapR: { value: this.mapR },
+      uMapR: { value: this.mapR }, uMapTexel: { value: 2 * this.mapR / this.mapSize },
       uCamPos: { value: new THREE.Vector3() },
       uInvProj: { value: new THREE.Matrix4() },
       uRayMat: { value: new THREE.Matrix3() },
@@ -87,7 +92,7 @@ export class GalaxyVolume {
       uHiiL: { value: type === 'irregular' ? 2.2 : 2.0 },
       uDustL: { value: 8.0 }, uScreen: { value: 0.9 },
       uBulgeA: { value: bulgeA }, uBulgeH: { value: new THREE.Vector2(bulgeH.x, bulgeH.y * bulgeL) }, uBulgeW: { value: bulgeW }, uBulgeS: { value: bulgeS }, uBulgeL: { value: bulgeL },
-      uBar: { value: new THREE.Vector4(S.barA * K || 1, S.barB * K || 1, S.barC * K || 1, S.barA > 0 ? 110 * (galaxy.bulgeFrac / 0.14) : 0) },
+      uBar: { value: new THREE.Vector4(S.barA * K || 1, S.barB * K || 1, S.barC * K || 1, S.barA > 0 ? 250 * (galaxy.bulgeFrac / 0.14) : 0) },
       uBarAng: { value: S.phi0 },
       uHalo: { value: new THREE.Vector2(S.haloA * K, type === 'elliptical' ? 0.6 : 0.35) },
       uDsMin: { value: S.hDust * K * 0.25 }, uDsMax: { value: R / 36 }, uDsNear: { value: 0.02 },
@@ -111,7 +116,14 @@ export class GalaxyVolume {
     });
     this.compositeMat = new THREE.ShaderMaterial({
       vertexShader: FS_VERT, fragmentShader: COMPOSITE_FRAG,
-      uniforms: { tVol: { value: this.rt.texture }, uVolSize: { value: new THREE.Vector2(4, 4) }, uGain: { value: 1 } },
+      uniforms: {
+        tVol: { value: this.rt.texture }, uVolSize: { value: new THREE.Vector2(4, 4) }, uGain: { value: 1 },
+        tMap: this.uniforms.tMap, uMapR: this.uniforms.uMapR, uMapTexel: this.uniforms.uMapTexel,
+        uOldL: this.uniforms.uOldL, uYoungL: this.uniforms.uYoungL, uHiiL: this.uniforms.uHiiL, uDustL: this.uniforms.uDustL,
+        uColOld: this.uniforms.uColOld, uColYoung: this.uniforms.uColYoung, uColHII: this.uniforms.uColHII, uExt: this.uniforms.uExt,
+        uCamPos: this.uniforms.uCamPos, uInvProj: this.uniforms.uInvProj, uRayMat: this.uniforms.uRayMat,
+        uDetail: { value: 1 }, uPixF: { value: 0.001 }, uLodC: { value: 1 },
+      },
       depthTest: false, depthWrite: false, transparent: true,
       blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
       blendSrc: THREE.OneFactor, blendDst: THREE.SrcAlphaFactor,
@@ -128,9 +140,11 @@ export class GalaxyVolume {
   build(renderer) {
     const S = this.S;
     const N = this.mapSize;
+    // mipmapped: the raymarch and the per-star dust lookups pick the level matching their pixel
+    // footprint, so fine filaments never alias into salt-and-pepper grain at wide views
     this.mapRT = new THREE.WebGLRenderTarget(N, N, {
       type: THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false,
-      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false,
+      minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true,
       wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping, colorSpace: THREE.LinearSRGBColorSpace,
     });
     const mapMat = fsMaterial(DISK_MAP_FRAG, {
@@ -177,6 +191,8 @@ export class GalaxyVolume {
     this.rt.setSize(vw, vh);
     this.compositeMat.uniforms.uVolSize.value.set(vw, vh);
     this.volH = vh;
+    this.fullH = h;
+    this.compositeMat.uniforms.uLodC.value = Math.log2(Math.max(1, h / vh));
   }
 
   /**
@@ -199,6 +215,7 @@ export class GalaxyVolume {
     }
     const fov = camera.fov * Math.PI / 180;
     u.uNoiseF.value.w = 2 * Math.tan(fov / 2) / Math.max(1, this.volH || 540);
+    this.compositeMat.uniforms.uPixF.value = 2 * Math.tan(fov / 2) / Math.max(1, this.fullH || 1080);
     // near-camera step size scales with the camera's distance to the nearest structure
     const dDisk = Math.max(Math.abs(u.uCamPos.value.y), 0.002);
     u.uDsNear.value = Math.min(0.2, Math.max(0.0005, dDisk * 0.25 + 0.002));

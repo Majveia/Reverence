@@ -7,6 +7,7 @@ import { makeCivMaterial } from './material.js';
 import { G } from '../../core/Uniforms.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const LANTERN = new Set(['village', 'harbor', 'hearth', 'monastery', 'nomad', 'ruins', 'spire', 'organic', 'frontier']);
 const _cache = new Map();
 
 /** Person (~1.75 m), clothing uses PAT.FABRIC so the instance tint recolours it. */
@@ -29,6 +30,12 @@ function figureGeo(style) {
   // head
   g.sphere(0, 1.6, 0, 0.12, 8, 5, skin);
   if (style === 'hearth') { for (const s of [-1, 1]) g.cyl(s * 0.07, 1.62, 0.1, 0.03, 0.02, 0.12, 4, true, skin); } // four-eyed Hearthian snout
+  // hand lantern (PAT.LAMP: glows at night; only some instances carry one, see aP.w)
+  if (LANTERN.has(style)) {
+    g.cyl(0.33, 0.62, 0.04, 0.012, 0.012, 0.22, 4, false, dark);
+    g.box(0.33, 0.44, 0.04, 0.13, 0.18, 0.13, 0.02, mat('#ffc070', 0.4, 0, PAT.LAMP, 7));
+    g.box(0.33, 0.62, 0.04, 0.15, 0.03, 0.15, 0, dark);
+  }
   if (style === 'village' || style === 'nomad' || style === 'harbor') g.cyl(0, 1.68, 0, 0.3, 0.02, 0.18, 10, true, mat('#c8a860', 0.9, 0, PAT.THATCH));
   else if (style === 'monastery' || style === 'ruins') g.cyl(0, 1.5, -0.02, 0.17, 0.08, 0.3, 8, true, cloth);
   else if (style === 'outpost' || style === 'nasapunk') g.sphere(0, 1.6, 0, 0.16, 10, 6, mat('#e8e8e8', 0.3, 0.3));
@@ -116,7 +123,7 @@ export function makeNPCs(style, paths, siteUp, rng, max) {
     const p = paths[i];
     A.set([p.a.x, p.a.y, p.a.z], i * 3); B.set([p.b.x, p.b.y, p.b.z], i * 3);
     const idle = rng.next() < 0.22;
-    Pp.set([idle ? 0 : rng.range(0.9, 1.5), rng.next() * 7, rng.range(0.9, 1.08), 0], i * 4);
+    Pp.set([idle ? 0 : rng.range(0.9, 1.5), rng.next() * 7, rng.range(0.9, 1.08), rng.next() < 0.4 ? 1 : 0], i * 4);
     const c = tints[Math.floor(rng.next() * tints.length)];
     T.set([c.r, c.g, c.b], i * 3);
   }

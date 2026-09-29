@@ -132,6 +132,17 @@ function buildStructure(g) {
   const S = { type, R, seed: g.seed >>> 0 };
   S.m = spiralish ? Math.max(1, g.arms | 0) : 0;
   S.pitch = g.pitch * Math.PI / 180;
+  // Morphology variants from an independent hash (does not disturb the RNG stream below):
+  //  barred → mostly 2 grand arms springing from the bar ends at an open pitch (NGC 1300 / 1365);
+  //  ring   → 'cartwheel' (collisional ring + spokes + inner ring), 'hoag' (detached ring, no arms)
+  //           or 'resonance' (inner ring + tightly wound arms + outer pseudo-ring).
+  const hv = U(hash32(hashCombine(g.seed, 0xc0de)));
+  if (type === 'barred') {
+    if (hv < 0.8) S.m = 2;
+    S.pitch = Math.max(S.pitch, (17 + 8 * U(hash32(hashCombine(g.seed, 0xb17c)))) * Math.PI / 180);
+  }
+  S.ringStyle = type === 'ring' ? (hv < 0.4 ? 'cartwheel' : hv < 0.7 ? 'hoag' : 'resonance') : null;
+  if (S.ringStyle === 'hoag') S.m = 0;
   S.tanP = Math.tan(S.pitch); S.sinP = Math.sin(S.pitch);
   S.phi0 = g.rotation;
   S.seedWarp = hashCombine(g.seed, 0x3a39) >>> 0;
@@ -141,12 +152,33 @@ function buildStructure(g) {
   S.seedLocal = hashCombine(g.seed, 0x10ca1) >>> 0;
 
   // bar / rings / arm origin
-  S.barA = type === 'barred' ? Math.max(0.1, g.barLength) * R * 1.05 : 0;   // semi-major axis
-  S.barB = S.barA * r.range(0.26, 0.36);
+  S.barA = type === 'barred' ? Math.max(0.1, g.barLength) * R * 1.35 : 0;   // semi-major axis
+  S.barB = S.barA * r.range(0.26, 0.36) * 0.75;
   S.barC = S.barA * r.range(0.18, 0.26);
   S.ringIn = type === 'ring' ? R * r.range(0.3, 0.42) : 0;
   S.ringOut = type === 'ring' ? R * r.range(0.84, 0.95) : 0;
-  S.r0 = type === 'barred' ? S.barA * 0.92 : type === 'ring' ? S.ringIn : R * r.range(0.07, 0.11);
+  S.r0 = type === 'barred' ? S.barA * 0.84 : type === 'ring' ? S.ringIn : R * r.range(0.07, 0.11);
+  S.ringOff = [0, 0];                         // centre of the outer ring relative to the nucleus
+  S.ringW = R * 0.03;                         // outer ring σ
+  if (S.ringStyle === 'cartwheel') {
+    // collisional ring: expanding outer ring (off-centre after the impact), inner ring round the
+    // nucleus, faint spokes between (arm machinery with m spokes at a very open pitch)
+    const h2 = (k) => U(hash32(hashCombine(g.seed, 0xca47 + k)));
+    S.ringIn = R * (0.17 + 0.06 * h2(1));
+    S.ringOut = R * (0.8 + 0.08 * h2(2));
+    S.ringW = R * 0.034;
+    const oa = h2(3) * TAU;
+    S.ringOff = [Math.cos(oa) * R * 0.07, Math.sin(oa) * R * 0.07];
+    S.m = 10 + Math.floor(h2(4) * 5);
+    S.pitch = (66 + 10 * h2(5)) * Math.PI / 180;
+    S.tanP = Math.tan(S.pitch); S.sinP = Math.sin(S.pitch);
+    S.r0 = S.ringIn;
+  } else if (S.ringStyle === 'hoag') {
+    const h2 = (k) => U(hash32(hashCombine(g.seed, 0x40a6 + k)));
+    S.ringIn = 0;
+    S.ringOut = R * (0.62 + 0.1 * h2(1));
+    S.ringW = R * (0.055 + 0.02 * h2(2));
+  }
 
   // disk
   S.rd = R * (type === 'lenticular' ? r.range(0.2, 0.25) : r.range(0.25, 0.3)); // scale length (old disk)
@@ -167,6 +199,10 @@ function buildStructure(g) {
     const strong = k < 2 || S.m <= 2;
     S.armAmp.push(strong ? r.range(0.85, 1) : r.range(0.4, 0.85));
     S.armEnd.push(R * (strong ? r.range(0.95, 1.15) : r.range(0.7, 1.05)));
+  }
+  if (S.ringStyle === 'cartwheel') {
+    S.armW *= 0.45;
+    for (let k = 0; k < S.m; k++) { S.armEnd[k] = S.ringOut * 1.02; S.armAmp[k] = 0.45 + 0.5 * U(hash32(hashCombine(g.seed, 0x5b0c + k))); }
   }
   S.armCum = [];
   { let t = 0; for (const a of S.armAmp) { t += a; S.armCum.push(t); } for (let k = 0; k < S.armCum.length; k++) S.armCum[k] /= t; }
@@ -289,10 +325,7 @@ export function youngDensity(S, x, z) {
     const sig = S.armW * (0.7 + 0.6 * r / S.R);
     const d = (a.dperp + 0.35 * sig) / sig;
     let v = armWindow(S, a.k, r) * armFrag(S, a.k, a.u) * Math.exp(-0.5 * d * d);
-    if (t === 'ring') {
-      const di = (r - S.ringIn) / (S.R * 0.035), dout = (r - S.ringOut) / (S.R * 0.03);
-      v = Math.max(v * smooth(S.ringIn * 0.95, S.ringIn * 1.15, r), Math.exp(-0.5 * di * di), 0.7 * Math.exp(-0.5 * dout * dout));
-    }
+    if (t === 'ring') v = ringYoung(S, x, z, r, v);
     return v;
   }
   if (t === 'irregular') {
@@ -301,6 +334,22 @@ export function youngDensity(S, x, z) {
     return Math.min(1, v);
   }
   return 0;
+}
+
+/** Distance (ly) from the outer ring's centre (the ring of a collisional galaxy is off-centre). */
+export function ringRadius(S, x, z) { return Math.hypot(x - S.ringOff[0], z - S.ringOff[1]); }
+
+// young density of ring galaxies (mirrored in gx_young, galaxyCommon.js); v = arm density
+function ringYoung(S, x, z, r, v) {
+  const ro = ringRadius(S, x, z);
+  const dout = (ro - S.ringOut) / S.ringW;
+  if (S.ringStyle === 'hoag') return Math.exp(-0.5 * dout * dout);
+  const di = (r - S.ringIn) / (S.R * 0.035);
+  if (S.ringStyle === 'cartwheel') {
+    const spokes = v * 0.4 * smooth(S.ringIn * 1.05, S.ringIn * 1.5, r) * (1 - smooth(S.ringOut * 0.92, S.ringOut, ro));
+    return Math.max(spokes, 0.55 * Math.exp(-0.5 * di * di), Math.exp(-0.5 * dout * dout));
+  }
+  return Math.max(v * smooth(S.ringIn * 0.95, S.ringIn * 1.15, r), Math.exp(-0.5 * di * di), 0.7 * Math.exp(-0.5 * dout * dout));
 }
 
 const _site = { x: 0, z: 0, active: false, size: 0, bright: 0, hii: false };
@@ -331,15 +380,15 @@ function computeSite(S, cx, cz, out) {
 
 function nearestActiveSite(S, x, z, out) {
   const cx = Math.floor(x / S.siteCell), cz = Math.floor(z / S.siteCell);
-  let best = Infinity, bx = 0, bz = 0, bs = 0, found = false;
+  let best = Infinity, bx = 0, bz = 0, bs = 0, bb = 0, found = false;
   for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
     const s = clusterSite(S, cx + i, cz + j);
     if (!s.active) continue;
     const d = (s.x - x) * (s.x - x) + (s.z - z) * (s.z - z);
-    if (d < best) { best = d; bx = s.x; bz = s.z; bs = s.size; found = true; }
+    if (d < best) { best = d; bx = s.x; bz = s.z; bs = s.size; bb = s.bright; found = true; }
   }
   if (!found) return false;
-  out.x = bx; out.z = bz; out.size = bs;
+  out.x = bx; out.z = bz; out.size = bs; out.bright = bb;
   return true;
 }
 
@@ -352,7 +401,7 @@ export function rotationOmega(S, r) {
 export function patternOmega(S) { return S.omegaP; }
 
 // ------------------------------------------------------------------ stars
-const _tmpSite = { x: 0, z: 0, size: 0 };
+const _tmpSite = { x: 0, z: 0, size: 0, bright: 0 };
 const SPREAD = [0.5, 0.65, 1.0, 1.7, 2.6, 3.2, 3.6];     // arm width multiplier by class (O..M)
 const YOUTH = [1, 0.9, 0.65, 0.4, 0.25, 0.15, 0.12];
 
@@ -406,6 +455,20 @@ function plummerR(a, u) { const q = Math.max(1e-6, Math.min(0.999, u)); return a
 function placeStar(S, component, ci, young, h, out) {
   const R = S.R;
   let x = 0, y = 0, z = 0, sub = 'field', follow = 0;
+  // collisional / Hoag rings: most young "arm" stars live in the outer ring
+  if (component === 'arm' && S.ringStyle && (S.m === 0 || (S.ringStyle === 'cartwheel' && U(h(60)) < 0.62))) component = 'ring';
+  if (component === 'disk' && (S.ringStyle === 'cartwheel' || S.ringStyle === 'hoag')) {
+    // the gap between nucleus and ring is swept clear: most old stars there were carried outward
+    const r = sampleExpDisk(S.rd, U(h(2)), U(h(3)), 1.2 * R, U(h(22)));
+    if (r > Math.max(S.ringIn * 1.35, R * 0.12) && r < S.ringOut * 0.88 && U(h(61)) < 0.7) {
+      follow = 1;
+      const th = U(h(7)) * TAU, rr = S.ringOut + S.ringW * 1.7 * gauss(h(62), h(63));
+      x = S.ringOff[0] + rr * Math.cos(th); z = S.ringOff[1] + rr * Math.sin(th);
+      y = sech2Sample(U(h(12)), S.hOld * 0.8);
+      out.x = x; out.y = y; out.z = z; out.sub = 'field'; out.follow = follow;
+      return;
+    }
+  }
   if (component === 'arm') {
     follow = 1;
     let r = sampleExpDisk(S.rdY, U(h(2)), U(h(3)), 1.15 * R, U(h(22)));
@@ -435,7 +498,7 @@ function placeStar(S, component, ci, young, h, out) {
     th += d / (rr * S.sinP);
     x = r * Math.cos(th); z = r * Math.sin(th);
     let hv = (ci <= 1 ? S.hYoung * 0.8 : ci === 2 ? S.hYoung * 1.1 : ci === 3 ? S.hYoung * 1.8 : S.hOld * 0.75);
-    if (ci <= 2 && U(h(11)) < S.clusterFrac * YOUTH[ci] && nearestActiveSite(S, x, z, _tmpSite)) {
+    if (ci <= 2 && U(h(11)) < S.clusterFrac * YOUTH[ci] && nearestActiveSite(S, x, z, _tmpSite) && U(h(18)) < _tmpSite.bright ** 3 * 1.6) {
       const sz = _tmpSite.size;
       x = _tmpSite.x + sz * gauss(h(14), h(15)); z = _tmpSite.z + sz * gauss(h(16), h(17));
       hv = Math.min(hv, sz * 0.5);
@@ -480,13 +543,17 @@ function placeStar(S, component, ci, young, h, out) {
   } else if (component === 'ring') {
     follow = 1;
     const p = U(h(8));
-    let r;
-    if (p < 0.62) r = S.ringIn * (1 + 0.05 * gauss(h(9), h(10)));
-    else r = S.ringOut * (1 + 0.035 * gauss(h(9), h(10)));
+    const pin = S.ringStyle === 'hoag' ? 0 : S.ringStyle === 'cartwheel' ? 0.28 : 0.62;
     const th = U(h(7)) * TAU;
-    x = r * Math.cos(th); z = r * Math.sin(th);
+    if (p < pin) {
+      const r = S.ringIn * (1 + 0.05 * gauss(h(9), h(10)));
+      x = r * Math.cos(th); z = r * Math.sin(th);
+    } else {
+      const r = S.ringOut + S.ringW * 0.9 * gauss(h(9), h(10));
+      x = S.ringOff[0] + r * Math.cos(th); z = S.ringOff[1] + r * Math.sin(th);
+    }
     let hv = S.hYoung * (ci <= 2 ? 0.9 : 1.6);
-    if (ci <= 2 && U(h(11)) < 0.45 && nearestActiveSite(S, x, z, _tmpSite)) {
+    if (ci <= 2 && U(h(11)) < 0.45 && nearestActiveSite(S, x, z, _tmpSite) && U(h(18)) < _tmpSite.bright ** 3 * 1.6) {
       const sz = _tmpSite.size;
       x = _tmpSite.x + sz * gauss(h(14), h(15)); z = _tmpSite.z + sz * gauss(h(16), h(17));
       hv = Math.min(hv, sz * 0.5);
@@ -598,6 +665,11 @@ export function galaxyDensity(galaxy, x, y, z, out = {}) {
     const cut = 1 - smooth(1.05 * R, 1.3 * R, r);
     const yd = youngDensity(S, x, z);
     disk = fd * sig0 * Math.exp(-r / S.rd) * cut * sech2(y / hO) / (2 * hO);
+    if (S.ringStyle === 'cartwheel' || S.ringStyle === 'hoag') {
+      const ro = ringRadius(S, x, z), dout = (ro - S.ringOut) / S.ringW;
+      const gap = smooth(Math.max(S.ringIn * 1.25, R * 0.08), Math.max(S.ringIn * 1.8, R * 0.2), r) * (1 - smooth(S.ringOut - 2.6 * S.ringW, S.ringOut - 1.2 * S.ringW, ro));
+      disk *= 1 - 0.8 * gap + 1.2 * Math.exp(-0.5 * dout * dout);
+    }
     const hY = S.hYoung * (1 + S.flare * (r / R) * (r / R));
     yng = fd * 0.8 * sig0 * Math.exp(-r / S.rdY) * yd * cut * sech2(y / hY) / (2 * hY) * (S.type === 'irregular' ? 3 : 1.6);
     dust = S.dust * (0.3 * Math.exp(-r / S.rdY) + yd) * sech2(y / (S.hDust * (1 + S.flare * (r / R) * (r / R))));

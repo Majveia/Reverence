@@ -87,26 +87,57 @@ float pillarSDF(vec3 q, vec3 s){
   return max(best, mound);
 }
 
-vec4 pillars(vec3 q, vec3 s, float hub){
+// displaced pillar field: > 0 inside the columns. Striations run along the columns (erosion by the
+// photo-evaporative flow), coarse lumps + fine grit break up the silhouette.
+float pillarField(vec3 q, vec3 s){
   float n1 = N(q * 1.1 + s).r - 0.5, n2 = N(q * 3.0 + s * 2.0).a - 0.5, n3 = N(q * 6.5 + s * 1.3).r - 0.5;
-  float sdf = pillarSDF(q, s) + 0.95 * n1 + 0.45 * n2 + 0.15 * n3;
-  vec3 qu = q + vec3(0.0, 0.06, 0.0);
-  float sdfU = pillarSDF(qu, s) + 0.95 * (N(qu * 1.1 + s).r - 0.5) + 0.45 * (N(qu * 3.0 + s * 2.0).a - 0.5) + 0.15 * (N(qu * 6.5 + s * 1.3).r - 0.5);
-  float pil = smoothstep(0.0, 0.22, sdf);
-  float rim = pow(clamp((sdf - sdfU) * 4.0 - 0.25, 0.0, 1.0), 1.5) * smoothstep(-0.1, 0.03, sdf) * (1.0 - smoothstep(0.03, 0.16, sdf)) * smoothstep(-0.4, 0.3, q.y);
+  float st = N(vec3(q.x * 5.5, q.y * 1.1, q.z * 5.5) + s * 0.7).g - 0.5;
+  return pillarSDF(q, s) + 0.9 * n1 + 0.42 * n2 + 0.17 * n3 + 0.16 * st;
+}
+
+// Pillars of Creation: cold molecular columns lit from above-front by an O-star cluster.
+// Lighting is volumetric: light transmission toward the cluster is estimated from the displaced SDF
+// sampled along the light direction (self-shadowing), the ionisation front is a thin bright skin on
+// lit faces, a photo-evaporation glow streams off them, and the teal [OIII] cavity fills the frame.
+vec4 pillars(vec3 q, vec3 s, float hub){
+  vec3 Ld = normalize(vec3(0.22, 1.0, -0.4));          // cluster above and behind the columns
   float r = length(q);
-  float hz = N(q * 0.4 + s * 0.7).r, hz2 = N(q * 1.3 + s).a;
-  float env = 1.0 - smoothstep(0.35, 1.05, r + 0.3 * (hz - 0.5));
-  float haze = clamp(hz * 1.1 + hz2 * 0.5 - 0.4, 0.0, 1.0) * env * smoothstep(0.1, -0.45, q.z - 0.25 * (hz2 - 0.5)) * (1.0 - smoothstep(-0.1, 0.1, sdf));
-  float near = exp(-max(sdf + 0.35, 0.0) * 0.0) * smoothstep(-0.6, -0.05, sdf);
-  vec3 blue = vec3(0.2, 0.55, 0.85), teal = vec3(0.3, 0.75, 0.6), gold = vec3(1.0, 0.8, 0.4);
-  vec3 hazeCol = mix(blue, teal, hz2) ;
-  hazeCol = mix(hazeCol, gold * 0.8, near * 0.55);
-  vec3 bodyCol = mix(vec3(0.45, 0.1, 0.04), vec3(0.62, 0.24, 0.1), smoothstep(0.1, 0.6, n2 + 0.5));
-  vec3 em = hazeCol * haze * 3.6
-          + vec3(1.0, 0.8, 0.5) * rim * 8.0
-          + bodyCol * pil * (0.9 + 2.2 * smoothstep(-0.3, 0.5, q.y)) * (0.6 + 0.8 * (n2 + 0.5));
-  return vec4(em * 1.4, pil * 22.0 + haze * 0.25);
+  float sdf = pillarField(q, s);
+  float body = smoothstep(0.0, 0.18, sdf);
+  float fl = 0.0, sh = 1.0;
+  if (sdf > -0.3) {
+    float l1 = pillarField(q + Ld * 0.05, s);
+    float l2 = pillarField(q + Ld * 0.16, s);
+    float l3 = pillarField(q + Ld * 0.38, s);
+    fl = clamp((sdf - l1) / 0.05, 0.0, 1.0);                                      // faces the cluster
+    sh = exp(-5.0 * max(l2, 0.0) - 3.0 * max(l3, 0.0));                          // light reaching q
+  }
+  float n2 = N(q * 3.0 + s * 2.0).a, n4 = N(q * 9.0 + s * 0.4).a, n5 = N(q * 14.0 + s * 1.9).r;
+  // ionisation-front skin
+  float skin = exp(-sdf * sdf / 0.005) * fl * sh * smoothstep(-0.7, 0.1, q.y);
+  // photo-evaporation flow: glow just outside the lit surfaces, streaming toward the cluster
+  float ev = smoothstep(-0.2, -0.01, sdf) * (1.0 - body) * (0.25 + 0.75 * fl) * sh * (0.5 + n4);
+  // body: dense rust dust, lit where light gets in, fine grit texture
+  float tex = 0.45 + 0.8 * n2 * (0.6 + 0.8 * n5);
+  vec3 rust = mix(vec3(0.3, 0.07, 0.025), vec3(0.8, 0.3, 0.1), smoothstep(0.25, 0.8, n2));
+  // (the columns are optically thick: visible radiance ≈ emission / extinction)
+  vec3 bodyE = rust * body * tex * tex * (1.5 + 11.0 * sh * (0.25 + 0.75 * fl));
+  // cavity haze: teal/blue [OIII] everywhere, gold-green close to the fronts, brighter up toward the stars
+  float hz = N(q * 0.35 + s * 0.7).r, hz2 = N(q * 1.2 + s).a, hz3 = N(q * 2.8 + s * 1.7).g;
+  float env = 1.0 - smoothstep(0.7, 1.0, r + 0.25 * (hz - 0.5));
+  // the cavity wall lies behind the columns (camera on +z): only a thin veil in front of them
+  float behind = mix(0.05, 1.0, smoothstep(0.3, -0.25, q.z + 0.35 * (hz2 - 0.5)));
+  float haze = clamp(0.35 + hz * 0.8 + hz2 * 0.45 - 0.5 + 0.25 * (hz3 - 0.5), 0.0, 1.2) * env * (1.0 - body) * behind * (0.7 + 0.5 * smoothstep(-0.6, 0.9, q.y));
+  float near = smoothstep(-0.45, -0.02, sdf);
+  vec3 cavC = mix(vec3(0.16, 0.42, 0.62), vec3(0.2, 0.62, 0.66), hz2);
+  vec3 frontC = mix(vec3(0.65, 0.75, 0.35), vec3(1.0, 0.72, 0.36), fl);
+  vec3 hazeCol = mix(cavC, frontC, near * 0.7);
+  vec3 skinC = mix(vec3(1.0, 0.58, 0.28), vec3(1.0, 0.86, 0.58), n4);
+  vec3 em = hazeCol * haze * 2.6
+          + skinC * skin * 40.0
+          + mix(vec3(1.0, 0.72, 0.4), vec3(0.55, 0.85, 0.75), 0.3) * ev * 4.5
+          + bodyE;
+  return vec4(em * 1.3, body * 26.0 + haze * 0.18 + ev * 0.3);
 }
 
 vec4 planetary(vec3 q, vec3 s, float hub){
@@ -215,7 +246,7 @@ export class Nebulae {
     });
     this.compositeMat = new THREE.ShaderMaterial({
       vertexShader: FS_VERT, fragmentShader: COMPOSITE_FRAG,
-      uniforms: { tVol: { value: this.rt.texture }, uVolSize: { value: new THREE.Vector2(4, 4) }, uGain: { value: 1 } },
+      uniforms: { tVol: { value: this.rt.texture }, uVolSize: { value: new THREE.Vector2(4, 4) }, uGain: { value: 1 }, uDetail: { value: 0 } },
       depthTest: false, depthWrite: false, transparent: true,
       blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
       blendSrc: THREE.OneFactor, blendDst: THREE.SrcAlphaFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,

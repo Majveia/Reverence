@@ -25,17 +25,17 @@ const ANIM_PARS = {
   npc: /* glsl */`
 attribute vec3 aA; attribute vec3 aB; attribute vec4 aP; attribute vec3 aTint;
 uniform vec3 uUpL; uniform float uTimeA;
-mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale;
+mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale; float rvHide;
 `,
   traffic: /* glsl */`
 attribute vec4 aL; attribute vec4 aL2;
 uniform vec3 uUpL; uniform vec3 uEastL; uniform vec3 uNorthL; uniform vec3 uSiteC; uniform float uRBase; uniform float uTimeA;
-mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale;
+mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale; float rvHide;
 `,
   boat: /* glsl */`
 attribute vec4 aL; attribute vec4 aL2;
 uniform vec3 uUpL; uniform vec3 uEastL; uniform vec3 uNorthL; uniform vec3 uSiteC; uniform float uRBase; uniform float uTimeA;
-mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale;
+mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale; float rvHide;
 `,
 };
 const ANIM_NORMAL = {
@@ -53,6 +53,7 @@ const ANIM_NORMAL = {
   rvRot = mat3(cross(up, fw), up, fw);
   rvWalk = aP.x > 0.01 ? s * L / 0.75 * 3.14159 : 0.0;
   rvScale = aP.z;
+  rvHide = aP.w;
 }
 objectNormal = rvRot * objectNormal;
 `,
@@ -75,7 +76,7 @@ objectNormal = rvRot * objectNormal;
   float bank = 0.25 * sign(aL2.y);
   up = normalize(up * cos(bank) + rt * sin(bank)); rt = cross(up, fw);
   rvRot = mat3(rt, up, fw);
-  rvWalk = 0.0; rvScale = 1.0;
+  rvWalk = 0.0; rvScale = 1.0; rvHide = 1.0;
 }
 objectNormal = rvRot * objectNormal;
 `,
@@ -94,7 +95,7 @@ objectNormal = rvRot * objectNormal;
   float roll = sin(uTimeA * 0.9 + aL2.x * 4.0) * 0.06, pitch = sin(uTimeA * 0.7 + aL2.x * 3.0) * 0.04;
   up = normalize(up + rt * roll + fw * pitch); fw = normalize(cross(rt, up)); rt = cross(up, fw);
   rvRot = mat3(rt, up, fw);
-  rvWalk = 0.0; rvScale = aL2.y;
+  rvWalk = 0.0; rvScale = aL2.y; rvHide = 1.0;
 }
 objectNormal = rvRot * objectNormal;
 `,
@@ -102,6 +103,8 @@ objectNormal = rvRot * objectNormal;
 const ANIM_POS = /* glsl */`
 {
   vec3 p = transformed * rvScale;
+  // optional props (hand lanterns) exist only on some instances: collapse them on the others
+  if (rvHide < 0.5 && aMat.w > 7.5 && aMat.w < 8.5) p = vec3(0.0, 0.9 * rvScale, 0.0);
   if (rvWalk != 0.0) {
     float sw = sin(rvWalk);
     if (p.y < 0.86 * rvScale) { float side = sign(p.x); p.z += (0.86 * rvScale - p.y) * sw * 0.55 * side; p.y += abs(sw) * 0.03 * step(0.0, side * sw); }
@@ -528,7 +531,8 @@ export function makeCivMaterial(style = {}, opts = {}) {
   };
   m.customProgramCacheKey = () => key;
   m.name = 'civ-uber' + (opts.key ? '-' + opts.key : '');
-  if (opts.polygonOffset) { m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -4; }
+  // three flips the factor for reversed depth but not the units: flip them here so the offset pulls toward the camera
+  if (opts.polygonOffset) { m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = opts.reversed ? 4 : -4; }
   m.userData.civ = ++_id;
   return m;
 }

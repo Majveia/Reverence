@@ -174,6 +174,26 @@ export function layoutSite(site, S, prof, quality = 1) {
     const L = polyLen(r.pts);
     for (let s = 0; s <= L; s += 1.5) { const p = along(r.pts, s); occ.disc(p.x, p.z, r.w / 2 + 0.6, 2); }
   }
+  // fortified enclosure (monastery kremlins, citadels): a ring wall with gates where roads cross.
+  // Reserved in the occupancy grid before any lot is placed, so houses never straddle the wall.
+  let wall = null;
+  if (prof.wall && (kind === 'town' || kind === 'city' || kind === 'metropolis') && !water) {
+    const wr = R * (prof.wall.r ?? 0.5);
+    const gates = [];
+    for (const r of roads) {
+      for (let i = 1; i < r.pts.length; i++) {
+        const a = r.pts[i - 1], b = r.pts[i];
+        const da = Math.hypot(a.x, a.z) - wr, db = Math.hypot(b.x, b.z) - wr;
+        if (da * db > 0) continue;
+        const t = da / (da - db);
+        const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+        const ang = Math.atan2(z, x);
+        if (!gates.some((g) => Math.abs(Math.atan2(Math.sin(g.a - ang), Math.cos(g.a - ang))) * wr < 16)) gates.push({ a: ang, w: r.w, main: r.type === 'spoke' || r.type === 'avenue' });
+      }
+    }
+    for (let a = 0; a < Math.PI * 2; a += 2 / wr) occ.disc(Math.cos(a) * wr, Math.sin(a) * wr, 3.2, 2);
+    wall = { r: wr, gates, h: prof.wall.h ?? 7 };
+  }
   // plaza
   occ.disc(0, 0, plazaR, 4);
   const plaza = { x: 0, z: 0, r: plazaR, h: G.g(0, 0) };
@@ -276,8 +296,9 @@ export function layoutSite(site, S, prof, quality = 1) {
       props.push({ type: 'lamp', x, z, rot: Math.atan2(-nx, -nz), h: G.g(x, z) });
       side = -side;
     }
-    // NPC walking paths: short road pieces
-    for (let s = rng.range(0, 20); s < L - 14; s += rng.range(18, 40)) {
+    // NPC walking paths: short road pieces, busier toward the centre and on main roads
+    const busy = r.type === 'avenue' || r.type === 'spoke' ? 0.6 : 1;
+    for (let s = rng.range(0, 12); s < L - 14; s += rng.range(9, 26) * busy * (0.6 + 0.8 * Math.min(1, Math.hypot(along(r.pts, s).x, along(r.pts, s).z) / R))) {
       const a = along(r.pts, s), b = along(r.pts, s + rng.range(10, 16));
       const off = (rng.next() < 0.5 ? -1 : 1) * r.w * 0.3;
       const ax = a.x - a.tz * off, az = a.z + a.tx * off, bx = b.x - b.tz * off, bz = b.z + b.tx * off;
@@ -291,12 +312,14 @@ export function layoutSite(site, S, prof, quality = 1) {
     const x = Math.cos(a) * dd, z = Math.sin(a) * dd;
     props.push({ type: 'stall', x, z, rot: Math.atan2(-x, -z), h: G.g(x, z) });
   }
-  for (let i = 0; i < 10; i++) {
+  // plaza crowd: strollers crossing the square + idlers chatting in small groups around the stalls
+  const crowd = kind === 'metropolis' ? 56 : kind === 'city' ? 44 : kind === 'town' ? 30 : kind === 'ruin' ? 0 : 14;
+  for (let i = 0; i < crowd; i++) {
     const a = rng.range(0, 6.28), dd = rng.range(plazaR * 0.3, plazaR * 0.85);
     const ax = Math.cos(a) * dd, az = Math.sin(a) * dd, a2 = a + rng.range(0.6, 1.6), bx = Math.cos(a2) * dd * 0.8, bz = Math.sin(a2) * dd * 0.8;
     paths.push({ ax, az, ah: G.g(ax, az), bx, bz, bh: G.g(bx, bz) });
   }
-  return { roads, lots, props, paths, plaza, ground: G, water };
+  return { roads, lots, props, paths, plaza, ground: G, water, wall };
 }
 
 export { polyLen, along };

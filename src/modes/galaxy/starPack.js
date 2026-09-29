@@ -25,7 +25,7 @@ export function blackbodyLinear(kelvin, out = [0, 0, 0]) {
 
 const _c = [0, 0, 0];
 // Stellar colors in photographs read more saturated than raw blackbody: gentle boost around luminance.
-export function starColor(kelvin, out = [0, 0, 0], sat = 1.35) {
+export function starColor(kelvin, out = [0, 0, 0], sat = 1.6) {
   blackbodyLinear(kelvin, _c);
   const l = 0.2126 * _c[0] + 0.7152 * _c[1] + 0.0722 * _c[2];
   for (let k = 0; k < 3; k++) out[k] = Math.max(0, l + (_c[k] - l) * sat);
@@ -38,7 +38,10 @@ const _sc = [0, 0, 0];
 /** Pack star record s into slot i. Returns the luminosity weight (for normalization sums). */
 export function packStar(s, i, pos, col, lum) {
   pos[i * 3] = s.x / 1000; pos[i * 3 + 1] = s.y / 1000; pos[i * 3 + 2] = s.z / 1000;
-  starColor(s.temperature, _sc);
+  const oldPop = s.component === 'spheroid' || s.component === 'halo' || s.component === 'bulge' || (s.component === 'disk' && !(s.young > 0.2));
+  // display only: an old population holds no hot main-sequence stars (B/A lifetimes ≪ its age); the
+  // catalogue class is untouched (picking shows the real record), the point shows the population's light
+  starColor(oldPop ? Math.min(s.temperature, 6200) : s.temperature, _sc);
   col[i * 4] = Math.round(Math.sqrt(_sc[0]) * 255);
   col[i * 4 + 1] = Math.round(Math.sqrt(_sc[1]) * 255);
   col[i * 4 + 2] = Math.round(Math.sqrt(_sc[2]) * 255);
@@ -48,7 +51,7 @@ export function packStar(s, i, pos, col, lum) {
   col[i * 4 + 3] = sph + ((s.follow ?? 0) & 3) * 16 + cluster + ci;
   let l = Math.log10(Math.max(1e-4, s.luminosity));
   // display only: old spheroids hold no bright hot stars (blue stragglers stay faint)
-  if (ci <= 2 && (s.component === 'spheroid' || s.component === 'halo' || s.component === 'bulge')) l -= 2.5;
+  if (ci <= 2 && oldPop) l = Math.min(l, 0.4) - 0.3;
   lum[i] = l;
   return Math.pow(10, l * 0.35);
 }

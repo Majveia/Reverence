@@ -13,7 +13,7 @@ export class StarField {
     const q = engine.quality;
     this.dustSteps = q.tier === 'low' ? 3 : q.tier === 'med' ? 5 : 8;
     const common = {
-      tMap: shared.tMap, tNoise: shared.tNoise, uMapR: shared.uMapR, uHDust: shared.uHDust, uFlare: shared.uFlare,
+      tMap: shared.tMap, tNoise: shared.tNoise, uMapR: shared.uMapR, uMapTexel: shared.uMapTexel, uHDust: shared.uHDust, uFlare: shared.uFlare,
       uR: shared.uR, uDustL: shared.uDustL, uNoiseF: shared.uNoiseF, uDustNoise: shared.uDustNoise, uExt: shared.uExt,
       uYmaxD: { value: 10 * S.hDust / 1000 * (1 + S.flare) },
       uDustSteps: { value: this.dustSteps },
@@ -22,9 +22,14 @@ export class StarField {
       uCamPat: { value: new THREE.Vector3() },
       uPixScale: { value: 500 },
       uEps: { value: 0.0025 }, uHaloR: { value: 2.2 }, uHaloFrac: { value: 0.035 }, uCoreSigma: { value: 0.62 },
-      uSpikeFrac: { value: 0.035 }, uSpikeMin: { value: 0.9 }, uSphW: { value: S.type === 'elliptical' ? 1.0 : 0.4 },
+      uSpikeFrac: { value: 0.035 }, uSpikeMin: { value: 2.2 }, uSphW: { value: S.type === 'elliptical' ? 1.0 : 0.4 },
+      // old-disk tracers (differential rotation): unresolved at galaxy scale → mostly diffuse light, faint grain
+      uDiskW: { value: S.type === 'lenticular' ? 0.6 : 0.45 },
     };
     this.common = common;
+    // gain of ONE real star (local LOD stars, and global tracers seen up close): a long-exposure
+    // astrophoto of the neighbourhood — a Sun at 250 ly is a faint point, a B giant there a bright one
+    this.singleGain = 1.5e-7;
     const mk = (own) => new THREE.ShaderMaterial({
       vertexShader: STAR_VERT, fragmentShader: STAR_FRAG,
       uniforms: { ...common, ...own },
@@ -34,14 +39,16 @@ export class StarField {
       blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
     });
     this.globalMat = mk({
-      uGain: { value: 1e-4 }, uLumExp: { value: 0.35 }, uSoft: { value: 0.02 }, uWeight: { value: 1 }, uLocal: { value: 0 },
+      uGain: { value: 1e-4 }, uLumExp: { value: 0.6 }, uSoft: { value: 0.02 }, uWeight: { value: 1 }, uLocal: { value: 0 },
       uFadeNear: { value: new THREE.Vector2(0, 0.001) }, uLodCenter: { value: new THREE.Vector3() }, uLodRadius: { value: 1 },
-      uMaxSize: { value: Math.min(64, maxPointSize) }, uClusterBoost: { value: 1.6 },
+      uMaxSize: { value: Math.min(64, maxPointSize) }, uClusterBoost: { value: 1.1 },
+      uGainNear: { value: 1.5e-7 }, uNearD: { value: new THREE.Vector2(0.3, 6.0) },
     });
     this.localMat = mk({
-      uGain: { value: 1e-6 }, uLumExp: { value: 0.62 }, uSoft: { value: 0.0005 }, uWeight: { value: 0 }, uLocal: { value: 1 },
+      uGain: { value: 1e-6 }, uLumExp: { value: 0.5 }, uSoft: { value: 0.0005 }, uWeight: { value: 0 }, uLocal: { value: 1 },
       uFadeNear: { value: new THREE.Vector2(0, 1e-6) }, uLodCenter: { value: new THREE.Vector3() }, uLodRadius: { value: 1 },
-      uMaxSize: { value: maxPointSize }, uClusterBoost: { value: 1 },
+      uMaxSize: { value: Math.min(44, maxPointSize) }, uClusterBoost: { value: 1 },
+      uGainNear: { value: 0 }, uNearD: { value: new THREE.Vector2(0.3, 6.0) },
     });
     this.global = null;
     this.local = null;

@@ -511,8 +511,66 @@ S.neon = {
     if (lot.type === 'tower') {
       const lvl = ctx.level;
       const H = (lvl >= 5 ? 1.3 : 1) * (t < 0.25 ? rng.range(110, 220) : t < 0.5 ? rng.range(60, 130) : rng.range(35, 75)) * (ctx.kind === 'town' ? 0.55 : 1);
-      const y = tower(g, ctx, { w, d, h: H, fh: 3.6, podium: true, podM: M.wall2, wall: rng.next() < 0.5 ? M.wall : M.wall2, wallUp: M.wallUp, neon: true, seedN: rng.int(0, 3), shrink: rng.range(0.72, 0.88), winSx: 2.2 });
-      neonDress(g, ctx, w, d, H);
+      const v = rng.next();
+      let y;
+      if (v < 0.22 && Math.abs(w - d) < 8) {
+        // round glass tower: podium, tapering drum with neon rings and vertical mullion fins
+        const r = Math.min(w, d) / 2;
+        g.windows(4, 4.2, 0); g.box(0, 0, 0, w + 4, 8.4, d + 4, 0.1, M.wall2); g.box(0, 8.4, 0, w + 4.4, 0.5, d + 4.4, 0.05, M.trim);
+        g.windows(2.0, 3.6, 8.9);
+        g.cyl(0, 8.9, 0, r, r * 0.82, H - 8.9, 24, false, M.wallUp);
+        const nm = M.neon[rng.int(0, 3)];
+        for (let yy = 20; yy < H - 4; yy += rng.range(14, 26)) { const rr = r - (r * 0.18) * (yy - 8.9) / (H - 8.9); g.cyl(0, yy, 0, rr + 0.25, rr + 0.25, 0.35, 24, false, nm); }
+        for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; g.push().rotY(a).translate(0, 8.9, r - 0.1); g.box(0, 0, 0.15, 0.25, (H - 8.9) * 0.97, 0.45, 0, M.trim); g.pop(); }
+        g.cyl(0, H, 0, r * 0.84, r * 0.6, 3, 24, true, M.metal);
+        P.antenna(g, 0, H + 3, 0, Math.max(10, H * 0.18), M.metal);
+        g.collider(0, H / 2, 0, r, H / 2, r);
+        y = H + 3;
+      } else if (v < 0.45) {
+        // residential megablock: stacked balcony slabs, laundry-lit windows, AC units, rooftop tanks
+        const fh = 3.2;
+        g.windows(2.4, fh, 0);
+        g.box(0, 0, 0, w, H, d, 0.1, M.wall2);
+        for (let yy = fh * 2; yy < H - 2; yy += fh * (rng.next() < 0.5 ? 1 : 2)) {
+          g.box(0, yy - 0.12, d / 2 + 0.5, w * 0.94, 0.2, 1.0, 0.02, M.concrete);
+          g.box(0, yy + 0.08, d / 2 + 0.98, w * 0.94, 0.9, 0.05, 0, M.iron);
+        }
+        for (let i = 0; i < Math.round(H / 7); i++) g.box(rng.range(-w / 2 + 1, w / 2 - 1), rng.range(4, H - 3), -d / 2 - 0.45, 0.9, 0.7, 0.8, 0.05, M.metal);
+        for (let i = 0; i < 2; i++) { const tx = (i ? 1 : -1) * w * 0.22; g.cyl(tx, H, rng.range(-d / 4, d / 4), 1.6, 1.6, 3.5, 10, true, M.rust); for (const sx of [-1, 1]) g.box(tx + sx, H, 0, 0.12, 0.8, 0.12, 0, M.iron); }
+        g.box(0, H, 0, w + 0.3, 0.8, d + 0.3, 0.03, M.trim);
+        const nm = M.neon[rng.int(0, 3)];
+        g.box(0, H + 0.8, d / 2 + 0.1, w * 0.9, 0.18, 0.1, 0, nm);
+        g.collider(0, H / 2, 0, w / 2, H / 2, d / 2);
+        y = H + 4;
+      } else {
+        y = tower(g, ctx, { w, d, h: H, fh: 3.6, podium: true, podM: M.wall2, wall: rng.next() < 0.5 ? M.wall : M.wall2, wallUp: M.wallUp, neon: true, seedN: rng.int(0, 3), shrink: rng.range(0.72, 0.88), winSx: 2.2, crown: rng.next() < 0.3 ? 'spire' : undefined });
+        // vertical fins / exoskeleton ribs on the shaft: real relief that catches the neon light
+        if (rng.next() < 0.6) {
+          const nf = Math.max(2, Math.round(w / 3.2));
+          for (let i = 0; i < nf; i++) { const x = -w / 2 + (i + 0.5) * w / nf; for (const sz of [-1, 1]) g.box(x, 8.9, sz * (d / 2 + 0.2), 0.3, Math.min(H * 0.45, 70), 0.5, 0, M.trim); }
+        }
+      }
+      // vertical blade sign running up the corner, and an edge-lit crown
+      if (rng.next() < 0.55) {
+        const hm = M.holo[rng.int(0, M.holo.length - 1)], sh = Math.min(H * 0.5, rng.range(18, 40)), sy = rng.range(10, Math.max(11, H * 0.4));
+        g.push().translate((rng.next() < 0.5 ? -1 : 1) * (w / 2 + 0.9), sy, d / 2 - 1).rotY(Math.PI / 2);
+        g.box(0, 0, 0, 2.2, sh, 0.3, 0.03, M.metal); g.box(0, 0.3, 0.17, 1.8, sh - 0.6, 0.06, 0, hm); g.box(0, 0.3, -0.17, 1.8, sh - 0.6, 0.06, 0, hm);
+        g.pop();
+        g.light((w / 2 + 1), sy + sh * 0.5, d / 2, hm.color, 6, 5, 0);
+      }
+      // street frontage sits on the podium face (round: w+4, setback: w+6, megablock: flush)
+      const pod = v < 0.22 && Math.abs(w - d) < 8 ? 4 : v < 0.45 ? 0 : 6;
+      // big holo billboard standing on the podium roof, facing the street (second layer of signage)
+      if (pod && rng.next() < 0.6) {
+        const hm = M.holo[rng.int(0, M.holo.length - 1)], bw = Math.min(w * 0.7, 14), bh = rng.range(3.5, 6);
+        g.push().translate(rng.range(-w * 0.15, w * 0.15), 8.9, (d + pod) / 2 - 1.2);
+        for (const sx of [-1, 1]) g.box(sx * bw * 0.35, 0, -0.3, 0.25, 2.2, 0.25, 0, M.iron);
+        g.box(0, 2.0, -0.35, bw + 0.4, bh + 0.4, 0.25, 0.03, M.metal);
+        g.box(0, 2.2, -0.2, bw, bh, 0.06, 0, hm);
+        g.pop();
+        g.light(0, 8.9 + 2.2 + bh / 2, (d + pod) / 2 + 2, hm.color, 5, bw * 0.4, 0);
+      }
+      neonDress(g, ctx, w + pod, d + pod, pod ? 8.4 : Math.min(H, 40));
       return y;
     }
     // low block: shops with signage, stacked AC units, pipes
@@ -528,12 +586,45 @@ S.neon = {
   road: () => 'road',
 };
 
+/** Hanging blade signs over the sidewalk, perpendicular to the facade (Kowloon / Blade Runner canyon). */
+function bladeSigns(g, ctx, w, d, nb) {
+  const { M, rng } = ctx;
+  for (let i = 0; i < nb; i++) {
+    const holo = rng.next() < 0.45;
+    const hm = holo ? M.holo[rng.int(0, M.holo.length - 1)] : M.neon[rng.int(0, M.neon.length - 1)];
+    const sx = -w * 0.4 + (i + rng.range(0.2, 0.8)) * w * 0.8 / nb, sh = rng.range(2.4, 7), sy = rng.range(4.4, 9);
+    for (const yy of [sy + sh - 0.3, sy + 0.3]) g.box(sx, yy, d / 2 + 0.5, 0.08, 0.08, 1.0, 0, M.iron);
+    g.box(sx, sy, d / 2 + 1.55, 0.3, sh, 1.3, 0.02, M.metal);
+    for (const sz of [-1, 1]) g.box(sx + sz * 0.17, sy + 0.12, d / 2 + 1.55, 0.04, sh - 0.24, 1.14, 0, hm);
+    g.light(sx, sy + sh * 0.5, d / 2 + 1.6, hm.color, 3.5, 1.4 + sh * 0.3, 0);
+  }
+}
+
+const SHOP = ['#e89a4a', '#3ab0d8', '#d84a98', '#e8c080', '#6ad84a', '#8a5ad8'].map((c) => mat(c, 0.3, 0, PAT.LAMP, 1.0));
 function neonDress(g, ctx, w, d, H) {
   const { M, rng } = ctx;
   // shopfront: glowing band, awnings, vertical kanji-like sign, holo billboard, AC units, pipes
   const nm = M.neon[rng.int(0, M.neon.length - 1)];
   g.box(0, 3.4, d / 2 + 0.2, w * 0.9, 0.35, 0.2, 0, nm);
-  g.box(0, 0, d / 2 + 0.05, w * 0.85, 3.2, 0.1, 0, mat('#2a3440', 0.1, 0.4, PAT.GLASS));
+  // shopfront: mullioned glass over a lit interior (noodle bars, pawn shops, clinics)
+  const shop = SHOP[rng.int(0, SHOP.length - 1)];
+  g.box(0, 0, d / 2 + 0.02, w * 0.85, 3.2, 0.08, 0, shop);
+  for (let i = 0; i <= 4; i++) g.box(-w * 0.425 + i * w * 0.2125, 0, d / 2 + 0.1, 0.12, 3.2, 0.08, 0, M.trim);
+  g.box(0, 2.3, d / 2 + 0.1, w * 0.85, 0.1, 0.08, 0, M.trim);
+  g.light(0, 1.2, d / 2 + 1.8, shop.color, 2.5, 3.5, 0);
+  bladeSigns(g, ctx, w, d, 1 + (w > 12 ? 1 : 0) + (rng.next() < 0.5 ? 1 : 0));
+  // side facades face cross streets in the grid: shop band + blade signs there too
+  for (const side of [-1, 1, 2]) {
+    if (rng.next() < 0.3) continue;
+    const back = side === 2, fw = back ? w : d, fd = back ? d : w; // facade width / depth to that face
+    g.push().rotY(back ? Math.PI : side * Math.PI / 2);
+    const sm = SHOP[rng.int(0, SHOP.length - 1)];
+    g.box(0, 0, fd / 2 + 0.02, fw * 0.7, 3.0, 0.08, 0, sm);
+    g.box(0, 3.3, fd / 2 + 0.15, fw * 0.75, 0.3, 0.15, 0, M.neon[rng.int(0, M.neon.length - 1)]);
+    g.light(0, 1.2, fd / 2 + 1.8, sm.color, 2.5, 3.5, 0);
+    bladeSigns(g, ctx, fw, fd, 1 + (fw > 12 ? 1 : 0));
+    g.pop();
+  }
   P.awning(g, 0, 3.2, d / 2 + 0.2, w * 0.8, M.canvas);
   g.light(0, 3.3, d / 2 + 1.2, nm.color, 3, 3, 0);
   if (rng.next() < 0.8) {
@@ -747,7 +838,7 @@ S.organic = {
     const fl = pal.flora || ['#2e7d5b', '#5fbf8f', '#e27fb0', '#7fd2ff', '#ffd36b'];
     return {
       shell: mat('#e8dcc4', 0.55, 0.05), shell2: mat('#d8c8b0', 0.6), wall: mat('#efe4cf', 0.6, 0, PAT.ARCHWIN),
-      pods: fl.map((c) => tint(mat(c, 0.45, 0.1), 0.85, 0, -0.18)), stem: mat('#8a7a68', 0.8, 0, PAT.STONE), found: mat('#9a8a78', 0.9, 0, PAT.STONE), stone: mat('#b8a890', 0.85, 0, PAT.STONE),
+      pods: fl.map((c) => tint(mat(c, 0.3, 0.15), 0.85, 0, -0.18)), stem: mat('#8a7a68', 0.8, 0, PAT.STONE), found: mat('#9a8a78', 0.9, 0, PAT.STONE), stone: mat('#b8a890', 0.85, 0, PAT.STONE),
       trim: mat(pal.accent ?? '#6fffe9', 0.4, 0.2), metal: mat('#a8a098', 0.35, 0.7), iron: mat('#6a6258', 0.5, 0.5), wood: mat('#8a6a4a', 0.8, 0, PAT.PLANKS),
       roof: mat(fl[2] ?? '#e27fb0', 0.5), glass: mat('#7fd2ff', 0.05, 0.5, PAT.GLASS), door: mat('#4a3a2a', 0.6),
       leaf: mat(fl[1] ?? '#5fbf8f', 0.9), bark: mat('#6a5a48', 0.9), canvas: mat('#f0e8d8', 0.95, 0, PAT.FABRIC), glowPod: mat(pal.accent ?? '#6fffe9', 0.3, 0, PAT.LAMP, 5),
@@ -788,12 +879,21 @@ S.organic = {
       return w * 0.55;
     }
     if (lot.type === 'stalk') {
-      // tall stem with stacked pod dwellings (mushroom-tower)
-      const h = rng.range(22, 42) * (ctx.level >= 5 ? 1.4 : 1);
+      // tall stem with stacked pod dwellings (mushroom-tower); in big cities a few colossal ones with a
+      // spiral shell ribbon — the skyline needs a scale hierarchy, not a field of equal pods
+      const giant = lot.t < 0.3 && (ctx.kind === 'metropolis' || ctx.kind === 'city') && rng.next() < 0.45;
+      const h = giant ? rng.range(70, 125) : rng.range(22, 42) * (ctx.level >= 5 ? 1.4 : 1);
+      if (giant) {
+        const pts = [];
+        const turns = rng.range(1.6, 2.6), ph = rng.range(0, 6.28);
+        for (let i = 0; i <= 40; i++) { const t = i / 40, a = ph + t * turns * Math.PI * 2, rr = r * (0.9 - 0.45 * t) + 1.5; pts.push(V(Math.cos(a) * rr, h * 0.12 + t * h * 0.8, Math.sin(a) * rr)); }
+        g.tube(pts, (t) => 0.9 - 0.5 * t, 8, M.shell);
+        for (let i = 4; i < 40; i += 7) g.light(pts[i].x, pts[i].y, pts[i].z, '#bffff4', 3, 1.6, 0);
+      }
       g.lathe(0, -1, 0, [[r * 0.55, 0], [r * 0.3, h * 0.2], [r * 0.22, h * 0.7], [r * 0.35, h]], 14, M.stem);
-      const n = rng.int(2, 4);
+      const n = giant ? rng.int(4, 6) : rng.int(2, 4);
       for (let i = 0; i < n; i++) {
-        const y = h * (0.45 + i / n * 0.55), pr = r * rng.range(0.5, 0.85);
+        const y = h * (0.45 + i / n * 0.55), pr = r * rng.range(0.5, 0.85) * (giant ? 1.5 - i / n * 0.6 : 1);
         const pm = M.pods[rng.int(0, M.pods.length - 1)];
         g.push().translate(0, y, 0);
         g.lathe(0, 0, 0, [[0.2, -pr * 0.5], [pr * 0.8, -pr * 0.35], [pr * 1.05, 0], [pr * 0.9, pr * 0.35], [pr * 0.4, pr * 0.6], [0.05, pr * 0.62]], 18, pm);
@@ -848,8 +948,13 @@ S.monastery = {
   mats() {
     return {
       wall: mat('#e6e2d8', 0.85, 0, PAT.ARCHWIN), wallS: mat('#b8b2a4', 0.9, 0, PAT.STONE), stoneWin: mat('#a8a294', 0.9, 0, PAT.ARCHWIN), stone: mat('#9e988a', 0.92, 0, PAT.STONE),
-      found: mat('#7e7a70', 0.95, 0, PAT.MOSS), trim: mat('#f2efe8', 0.7), roof: mat('#3e4a48', 0.6, 0.3, PAT.TILES), roofs: [mat('#3e4a48', 0.6, 0.3, PAT.TILES), mat('#4a5a44', 0.6, 0.3, PAT.TILES)],
-      dome: mat('#c8a048', 0.25, 0.9), domeG: mat('#3a6a5a', 0.4, 0.6), wood: mat('#5a4636', 0.85, 0, PAT.PLANKS), door: mat('#4a3626', 0.7, 0, PAT.PLANKS),
+      // Tarkovsky palette: whitewash, ochre, faded rose and sky-blue plaster, wooden izbas
+      walls: [mat('#e6e2d8', 0.85, 0, PAT.ARCHWIN), mat('#d9b98a', 0.88, 0, PAT.ARCHWIN), mat('#d6a49a', 0.88, 0, PAT.ARCHWIN), mat('#a9bcc8', 0.88, 0, PAT.ARCHWIN), mat('#e9dcc0', 0.86, 0, PAT.WINDOWS)],
+      izba: mat('#6e5238', 0.9, 0, PAT.PLANKS), izbaWin: mat('#6e5238', 0.9, 0, PAT.WINDOWS),
+      wallW: mat('#ebe7dd', 0.88, 0, PAT.PLAIN), wallCap: mat('#6a4a3a', 0.7, 0.1, PAT.TILES),
+      found: mat('#7e7a70', 0.95, 0, PAT.MOSS), trim: mat('#f2efe8', 0.7), roof: mat('#3e4a48', 0.6, 0.3, PAT.TILES),
+      roofs: [mat('#3e4a48', 0.6, 0.3, PAT.TILES), mat('#3f6a52', 0.55, 0.35, PAT.TILES), mat('#8a3a2c', 0.7, 0.1, PAT.TILES), mat('#5a6a78', 0.55, 0.4, PAT.CORRUGATED), mat('#7a5a3a', 0.9, 0, PAT.PLANKS)],
+      dome: mat('#c8a048', 0.25, 0.9), domeG: mat('#3a6a5a', 0.4, 0.6), domeB: mat('#2e4e8a', 0.35, 0.5), wood: mat('#5a4636', 0.85, 0, PAT.PLANKS), door: mat('#4a3626', 0.7, 0, PAT.PLANKS),
       metal: mat('#6a6a68', 0.4, 0.7), iron: mat('#2e2e2e', 0.5, 0.7), glass: mat('#506070', 0.1, 0.4, PAT.GLASS), leaf: mat('#3f5a45', 0.9), bark: mat('#4a3e34', 0.95),
       lampGlow: mat('#ffc680', 0.4, 0, PAT.LAMP, 6), road: mat('#8e887a', 0.9, 0, PAT.COBBLE), path: mat('#7e7864', 0.95, 0, PAT.DIRT), plaza: mat('#9a9486', 0.9, 0, PAT.PAVING),
       statue: mat('#d8d4ca', 0.7, 0, PAT.STONE), glow: mat('#ffd8a0', 0.4, 0, PAT.LAMP, 8), canvas: mat('#d8d0c0', 0.95, 0, PAT.FABRIC),
@@ -857,8 +962,12 @@ S.monastery = {
   },
   profile: {
     roadW: 3.6, streetW: 2.6, slopeTol: 0.8, slopeAdd: 5, density: 0.85, infill: 2, lampSpacing: 24,
-    lot(t, rng) {
-      if (rng.next() < 0.12) return { w: 8, d: 8, type: 'chapel', setback: 2 };
+    wall: { r: 0.46, h: 7.5 },
+    lot(t, rng, kind) {
+      const r = rng.next();
+      if (t > 0.25 && t < 0.6 && r < 0.05 && kind !== 'village') return { w: 7, d: 7, type: 'belfry', setback: 2 };
+      if (r < 0.12) return { w: 8, d: 8, type: 'chapel', setback: 2 };
+      if (t > 0.55 && r < 0.45) return { w: rng.range(6, 8), d: rng.range(5.5, 7), type: 'izba', setback: rng.range(2, 4) };
       return { w: rng.range(7, 12), d: rng.range(6, 9), type: t < 0.4 ? 'big' : 'house', setback: rng.range(1.5, 3) };
     },
   },
@@ -868,24 +977,78 @@ S.monastery = {
     const { w, d } = lot;
     if (lot.type === 'landmark') return cathedral(g, ctx, w, d);
     if (lot.type === 'spaceport') return spaceportPad(g, ctx);
+    if (lot.type === 'belfry') return belfry(g, ctx, rng.range(24, 34));
     if (lot.type === 'chapel') {
+      const wm = M.walls[rng.int(0, 3)];
+      const tall = rng.range(5, 8);
       g.windows(1.6, 5, 0);
       g.box(0, -0.2, 0, 5.6, 0.6, 5.6, 0.05, M.found);
-      g.box(0, 0, 0, 5, 6, 5, 0.06, M.wall);
-      g.cyl(0, 6, 0, 2.2, 2.2, 3, 10, false, M.wall);
-      onion(g, 0, 9, 0, 2.3, rng.next() < 0.5 ? M.dome : M.domeG, M);
+      g.box(0, 0, 0, 5, tall, 5, 0.06, wm);
+      // kokoshnik gables around the drum base
+      for (let i = 0; i < 4; i++) { g.push().rotY(i * Math.PI / 2).translate(0, tall, 2.5); g.cyl(0, 0, 0, 1.2, 1.2, 0.3, 10, true, plain(wm), { a0: 0, a1: Math.PI }); g.pop(); }
+      g.cyl(0, tall, 0, 2.2, 2.2, rng.range(2.5, 4.5), 10, false, wm);
+      const dm = [M.dome, M.domeG, M.domeB][rng.int(0, 2)];
+      onion(g, 0, tall + 3, 0, 2.3, dm, M);
+      // apse at the back
+      g.cyl(0, 0, -2.5, 1.8, 1.8, tall * 0.7, 12, true, wm, { a0: Math.PI, a1: Math.PI * 2 });
       P.door(g, 0, 2.5, 1.1, 2.4, M, M.stone, M.lampGlow);
       g.collider(0, 4.5, 0, 2.6, 4.5, 2.6);
-      return 15;
+      return tall + 9;
+    }
+    if (lot.type === 'izba') {
+      // log house: dark planks, carved white window frames, steep plank roof, gable-end to the street
+      const fl = rng.next() < 0.3 ? 2 : 1;
+      g.push().rotY(Math.PI / 2);
+      const H = house(g, ctx, { w: d, d: w, floors: fl, fh: 2.8, wall: M.izbaWin, roofM: rng.next() < 0.6 ? M.roofs[4] : M.roofs[3], roofH: Math.min(w, d) * rng.range(0.7, 0.95),
+        winSx: 2.0, chimney: true, eave: 0.6, door: false, baseM: M.found });
+      g.pop();
+      P.door(g, 0, d / 2, 1.0, 2.1, M, M.trim, M.lampGlow);
+      // porch with a little plank roof
+      g.box(0, 0, d / 2 + 1.0, 2.2, 0.35, 1.6, 0.03, M.wood);
+      for (const sx of [-1, 1]) g.box(sx * 1.0, 0.35, d / 2 + 1.7, 0.14, 2.3, 0.14, 0, M.wood);
+      g.box(0, 2.65, d / 2 + 1.0, 2.4, 0.12, 1.8, 0, M.roofs[4]);
+      return H;
     }
     const big = lot.type === 'big';
     const fl = big ? rng.int(2, 3) : rng.int(1, 2);
     const extraFound = Math.max(0, lot.hMax - lot.hMin);
-    return house(g, ctx, { w, d, floors: fl, fh: 3.2, wall: rng.next() < 0.6 ? M.wall : M.stoneWin, roofM: M.roofs[rng.int(0, 1)], roofH: Math.min(w, d) * rng.range(0.6, 0.85),
-      winSx: 2.4, chimney: rng.next() < 0.5, eave: 0.3, band: true, doorLamp: true, baseM: M.found, quoins: extraFound < 2 && rng.next() < 0.3 });
+    const wm = M.walls[rng.int(0, M.walls.length - 1)];
+    const roofKind = rng.next();
+    const H = house(g, ctx, { w, d, floors: fl, fh: 3.2, wall: wm, roofM: M.roofs[rng.int(0, 3)], roofH: Math.min(w, d) * rng.range(0.45, 0.95),
+      roof: roofKind < 0.22 ? 'hip' : 'gable', winSx: 2.4, chimney: rng.next() < 0.5, eave: 0.3, band: true, doorLamp: true, baseM: M.found, quoins: extraFound < 2 && rng.next() < 0.3 });
+    const fh = fl * 3.2;
+    // merchant houses: a tiny rooftop cupola or a gallery porch
+    if (big && rng.next() < 0.35) { g.cyl(0, fh + Math.min(w, d) * 0.3, 0, 0.8, 0.8, 1.6, 8, false, wm); onion(g, 0, fh + Math.min(w, d) * 0.3 + 1.6, 0, 0.8, [M.dome, M.domeG, M.domeB][rng.int(0, 2)], M); }
+    else if (rng.next() < 0.3) { g.box(0, 0, d / 2 + 1.0, w * 0.7, 0.25, 2.0, 0.03, M.wood); for (const sx of [-1, 1]) g.box(sx * w * 0.33, 0.25, d / 2 + 1.9, 0.14, 2.6, 0.14, 0, M.wood); g.box(0, 2.85, d / 2 + 1.0, w * 0.74, 0.12, 2.2, 0, M.roofs[4]); }
+    return H;
   },
   road: (r) => (r.type === 'spoke' ? 'road' : 'path'),
 };
+
+/** Free-standing tiered bell tower (kolokolnya): square base, octagonal arcaded tiers, tent roof + onion. */
+function belfry(g, ctx, H) {
+  const { M, rng } = ctx;
+  const wm = M.walls[rng.int(0, 2)];
+  g.box(0, -0.4, 0, 7.4, 0.9, 7.4, 0.05, M.found);
+  g.windows(2.2, H * 0.25, 0);
+  g.box(0, 0, 0, 6.4, H * 0.32, 6.4, 0.06, wm);
+  g.box(0, H * 0.32, 0, 6.8, 0.35, 6.8, 0.03, M.trim);
+  let y = H * 0.32 + 0.35, r = 2.9;
+  for (let tier = 0; tier < 3; tier++) {
+    const th = H * (tier === 0 ? 0.2 : 0.14);
+    // arcaded bell stage: 8 piers with openings between them (dark interior + bell)
+    g.cyl(0, y, 0, r * 0.75, r * 0.75, th, 8, false, mat('#1c1a18', 0.9));
+    for (let i = 0; i < 8; i++) { const a = (i + 0.5) / 8 * Math.PI * 2; g.box(Math.cos(a) * r * 0.92, y, Math.sin(a) * r * 0.92, 0.7, th, 0.7, 0.03, wm); }
+    g.cyl(0, y + th, 0, r + 0.2, r + 0.2, 0.45, 8, true, M.trim);
+    if (tier < 2) { g.push().translate(0, y + th * 0.25, 0); g.lathe(0, 0, 0, [[0.05, th * 0.55], [r * 0.3, th * 0.5], [r * 0.38, th * 0.15], [r * 0.45, 0]], 10, M.metal); g.pop(); }
+    g.light(0, y + th * 0.5, 0, '#ffc680', 4, 2.4, 2);
+    y += th + 0.45; r *= 0.8;
+  }
+  g.cyl(0, y, 0, r + 0.2, 0.25, H * 0.26, 8, true, M.roofs[1]);
+  onion(g, 0, y + H * 0.26, 0, 0.8, M.dome, M);
+  g.collider(0, H / 2, 0, 3.2, H / 2, 3.2);
+  return y + H * 0.26 + 2;
+}
 
 function onion(g, x, y, z, r, M, MM) {
   g.lathe(x, y, z, [[r * 0.75, 0], [r * 1.05, r * 0.55], [r * 0.9, r * 1.05], [r * 0.45, r * 1.5], [r * 0.12, r * 1.85], [0.04, r * 2.1]], 16, M);

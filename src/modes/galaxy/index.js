@@ -35,9 +35,9 @@ export default class GalaxyMode extends Mode {
     super(engine);
     this.inputScheme = 'orbit';
     this.look = {
-      exposure: 0.8, tonemap: 'agx',
-      bloom: { strength: 0.32, radius: 0.8, threshold: 1.4, knee: 0.8 },
-      vignette: 0.3, grain: 0.018, chromatic: 0.0006, saturation: 1.12, contrast: 1.05,
+      exposure: 0.8, tonemap: 'agx', filmLook: { power: 1.06, saturation: 1.3 },
+      bloom: { strength: 0.26, radius: 0.8, threshold: 1.6, knee: 0.8 },
+      vignette: 0.3, grain: 0.018, chromatic: 0.0006, saturation: 1.18, vibrance: 0.15, contrast: 1.06,
     };
     this.workers = [];
     this.pending = 0;
@@ -86,9 +86,13 @@ export default class GalaxyMode extends Mode {
         const [k, v] = kv.split(':');
         const un = this.volume.uniforms['u' + k] ?? this.stars.common['u' + k] ?? this.stars.globalMat.uniforms['u' + k];
         if (un && typeof un.value === 'number' && Number.isFinite(+v)) un.value = +v;
-        else if (k === 'exp') this.look.exposure = +v;
+        else if (k === 'exp') { this.look.exposure = +v; this._expSet = true; }
         else if (k === 'stars') this.starGainMul = +v;
         else if (k === 'HaloL') this.volume.uniforms.uHalo.value.y = +v;
+        else if (k === 'BarL') this.volume.uniforms.uBar.value.w = +v;
+        else if (k === 'EnvL') this.volume.uniforms.uBulgeH.value.y = +v;
+        else if (k === 'EnvA') this.volume.uniforms.uBulgeH.value.x = +v;
+        else if (k === 'meter') { this.edgeMeter = +v; this._meterSet = true; }
       }
     }
     this._startGlobalGeneration(n);
@@ -103,11 +107,17 @@ export default class GalaxyMode extends Mode {
     const R = this.R;
     const yaw = params.yaw !== undefined ? parseFloat(params.yaw) * DEG : 0.55;
     const pitch = params.pitch !== undefined ? parseFloat(params.pitch) * DEG : 44 * DEG;
-    const dist = params.dist !== undefined ? parseFloat(params.dist) : R * (gal.type === 'elliptical' ? 1.5 : gal.type === 'lenticular' ? 2.3 : 2.45);
+    const dist = params.dist !== undefined ? parseFloat(params.dist) : R * (gal.type === 'elliptical' ? 1.5 : gal.type === 'lenticular' ? 2.3 : 1.95);
     const minD = this.blackHole ? this.blackHole.rs * 2.2 : 1e-10;
     this.rig = new GalaxyCamera(this.camera, { distance: dist, yaw, pitch, minDistance: minD, maxDistance: R * 12, maxTarget: R * 1.6 });
     this._applyFocus(params);
 
+    // per-type look: early types are metered for their huge bulges and kept creamy (not orange)
+    if (gal.type === 'lenticular' || gal.type === 'elliptical') {
+      if (!this._meterSet) this.edgeMeter = 0.12;
+      this.look.filmLook = { power: 1.04, saturation: 1.12 };
+      if (!this._expSet) this.look.exposure = gal.type === 'lenticular' ? 1.0 : 0.85;
+    }
     e.ui.setLocation({ scale: 'Galaxy', title: gal.name, subtitle: `${gal.type} galaxy` });
     e.ui.showTitle(gal.name.toUpperCase(), `${gal.type} galaxy · ${(gal.starCount / 1e9).toFixed(0)} billion stars`, 3000);
     e.ui.hint('drag to orbit · scroll or pinch to zoom · tap a star to select · double-tap to travel');
@@ -131,7 +141,7 @@ export default class GalaxyMode extends Mode {
       if (nb) {
         this.rig.setView({ target: new THREE.Vector3(nb.x, nb.y + (nb.kind === 'pillars' ? nb.radius * 0.1 : 0), nb.z).multiplyScalar(1 / 1000) });
         if (nb.kind === 'pillars' && params.yaw === undefined) this.rig.setView({ yaw: nb.tilt[0] });
-        setD(nb.radius / 1000 * (nb.kind === 'pillars' ? 2.5 : nb.kind === 'emission' ? 2.7 : 3.0), nb.kind === 'pillars' ? 4 : 18);
+        setD(nb.radius / 1000 * (nb.kind === 'pillars' ? 2.1 : nb.kind === 'emission' ? 2.7 : 3.0), nb.kind === 'pillars' ? 4 : 18);
         if (params.dist !== undefined) this.rig.setView({ distance: parseFloat(params.dist) * nb.radius / 1000 });
       }
     } else if (f.startsWith('star') || f === 'local' || params.star !== undefined) {
@@ -224,7 +234,9 @@ export default class GalaxyMode extends Mode {
     const u = this.volume.uniforms;
     const rd = this.S.rd / 1000;
     const diskLight = u.uOldL.value * 2 * Math.PI * rd * rd + u.uBulgeL.value * 0.9;
-    const frac = this.galaxy.type === 'elliptical' ? 0.06 : 0.2;
+    // (lumSum is Σ L^0.35; with uLumExp 0.6 the brightest young supergiants carry most of the tracer
+    // light → Hubble-like resolved sparkle along the arms over a smooth unresolved disk)
+    const frac = this.galaxy.type === 'elliptical' ? 0.1 : 0.4;
     const sum = Math.max(1e-6, this.stars.lumSum);
     this.stars.globalMat.uniforms.uGain.value = frac * diskLight / sum * (this.starGainMul ?? 1);
   }
@@ -258,7 +270,9 @@ export default class GalaxyMode extends Mode {
       lm.uWeight.value = k;
       lm.uLodCenter.value.copy(lod.center);
       lm.uLodRadius.value = lod.radius;
-      lm.uGain.value = 1.4e-10;
+      let nf = 0;
+      for (const it of this.nebulae?.active ?? []) nf = Math.max(nf, it.fade);
+      lm.uGain.value = this.stars.singleGain * (1 - 0.7 * nf);
       const gm = this.stars.globalMat.uniforms;
       gm.uLodCenter.value.copy(lod.center);
       gm.uLodRadius.value = lod.radius * k;
@@ -287,9 +301,12 @@ export default class GalaxyMode extends Mode {
     const rad = e.input.lastDevice === 'touch' ? 26 : 16;
     const rad2 = rad * rad;
     let best = null, bestScore = -Infinity;
-    const test = (x, y, z, logL, lumExp, gain, cand) => {
+    const gm = this.stars.globalMat.uniforms;
+    const gNear = gm.uGainNear.value, nd0 = gm.uNearD.value.x, nd1 = gm.uNearD.value.y;
+    const test = (x, y, z, logL, lumExp, gain, cand, near = false) => {
       const cw = m[3] * x + m[7] * y + m[11] * z + m[15];
       if (cw <= 1e-12) return;
+      if (near && gNear > 0 && cw < nd1) gain = Math.exp(Math.log(gNear) + (Math.log(gain) - Math.log(gNear)) * smoothstep(nd0, nd1, cw));
       const sx = (m[0] * x + m[4] * y + m[8] * z + m[12]) / cw;
       const sy = (m[1] * x + m[5] * y + m[9] * z + m[13]) / cw;
       const dx = (sx - nx) * W, dy = (sy - ny) * H;
@@ -311,7 +328,7 @@ export default class GalaxyMode extends Mode {
         const follow = (f >> 4) & 3;
         this._starWorld(P[i * 3], P[i * 3 + 1], P[i * 3 + 2], follow, v);
         const idx = i;
-        test(v.x, v.y, v.z, Lm[i], le, gain, () => ({ index: idx, pos: new THREE.Vector3(P[idx * 3], P[idx * 3 + 1], P[idx * 3 + 2]), follow: (C[idx * 4 + 3] >> 4) & 3 }));
+        test(v.x, v.y, v.z, Lm[i], le, gain, () => ({ index: idx, pos: new THREE.Vector3(P[idx * 3], P[idx * 3 + 1], P[idx * 3 + 2]), follow: (C[idx * 4 + 3] >> 4) & 3 }), true);
       }
     }
     // local stars (pattern frame, follow the pattern)
@@ -412,7 +429,11 @@ export default class GalaxyMode extends Mode {
       {
         const l = (Math.log10(Math.max(this.rig.distance, 1e-12)) - Math.log10(0.3)) / (Math.log10(12) - Math.log10(0.3));
         const k = clamp(l, 0, 1);
-        this.volume.compositeMat.uniforms.uGain.value = 0.02 + 0.98 * k * k * (3 - 2 * k);
+        // floor: from inside the disk the galaxy's own band / nebular glow stays visible behind the stars
+        // a nearby nebula dominates the frame's exposure → the galaxy's diffuse glow recedes further
+        let nf = 0;
+        for (const it of this.nebulae?.active ?? []) nf = Math.max(nf, it.fade);
+        this.volume.compositeMat.uniforms.uGain.value = (0.07 + 0.93 * k * k * (3 - 2 * k)) * (1 - 0.65 * nf);
       }
       this.volume.update(this.camera, this.pat);
       rotTheta(this.camera.position, -this.pat, this._camPat);

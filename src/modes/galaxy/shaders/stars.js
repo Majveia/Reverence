@@ -7,7 +7,7 @@ registerChunk('gx_dust', /* glsl */ `
 #define GX_DUST
 uniform sampler2D tMap;
 uniform highp sampler3D tNoise;
-uniform float uMapR, uHDust, uFlare, uR, uDustL, uDustNoise, uYmaxD;
+uniform float uMapR, uMapTexel, uHDust, uFlare, uR, uDustL, uDustNoise, uYmaxD;
 uniform vec4 uNoiseF;
 uniform vec3 uExt;
 uniform int uDustSteps;
@@ -19,7 +19,7 @@ float gxd_gint(float y0, float y1, float dt, float h){
   return dt / dy * 0.5 * (gxd_erf(clamp(y1 / h, -6.0, 6.0)) - gxd_erf(clamp(y0 / h, -6.0, 6.0)));
 }
 // optical depth (rgb) between two pattern-frame points
-vec3 gx_dustTau(vec3 a, vec3 b, float jit){
+vec3 gx_dustTau(vec3 a, vec3 b, float jit, float lod){
   if (uDustSteps <= 0) return vec3(0.0);
   vec3 d = b - a; float len = length(d);
   if (len < 1e-7) return vec3(0.0);
@@ -40,7 +40,7 @@ vec3 gx_dustTau(vec3 a, vec3 b, float jit){
     vec3 pm = a + dir * ((tcr >= ta && tcr <= tb) ? tcr : ta + dt * jit);
     vec2 uv = pm.xz / (2.0 * uMapR) + 0.5;
     if (abs(uv.x - 0.5) >= 0.5 || abs(uv.y - 0.5) >= 0.5) continue;
-    float Mb = textureLod(tMap, uv, 0.0).b;
+    float Mb = textureLod(tMap, uv, lod).b;
     float rm = length(pm.xz);
     float hD = uHDust * (1.0 + 0.35 * uFlare * (rm / uR) * (rm / uR));
     float ID = gxd_gint(pa.y, pb.y, dt, hD);
@@ -64,7 +64,9 @@ uniform float uPixScale, uGain, uLumExp, uSoft, uWeight, uLocal, uEps, uHaloR, u
 uniform vec2 uFadeNear;
 uniform vec3 uLodCenter;
 uniform float uLodRadius;
-uniform float uClusterBoost, uSphW;
+uniform float uClusterBoost, uSphW, uDiskW;
+uniform float uGainNear;       // single-star gain (global tracers only): a tracer stands for ~10^6 stars
+uniform vec2 uNearD;           // far away, but close up it is just one star → blend the gain in log space
 varying vec3 vCol;
 varying float vSize;
 varying float vSpike;
@@ -82,7 +84,9 @@ void main(){
   gl_Position = projectionMatrix * mv;
   float d = length(mv.xyz);
   float L = exp2(aLogL * 3.3219281 * uLumExp);
-  float flux = L * uGain / (d * d + uSoft * uSoft);
+  float gain = uGain;
+  if (uLocal < 0.5 && uGainNear > 0.0) gain = exp(mix(log(uGainNear), log(uGain), smoothstep(uNearD.x, uNearD.y, d)));
+  float flux = L * gain / (d * d + uSoft * uSoft);
   flux *= smoothstep(uFadeNear.x, uFadeNear.y, d);
   vec3 sp = rotT(position, ang - uPat);            // pattern frame
   if (uLocal > 0.5) {
@@ -93,12 +97,14 @@ void main(){
     // inside the local LOD sphere the real neighborhood stars take over
     if (uLodRadius > 0.0) flux *= smoothstep(0.5, 1.0, length(sp - uLodCenter) / uLodRadius);
   }
-  flux *= uWeight * (sph == 1 ? uSphW : 1.0);
+  flux *= uWeight * (sph == 1 ? uSphW : (follow == 0 ? uDiskW : 1.0));
   vec3 col = aCol.rgb * aCol.rgb;
   float Fp = flux * uPixScale * uPixScale;
   float lum0 = Fp * max(col.r, max(col.g, col.b));
   if (lum0 < uEps * 0.03 || mv.z > 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vSize = 1.0; vSpike = 0.0; return; }
-  col *= exp(-gx_dustTau(sp, uCamPat, fract(float(gl_VertexID) * 0.61803399)));
+  // dust map level ~ the star's pixel footprint (a star is a point but its column is seen through a pixel)
+  float lodD = max(0.0, log2(d * uNoiseF.w / uMapTexel) - 0.5);
+  col *= exp(-gx_dustTau(sp, uCamPat, fract(float(gl_VertexID) * 0.61803399), lodD));
   float lum = Fp * max(col.r, max(col.g, col.b));
   float x = lum * uHaloFrac / (3.14159265 * uHaloR * uHaloR * uEps);
   float rv = x > 1.0 ? uHaloR * sqrt(sqrt(x) - 1.0) : 0.0;

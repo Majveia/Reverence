@@ -13,10 +13,11 @@ import { RNG, hashCombine } from '../../core/rng.js';
 import { dirToLatLon } from '../../core/math.js';
 import { planSites, offsetDir } from './planner.js';
 import { layoutSite, polyLen, along } from './layout.js';
-import { Geo, mat, PAT } from './geo.js';
+import { Geo, mat, tint, PAT } from './geo.js';
 import { makeCivMaterial, makeGlowMaterial } from './material.js';
 import { getStyle, buildLamp, parts as P } from './styles.js';
 import { makeNPCs, makeTraffic, makeBoats, makeElevator } from './life.js';
+import { makePools } from './pools.js';
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _m = new THREE.Matrix4();
 const _X = new THREE.Vector3(), _Y = new THREE.Vector3(), _Z = new THREE.Vector3();
@@ -37,7 +38,7 @@ class Civ {
     world.root.add(this.root);
     this.sites = [];
     this.jobs = [];
-    this.stats = { built: 0, tris: 0, draw: 0, ms: 0 };
+    this.stats = { built: 0, tris: 0, trisBuilt: 0, draw: 0, ms: 0, npcs: 0, traffic: 0, boats: 0, lotFails: 0, jobFails: 0, empty: 0, err: null };
     this.kits = new Map();
     this.glowMats = [];
     const qk = { low: 0.45, med: 0.7, high: 1, ultra: 1.25 }[this.q.tier] ?? 1;
@@ -51,9 +52,10 @@ class Civ {
     const plan = planSites(world);
     this.spawn = plan.spawn;
     for (const s of plan.sites) this._initSite(s);
+    this._grade();
     this.stats.planMs = Math.round(now() - t0);
     // clearings for flora/fauna placement: [dirX, dirY, dirZ, cosAngularRadius, keepFraction]
-    this.clearings = this.sites.map((s) => [s.up.x, s.up.y, s.up.z, Math.cos((s.radius * (s.hamlet ? 1.3 : 1.08)) / s.R), s.kind === 'ruin' || s.kind === 'monument' ? 0.5 : s.hamlet || s.kind === 'village' || s.kind === 'camp' ? 0.12 : 0.04]);
+    this.clearings = this.sites.map((s) => [s.up.x, s.up.y, s.up.z, Math.cos((s.radius * (s.hamlet ? 1.3 : 1.08)) / s.R), s.kind === 'ruin' || s.kind === 'monument' ? 0.5 : s.hamlet || s.kind === 'village' || s.kind === 'camp' ? 0.12 : this._kit(s.kit).style.pave ? 0.0 : 0.04]);
     const cap0 = this.sites[0];
     this.spawnTarget = cap0 ? cap0.pos.clone().addScaledVector(cap0.up, Math.min(40, cap0.radius * 0.1)) : null;
     try { world.civ = { clearings: this.clearings, sites: this.sites, spawnTarget: this.spawnTarget, capital: cap0 }; world.events?.emit?.('civ:clearings', { clearings: this.clearings }); } catch (_) { /* ignore */ }
@@ -73,7 +75,7 @@ class Civ {
       const M = style.mats(this.body, rng);
       const look = style.look || {};
       const mainMat = makeCivMaterial(look, { key: '' });
-      const roadMat = makeCivMaterial(look, { key: 'road', polygonOffset: true });
+      const roadMat = makeCivMaterial(look, { key: 'road', polygonOffset: true, reversed: !!this.world.engine?.reversedDepth });
       mainMat.userData.shared = true; roadMat.userData.shared = true;
       k = { name, style, M, mainMat, roadMat };
       this.world.lighting?.setupMaterial?.(mainMat);
@@ -96,6 +98,27 @@ class Civ {
     const kind = s.kind === 'metropolis' || s.kind === 'city' ? 'city' : s.kind === 'ruin' ? 'ruin' : s.kind === 'monument' ? 'monument' : 'village';
     try { this.world.addPOI({ kind, name: s.name, pos: s.pos.clone(), radius: s.radius, data: { style: s.kit, level: s.level, capital: !!s.capital, civ: this.body.civ?.name } }); } catch (_) { /* ignore */ }
     this.sites.push(s);
+  }
+
+  /**
+   * Grade each settlement's civic heart into the terrain (terrain track flatten stamps): the plaza /
+   * monument terrace becomes a level disc that blends into the hillside, so the town reads as built
+   * on its land rather than floating on foundations. Stamps are added BEFORE any layout, so every
+   * height civ samples afterwards (roads, lots, NPC paths) is already the graded one.
+   */
+  _grade() {
+    const S = this.S;
+    if (!S?.addFlatten) return;
+    const sea = S.seaLevel > -1e8 ? S.seaLevel : -Infinity;
+    this.flats = [];
+    for (const s of this.sites) {
+      const h = S.height(s.up.x, s.up.y, s.up.z);
+      if (h < sea + 2) continue; // water cities stand on decks
+      const r = s.kind === 'monument' ? 22 : s.hamlet ? 12 : ({ metropolis: 42, city: 32, town: 22, village: 13, camp: 13, ruin: 13 }[s.kind] ?? 16) + 4;
+      try { const id = S.addFlatten({ dir: s.up, radius: r, height: h, falloff: Math.max(14, r * 0.9) }); if (id) this.flats.push(id); } catch (_) { /* optional */ }
+      s.h0 = h;
+      s.pos.copy(s.up).multiplyScalar(s.R + s.h0);
+    }
   }
 
   _layout(s) {
@@ -274,7 +297,11 @@ class Civ {
       }
       let h = 6;
       const t0 = g.tris;
-      try { h = style.build(g, lot, ctx) ?? 6; } catch (e) { if (!this._warned) { console.warn('[civ] build failed', lot.type, e); this._warned = true; } }
+      try { h = style.build(g, lot, ctx) ?? 6; } catch (e) {
+        this.stats.lotFails++;
+        if (!this.stats.err) this.stats.err = `${s.kit}/${lot.type}: ${e?.message || e}`;
+        if (!this._warned) { console.warn('[civ] build failed', s.kit, lot.type, e); this._warned = true; }
+      }
       lot.farH = h;
       if (globalThis.__civProf) { const P2 = globalThis.__civProf; P2[lot.type] = (P2[lot.type] || 0) + g.tris - t0; P2['#' + lot.type] = (P2['#' + lot.type] || 0) + 1; }
       if (++k % 6 === 0) yield;
@@ -291,6 +318,7 @@ class Civ {
     if (globalThis.__civProf) globalThis.__civProf['@props' + s.id] = g.tris;
     if (style.profile?.powerLines && s.kind !== 'monument' && s.kind !== 'ruin') { this._powerLines(g, s, L, M, rng); yield; }
     if (globalThis.__civProf) globalThis.__civProf['@power' + s.id] = g.tris;
+    if (L.wall) { this._wall(g, s, L, kit, rng); yield; }
     if (s.kind !== 'monument') this._plazaPiece(g, s, L, M, rng, ctx);
     else this._monument(g, s, M, rng, ctx);
     yield;
@@ -303,12 +331,12 @@ class Civ {
     grp.name = 'civ-site-' + s.id;
     grp.position.copy(s.pos);
     const geo = g.build();
+    const life = { npcs: 0, traffic: 0, boats: 0 };
     if (geo) {
       const mesh = new THREE.Mesh(geo, kit.mainMat);
       mesh.castShadow = true; mesh.receiveShadow = true;
       mesh.name = 'civ-buildings';
       grp.add(mesh);
-      this.stats.tris += g.tris;
     }
     const rgeo = rg.build();
     if (rgeo) {
@@ -318,6 +346,7 @@ class Civ {
     }
     const pts = this._points(g.lights, 1);
     if (pts) { pts.material.uniforms.uFarFade.value.set(0, this.dropR + 2000); grp.add(pts); }
+    try { const pl = this._pools(s, L, g.lights); if (pl) grp.add(pl); } catch (e) { if (!this.stats.err) this.stats.err = 'pools: ' + (e?.message || e); }
     // ---- life
     const npcPaths = [];
     // busiest near the centre: sort walk segments by distance (with jitter) before the budget cut
@@ -327,21 +356,21 @@ class Civ {
       const b = offsetDir(s, pth.bx, pth.bz, new THREE.Vector3()).multiplyScalar(s.R + pth.bh + 0.02).sub(s.pos);
       npcPaths.push({ a, b });
     }
-    const maxNPC = Math.round((s.kind === 'metropolis' ? 260 : s.kind === 'city' ? 200 : s.kind === 'town' ? 120 : 50) * this.qk);
+    const maxNPC = Math.round((s.kind === 'metropolis' ? 340 : s.kind === 'city' ? 280 : s.kind === 'town' ? 190 : 70) * this.qk);
     if (s.kind !== 'monument' && s.kind !== 'ruin') {
       const npcs = makeNPCs(s.kit, npcPaths, s.up, rng, s.kind === 'ruin' ? 0 : maxNPC);
-      if (npcs) grp.add(npcs);
+      if (npcs) { grp.add(npcs); life.npcs = npcs.geometry.instanceCount; }
     }
     if (s.level >= 4 && (s.kind === 'city' || s.kind === 'metropolis')) {
       const tk = MODERN.has(s.kit) ? (s.kit === 'neon' ? 'neon' : 'car') : s.kit === 'hearth' ? 'ship' : 'glider';
       const n = Math.round((s.kind === 'metropolis' ? 70 : 40) * this.qk);
       const tr = makeTraffic(tk, s, n, rng, s.radius, s.kit === 'neon' ? 70 : 45);
-      if (tr) grp.add(tr);
+      if (tr) { grp.add(tr); life.traffic = tr.geometry.instanceCount; }
     }
     if (s.coastal > 0 || L.water) {
       const spots = this._boatSpots(s, rng);
       const bt = makeBoats(s, spots, sea);
-      if (bt) grp.add(bt);
+      if (bt) { grp.add(bt); life.boats = bt.geometry.instanceCount; }
     }
     if (s.spaceport && s.kit !== 'hearth') {
       const sp = L.lots.find((l) => l.type === 'spaceport');
@@ -375,11 +404,58 @@ class Civ {
       cols.push(c);
       try { this.world.addCollider(c); } catch (_) { /* ignore */ }
     }
-    s.detail = { grp, cols };
+    // ---- validate: a detailed site must have geometry. Never mark an empty build as done silently.
+    let tris = 0;
+    grp.traverse((o) => { if (o.isMesh && o.geometry?.index) tris += o.geometry.index.count / 3 * (o.geometry.isInstancedBufferGeometry ? o.geometry.instanceCount : 1); });
+    if (!(g.tris > 0) || !(tris > 0)) {
+      this.stats.empty++;
+      const why = `site ${s.id} '${s.name}' (${s.kit}/${s.kind}) built empty: lots=${L.lots.length} props=${L.props.length} roads=${L.roads.length} lotFails=${this.stats.lotFails} h0=${s.h0}`;
+      if (!this.stats.err) this.stats.err = why;
+      console.warn('[civ]', why);
+    }
+    s.detail = { grp, cols, tris, life };
     this.root.add(grp);
     try { const L = this.world.lighting; if (L?.setupMaterial) grp.traverse((o) => { if (o.isMesh && o.material && !o.userData.noCSM) L.setupMaterial(o.material); }); } catch (_) { /* ignore */ }
     if (s.far) s.far.visible = false;
     this.stats.built++;
+    this.stats.trisBuilt += tris;
+    this._recount();
+  }
+
+  /** live counters over the currently detailed sites (shown in __rv.state().civ). */
+  _recount() {
+    const st = this.stats;
+    st.tris = 0; st.npcs = 0; st.traffic = 0; st.boats = 0;
+    for (const s of this.sites) {
+      const d = s.detail; if (!d) continue;
+      st.tris += d.tris || 0; st.npcs += d.life?.npcs || 0; st.traffic += d.life?.traffic || 0; st.boats += d.life?.boats || 0;
+    }
+  }
+
+  /** Ground light pools under low lights (street lamps, lanterns, shopfronts, signs). */
+  _pools(s, L, lights) {
+    const G = L.ground; if (!G) return null;
+    const out = [];
+    const max = Math.round(1600 * this.qk);
+    for (const l of lights) {
+      if (l.kind !== 0 && l.kind !== 2) continue;
+      const lum = l.r * 0.3 + l.g * 0.55 + l.b * 0.15;
+      if (lum < 0.6) continue;
+      _v.set(l.x, l.y, l.z);
+      const x = _v.dot(s.east), z = _v.dot(s.north);
+      _w.copy(_v).add(s.pos);
+      const lr = _w.length();
+      const gh = G.g(x, z);
+      const hgt = lr - s.R - gh;
+      if (!(hgt > 0.4 && hgt < 8.5)) continue;
+      _w.divideScalar(lr);
+      const bx = _w.x * (s.R + gh) - s.pos.x, by = _w.y * (s.R + gh) - s.pos.y, bz = _w.z * (s.R + gh) - s.pos.z;
+      const k = 0.04 * Math.min(1.5, 4.5 / Math.max(2, hgt));
+      out.push({ x: bx, y: by, z: bz, nx: _w.x, ny: _w.y, nz: _w.z, r: l.r * k, g: l.g * k, b: l.b * k, rad: Math.min(6.5, Math.max(2.2, hgt * 1.15)), hgt, w: lum * k });
+    }
+    // over budget: keep the brightest pools (street lamps and shopfronts beat faint window spill)
+    if (out.length > max) { out.sort((a, b) => b.w - a.w); out.length = max; }
+    return makePools(out, !!this.world.engine?.reversedDepth);
   }
 
   _boatSpots(s, rng) {
@@ -560,6 +636,93 @@ class Civ {
     }
   }
 
+  /**
+   * Fortified enclosure (kremlin / monastery wall): whitewashed stepped wall that follows the terrain,
+   * swallow-tail merlons, a wall-walk, round corner towers with tent roofs every ~45 m and a gatehouse
+   * tower wherever a road crosses. Lamps on the gates, colliders for every piece.
+   */
+  _wall(g, s, L, kit, rng) {
+    const G = L.ground, W = L.wall; if (!G || !W) return;
+    const { M, style } = kit;
+    const wallM = M.wallW || M.trim || M.wall, capM = M.wallCap || M.roof, baseM = M.found;
+    const towerRoof = M.roofs?.[1] || M.roof, dome = M.domeG || M.dome || towerRoof;
+    const H = W.h, T = 2.2, r = W.r;
+    const f = new THREE.Matrix4();
+    const circ = Math.PI * 2 * r;
+    const n = Math.ceil(circ / 5), segL = circ / n;
+    const nt = Math.max(6, Math.round(circ / 46));
+    const gateAt = (a) => W.gates.find((q) => Math.abs(Math.atan2(Math.sin(q.a - a), Math.cos(q.a - a))) * r < q.w / 2 + 4.5);
+    const place = (a, rr, h) => this._frame(s, Math.cos(a) * rr, Math.sin(a) * rr, Math.PI / 2 - a, h, f);
+    for (let i = 0; i < n; i++) {
+      const a = (i + 0.5) / n * Math.PI * 2;
+      if (gateAt(a)) continue;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      if (G.wet(x, z)) continue;
+      const a0 = i / n * Math.PI * 2, a1 = (i + 1) / n * Math.PI * 2;
+      const h0 = G.g(Math.cos(a0) * r, Math.sin(a0) * r), h1 = G.g(Math.cos(a1) * r, Math.sin(a1) * r), hm = G.g(x, z);
+      const lo = Math.min(h0, h1, hm), top = Math.max(h0, h1, hm);
+      g.begin(place(a, r, top), i * 0.37);
+      const drop = top - lo + 1.2;
+      g.box(0, -drop, 0, segL + 0.25, drop + 0.9, T + 0.5, 0, baseM);
+      g.box(0, 0, 0, segL + 0.2, H, T, 0, wallM);
+      g.box(0, H - 0.1, 0, segL + 0.3, 0.3, T + 0.3, 0, capM);
+      // swallow-tail merlons on the outer edge, low parapet inside
+      for (let k = 0; k < 3; k++) {
+        const mx = -segL / 2 + (k + 0.5) * segL / 3;
+        g.box(mx, H + 0.2, T / 2 - 0.35, 0.9, 1.1, 0.5, 0, wallM);
+        for (const sx of [-1, 1]) { g.push().translate(mx + sx * 0.22, H + 1.3, T / 2 - 0.35).rotZ(sx * 0.35); g.box(0, 0, 0, 0.35, 0.55, 0.5, 0, wallM); g.pop(); }
+      }
+      g.box(0, H + 0.2, -T / 2 + 0.2, segL + 0.2, 0.6, 0.3, 0, wallM);
+      // blind arcade on the outside face
+      g.box(0, 1.2, T / 2 + 0.02, segL * 0.55, H * 0.55, 0.05, 0, tint(wallM, 0.86));
+      g.collider(0, H / 2 - drop / 2, 0, segL / 2, (H + drop) / 2, T / 2);
+    }
+    // towers
+    for (let k = 0; k < nt; k++) {
+      const a = (k + 0.5) / nt * Math.PI * 2 + 0.07;
+      if (gateAt(a)) continue;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      if (G.wet(x, z)) continue;
+      const hh = G.g(x, z), lo = Math.min(G.g(x * 1.02, z * 1.02), G.g(x * 0.98, z * 0.98), hh);
+      g.begin(place(a, r, hh), k + 0.5);
+      const th = H + rng.range(5, 8), tr = 3.4;
+      g.cyl(0, lo - hh - 1.2, 0, tr + 0.35, tr + 0.35, hh - lo + 2, 16, true, baseM);
+      g.windows(1.8, 3.2, 0);
+      g.cyl(0, 0.6, 0, tr + 0.15, tr, th, 16, false, M.wall || wallM);
+      g.cyl(0, th + 0.6, 0, tr + 0.5, tr + 0.5, 0.4, 16, true, capM);
+      for (let m = 0; m < 10; m++) { const b = m / 10 * Math.PI * 2; g.box(Math.cos(b) * (tr + 0.2), th + 1, Math.sin(b) * (tr + 0.2), 0.8, 1.0, 0.5, 0, wallM); }
+      // tent roof with a small lantern + onion (kremlin skyline)
+      g.cyl(0, th + 1.9, 0, tr * 0.72, tr * 0.72, 1.4, 12, false, wallM);
+      g.cyl(0, th + 3.3, 0, tr * 0.85, 0.35, tr * 2.4, 12, true, towerRoof);
+      g.cyl(0, th + 3.3 + tr * 2.4, 0, 0.35, 0.3, 1.2, 8, false, wallM);
+      g.push().translate(0, th + 4.4 + tr * 2.4, 0); g.sphere(0, 0.45, 0, 0.55, 10, 6, dome); g.cyl(0, 0.9, 0, 0.18, 0.02, 0.9, 6, true, dome); g.pop();
+      g.light(0, th * 0.55, tr + 0.3, style.look?.winCol ?? '#ffc680', 3, 1.6, 2);
+      g.collider(0, th / 2, 0, tr, th / 2 + 1, tr);
+    }
+    // gatehouses where roads pass through
+    for (const q of W.gates) {
+      const x = Math.cos(q.a) * r, z = Math.sin(q.a) * r;
+      if (G.wet(x, z)) continue;
+      const hh = G.g(x, z);
+      g.begin(place(q.a, r, hh), q.a);
+      const gw = q.w + 2.2, pw = 2.6, gh = H + (q.main ? 9 : 5), D = T + 3;
+      for (const sx of [-1, 1]) {
+        g.box(sx * (gw / 2 + pw / 2), -1.5, 0, pw, gh + 1.5, D, 0.05, wallM);
+        g.collider(sx * (gw / 2 + pw / 2), gh / 2, 0, pw / 2, gh / 2, D / 2);
+      }
+      // archway: stepped voussoirs, then the upper chamber
+      const ah = Math.min(5.2, H - 0.8);
+      for (let v = 0; v < 7; v++) { const b = Math.PI * v / 6; g.box(Math.cos(b) * gw / 2 * 0.98, ah + Math.sin(b) * 1.4, 0, 0.9, 0.9, D + 0.1, 0, tint(wallM, 0.92)); }
+      g.box(0, ah + 1.4, 0, gw + 0.2, gh - ah - 1.4, D, 0.05, M.wall || wallM);
+      g.box(0, gh, 0, gw + pw * 2 + 0.6, 0.4, D + 0.6, 0.03, capM);
+      // icon niche above the arch (warm lit at night)
+      g.box(0, ah + 2.4, D / 2 + 0.02, 1.4, 2.0, 0.08, 0, M.lampGlow || capM);
+      g.cyl(0, gh + 0.4, 0, (gw + pw * 2) * 0.42, 0.3, q.main ? 8 : 5.5, 4, true, towerRoof, { a0: Math.PI / 4, a1: Math.PI / 4 + Math.PI * 2 });
+      g.push().translate(0, gh + (q.main ? 8.4 : 5.9), 0); g.sphere(0, 0.6, 0, 0.8, 10, 6, dome); g.cyl(0, 1.3, 0, 0.22, 0.02, 1.4, 6, true, dome); g.pop();
+      for (const sx of [-1, 1]) g.light(sx * (gw / 2 + 0.4), 3.6, D / 2 + 0.5, style.look?.winCol ?? '#ffc680', 5, 2.2, 2);
+    }
+  }
+
   // ------------------------------------------------------------------ centerpieces & monuments
   _plazaPiece(g, s, L, M, rng, ctx) {
     const f = this._frame(s, 0, 0, s.heading, L.plaza.h + 0.2, new THREE.Matrix4());
@@ -649,6 +812,15 @@ class Civ {
   // ------------------------------------------------------------------ frame loop
   update(dt) {
     if (!this.enabled) return;
+    try { this._update(dt); } catch (e) {
+      // never throw into the frame loop
+      this.stats.jobFails++;
+      if (!this._updWarned) { console.error('[civ] update failed', e); this._updWarned = true; }
+    }
+  }
+
+  _update(dt) {
+    this._t = (this._t || 0) + (dt || 0);
     if (this._debug.includes('npcbig') && !this._npcbig) { this._npcbig = true; this.root.traverse((o) => { if (o.name === 'civ-npcs') o.geometry.attributes.aP.array.forEach((v, i, a) => { if (i % 4 === 2) a[i] = 8; }); }); }
     if (this._debug.includes('noflora')) { const f = this.world.get?.('flora'); if (f?.group) f.group.visible = false; }
     const cam = this.world.camera.position;
@@ -657,7 +829,7 @@ class Civ {
     for (const s of this.sites) {
       const d = cam.distanceTo(s.pos) - s.radius;
       const want = d < this.detailR && alt < 9000;
-      if (want && !s.detail && !s.building) {
+      if (want && !s.detail && !s.building && !((s.retryAt || 0) > this._t)) {
         s.building = true;
         this.jobs.unshift({ site: s, kind: 'detail', gen: this._buildDetail(s), d });
       } else if (!want && s.detail && d > this.dropR) this._drop(s);
@@ -670,7 +842,14 @@ class Civ {
     while (this.jobs.length && now() - t0 < budget) {
       const j = this.jobs[0];
       let r;
-      try { r = j.gen.next(); } catch (e) { console.error('[civ] job failed', e); r = { done: true }; }
+      try { r = j.gen.next(); } catch (e) {
+        this.stats.jobFails++;
+        if (!this.stats.err) this.stats.err = `${j.kind} ${j.site.id}: ${e?.message || e}`;
+        console.error('[civ] job failed', j.kind, j.site.id, e);
+        r = { done: true };
+        // a failing detail build must not be retried every frame: back off (retry after 10 s of sim time)
+        if (j.kind === 'detail') j.site.retryAt = (this._t || 0) + 10;
+      }
       if (r.done) { this.jobs.shift(); if (j.kind === 'detail') j.site.building = false; }
     }
     this.stats.ms = Math.round(now() - t0);
@@ -691,6 +870,7 @@ class Civ {
     d.grp.removeFromParent();
     s.detail = null;
     if (s.far) s.far.visible = true;
+    this._recount();
   }
 
   isReady() {
@@ -702,7 +882,7 @@ class Civ {
     }
     // sites that should be detailed but have not been queued yet (first frame)
     const alt = cam.length() - this.body.radius;
-    if (alt < 9000) for (const s of this.sites) if (!s.detail && cam.distanceTo(s.pos) - s.radius < this.detailR) return false;
+    if (alt < 9000) for (const s of this.sites) if (!s.detail && !((s.retryAt || 0) > (this._t || 0)) && cam.distanceTo(s.pos) - s.radius < this.detailR) return false;
     return true;
   }
 
@@ -711,7 +891,9 @@ class Civ {
     const c = this.sites[0];
     return {
       style: this.styleName, level: this.level, sites: this.sites.length, detail: this.sites.filter((s) => s.detail).map((s) => s.id),
-      jobs: this.jobs.length, tris: this.stats.tris, farVis: this.sites.filter((s) => s.far?.visible).length,
+      jobs: this.jobs.length, tris: this.stats.tris, trisBuilt: this.stats.trisBuilt, npcs: this.stats.npcs, traffic: this.stats.traffic, boats: this.stats.boats,
+      siteTris: Object.fromEntries(this.sites.filter((s) => s.detail).map((s) => [s.id, s.detail.tris])),
+      fails: this.stats.lotFails + this.stats.jobFails + this.stats.empty, err: this.stats.err, farVis: this.sites.filter((s) => s.far?.visible).length,
       capDist: c ? Math.round(this.world.camera.position.distanceTo(c.pos)) : 0, planMs: this.stats.planMs, ms: this.stats.ms,
       capital: c ? { name: c.name, kind: c.kind, lat: +c.lat.toFixed(4), lon: +c.lon.toFixed(4), r: Math.round(c.radius) } : null,
       hamlet: this.sites.find((s) => s.hamlet) ? { lat: +this.sites.find((s) => s.hamlet).lat.toFixed(4), lon: +this.sites.find((s) => s.hamlet).lon.toFixed(4) } : null,
@@ -721,6 +903,7 @@ class Civ {
   onOriginShift() { /* everything is parented to world.root in planet-local coordinates */ }
 
   dispose() {
+    try { for (const id of this.flats || []) this.S?.removeFlatten?.(id); } catch (_) { /* ignore */ }
     for (const s of this.sites) { this._drop(s); if (s.far) { s.far.traverse((o) => o.geometry?.dispose?.()); s.far.removeFromParent(); } }
     for (const k of this.kits.values()) { k.mainMat.dispose(); k.roadMat.dispose(); }
     for (const m of this.glowMats) m.dispose();

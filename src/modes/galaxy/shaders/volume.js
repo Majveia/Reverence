@@ -14,7 +14,7 @@ precision highp sampler3D;
 #include <rv_common>
 uniform sampler2D tMap;
 uniform sampler3D tNoise;
-uniform float uMapR;
+uniform float uMapR, uMapTexel;
 uniform vec3 uCamPos;          // pattern frame, kly
 uniform mat4 uInvProj;
 uniform mat3 uRayMat;          // view → pattern-frame rotation
@@ -160,7 +160,10 @@ void main(){
     float tcr = abs(rd.y) > 1e-7 ? clamp(-ro.y / rd.y, t, tb) : 0.5 * (t + tb);
     vec3 pm = ro + rd * tcr;
     vec2 uv = pm.xz / (2.0 * uMapR) + 0.5;
-    vec4 M = (abs(uv.x - 0.5) < 0.5 && abs(uv.y - 0.5) < 0.5) ? textureLod(tMap, uv, 0.0) : vec4(0.0);
+    // mip level from the pixel footprint on the disk (stretched along grazing rays)
+    float footM = pixA * max(tcr, 1e-4) / max(abs(rd.y), 0.2);
+    float lodM = max(0.0, log2(footM / uMapTexel) - 0.5);
+    vec4 M = (abs(uv.x - 0.5) < 0.5 && abs(uv.y - 0.5) < 0.5) ? textureLod(tMap, uv, lodM) : vec4(0.0);
     float rm = length(pm.xz);
     float fl = 1.0 + uFlare * (rm / uR) * (rm / uR);
     float flT = 1.0 + 0.35 * (fl - 1.0);               // young stars and dust stay thin (little flare)
@@ -211,12 +214,23 @@ void main(){
 }
 `;
 
-// Upsample (Catmull-Rom, 9 bilinear taps) + composite: out = emission + dst * transmittance
+// Upsample (Catmull-Rom, 9 bilinear taps) + full-resolution detail transfer + composite:
+//   out = emission + dst * transmittance
+// Detail transfer: the raymarch runs at reduced resolution and samples the disk map at its own
+// (coarse) footprint. Per full-res pixel we re-sample the map where the ray crosses the midplane at
+// the fine and at the coarse level, and apply the difference: dust transmission ratio (half of the
+// disk light lies behind the dust layer) and young/HII/old emission residual. Fine dust filaments and
+// star-forming knots thus survive the upsample; nothing changes where the map has no sub-pixel detail.
 export const COMPOSITE_FRAG = /* glsl */ `
 precision highp float;
 uniform sampler2D tVol;
 uniform vec2 uVolSize;
 uniform float uGain;
+uniform sampler2D tMap;
+uniform float uMapR, uMapTexel, uOldL, uYoungL, uHiiL, uDustL, uDetail, uPixF, uLodC;
+uniform vec3 uCamPos, uColOld, uColYoung, uColHII, uExt;
+uniform mat4 uInvProj;
+uniform mat3 uRayMat;
 varying vec2 vUv;
 vec4 bicubic(sampler2D tex, vec2 uv, vec2 size){
   vec2 samplePos = uv * size;
@@ -241,12 +255,36 @@ vec4 bicubic(sampler2D tex, vec2 uv, vec2 size){
   r += texture2D(tex, vec2(tc3.x, tc3.y)) * w3.x * w3.y;
   return r;
 }
+vec3 halfBehind(vec3 tau){ return 0.45 + 0.55 * exp(-tau); }
 void main(){
   vec4 v = bicubic(tVol, vUv, uVolSize);
   vec4 b = texture2D(tVol, vUv);
   // guard against ringing around very bright cores: never go below the bilinear minimum
   v.rgb = max(v.rgb, b.rgb * 0.5);
-  gl_FragColor = vec4(max(v.rgb, 0.0) * uGain, clamp(v.a, 0.0, 1.0));
+  vec3 col = max(v.rgb, 0.0);
+  if (uDetail > 0.0) {
+    vec4 vv = uInvProj * vec4(vUv * 2.0 - 1.0, 0.5, 1.0);
+    vec3 rd = normalize(uRayMat * normalize(vv.xyz / vv.w));
+    float ay = abs(rd.y);
+    float t = ay > 1e-5 ? -uCamPos.y / rd.y : -1.0;
+    if (t > 0.0 && ay > 0.04) {
+      vec3 pm = uCamPos + rd * t;
+      vec2 uv = pm.xz / (2.0 * uMapR) + 0.5;
+      if (abs(uv.x - 0.5) < 0.5 && abs(uv.y - 0.5) < 0.5) {
+        float foot = uPixF * t / max(ay, 0.2);
+        float lf = max(0.0, log2(foot / uMapTexel) - 0.5);
+        vec4 Mf = textureLod(tMap, uv, lf), Mc = textureLod(tMap, uv, lf + uLodC);
+        float fade = smoothstep(0.04, 0.25, ay) * uDetail;
+        float ia = 1.0 / max(ay, 0.25);
+        vec3 tf = halfBehind(uExt * (Mf.b * uDustL * ia)), tc = halfBehind(uExt * (Mc.b * uDustL * ia));
+        vec3 ef = (uColOld * (Mf.r * uOldL) + uColYoung * (Mf.g * uYoungL) + uColHII * (Mf.a * uHiiL)) * ia;
+        vec3 ec = (uColOld * (Mc.r * uOldL) + uColYoung * (Mc.g * uYoungL) + uColHII * (Mc.a * uHiiL)) * ia;
+        vec3 dcol = col * (tf / max(tc, vec3(1e-3))) + (ef * tf - ec * tc);
+        col = mix(col, max(dcol, col * 0.15), fade);
+      }
+    }
+  }
+  gl_FragColor = vec4(col * uGain, clamp(v.a, 0.0, 1.0));
 }
 `;
 

@@ -115,6 +115,7 @@ export function planSites(world) {
   const rng = new RNG(hashCombine(civ.placeSeed >>> 0, 0x51735));
   const sea = S.seaLevel > -1e8 ? S.seaLevel : -Infinity;
   const waterOK = style === 'neon' || style === 'harbor' || style === 'organic';
+  const perch = style === 'monastery';
   const sites = [];
   const name = (k) => { try { return world.universe.placeName(body, k); } catch (_) { return `Site ${k}`; } };
 
@@ -135,9 +136,14 @@ export function planSites(world) {
         const st = siteStats(S, fr, r * 0.85, hamlet ? 6 : 16, 8);
         const tgt = dir.clone().multiplyScalar(R + st.mean + Math.min(40, r * 0.1));
         const block = clearView(S, R, eye, tgt) * (hamlet ? 3 : 1);
-        let score = -st.rough * (hamlet ? 30 : 12) - (1 - st.dry) * (waterOK ? 0.4 : 6) - Math.abs(Math.abs(ao) - (hamlet ? 16 : 0)) / angW
+        let score = -st.rough * (hamlet ? 30 : perch ? 5 : 12) - (1 - st.dry) * (waterOK ? 0.4 : 6) - Math.abs(Math.abs(ao) - (hamlet ? 16 : 0)) / angW
           - Math.abs(dist - dists[1]) / (hamlet ? 1200 : 600) - Math.min(block, 400) * 0.01;
         if (st.mean < sea + 3 && !(waterOK && st.mean > sea - 30)) score -= 4;
+        // cliff / hilltop styles (monasteries, citadels): reward prominence over the surroundings
+        if (perch && !hamlet) {
+          const ring = siteStats(S, fr, r * 2.6, 24, 10);
+          score += clamp((st.mean - (ring.mean * 1.5 - st.mean * 0.5)) / 35, -1, 2.2) * 1.2;
+        }
         if (globalThis.__civDebug) console.log('cand', dist, ao, 'rough', st.rough.toFixed(3), 'dry', st.dry.toFixed(2), 'block', Math.round(block), 'mean', Math.round(st.mean), 'score', score.toFixed(2));
         if (!best || score > best.score) best = { score, fr, st, dist };
       }

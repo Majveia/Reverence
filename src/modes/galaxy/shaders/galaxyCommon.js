@@ -14,9 +14,11 @@ registerChunk('gx_common', /* glsl */ `
 #endif
 uniform float gR, gM, gTanP, gSinP, gPhi0, gR0, gWarpAmp, gWarpF, gArmW, gFragAmp, gFragF;
 uniform uint gSeedWarp, gSeedFrag, gSeedSite;
-uniform float gArmAmp[8];
-uniform float gArmEnd[8];
-uniform float gSiteCell, gSiteDensity, gHiiFrac, gRingIn, gRingOut;
+uniform float gArmAmp[16];
+uniform float gArmEnd[16];
+uniform float gSiteCell, gSiteDensity, gHiiFrac, gRingIn, gRingOut, gRingW;
+uniform vec2 gRingOff;
+uniform int gRingStyle;        // 0 resonance · 1 cartwheel · 2 hoag
 uniform int gType;
 uniform vec4 gClumps[12];
 uniform int gNClumps;
@@ -75,8 +77,14 @@ float gx_young(vec2 p){
     float d = (a.dperp + 0.35 * sig) / sig;
     float v = gx_armWindow(a.k, r) * gx_armFrag(a.k, a.u) * exp(-0.5 * d * d);
     if (gType == 2) {
-      float di = (r - gRingIn) / (gR * 0.035), dout = (r - gRingOut) / (gR * 0.03);
-      v = max(max(v * smoothstep(gRingIn * 0.95, gRingIn * 1.15, r), exp(-0.5 * di * di)), 0.7 * exp(-0.5 * dout * dout));
+      float ro = length(p - gRingOff);
+      float dout = (ro - gRingOut) / gRingW;
+      float di = (r - gRingIn) / (gR * 0.035);
+      if (gRingStyle == 2) v = exp(-0.5 * dout * dout);
+      else if (gRingStyle == 1) {
+        float spokes = v * 0.4 * smoothstep(gRingIn * 1.05, gRingIn * 1.5, r) * (1.0 - smoothstep(gRingOut * 0.92, gRingOut, ro));
+        v = max(max(spokes, 0.55 * exp(-0.5 * di * di)), exp(-0.5 * dout * dout));
+      } else v = max(max(v * smoothstep(gRingIn * 0.95, gRingIn * 1.15, r), exp(-0.5 * di * di)), 0.7 * exp(-0.5 * dout * dout));
     }
     return v;
   }
@@ -110,8 +118,8 @@ vec4 gx_site(int cx, int cz, out float isAct, out float isHii){
 /** Uniform values for the gx_common block from a GalaxyModel structure (lengths → kly). */
 export function galaxyUniforms(S) {
   const k = 1 / 1000;
-  const amp = new Float32Array(8), end = new Float32Array(8);
-  for (let i = 0; i < 8; i++) { amp[i] = S.armAmp[i] ?? 0; end[i] = (S.armEnd[i] ?? S.R) * k; }
+  const amp = new Float32Array(16), end = new Float32Array(16);
+  for (let i = 0; i < 16; i++) { amp[i] = S.armAmp[i] ?? 0; end[i] = (S.armEnd[i] ?? S.R) * k; }
   const clumps = [];
   for (let i = 0; i < 12; i++) {
     const c = S.clumps[i];
@@ -124,7 +132,9 @@ export function galaxyUniforms(S) {
     gSeedWarp: { value: S.seedWarp >>> 0 }, gSeedFrag: { value: S.seedFrag >>> 0 }, gSeedSite: { value: S.seedSite >>> 0 },
     gArmAmp: { value: amp }, gArmEnd: { value: end },
     gSiteCell: { value: S.siteCell * k }, gSiteDensity: { value: S.siteDensity }, gHiiFrac: { value: S.hiiFrac },
-    gRingIn: { value: S.ringIn * k }, gRingOut: { value: S.ringOut * k },
+    gRingIn: { value: S.ringIn * k }, gRingOut: { value: S.ringOut * k }, gRingW: { value: (S.ringW || S.R * 0.03) * k },
+    gRingOff: { value: new THREE.Vector2((S.ringOff?.[0] ?? 0) * k, (S.ringOff?.[1] ?? 0) * k) },
+    gRingStyle: { value: S.ringStyle === 'cartwheel' ? 1 : S.ringStyle === 'hoag' ? 2 : 0 },
     gType: { value: TYPE_ID[S.type] ?? 0 },
     gClumps: { value: clumps }, gNClumps: { value: S.clumps.length },
   };
