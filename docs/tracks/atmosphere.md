@@ -171,6 +171,11 @@ it) and `overcast`.
 * **terrain**: cloud shadows now use strength 0.72; very dark shadowed slopes at low sun suggest the terrain
   shader under-weights `scene.environment` (sky ambient) relative to the direct sun.
 
+* **vehicles / player** (round 2): at W4 `view=surface&tod=0.45` the camera spawns ~2 m from the parked ship,
+  which fills a third of the frame and hides the storm sky; honour `props=0` or park props ≥ 15 m from the spawn.
+* **post** (round 2): the atmosphere now soft-limits cloud silver linings (no more ~100× radiance edges); if the
+  bloom still spreads a veil from the sun disc under broken clouds, a slightly higher bloom threshold for
+  far-plane (sky) pixels would keep backlit terrain contrasty.
 * **terrain / lead** (re: CRITICAL airless-body request): reproduced M1
   (`star=0&planet=2.0&view=fp&lat=-25.555&lon=-70.154&tod=0.5`) — the terrain is black **identically with
   and without** the atmosphere (`&disable=atmosphere`), and with `only=terrain,player` too in current code.

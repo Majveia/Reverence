@@ -84,18 +84,47 @@ export function broadleaf(rnd, P) {
   const trunkH = H - crownH * 1.05;
   const r0 = P.trunkR * rnd.range(0.85, 1.2);
   const leanX = rnd.range(-1, 1) * (P.lean ?? 0.03), leanZ = rnd.range(-1, 1) * (P.lean ?? 0.03);
-  const trunk = trunkPath(rnd, trunkH + crownH * 0.6, r0, r0 * 0.45, { gnarl: P.gnarl ?? 0.2, leanX, leanZ, segs: 12, flare: P.flare ?? 0.8 });
+  // BotW / English-oak habit: most trees fork low into 2–3 leaders that spread into the crown
+  // (a single straight pole through the crown reads as a plantation / lollipop)
+  const forked = rnd() < (P.fork ?? 0);
+  const forkH = trunkH * rnd.range(0.38, 0.62);
+  const trunk = forked
+    ? trunkPath(rnd, forkH, r0, r0 * 0.74, { gnarl: (P.gnarl ?? 0.2) * 0.7, leanX, leanZ, segs: 8, flare: P.flare ?? 0.8 })
+    : trunkPath(rnd, trunkH + crownH * 0.6, r0, r0 * 0.45, { gnarl: P.gnarl ?? 0.2, leanX, leanZ, segs: 12, flare: P.flare ?? 0.8 });
   const top = trunk[trunk.length - 1];
-  const crown = [top.x, trunkH + crownH * 0.55, top.z];
+  const leaders = [];
+  if (forked) {
+    const nLead = rnd() < 0.55 ? 2 : 3;
+    const az0 = rnd() * 6.28;
+    const rise = trunkH + crownH * 0.5 - top.y;
+    const rL = r0 * 0.74 * (nLead === 2 ? 0.8 : 0.68);
+    for (let k = 0; k < nLead; k++) {
+      const az = az0 + (k / nLead) * Math.PI * 2 + rnd.range(-0.45, 0.45);
+      const spread = crownR * rnd.range(0.32, 0.55);
+      const cx = Math.cos(az), cz = Math.sin(az);
+      const h = rise * rnd.range(0.85, 1.1);
+      // S-curved leader: leaves the fork steeply outward, then turns up into the crown
+      const P0 = [top.x, top.y - 0.15, top.z];
+      const P1 = [top.x + cx * spread * 0.55, top.y + h * 0.28, top.z + cz * spread * 0.55];
+      const P2 = [top.x + cx * spread * 0.95, top.y + h * 0.62, top.z + cz * spread * 0.95];
+      const P3 = [top.x + cx * spread * (1.0 + rnd.range(-0.1, 0.2)), top.y + h, top.z + cz * spread * 1.05];
+      const path = bezierPath([P0, P1, P2, P3], 7, (t) => rL * (1 - 0.72 * Math.pow(t, 0.8)), 0,
+        { flex: (t) => top.flex + t * 0.14, ao: (t) => 0.6 + 0.4 * t });
+      leaders.push({ path, az, end: P3, phase: rnd() });
+    }
+  }
+  let cxm = top.x, czm = top.z;
+  if (leaders.length) { cxm = 0; czm = 0; for (const l of leaders) { cxm += l.end[0] / leaders.length; czm += l.end[2] / leaders.length; } }
+  const crown = [cxm, trunkH + crownH * 0.55, czm];
   const limbs = [];
   const nL = P.limbs ?? rnd.int(4, 6);
   const phase0 = rnd() * 6.28;
   for (let k = 0; k < nL; k++) {
-    const az = phase0 + (k / nL) * Math.PI * 2 + rnd.range(-0.35, 0.35);
-    const t0 = rnd.range(0.62, 0.86);
-    const s = pointOn(trunk, t0);
+    const ld = leaders.length ? leaders[k % leaders.length] : null;
+    const az = ld ? ld.az + rnd.range(-1.3, 1.3) : phase0 + (k / nL) * Math.PI * 2 + rnd.range(-0.35, 0.35);
+    const s = ld ? pointOn(ld.path, rnd.range(0.35, 0.85)) : pointOn(trunk, rnd.range(0.62, 0.86));
     const el = rnd.range(0.35, 0.85);                  // elevation above horizontal
-    const L = crownR * rnd.range(0.7, 1.0);
+    const L = crownR * (ld ? rnd.range(0.5, 0.78) : rnd.range(0.7, 1.0));
     const ex = s.x + Math.cos(az) * Math.cos(el) * L, ey = s.y + Math.sin(el) * L * 0.9 + crownH * 0.15, ez = s.z + Math.sin(az) * Math.cos(el) * L;
     const mx = s.x + Math.cos(az) * L * 0.45, my = s.y + L * 0.2, mz = s.z + Math.sin(az) * L * 0.45;
     const phase = rnd();
@@ -122,6 +151,7 @@ export function broadleaf(rnd, P) {
     }
   }
   clumps.push({ x: crown[0], y: crown[1] + crownH * 0.45, z: crown[2], r: clR * 1.1, flex: 0.4, phase: rnd() });
+  for (const l of leaders) clumps.push({ x: l.end[0], y: l.end[1] + clR * 0.3, z: l.end[2], r: clR * rnd.range(0.85, 1.05), flex: 0.4, phase: l.phase });
   // fill clumps to round out the crown silhouette
   for (let k = 0; k < (P.fill ?? 3); k++) {
     const a = rnd() * 6.28, rr = crownR * rnd.range(0.3, 0.65);
@@ -135,6 +165,7 @@ export function broadleaf(rnd, P) {
     const b = new PlantBuilder();
     const seg = detail ? 5 : 10;
     b.tube(detail ? trunk.filter((_, i) => i % 2 === 0 || i === trunk.length - 1) : trunk, { segs: detail ? 6 : 12, color: P.bark, capTip: true });
+    for (const l of leaders) b.tube(detail ? l.path.filter((_, i) => i % 2 === 0 || i === l.path.length - 1) : l.path, { segs: detail ? 5 : 9, color: P.bark, phase: l.phase, capTip: true });
     for (const l of limbs) {
       b.tube(detail ? l.path.filter((_, i) => i % 2 === 0) : l.path, { segs: detail ? 3 : 6, color: P.bark, phase: l.phase, capTip: true });
       if (!detail && l.subs) for (const sp of l.subs) b.tube(sp, { segs: 4, color: P.bark, phase: l.phase, capTip: true });

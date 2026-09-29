@@ -16,33 +16,38 @@ import { FLORA_DITHER } from './materials.js';
  * independent of the blade's position in the disc, so density thinning never shrinks a patch into
  * a clump (it removes blades uniformly over the whole patch).
  */
-export function makeGrassPatch(blades, segs, seed = 3) {
+export function makeGrassPatch(blades, segs, seed = 3, carpet = 0) {
   const rnd = mulberry(seed);
   const vpb = segs * 2 + 1;
-  const pos = new Float32Array(blades * vpb * 3);
-  const bl = new Float32Array(blades * vpb * 4);
-  const sg = new Float32Array(blades * vpb * 2);
+  const nv = blades * vpb + carpet * 3;
+  const pos = new Float32Array(nv * 3);
+  const bl = new Float32Array(nv * 4);
+  const sg = new Float32Array(nv * 2);
   const idx = [];
   // random permutation of ranks (uniform thinning order, uncorrelated with radius)
-  const ranks = Array.from({ length: blades }, (_, i) => (i + 0.5) / blades);
-  for (let i = blades - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = ranks[i]; ranks[i] = ranks[j]; ranks[j] = t; }
+  const perm = (n) => {
+    const a = Array.from({ length: n }, (_, i) => (i + 0.5) / n);
+    for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; }
+    return a;
+  };
+  const ranks = perm(blades);
+  const put = (i, x, z, ang, r, t, side) => {
+    pos[i * 3] = x; pos[i * 3 + 1] = t * 0.6; pos[i * 3 + 2] = z;
+    bl[i * 4] = x; bl[i * 4 + 1] = z; bl[i * 4 + 2] = ang; bl[i * 4 + 3] = r;
+    sg[i * 2] = t; sg[i * 2 + 1] = side;
+  };
   for (let b = 0; b < blades; b++) {
     // blue-noise-ish distribution: sunflower spiral + jitter (disc edge softened so patches blend)
     const rr = Math.min(1.08, Math.sqrt((b + 0.5) / blades) * (0.9 + rnd() * 0.2));
     const th = b * 2.39996 + (rnd() - 0.5) * 0.9;
     const x = Math.cos(th) * rr, z = Math.sin(th) * rr;
     const ang = rnd() * Math.PI * 2;
-    const r = ranks[b];
     const base = b * vpb;
     for (let k = 0; k < vpb; k++) {
       const seg = k === vpb - 1 ? segs : Math.floor(k / 2);
       // rows packed toward the tip (where the curvature and the taper are)
       const t = Math.pow(seg / segs, 0.85);
-      const side = k === vpb - 1 ? 0 : (k % 2 === 0 ? -1 : 1);
-      const i = base + k;
-      pos[i * 3] = x; pos[i * 3 + 1] = t * 0.6; pos[i * 3 + 2] = z;
-      bl[i * 4] = x; bl[i * 4 + 1] = z; bl[i * 4 + 2] = ang; bl[i * 4 + 3] = r;
-      sg[i * 2] = t; sg[i * 2 + 1] = side;
+      put(base + k, x, z, ang, ranks[b], t, k === vpb - 1 ? 0 : (k % 2 === 0 ? -1 : 1));
     }
     for (let s = 0; s < segs - 1; s++) {
       const a = base + s * 2;
@@ -50,6 +55,21 @@ export function makeGrassPatch(blades, segs, seed = 3) {
     }
     const a = base + (segs - 1) * 2;
     idx.push(a, a + 1, base + vpb - 1);
+  }
+  // turf carpet: short single-triangle blades (rank offset by +2 flags them in the shader). They
+  // cover the ground between the tall blades so meadows read as continuous sward, not tufts on soil.
+  const cr = perm(carpet);
+  const c0 = blades * vpb;
+  for (let b = 0; b < carpet; b++) {
+    const rr = Math.min(1.1, Math.sqrt((b + 0.5) / carpet) * (0.92 + rnd() * 0.16));
+    const th = b * 2.39996 + 1.3 + (rnd() - 0.5) * 1.2;
+    const x = Math.cos(th) * rr, z = Math.sin(th) * rr;
+    const ang = rnd() * Math.PI * 2;
+    const i = c0 + b * 3;
+    put(i, x, z, ang, cr[b] + 2, 0, -1);
+    put(i + 1, x, z, ang, cr[b] + 2, 0, 1);
+    put(i + 2, x, z, ang, cr[b] + 2, 1, 0);
+    idx.push(i, i + 1, i + 2);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -68,7 +88,7 @@ attribute vec4 aBlade; attribute vec2 aSeg;
 uniform vec3 uCamPos; uniform vec3 uPlanetCenter; uniform float uTime; uniform vec3 uWindDir; uniform float uWindStrength;
 uniform vec4 uFade; uniform float uPatchR; uniform float uHeight; uniform float uWidth; uniform float uDensity;
 uniform vec4 uKeep; uniform vec4 uPush; uniform float uWidenK; uniform float uStiff;
-varying float vT; varying float vDry; varying float vRand; varying vec2 vFade; varying float vAO; varying vec3 vGW; varying float vSide;
+varying float vT; varying float vDry; varying float vRand; varying vec2 vFade; varying float vAO; varying vec3 vGW; varying float vCarp;
 vec3 rvQrotG(vec4 q, vec3 v){ return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 float gHash(float n){ return fract(sin(n) * 43758.5453); }
 vec3 rvGrassPos; vec3 rvGrassN;
@@ -81,9 +101,13 @@ const GRASS_CORE = /* glsl */`
   vec3 upP = normalize(anchorW - uPlanetCenter);         // true planet up (wind, push)
   vec3 up = rvQrotG(iRot, vec3(0.0, 1.0, 0.0));          // patch up (slope-tilted)
   float t = aSeg.x;
-  float r = aBlade.w;
+  float carpet = step(1.5, aBlade.w);                    // short single-triangle turf blade
+  float r = aBlade.w - 2.0 * carpet;
   float h1 = gHash(r * 91.7 + iData.x * 13.1), h2 = gHash(r * 47.3 + iData.x * 7.7), h3 = gHash(r * 13.9 + iData.x * 3.3);
   float h4 = gHash(r * 29.1 + iData.x * 5.9);
+  // turf: half the carpet blades are upright short blades, half lie over as thatch that shades
+  // the ground between the stems (the sward reads dense instead of tufts on bare soil)
+  float thatch = carpet * step(0.5, h4);
   vec3 rootL = vec3(aBlade.x, 0.0, aBlade.y) * uPatchR * iPos.w;
   vec3 root = rvQrotG(iRot, rootL);
   vec3 rootW = anchorW + root;
@@ -93,8 +117,8 @@ const GRASS_CORE = /* glsl */`
   float keep = iData.y * uDensity * clamp(pow(uKeep.x / max(d, 1.0), uKeep.y), uKeep.z, 1.0);
   float alive = smoothstep(0.0, 0.08, keep - r) * vFade.x * vFade.y;
   // height: a few tall seed-stalk blades over a carpet of short ones
-  float H = uHeight * iData.z * (0.5 + 0.55 * h1 * h1 + 0.25 * h2 + 0.45 * step(0.9, h4)) * alive;
-  float W = uWidth * (0.55 + 0.9 * h2) * (1.0 + d * uWidenK) * iPos.w;
+  float H = uHeight * iData.z * mix(0.5 + 0.55 * h1 * h1 + 0.25 * h2 + 0.45 * step(0.9, h4), mix(0.34 + 0.34 * h1 * h1, 0.2 + 0.14 * h1, thatch), carpet) * alive;
+  float W = uWidth * mix(0.55 + 0.9 * h2, mix(1.0 + 0.7 * h2, 2.4 + 1.4 * h2, thatch), carpet) * (1.0 + d * uWidenK) * iPos.w;
   float ang = aBlade.z;
   vec3 fl = rvQrotG(iRot, vec3(cos(ang), 0.0, sin(ang)));       // blade facing (normal)
   // per-blade twist along the length: the width vector rotates toward the tip
@@ -111,6 +135,9 @@ const GRASS_CORE = /* glsl */`
   // droop: long blades arc over more (grass-like), short ones stay upright
   float droop = 0.25 + 0.55 * h2 * h2 + 0.3 * h1 + 0.35 * step(0.9, h4);
   vec3 D = (flow * 0.3 + outward * 0.18 + fl * (h3 - 0.5) * 0.5) * H * droop;
+  // turf blades splay in all directions (a matted sward), barely combed by the flow field
+  D = mix(D, (flow * 0.22 + fl * (h3 - 0.5) * 0.9 + outward * 0.22) * H, carpet);
+  D = mix(D, normalize(flow * 0.5 + fl * (h3 - 0.5) * 2.0 + outward * 0.6 + 1e-4) * H * 1.7, thatch);
   // wind: travelling gusts (coherent over the field) + per-blade flutter
   vec3 wd = uWindDir - upP * dot(uWindDir, upP);
   wd = length(wd) > 1e-3 ? normalize(wd) : sl;
@@ -122,7 +149,7 @@ const GRASS_CORE = /* glsl */`
   float gust = clamp(0.5 + 0.35 * g1 + 0.3 * g2, 0.0, 1.2);
   float ws = uWindStrength;
   float flut = sin(uTime * (3.5 + h1 * 2.5) + h2 * 30.0 + along * 0.9);
-  D += wd * H * (ws * (0.25 + 0.95 * gust) + 0.06 * flut * (0.3 + ws)) / uStiff;
+  D += wd * H * (ws * (0.25 + 0.95 * gust) + 0.06 * flut * (0.3 + ws)) / uStiff * (1.0 - 0.6 * carpet);
   D += wsd * H * 0.08 * sin(uTime * 1.7 + h3 * 20.0 + across * 0.5) * (0.2 + ws);
   // interactive push away from the player (and flattening under their feet)
   vec3 pv = rootW - uPush.xyz;
@@ -149,8 +176,10 @@ const GRASS_CORE = /* glsl */`
   vec3 bn = normalize(cross(sl, tangent));
   if (dot(bn, uCamPos - rootW) < 0.0) bn = -bn;
   bn = normalize(bn + sl * aSeg.y * 0.5);
-  rvGrassN = normalize(mix(bn, upP, 0.5));
-  vT = t; vDry = iData.w; vRand = h1; vAO = mix(0.5, 1.0, smoothstep(0.0, 0.7, t)); vSide = aSeg.y;
+  rvGrassN = normalize(mix(bn, upP, 0.5 + 0.3 * carpet));
+  // turf reads as the lower part of the sward (base colour, root AO)
+  t *= 1.0 - 0.3 * carpet - 0.35 * thatch;
+  vT = t; vDry = iData.w; vRand = h1; vAO = mix(0.5, 1.0, smoothstep(0.0, 0.7, t)); vCarp = carpet;
   vGW = rootW;
   if (H < 1e-3) rvGrassPos = iPos.xyz;
 }
@@ -160,7 +189,7 @@ const GRASS_FRAG_PARS = /* glsl */`
 #include <rv_flora>
 uniform vec3 uBase; uniform vec3 uTip; uniform vec3 uDryC; uniform vec3 uGlowTip; uniform float uGlowAmt; uniform float uNight; uniform float uTime;
 uniform float uTransl; uniform vec3 uPlanetCenter;
-varying float vT; varying float vDry; varying float vRand; varying vec2 vFade; varying float vAO; varying vec3 vGW; varying float vSide;
+varying float vT; varying float vDry; varying float vRand; varying vec2 vFade; varying float vAO; varying vec3 vGW; varying float vCarp;
 float rvTransl = 0.0; float rvWrap = 0.0;
 vec3 rvGlow = vec3(0.0);
 float gH3(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.yzx + 33.33); return fract((p.x + p.y) * p.z); }
@@ -194,9 +223,14 @@ const GRASS_MAP = /* glsl */`
   rvWrap = 0.6;
   if (uGlowAmt > 0.0) {
     // only some blades carry glowing tips; they breathe slowly in patches
+    // some blades carry glowing tips, the tallest few glow along their whole upper blade (curved
+    // strokes of light, Pacific Drive style); they breathe slowly in patches
     float sel = smoothstep(0.62, 0.8, vRand);
+    float streak = smoothstep(0.86, 0.93, vRand) * smoothstep(0.35, 0.65, macro);
     float pulse = 0.55 + 0.45 * sin(uTime * 0.9 + macro * 12.0 + vRand * 6.0);
-    rvGlow = uGlowTip * uGlowAmt * pow(t, 4.0) * (0.02 + uNight) * sel * pulse;
+    float gl = pow(t, 4.0) * sel + streak * 0.55 * smoothstep(0.2, 1.0, t) * (0.6 + 0.4 * t);
+    rvGlow = uGlowTip * uGlowAmt * gl * (0.02 + uNight) * pulse * (1.0 - vCarp);
+    diffuseColor.rgb = mix(diffuseColor.rgb, uGlowTip * 0.25, streak * 0.6 * (1.0 - vCarp));
   }
 }
 `;

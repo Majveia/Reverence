@@ -176,7 +176,7 @@ function patchLighting(mat, { rim = 0.0, wear = 1, key = 'x' } = {}) {
  */
 function patchVisor(mat, P) {
   const uUp = { value: new THREE.Vector3(0, 1, 0) };
-  const tint = { value: P.visorGold || new THREE.Color(1.0, 0.74, 0.4) };
+  const tint = { value: P.visorGold || new THREE.Color(1.0, 0.7, 0.3) };
   mat.userData.uUp = uUp;
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uVUp = uUp; sh.uniforms.uVTint = tint;
@@ -188,22 +188,28 @@ function patchVisor(mat, P) {
           vec3 Vv = normalize(vViewPosition);
           vec3 Rv = reflect(-Vv, normal);
           vec3 Rw = normalize((vec4(Rv, 0.0) * viewMatrix).xyz);
+          float ndv = clamp(dot(normal, Vv), 0.0, 1.0);
           float h = dot(Rw, uVUp);
-          float fres = 0.3 + 0.7 * pow(1.0 - clamp(dot(normal, Vv), 0.0, 1.0), 2.5);
-          vec3 sky = mix(uVSky * 1.1 + 0.02, uVSky * 2.6 + 0.04, smoothstep(0.0, 0.8, h));
-          vec3 grd = uVGround * 0.25 + 0.004;
-          vec3 env = mix(grd, sky, smoothstep(-0.06, 0.05, h));
-          env += (uVSun * 0.12 + uVSky * 0.6) * exp(-abs(h) * 16.0);
+          float fres = 0.22 + 0.78 * pow(1.0 - ndv, 3.0);
+          // crisp "astronaut visor" reflection: bright hazy horizon, deep zenith, dark ground below a
+          // sharp horizon line (the PBR env map alone reads as blotches on a small curved dome)
+          vec3 skyZ = uVSky * 1.5 + 0.02;
+          vec3 skyH = uVSky * 3.4 + uVSun * 0.05 + 0.05;
+          vec3 sky = mix(skyH, skyZ, smoothstep(0.0, 0.75, h));
+          vec3 grd = mix(uVGround, vec3(dot(uVGround, vec3(0.33))), 0.6) * 0.3 + 0.003;
+          grd *= mix(1.5, 0.3, smoothstep(0.0, -0.5, h));
+          vec3 env = mix(grd, sky, smoothstep(-0.04, 0.04, h));
+          env += (uVSky * 1.2 + uVSun * 0.1) * exp(-abs(h) * 30.0); // horizon glow line
           float sd = max(dot(Rw, normalize(uVSunDir)), 0.0);
-          vec3 spec = uVSun * (pow(sd, 1200.0) * 40.0 + pow(sd, 60.0) * 0.5);
-          outgoingLight += (env * fres) * uVTint * 0.32 + spec * uVTint;
+          vec3 spec = uVSun * (pow(sd, 1600.0) * 60.0 + pow(sd, 90.0) * 0.8 + pow(sd, 8.0) * 0.05);
+          outgoingLight = outgoingLight * 0.35 + env * fres * uVTint * 0.8 + spec * mix(uVTint, vec3(1.0), 0.5);
           // soft studio-window glint (reads as a curved glass dome at any distance)
           vec3 Rvn = normalize(Rv);
-          float win = smoothstep(0.35, 0.75, Rvn.y) * smoothstep(0.55, 0.1, abs(Rvn.x + 0.25));
-          outgoingLight += uVTint * (uVSky * 1.6 + uVSun * 0.05) * win * 0.55;
+          float win = smoothstep(0.45, 0.8, Rvn.y) * smoothstep(0.5, 0.12, abs(Rvn.x + 0.3));
+          outgoingLight += uVTint * (uVSky * 1.4 + uVSun * 0.04) * win * 0.5;
           // warm gold interference band near the rim of the dome
-          float rimG = pow(1.0 - clamp(dot(normal, Vv), 0.0, 1.0), 4.0);
-          outgoingLight += vec3(1.0, 0.62, 0.2) * rimG * (uVSky * 0.9 + uVSun * 0.08);
+          float rimG = pow(1.0 - ndv, 5.0);
+          outgoingLight += vec3(1.0, 0.6, 0.18) * rimG * (uVSky * 1.2 + uVSun * 0.1);
         }
         #include <opaque_fragment>`);
   };
@@ -226,10 +232,10 @@ export function makeMaterials(renderer, P, quality) {
   const visor = hi
     ? new THREE.MeshPhysicalMaterial({
       // gold-film sun visor: gold metal F0 under a glass clearcoat, thin-film sheen at grazing angles
-      color: new THREE.Color(0.5, 0.31, 0.09), roughness: 0.1, metalness: 1.0, clearcoat: 1, clearcoatRoughness: 0.03,
-      iridescence: 0.25, iridescenceIOR: 1.35, iridescenceThicknessRange: [300, 480], envMapIntensity: 1.0,
+      color: new THREE.Color(0.42, 0.26, 0.08), roughness: 0.08, metalness: 1.0, clearcoat: 1, clearcoatRoughness: 0.03,
+      iridescence: 0.2, iridescenceIOR: 1.35, iridescenceThicknessRange: [300, 480], envMapIntensity: 0.45,
     })
-    : new THREE.MeshStandardMaterial({ color: new THREE.Color(0.5, 0.31, 0.09), roughness: 0.1, metalness: 1.0, envMapIntensity: 1.0 });
+    : new THREE.MeshStandardMaterial({ color: new THREE.Color(0.42, 0.26, 0.08), roughness: 0.08, metalness: 1.0, envMapIntensity: 0.45 });
   patchVisor(visor, P);
   patchLighting(fabric, { rim: 0.6, key: 'fabric' });
   patchLighting(hard, { rim: 0.8, key: 'hard' });
@@ -429,10 +435,19 @@ export function buildExplorer(renderer, body, quality) {
     const g = ellipsoid(hr.x, hr.y, hr.z, R(40), R(28), { e: 2.25, deform: (v) => { v.add(hc); helmetDeform(v); } });
     A.add('hard', g, P.shell, rigid(B.head));
   }
-  const HS = ellipsoidSurface(hc, hr.clone().multiplyScalar(1.0), (v, az, el) => { v.add(hc); helmetDeform(v); v.sub(hc); });
+  // the shell is a super-ellipsoid (e = 2.25): lay the visor / frame on the SAME surface, or the shell
+  // bulges through the glass at the diagonals (it did — read as a white blotch inside the visor)
+  const spw0 = (x, k) => Math.sign(x) * Math.pow(Math.abs(x), k);
+  const HS = (az, el, out) => {
+    const ce = Math.cos(el), k = 2 / 2.25;
+    out.set(spw0(Math.sin(az) * ce, k) * hr.x, spw0(Math.sin(el), k) * hr.y, spw0(Math.cos(az) * ce, k) * hr.z).add(hc);
+    helmetDeform(out);
+    return out;
+  };
+  HS.inside = (az, el, out) => out.copy(hc);
   // visor
   const visorTaper = (t) => [-0.86 - 0.26 * t, 0.86 + 0.26 * t];
-  A.add('visor', patch(HS, { u0: -1.1, u1: 1.1, v0: -0.6, v1: 0.42, nu: R(22), nv: R(14), off: 0.006, thick: 0.01, bevel: 0.004, round: 3.2, taper: visorTaper }), P.visorTint, rigid(B.head));
+  A.add('visor', patch(HS, { u0: -1.1, u1: 1.1, v0: -0.6, v1: 0.42, nu: R(40), nv: R(26), off: 0.006, thick: 0.01, bevel: 0.004, round: 3.2, taper: visorTaper }), P.visorTint, rigid(B.head));
   // visor frame (tube following the outline)
   {
     const pts = [];
@@ -468,11 +483,42 @@ export function buildExplorer(renderer, body, quality) {
     g.computeVertexNormals();
     A.add('hard', g, P.accent, rigid(B.head));
   }
+  // shell panel seams (dark inset lines that read at game distance) + temple lamp
+  {
+    const spw = (x, k) => Math.sign(x) * Math.pow(Math.abs(x), k);
+    const HP = (ux, uy, uz, lift) => { // unit-sphere direction → point on the (super-ellipsoid) shell
+      const k = 2 / 2.25;
+      const v = new THREE.Vector3(spw(ux, k) * hr.x, spw(uy, k) * hr.y, spw(uz, k) * hr.z).add(hc);
+      helmetDeform(v);
+      return v.addScaledVector(v.clone().sub(hc).normalize(), lift);
+    };
+    const line = (fn, t0, t1, n, r = 0.0026) => {
+      const pts = [];
+      for (let i = 0; i <= n; i++) pts.push(fn(t0 + (t1 - t0) * (i / n)));
+      A.add('metal', tube(pts, r, R(n * 3), 5, false), P.dark, rigid(B.head));
+    };
+    const sph = (az, el) => [Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)];
+    // brow seam over the visor, and the ring around the back of the skull above the ear pods
+    line((a) => HP(...sph(a, 0.64), 0.0012), -1.32, 1.32, 16);
+    line((a) => HP(...sph(a, 0.3), 0.0012), 1.32, Math.PI * 2 - 1.32, 18);
+    // two seams parallel to the crest, splitting the dome into panels
+    for (const xo of [0.44, -0.44]) {
+      const c = Math.sqrt(1 - xo * xo);
+      line((t) => HP(xo, Math.sin(t) * c, Math.cos(t) * c, 0.0012), 0.72, 2.75, 16);
+    }
+    // temple lamp (right side): housing + lens
+    const lp = HP(...sph(-1.2, 0.36), 0.0);
+    const hous = box(0.028, 0.024, 0.05, 0.007); xf(hous, lp.x - 0.004, lp.y, lp.z + 0.012, 0, -0.35, 0);
+    A.add('metal', hous, P.dark, rigid(B.head));
+    const lens = cylinder(0.0085, 0.0085, 0.004, R(12)); xf(lens, lp.x + 0.004, lp.y, lp.z + 0.038, Math.PI / 2, 0, 0);
+    A.add('glow', lens, new THREE.Color(1.0, 0.95, 0.85), rigid(B.head));
+  }
   // ear pods + glow rings + antenna
   for (const s of [1, -1]) {
     const px = s * 0.147;
     { const g = cylinder(0.047, 0.05, 0.036, R(20)); xf(g, px, 1.655, -0.01, 0, 0, Math.PI / 2); A.add('hard', g, P.shell2, rigid(B.head)); }
-    { const g = torus(0.033, 0.0045, R(6), R(22)); xf(g, px + s * 0.019, 1.655, -0.01, 0, Math.PI / 2, 0); A.add('glow', g, P.glow, rigid(B.head)); }
+    // (dim: two bright rings + a lit rear slot read as a face from behind — keep them subtle)
+    { const g = torus(0.033, 0.0045, R(6), R(22)); xf(g, px + s * 0.019, 1.655, -0.01, 0, Math.PI / 2, 0); A.add('glow', g, P.glow.clone().multiplyScalar(0.35), rigid(B.head)); }
     { const g = cylinder(0.024, 0.028, 0.012, R(16)); xf(g, px + s * 0.02, 1.655, -0.01, 0, 0, Math.PI / 2); A.add('metal', g, P.metal, rigid(B.head)); }
   }
   {
@@ -483,9 +529,9 @@ export function buildExplorer(renderer, body, quality) {
     const t = ellipsoid(0.009, 0.009, 0.009, 8, 6); xf(t, 0.166 + Math.sin(0.12) * 0.2, 1.69 + Math.cos(0.28) * 0.2, -0.035 - Math.sin(0.28) * 0.2);
     A.add('glow', t, P.glow, rigid(B.antenna));
   }
-  // rear helmet vent + light
-  { const g = box(0.07, 0.03, 0.02, 0.008); xf(g, 0, 1.64, -0.158, -0.25); A.add('hard', g, P.dark, rigid(B.head)); }
-  { const g = box(0.05, 0.006, 0.006, 0.002); xf(g, 0, 1.64, -0.169, -0.25); A.add('glow', g, P.glow, rigid(B.head)); }
+  // rear helmet vent: slatted grille (no light — it read as a mouth under the two ear rings)
+  { const g = box(0.074, 0.036, 0.02, 0.008); xf(g, 0, 1.64, -0.158, -0.25); A.add('hard', g, P.shell2, rigid(B.head)); }
+  for (let i = 0; i < 3; i++) { const g = box(0.056, 0.0045, 0.008, 0.002); xf(g, 0, 1.629 + i * 0.011, -0.167 + i * 0.0028, -0.25); A.add('metal', g, P.dark, rigid(B.head)); }
 
   // ---------------- backpack / jetpack
   const pk = rigid(B.pack);
@@ -511,8 +557,10 @@ export function buildExplorer(renderer, body, quality) {
     const nz = lathe([[0.03, 0.0], [0.036, -0.012], [0.046, -0.045], [0.05, -0.07], [0.046, -0.074], [0.036, -0.05], [0.028, -0.02]], R(20));
     xf(nz, s * 0.085, 1.04, -0.245, -0.18, 0, 0);
     A.add('metal', nz, P.metal, pk);
+    // idle pilot glow only (the FX jets draw the thrust): full-bright discs read as a pair of eyes when
+    // the explorer lies prone swimming away from the camera
     const gl = cylinder(0.032, 0.036, 0.004, R(16)); xf(gl, s * 0.085, 0.976, -0.257, -0.18, 0, 0);
-    A.add('glow', gl, P.glow, pk);
+    A.add('glow', gl, P.glow.clone().multiplyScalar(0.1), pk);
   }
   // pack face details: status strip, grab handle, badge
   { const g = box(0.012, 0.16, 0.006, 0.003); xf(g, 0.1, 1.24, -0.306); A.add('glow', g, P.glow, pk); }

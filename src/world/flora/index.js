@@ -291,14 +291,15 @@ class Flora {
       base: G.base, tip: G.tip, dry: G.dry, glowTip: G.glowTip, glowAmt: 1.6, push: this.pushU,
       height: hgt * 0.66, patchR: pR, transl: 0.9, stiff: 1,
     };
-    const dense = makeGrassPatch(low ? 48 : 92, 4, 11);
-    const sparse = makeGrassPatch(low ? 18 : 32, 3, 23);
-    const far = makeGrassPatch(low ? 14 : 26, 2, 37);
+    // tall blades (Bézier strips) over a turf carpet of short single-triangle blades
+    const dense = makeGrassPatch(low ? 36 : 64, low ? 3 : 4, 11, low ? 70 : 150);
+    const sparse = makeGrassPatch(low ? 16 : 28, 3, 23, low ? 24 : 56);
+    const far = makeGrassPatch(low ? 12 : 22, 2, 37, low ? 12 : 24);
     const nearF = low ? [6, 9] : [8, 11.5];
     const midF = low ? [12, 15] : [17, 21];
-    const mD = makeGrassMaterial({ ...common, fade: [0, 0, nearF[0], nearF[1]], keep: [1e6, 1, 1, 1], width: 0.04, widenK: 0.01, density: 1 });
-    const mS = makeGrassMaterial({ ...common, fade: [nearF[0], nearF[1], midF[0], midF[1]], keep: [1e6, 1, 1, 1], width: 0.06, widenK: 0.016, patchR: pR * 1.05, density: 1 });
-    const mF = makeGrassMaterial({ ...common, fade: [midF[0], midF[1], R * 0.72, R], keep: [1e6, 1, 1, 1], width: 0.075, widenK: 0.016, patchR: pR * 1.05, density: 1 });
+    const mD = makeGrassMaterial({ ...common, fade: [0, 0, nearF[0], nearF[1]], keep: [1e6, 1, 1, 1], width: 0.029, widenK: 0.012, density: 1 });
+    const mS = makeGrassMaterial({ ...common, fade: [nearF[0], nearF[1], midF[0], midF[1]], keep: [1e6, 1, 1, 1], width: 0.045, widenK: 0.018, patchR: pR * 1.05, density: 1 });
+    const mF = makeGrassMaterial({ ...common, fade: [midF[0], midF[1], R * 0.72, R], keep: [1e6, 1, 1, 1], width: 0.06, widenK: 0.018, patchR: pR * 1.05, density: 1 });
     const LD = new InstanceLayer(dense, mD.material, null, { capacity: 2048, parent: this.group, castShadow: false, name: 'flora-grass-dense', boundsPad: 2 });
     const LS = new InstanceLayer(sparse, mS.material, null, { capacity: 4096, parent: this.group, castShadow: false, name: 'flora-grass-mid', boundsPad: 2 });
     const LF = new InstanceLayer(far, mF.material, null, { capacity: 8192, parent: this.group, castShadow: false, name: 'flora-grass-far', boundsPad: 3 });

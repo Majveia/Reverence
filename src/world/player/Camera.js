@@ -97,12 +97,15 @@ export class CameraRig {
     const vyC = ctx.vel.dot(up);
     if (st === 'climb' && ctx.climbN && this.idleLook > 0.9) {
       // climbing: swing to a ¾ view of the wall on the side we came from, looking a touch up the route
+      // high on the face the lens swings wider along the wall and looks down past the climber, so the
+      // frame shows the drop and the vista instead of a screen-filling slab of rock
+      const hi = smoothstep(3, 12, ctx.climbAgl || 0);
       _a.copy(ctx.climbN).negate(); projectOnPlane(_a, up);
       if (_a.lengthSq() > 1e-6) {
-        _a.normalize().applyAxisAngle(up, (ctx.climbSide || 1) * 0.85);
+        _a.normalize().applyAxisAngle(up, (ctx.climbSide || 1) * (0.85 + 0.35 * hi));
         this.recenter(up, _a, 1.4, dt, 3.1);
       }
-      this.pitch = damp(this.pitch, 0.02, 1.2, dt);
+      this.pitch = damp(this.pitch, lerp(0.02, -0.2, hi), 1.2, dt);
     } else if (this.idleLook > 0.9 && sp > 2.5 && (st === 'slide' || st === 'ground')) {
       // follow the grade of the motion: look down the slope you're surfing / running down
       const target = clamp(-0.13 + Math.atan2(vyC, sp) * 0.75 - (st === 'slide' ? 0.16 : 0), -0.95, 0.25);
@@ -113,7 +116,7 @@ export class CameraRig {
     }
     // ---- arm length by state
     const glideK = st === 'glide' ? 1 : 0;
-    let arm = 3.7 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (1.3 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? -0.4 : 0) + (st === 'climb' ? 0.5 : 0);
+    let arm = 3.7 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (1.3 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? -0.4 : 0) + (st === 'climb' ? 0.5 + 1.2 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
     // looking up from low: shorten the arm so the camera does not dig into the ground (BotW)
     arm *= 1 - 0.35 * smoothstep(0.05, 0.9, this.pitch);
     arm *= this.zoom;
@@ -141,13 +144,16 @@ export class CameraRig {
     const want = _c.copy(pivot).addScaledVector(camF, -arm).addScaledVector(right, sh);
     // ---- collision: first try to rise over terrain along the arm (BotW), then pull in as a fallback
     const H = ctx.heights;
+    // on foot the lens rides ~1 m over the ground so it stays above meadow grass (flora billboards right
+    // in front of the lens read as giant blades); tighter when swimming / climbing / under water
+    const clear = st === 'ground' || st === 'slide' || st === 'air' ? 0.95 : 0.45;
     let lift = 0;
     if (H) {
       const N = 9;
       for (let k = 1; k <= N; k++) {
         const t = k / N;
         _f.copy(pivot).lerp(want, t);
-        const deficit = H.groundR(_f) + 0.45 - _f.length();
+        const deficit = H.groundR(_f) + clear - _f.length();
         if (deficit > 0) lift = Math.max(lift, deficit / t);
       }
     }
@@ -176,7 +182,7 @@ export class CameraRig {
     const pos = _f.copy(pivot).addScaledVector(dir, this.dist);
     // final ground clearance (also over the terrain directly beneath the lens)
     if (H) {
-      const gr = H.groundR(pos) + 0.28;
+      const gr = H.groundR(pos) + (clear > 0.5 ? 0.75 : 0.28);
       if (pos.length() < gr) pos.setLength(gr);
       if (H.hasOcean && !H.solidSea && !ctx.submerged) { // the lens stays above the sea unless we dive
         const sea = H.R + H.sea + (st === 'swim' ? 0.25 : 0.2);

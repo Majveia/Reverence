@@ -16,7 +16,7 @@ function canvas(w, h) {
 }
 
 /** Height (grayscale canvas) → tangent-space normal map (RGBA8). */
-function heightToNormal(src, strength, wrap) {
+export function heightToNormal(src, strength, wrap) {
   const w = src.width, h = src.height;
   const sd = src.getContext('2d').getImageData(0, 0, w, h).data;
   const H = new Float32Array(w * h);
@@ -141,6 +141,15 @@ function panelAlbedo(hsrc, rnd) {
     for (let x = Math.max(0, x0 - w | 0); x < Math.min(S, x0 + w); x++) streak[x] += a * (1 - Math.abs(x - x0) / w);
   }
   const Q = S / 2;
+  // low-frequency mottling (bilinear value noise, two octaves): paint that has lived outdoors
+  const G1 = 9, G2 = 23, g1 = new Float32Array(G1 * G1), g2 = new Float32Array(G2 * G2);
+  for (let i = 0; i < g1.length; i++) g1[i] = rnd.next();
+  for (let i = 0; i < g2.length; i++) g2[i] = rnd.next();
+  const vn = (g, n, x, y) => {
+    const fx = x * (n - 1), fy = y * (n - 1), i = Math.min(n - 2, fx | 0), j = Math.min(n - 2, fy | 0), u = fx - i, v = fy - j;
+    const su = u * u * (3 - 2 * u), sv = v * v * (3 - 2 * v);
+    return (g[j * n + i] * (1 - su) + g[j * n + i + 1] * su) * (1 - sv) + (g[(j + 1) * n + i] * (1 - su) + g[(j + 1) * n + i + 1] * su) * sv;
+  };
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     const i = (y * S + x) * 4;
     const h = hd[i] / 255;
@@ -149,7 +158,9 @@ function panelAlbedo(hsrc, rnd) {
     if (h < 0.42) a *= 0.42 + 0.58 * Math.max(0, (h - 0.12) / 0.3); // grooves, vents
     if (hu > h + 0.12) a *= 0.86;
     const qy = (y % Q) / Q; // 0 top → 1 bottom of the plate (atlas v is flipped by the texture upload)
-    a *= 1 - streak[x] * (0.25 + 0.75 * qy);
+    a *= 1 - streak[x] * 0.3 * qy * qy;                       // faint run-off toward the lower edge only
+    const m = vn(g1, G1, x / S, y / S) * 0.65 + vn(g2, G2, x / S, y / S) * 0.35;
+    a *= 0.93 + 0.1 * m;
     if (h > 0.62) a *= 1.04; // raised emboss catches less dirt
     const v = Math.max(0, Math.min(255, a * 248)) | 0;
     d[i] = v; d[i + 1] = v; d[i + 2] = Math.min(255, v + 2); d[i + 3] = 255;

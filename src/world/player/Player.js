@@ -75,7 +75,7 @@ export class Player {
     // ---- kinematic state
     let dir = latLonToDir(p.lat !== undefined ? +p.lat : 12, p.lon !== undefined ? +p.lon : 28);
     if (p.lat === undefined && this.surface) dir = this._findLand(dir);
-    else if (this.surface && p.view !== 'fly' && p.view !== 'orbit' && !(+p.alt > 0.5) && p.flat !== '0') dir = this._flatSpot(dir, 45);
+    else if (this.surface && p.view !== 'fly' && p.view !== 'orbit' && !(+p.alt > 0.5) && p.flat !== '0') dir = p.flat === 'low' ? this._lowSpot(dir, clamp(+p.flatr || 400, 20, 3000)) : this._flatSpot(dir, 45);
     this.up = dir.clone().normalize();
     this.pos = this.up.clone().multiplyScalar(this.R + this._terrainH(this.up));
     if (this.heights.solidSea && this.pos.length() < this.heights.seaR) this.pos.setLength(this.heights.seaR); // on the ice
@@ -251,6 +251,29 @@ export class Player {
     return dir;
   }
 
+  /**
+   * flat=low: the LOWEST walkable, dry spot within `meters` (valley floors / lake shores instead of the
+   * clifftop the URL point may sit on — terrain request). flatr=<m> sets the search radius.
+   */
+  _lowSpot(dir, meters) {
+    const S = this.surface;
+    if (!S) return dir;
+    const nrm = new THREE.Vector3(), e = new THREE.Vector3(), n = new THREE.Vector3(), d = new THREE.Vector3();
+    const sea = S.seaLevel > -1e8 ? S.seaLevel : -Infinity;
+    tangentBasis(dir, e, n);
+    const k = 1 / this.R;
+    let best = null, bestH = Infinity;
+    for (let i = 0; i < 320; i++) {
+      const t = i * 2.39996, r = Math.sqrt(i / 320) * meters * k;
+      d.copy(dir).addScaledVector(e, Math.cos(t) * r).addScaledVector(n, Math.sin(t) * r).normalize();
+      const h = S.height(d.x, d.y, d.z);
+      if (!(h < bestH) || h < sea + 1.5) continue;
+      if (S.normal(d, nrm, 1.0).dot(d) < 0.92) continue;
+      bestH = h; best = (best || new THREE.Vector3()).copy(d);
+    }
+    return best || this._flatSpot(dir, 45);
+  }
+
   // ======================================================================================= API
   teleport(p) {
     this.pos.copy(p);
@@ -319,11 +342,11 @@ export class Player {
         if (!this._enterClimb(nA, d)) { this.pos.copy(start); this.up.copy(start).normalize(); this.state = 'ground'; this.grounded = true; continue; }
         this._settle = 0;
         // ¾ side view of the wall (camyaw still orbits relative to that)
-        const side = this.params.camyaw !== undefined ? 0 : 1;
-        this.cam.fwd.copy(d).applyAxisAngle(this.up, side * 0.85);
+        const side = this.params.camyaw !== undefined ? 0 : 1, hiK = smoothstep(3, 12, h);
+        this.cam.fwd.copy(d).applyAxisAngle(this.up, side * (0.85 + 0.35 * hiK));
         if (this.params.camyaw !== undefined) this.cam.fwd.applyAxisAngle(this.up, -(+this.params.camyaw) * DEG);
         this.climbS.side = 1;
-        if (this.params.pitch === undefined) this.cam.pitch = 0.02;
+        if (this.params.pitch === undefined) this.cam.pitch = lerp(0.02, -0.2, hiK);
         this.cam.idleLook = 0;
         return true;
       }
@@ -1157,6 +1180,10 @@ export class Player {
     ctx.carve = this.slideS.carve; ctx.dive = this.glide.dive > 0.5; ctx.boost = this.boostP;
     ctx.submerged = this.state === 'swim' && this.dive > 0.6; ctx.forward = this.forward;
     ctx.climbN = this.climbS.n; ctx.climbUp = this.climbS.up; ctx.climbSide = this.climbS.side;
+    if (this.state === 'climb') { // height above the ground at the foot of the wall (camera composition)
+      _a.copy(this.pos).addScaledVector(this.climbS.n, 2.5);
+      ctx.climbAgl = this.pos.length() - this.heights.groundR(_a);
+    } else ctx.climbAgl = 0;
     if (this.view === 'fp') {
       if (this.animator) {
         this.animator.eyeGroup(this.eye).applyQuaternion(this.gquat).add(this.gpos);
@@ -1293,6 +1320,11 @@ export class Player {
       au.setParam('glide', this.state === 'glide' ? 1 : 0);
       au.setParam('swim', this.state === 'swim' ? 1 : 0);
       au.setParam('boost', this.boostP);
+      // danger: a free fall that would be a hard landing (no glider open) — audio tension bed
+      const vy = this.vel.dot(this.up);
+      const dz = this.state === 'air' ? smoothstep(9, 22, -vy) * smoothstep(0.4, 1.2, this.airTime) : 0;
+      this._danger = damp(this._danger || 0, dz, dz > (this._danger || 0) ? 4 : 1.5, dt);
+      au.setParam('danger', this._danger);
     }
     // ---- contextual prompts (minimal)
     let pr = null;

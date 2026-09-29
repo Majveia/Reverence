@@ -57,7 +57,7 @@ export function buildStyle(body, atlas) {
     
     barkLayer: BARK.furrow, tint2: [0.1, 0.07, 0.04],
     biomes: bw({ FOREST: 1, GRASSLAND: 0.8, SAVANNA: 0.35, JUNGLE: 0.5, TAIGA: 0.15 }), m: [0.3, 1.5], t: [0.25, 1.2], slope: 0.7, alt: [-0.01, 0.55],
-    zone: 0, dens: 1, scale: [0.75, 1.3], lean: 0.05, sink: 0.35, ...o, params: { height: 13, crownR: 5.2, trunkR: 0.42, leafSize: 1.9, leafDensity: 6.5, rects: [R('broad'), R('broad2'), R('broad')], leafA: fl(0), leafB: fl(1), bark: barkBrown, gnarl: 0.3, ...o.params },
+    zone: 0, dens: 1, scale: [0.75, 1.3], lean: 0.05, sink: 0.35, ...o, params: { height: 13, crownR: 5.2, trunkR: 0.42, leafSize: 1.9, leafDensity: 6.5, fork: 0.72, rects: [R('broad'), R('broad2'), R('broad')], leafA: fl(0), leafB: fl(1), bark: barkBrown, gnarl: 0.3, ...o.params },
   });
   const conifer = (o = {}) => ({
     id: 'spruce', layer: 'canopy', gen: T.conifer, variants: 3, collider: 'tree',

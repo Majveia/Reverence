@@ -216,6 +216,13 @@ export class Animator {
     L.chest.y = -L.hipsRot.y * 1.25;
     L.spine.y = -L.hipsRot.y * 0.3;
     L.head.x = -(L.spine.x + L.chest.x) * 0.7;
+    // idle contrapposto: weight over the right leg, pelvis shifted and tilted, shoulders counter-tilted,
+    // head tipped a touch — a relaxed explorer's stance instead of a mannequin
+    const cp = idle * (0.85 + 0.15 * Math.sin(this.idleT * 0.21));
+    L.hipsPos.x -= 0.032 * cp; L.hipsPos.y -= 0.012 * cp;
+    L.hipsRot.z -= 0.06 * cp; L.hipsRot.y += 0.07 * cp;
+    L.spine.z += 0.035 * cp; L.chest.z += 0.045 * cp; L.chest.y -= 0.05 * cp;
+    L.head.z -= 0.05 * cp; L.head.y += 0.06 * cp;
     // legs
     for (const [side, off] of [['L', 0], ['R', 0.5]]) {
       const p = ((ph + off) % 1 + 1) % 1;
@@ -238,29 +245,31 @@ export class Animator {
         z -= kick * 0.5;
         pitch = lerp(-0.5 * (walkT * 0.6 + runT * 0.4), 0.18 * walkT, smoothstep(0.35, 0.95, s));
       }
-      // idle stance: feet slightly staggered and turned out
-      const idleZ = side === 'L' ? 0.05 : -0.035;
+      // idle stance: weight (right) foot under the pelvis, free (left) foot forward, wider and turned out
+      const idleZ = side === 'L' ? 0.1 : -0.03;
       z = lerp(idleZ, z, walkT);
-      const x = (side === 'L' ? 1 : -1) * lerp(0.115, width, walkT);
+      const x = (side === 'L' ? 1 : -1) * lerp(side === 'L' ? 0.15 : 0.085, width, walkT);
       foot.set(x, DIM.ankle + y * walkT, z);
-      frot.set(pitch * walkT, (side === 'L' ? 0.12 : -0.12) * idle, 0);
+      frot.set(pitch * walkT, (side === 'L' ? 0.32 : -0.1) * idle, 0);
       const knee = side === 'L' ? L.kneeL : L.kneeR;
       knee.set((side === 'L' ? 0.2 : -0.2), 0, 1);
     }
     L.terrain = 1;
     // arms: counter-swing to legs
     const armAmp = lerp(lerp(0.05, 0.32, walkT), 0.62, runT) + 0.2 * sprintT;
-    const elbow = lerp(lerp(0.22, 0.3, walkT), 1.45, runT) + 0.25 * sprintT;
+    const elbow = lerp(lerp(0.42, 0.3, walkT), 1.45, runT) + 0.25 * sprintT;
     for (const [side, off] of [['L', 0.5], ['R', 0]]) {
       const p = ph + off;
       const sw = Math.sin(p * TAU) * armAmp;
       const th = sw + 0.04 + 0.12 * runT;
       const ph2 = elbow + (sw > 0 ? sw * 0.5 : 0) * runT;
-      const al = lerp(0.1, 0.16, runT) - 0.05 * sprintT + idle * 0.015 * Math.sin(this.idleT * 0.8 + (side === 'L' ? 0 : 2));
+      const al = lerp(0.1, 0.16, runT) - 0.05 * sprintT + idle * (0.05 + 0.015 * Math.sin(this.idleT * 0.8 + (side === 'L' ? 0 : 2)));
       armTarget(side, th, ph2, al, side === 'L' ? L.handL : L.handR, 0);
       // hands come in toward the midline in front when sprinting
       if (sw > 0) (side === 'L' ? L.handL : L.handR).x -= (side === 'L' ? 1 : -1) * 0.05 * runT * (sw / Math.max(0.01, armAmp));
-      (side === 'L' ? L.elbowL : L.elbowR).set(side === 'L' ? 0.4 : -0.4, 0, -1);
+      // elbow pole: back and down, only slightly out — an outward pole throws the bent elbow sideways
+      // ("chicken wing" arms seen from behind when running)
+      (side === 'L' ? L.elbowL : L.elbowR).set((side === 'L' ? 1 : -1) * lerp(0.4, 0.14, runT), -0.5 * runT, -1);
       (side === 'L' ? L.handRotL : L.handRotR).set(-0.1 * runT, 0, 0);
     }
     L.fingers = lerp(0.25, 0.9, runT);

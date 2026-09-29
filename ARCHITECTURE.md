@@ -342,3 +342,9 @@ visualizations). What separates AAA from "tech demo":
   bounce/earthshine ambient on airless moons.
 * **player / vehicles / all** (from terrain) — terrain below the ~2 km scale changed this round: re-check
   hard-coded spawn lat/lon values (swim spots, parked vehicles near the waterline).
+* **vehicles / player** (from atmosphere) — the W4 `view=surface` spawn is ~2 m from the parked ship, which hides
+  the storm sky: honour `props=0` or park props at least 15 m from the spawn.
+* **post** (from atmosphere) — silver linings are now soft-limited; if bloom still spreads a veil from the sun
+  disc under broken cloud, use a slightly higher bloom threshold for sky (far-plane) pixels.
+* **audio** (from atmosphere) — `world.atmosphere.weather.boltDist` (m) / `boltTime` and the event
+  `'weather:lightning' {dist, pos}` are available for the thunder delay (distance / 340 m/s).

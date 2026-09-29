@@ -5,6 +5,7 @@
 // structural + shear + bending, iterated; collisions against body proxy spheres (helmet, torso, pack).
 import * as THREE from 'three';
 import { clamp, noise1 } from './util.js';
+import { heightToNormal } from './textures.js';
 
 function scarfTexture(c1, c2) {
   const W = 64, H = 256;
@@ -13,23 +14,57 @@ function scarfTexture(c1, c2) {
   const ctx = cv.getContext('2d');
   const hex = (c) => '#' + c.getHexString(THREE.SRGBColorSpace);
   ctx.fillStyle = hex(c1); ctx.fillRect(0, 0, W, H);
+  // slow lengthwise dye variation (hand-dyed wool)
+  for (let y = 0; y < H; y += 4) {
+    const k = 0.5 + 0.5 * Math.sin(y * 0.071) * Math.sin(y * 0.023 + 1.3);
+    ctx.fillStyle = `rgba(0,0,0,${0.1 * k})`; ctx.fillRect(0, y, W, 4);
+  }
   // fine woven texture
   for (let y = 0; y < H; y += 2) { ctx.fillStyle = `rgba(0,0,0,${0.05 + 0.04 * ((y >> 1) & 1)})`; ctx.fillRect(0, y, W, 1); }
-  for (let x = 0; x < W; x += 2) { ctx.fillStyle = 'rgba(255,255,255,0.035)'; ctx.fillRect(x, 0, 1, H); }
+  for (let x = 0; x < W; x += 2) { ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fillRect(x, 0, 1, H); }
   // glyph band and stripes toward the tip (v → 1)
   ctx.fillStyle = hex(c2);
-  ctx.fillRect(0, H * 0.78, W, 3); ctx.fillRect(0, H * 0.94, W, 3);
+  ctx.fillRect(0, H * 0.72, W, 3); ctx.fillRect(0, H * 0.88, W, 3);
   ctx.globalAlpha = 0.9;
   for (let i = 0; i < 5; i++) {
-    const y = H * 0.81 + i * 9;
+    const y = H * 0.75 + i * 7;
     const x = 10 + (i % 2) * 8;
     ctx.fillRect(x, y, 6, 3); ctx.fillRect(x + 14, y, 3, 6); ctx.fillRect(x + 24, y + 2, 8, 2); ctx.fillRect(x + 36, y, 3, 5);
   }
   ctx.globalAlpha = 1;
   // edge hems
   ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(0, 0, 3, H); ctx.fillRect(W - 3, 0, 3, H);
+  // fringe: the last 8% are loose threads (alpha-tested), knotted in bundles
+  const f0 = Math.round(H * 0.92);
+  ctx.clearRect(0, f0, W, H - f0);
+  for (let x = 1; x < W - 1; x += 3) {
+    const len = (H - f0) * (0.55 + 0.45 * Math.abs(Math.sin(x * 12.9898) * 43758.5453 % 1));
+    ctx.fillStyle = hex(c1); ctx.fillRect(x, f0, 2, len);
+    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(x + 1, f0, 1, len);
+  }
+  ctx.fillStyle = hex(c2); ctx.fillRect(0, f0 - 3, W, 3); // knot band
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+/** Wool weave + soft lengthwise creases → normal map (tangent space, uv of the strip). */
+function scarfNormal() {
+  const W = 64, H = 256;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  const img = ctx.createImageData(W, H), d = img.data;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const weave = 0.5 + 0.18 * Math.sin(x * Math.PI) * Math.sin(y * Math.PI * 0.5) + 0.12 * Math.sin((x + y) * Math.PI * 0.5);
+    const crease = 0.2 * Math.sin(x / W * Math.PI * 3 + Math.sin(y * 0.05) * 1.5) * (0.6 + 0.4 * Math.sin(y * 0.03));
+    const v = Math.max(0, Math.min(255, (weave + crease) * 200)) | 0;
+    const i = (y * W + x) * 4; d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(heightToNormal(cv, 1.2, true));
+  t.colorSpace = THREE.NoColorSpace;
   t.anisotropy = 4;
   return t;
 }
@@ -77,10 +112,18 @@ export class Scarf {
     this.tex = null;
     try { this.tex = scarfTexture(palette.scarf, palette.scarf2); } catch (_) { this.tex = null; }
     const hi = quality?.tier !== 'low';
+    let nrm = null;
+    try { nrm = scarfNormal(); } catch (_) { nrm = null; }
     this.material = new (hi ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({
-      color: this.tex ? 0xffffff : palette.scarf, map: this.tex, roughness: 0.82, side: THREE.DoubleSide,
+      color: this.tex ? 0xffffff : palette.scarf, map: this.tex, roughness: 0.88, side: THREE.DoubleSide,
+      normalMap: nrm, normalScale: new THREE.Vector2(0.8, 0.8), alphaTest: this.tex ? 0.5 : 0,
     });
-    if (hi) { this.material.sheen = 0.8; this.material.sheenRoughness = 0.45; this.material.sheenColor = palette.scarf.clone().lerp(new THREE.Color(1, 1, 1), 0.35); }
+    // wool: a soft sheen in the scarf's own (lighter, more saturated) hue — never a pink/white film
+    if (hi) {
+      const hsl = {}; palette.scarf.getHSL(hsl);
+      this.material.sheen = 0.45; this.material.sheenRoughness = 0.55;
+      this.material.sheenColor = new THREE.Color().setHSL(hsl.h, Math.min(1, hsl.s * 1.1), Math.min(0.6, hsl.l * 1.35 + 0.05));
+    }
     this.meshes = [];
     for (const s of this.strips) {
       const g = new THREE.BufferGeometry();
@@ -156,16 +199,17 @@ export class Scarf {
           const j = Math.floor(pi / s.cols);
           // travelling flutter wave down the tail (faster & tighter in strong airflow) + turbulence
           const fq = 3 + Math.min(this._air || 0, 25) * 0.45;
-          const fl = Math.sin(this.t * fq - j * 1.15 + k * 2.1) * 0.75 + noise1(this.t * 2.3 + j * 0.9 + k * 5.1, 7 + k) * 0.6;
+          const ci = pi - j * s.cols; // column: edges flap out of phase → the ribbon twists instead of planking
+          const fl = Math.sin(this.t * fq - j * 1.15 + k * 2.1 + (ci - 1) * 0.55) * 0.75 + noise1(this.t * 2.3 + j * 0.9 + k * 5.1, 7 + k) * 0.6;
           let rx = wind.x - vx, ry = wind.y - vy, rz = wind.z - vz;
           const rl = Math.sqrt(rx * rx + ry * ry + rz * rz);
           // pressure along the normal + tangential drag (ribbons stream downwind), flutter
           const nx = N[o], ny = N[o + 1], nz = N[o + 2];
           const vn = rx * nx + ry * ny + rz * nz;
-          const kN = 1.6, kT = 0.28;
-          let ax = gx + (vn * nx * kN + rx * kT) * Math.min(rl, 30) * 0.3 + nx * fl * Math.min(rl, 25) * 0.7;
-          let ay = gy + (vn * ny * kN + ry * kT) * Math.min(rl, 30) * 0.3 + ny * fl * Math.min(rl, 25) * 0.7;
-          let az = gz + (vn * nz * kN + rz * kT) * Math.min(rl, 30) * 0.3 + nz * fl * Math.min(rl, 25) * 0.7;
+          const kN = 1.6, kT = 0.28, flK = 0.7 + 0.055 * Math.min(rl, 25); // livelier flutter at speed
+          let ax = gx + (vn * nx * kN + rx * kT) * Math.min(rl, 30) * 0.3 + nx * fl * Math.min(rl, 25) * flK;
+          let ay = gy + (vn * ny * kN + ry * kT) * Math.min(rl, 30) * 0.3 + ny * fl * Math.min(rl, 25) * flK;
+          let az = gz + (vn * nz * kN + rz * kT) * Math.min(rl, 30) * 0.3 + nz * fl * Math.min(rl, 25) * flK;
           const damp = 0.985;
           const nxp = X[o] + (X[o] - Pp[o]) * damp + ax * h * h;
           const nyp = X[o + 1] + (X[o + 1] - Pp[o + 1]) * damp + ay * h * h;
@@ -239,5 +283,6 @@ export class Scarf {
     for (const m of this.meshes) m.geometry.dispose();
     this.material.dispose();
     this.tex?.dispose();
+    this.material.normalMap?.dispose();
   }
 }
