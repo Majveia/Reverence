@@ -11,11 +11,12 @@ Names come from `universe/names.js` (`word()` + an archetype noun: "Riosoliara G
 
 | layer | archetypes | body | behaviour |
 |---|---|---|---|
-| ground | grazer, giant (long-necked), hexapod, hopper (biped), critter | `bodies/legged.js` lofted skinned mesh: torso/neck/head spline, ears, 8 horn types (antler, lyre, spiral, crest…), dorsal plates, hooves/pads/paws/claws | `behavior/ground.js` Herd: graze / wander / alert / flee state machine, formation slots, separation, water & cliff avoidance, curious individuals approach, a still observer is tolerated (Planet Earth rule), running/driving scatters them |
+| ground | grazer, giant (long-necked), hexapod, hopper (biped), critter | `bodies/legged.js` lofted skinned mesh: torso with shoulder / haunch / rib-cage / withers muscle bulges, slim laterally-compressed neck tapering to a throat latch (clear jaw stop), head with cheeks + brow ridge, eyes set in lidded sockets, ears, 8 horn types (antler, lyre, spiral, crest…), dorsal plates, hooves/pads/paws/claws | `behavior/ground.js` Herd: graze / wander / alert / flee state machine, formation slots, separation, water & cliff avoidance, curious individuals approach, a still observer is tolerated (Planet Earth rule), running/driving scatters them |
 | air | bird, ray | `bodies/chain.js` bird: body + beak + 2-bone wings with scalloped feather trailing edge + fan/fork/streamer tail; ray: one flat loft re-skinned by span (manta planform, cephalic lobes, whip tail) | `behavior/air.js` Flock: boids around a looping anchor that climbs / swoops; flap when climbing, glide when descending, bank in turns; scatters away from the player |
 | sky | whale | 36–110 m sky whale: rounded head, ventral grooves, humpback pectorals (+ optional 2nd pair), flukes, dorsal ridge with glowing nodules | Pod: leader wanders slowly, followers hold echelon slots, terrain look-ahead altitude hold |
 | float | jelly | double-walled translucent bell + scalloped glowing rim + tentacles + frilly oral arms (transparent crowd) | Swarm: wind drift, altitude spring, lift on each bell contraction, shy of the player |
-| water | fish | fusiform body, forked/fan/lunate caudal fin, dorsal fin | School: boids under the sea surface, depth band, avoid shallows, startle, occasional leaps (ballistic arcs out of the water) |
+| ground | serpent | `bodies/chain.js` 2–7 m serpent: 9-bone chain, flattened belly with ventral scutes, wedge head, brow scales, mouth line; optional membrane crest on exotic worlds | Herd (1–3), `ChainAnimator` serpentine: travelling wave whose phase advances with distance travelled (segments follow the head's path), deep resting S-curve, body draped over the terrain per segment, rears up cobra-like when alert |
+| water | fish | fusiform body, exaggerated forked/fan/lunate caudal fin, tall dorsal, pectoral fins | School: boids under the sea surface, depth band, avoid shallows, startle, leaps (ballistic arcs out of the water) with a spray + surface-foam burst on every breach and re-entry |
 
 **Animation** (all procedural, CPU, allocation-free per frame):
 * `anim/LeggedAnimator.js` — walk / trot / gallop / tripod / hop gait tables blended by speed, feet
@@ -31,14 +32,27 @@ Names come from `universe/names.js` (`word()` + an archetype noun: "Riosoliara G
 (LOD0 hero mesh ≈ 3–11 k tris, LOD1 ≈ 0.25–1.1 k), GPU skinning from a per-frame RGBA32F bone texture
 (one row per visible instance, 2-bone linear blend), a single shared `MeshStandardMaterial`
 program patched with: countershading, 7 procedural coat patterns (stripes, spots, reticulated,
-saddle, dapples, rings, blotches), per-individual tint, socks/muzzle, fur/scale micro-normal
-(footprint-faded), keratin, wet eyes with sky catch-light, membranes & ears with sun
+saddle, dapples, rings, blotches), per-individual tint, socks/muzzle, fur/scale micro-normal and
+micro-albedo (both faded by pixel footprint via `fwidth` *before* the noise reaches pixel frequency —
+dFdx of pixel-rate noise is what produced the old 2×2 "checkerboard"), keratin, eyes with sclera /
+noisy iris / pupil and a soft sky catch-light (roughness 0.16, lidded sockets), membranes & ears with sun
 translucency, carapace iridescence, bioluminescent organs/lines/tips/veins that pulse at night,
 eyeshine, fur sheen rim. Dithered distance fade (no pop), shadow casting through a skinned depth
 material, cloud shadows via `world.lighting.setupMaterial` (auto).
 
 **Motes** (`particles.js`, 1 draw call): fireflies at dusk/night (blinking, art-directed colour,
 bioluminescent-world hues), pollen/midges by day lit by forward scattering against the sun.
+
+**Splashes** (`particles.js` `Splashes`, 1 draw call, only while a burst is alive): ring buffer of
+960 point sprites; each burst = droplets (ballistic, evaluated in the vertex shader from spawn
+pos/velocity/time) + surface foam specks sliding outward; lit by sun + sky ambient. Triggered by
+fish breaching / re-entering (`env.splash(pos, up, size)`); CPU only writes the new burst's rows.
+
+**Night bioluminescence**: glowing species keep their volume at night — besides the glow pattern
+(spots / spine+lateral lines / tips / veins / **photophores**: rows of dots on flanks & belly), the
+whole body gets a dim self-illumination scattered "under the skin": dark back → glowing belly
+gradient, fresnel toward the silhouette, low-frequency mottling, pulsing. Sky whales use veins or
+photophores (never the thin single spine line).
 
 **Streaming**: deterministic cube-sphere cells (`cells.js`) per layer — ground 210 m (radius
 620 m), air 800 m (1.3 km), fish 260 m (420 m, only in water 1.5–40 m deep), sky whales 3.2 km
@@ -49,6 +63,10 @@ every 2–8 frames far/offscreen, pose shifted to the current root so it never l
 **Discovery**: `events.emit('discovery', {kind:'creature', name, species, archetype})` the first
 time each species is visible within its discovery distance (≥ 2.5 s apart).
 
+**Alarm**: `events.emit('creature:alarm', {archetype, species, name, pos: Vector3 (planet-local),
+dist, count})` when a herd bolts (FLEE) or a flock scatters (player sprinting / driving close);
+rate-limited to one per 1.2 s (audio: alarm calls, stampede / wing bursts).
+
 ## API
 
 ```js
@@ -56,10 +74,11 @@ const fauna = world.get('fauna');   // null on lifeless / gas bodies
 fauna.roster        // [{ id, name, archetype, layer, genome, look, glowing, temper, … }]
 fauna.creatures     // live individuals: { species, pos: Float64Array(3) planet-local, fwd, up, speed, … }
 fauna.nearest(archetype?, fromFloat64Array3?)
-fauna.getState()    // { species, roster, groups, creatures, byKind, drawn, meshes, motes, discovered }
+fauna.getState()    // { species, roster, groups, creatures, byKind, drawn, meshes, motes, discovered, showcase }
+// events: 'discovery' {kind:'creature', name, species, archetype} · 'creature:alarm' {archetype, species, name, pos, dist, count}
 ```
 
-URL params: `fauna=<grazer|giant|hexapod|hopper|critter|birds|rays|whales|jellies|fish|none>` frames a
+URL params: `fauna=<grazer|giant|hexapod|hopper|critter|serpent|birds|rays|whales|jellies|fish|none>` frames a
 showcase group in front of the spawn camera (clear line of sight vs terrain + colliders; herds stay
 grazing, broadside, until the player moves); `faunadist=<0.3..4>` scales the showcase distance.
 Without `fauna=`, a herd + a bird flock (+ rays / a whale pod when the roster has them, jellies at

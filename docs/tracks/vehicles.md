@@ -36,6 +36,9 @@ All three scale particle counts with `quality.particleScale`; ribbons are skippe
   vs lush meadow, wet or paved plazas); particles fade softly where they meet the ground.
 * **Placement** — never on civ plazas/clearings or inside towns, never below sea level, ≥ 18 m (ship) / 6 m (rover)
   from the player spawn; `props=0` (or `&fauna=`) spawns only the start vehicle.
+* **Light pools drape over the terrain** — headlight / VTOL / landing-light pools are subdivided quads conformed to the
+  CPU heightfield (`conformPool`, throttled to when they move), so they no longer float over slopes or vanish into
+  crests. Wheel-slip dust is capped so a slow, slipping climb no longer builds an opaque disc of dust.
 * **Capture framing** — `camd` / `camyaw` / `campitch`, `vnear`, `vramp` (see below).
 
 ## Controls

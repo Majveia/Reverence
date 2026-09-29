@@ -536,12 +536,14 @@ class Fauna {
     const wantSky = SHOW[this.showcase];
     const pick = (a) => this.roster.find((x) => x.archetype === a);
     const F3 = [fx, fy, fz];      // horizontal view direction (the player camera settles near the horizon)
-    void f3x; void f3y; void f3z;
     /** point `dist` m along the camera's 3D view ray (turned by yawOff rad, raised by liftDeg) →
      *  { home: ground point beneath, agl } (never below minAgl above ground / sea) */
-    const aim = (dist, liftDeg, yawOff = 0, minAgl = 4) => {
+    const aim = (dist, liftDeg, yawOff = 0, minAgl = 4, view3d = false) => {
       const c = Math.cos(yawOff), s2 = Math.sin(yawOff);
-      let dx = F3[0] * c + rx * s2, dy = F3[1] * c + ry * s2, dz = F3[2] * c + rz * s2;
+      // view3d: relative to the camera's actual (pitched) view ray, so big sky life stays in frame
+      // when the spawn camera looks down a slope or up a hill
+      const B = view3d ? [f3x, f3y, f3z] : F3;
+      let dx = B[0] * c + rx * s2, dy = B[1] * c + ry * s2, dz = B[2] * c + rz * s2;
       const lr = liftDeg * Math.PI / 180;
       dx += ux * Math.tan(lr); dy += uy * Math.tan(lr); dz += uz * Math.tan(lr);
       const dl = Math.hypot(dx, dy, dz);
@@ -575,7 +577,7 @@ class Fauna {
     if (wantSky === 'whale' || !want) {
       const sp = pick('whale');
       if (sp) {
-        const { home, agl } = wantSky ? aim((200 + sp.genome.L * 2.2) * this.showDist, 9.5 - 2 * (1 - Math.min(1, this.showDist)), -0.08, 14 + sp.genome.R) : aim(700, 7, 0.2, 90);
+        const { home, agl } = wantSky ? aim((200 + sp.genome.L * 2.2) * this.showDist, 7, -0.08, 14 + sp.genome.R, true) : aim(700, 7, 0.2, 90);
         mark(this._spawnAir(sp, home, rng.fork('ww'), wantSky ? 3 : undefined, { agl: [agl, agl + 10], heading: across(home, -0.35) }));
       }
     }

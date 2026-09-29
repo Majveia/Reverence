@@ -69,7 +69,7 @@ void main(){
   // fade it out — the real tail's low surface brightness is invisible from within
   float along = abs(dot(tang, view));
   float dcam = length(P - uCamLocal);
-  vDepthFade = (1.0 - smoothstep(0.7, 0.93, along)) * smoothstep(w * 1.5, w * 6.0, dcam);
+  vDepthFade = (1.0 - smoothstep(0.9, 0.985, along)) * smoothstep(w * 1.5, w * 6.0, dcam);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(P, 1.0);
 }`;
 const TAIL_FRAG = /* glsl */ `

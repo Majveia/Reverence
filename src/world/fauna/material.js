@@ -255,8 +255,9 @@ const FRAG_EMISSIVE = /* glsl */`
     float fr = pow(1.0 - clamp(abs(dot(normal, Vw)), 0.0, 1.0), 2.2);
     float belly = smoothstep(0.35, -0.85, rvDors);
     float mott = 0.65 + 0.7 * rvVN(vRest * pPattern.y * 1.7 + rvSeed * 9.0);
-    vec3 sub = mix(diffuseColor.rgb * 1.5 + 0.02, cGlow, 0.55);
-    float k = (0.04 + 0.09 * belly + 0.15 * fr) * mott * (0.8 + 0.4 * pulse);
+    vec3 sub = mix(diffuseColor.rgb * 1.2 + 0.01, cGlow, 0.72);
+    // strong dorsal → ventral gradient (dark back, glowing belly) so the body keeps its volume
+    float k = (0.01 + 0.13 * pow(belly, 1.5) + 0.09 * fr * (0.35 + 0.65 * belly)) * mott * (0.8 + 0.4 * pulse);
     totalEmissiveRadiance += sub * k * min(pGlow.x, 2.0) * night * (0.7 + 0.6 * vInst.y);
   }
   // eyeshine: retroreflection in the dark

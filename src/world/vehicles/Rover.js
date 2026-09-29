@@ -507,7 +507,7 @@ export class Rover extends Vehicle {
       const slip = wh.slip;
       const sp = Math.abs(wh.vLong);
       const surf = this.surfaceKind === 'rock' ? 0.25 : this.surfaceKind === 'sand' ? 1.3 : this.surfaceKind === 'snow' ? 1.0 : 0.55;
-      const rate = (sp * 0.3 + slip * 22 + (sp > 4 ? 1 : 0)) * q * surf * (wh.front ? 0.6 : 1) * (water ? 1 : (this.dusty ?? 0.7));
+      const rate = (sp * 0.3 + Math.min(slip, 0.6) * 12 + (sp > 4 ? 1 : 0)) * q * surf * (wh.front ? 0.6 : 1) * (water ? 1 : (this.dusty ?? 0.7));
       wh.emit += dt * rate;
       while (wh.emit >= 1) {
         wh.emit -= 1;
@@ -523,7 +523,7 @@ export class Rover extends Vehicle {
           mgr.fx.spray.spawn(gp.x, gp.y, gp.z, vx + up.x * 3, vy + up.y * 3, vz + up.z * 3, { life: 0.8 + rnd.next() * 0.6, size0: 0.3, size1: 1.8, alpha: 0.55, color: _col, drag: 1.0, grav: 8, rot: rnd.next() * 6, ground: wh.cp.length() });
         } else {
           _col.copy(this.dustColor).multiplyScalar(0.85 + rnd.next() * 0.3);
-          mgr.fx.dust.spawn(gp.x, gp.y, gp.z, vx, vy, vz, { life: 1.2 + rnd.next() * 1.4 + slip, size0: 0.3, size1: 1.6 + sp * 0.05 + slip * 2.2, alpha: 0.26 + slip * 0.18, color: _col, drag: 1.4, grav: -0.15, rot: rnd.next() * 6, rotSpeed: rnd.signed() * 0.5, ground: wh.cp.length() });
+          mgr.fx.dust.spawn(gp.x, gp.y, gp.z, vx, vy, vz, { life: 1.2 + rnd.next() * 1.4 + slip, size0: 0.3, size1: 1.6 + sp * 0.05 + slip * 2.2, alpha: 0.2 + Math.min(slip, 0.6) * 0.14, color: _col, drag: 1.4, grav: -0.15, rot: rnd.next() * 6, rotSpeed: rnd.signed() * 0.5, ground: wh.cp.length() });
         }
       }
     }

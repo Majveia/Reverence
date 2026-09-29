@@ -112,6 +112,7 @@ Owner paths: `src/world/water/**`, this file.
 | W2 lake, mountain reflections (SSR) | `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=3&lat=-13.325&lon=146.162&yaw=270&pitch=-4&tod=0.3` | |
 | Underwater, W1 sandy shelf (caustics, god rays, Snell's window above) | `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=4&lat=15.8013&lon=34.3048&yaw=330&pitch=-10&tod=0.4&uw=3&disable=vehicles` | |
 | Underwater looking up at the surface (rippled Snell window, caustic highlights on the underside) | same with `yaw=100&pitch=25&uw=4` | |
+| Underwater toward the sun (god-ray shafts, reef silhouettes) | same with `yaw=106&pitch=6&uw=5` | |
 | W6 Roger Dean sea city on the water | `/?mode=system&galaxy=0&star=1&planet=3&tod=0.4&view=fly&alt=76&pitch=-8&lat=8.4422&lon=34.4330&yaw=45` | |
 | W6 island beach, noon | `/?mode=system&galaxy=0&star=1&planet=3&view=fly&alt=4&lat=-14.108&lon=-66.948&yaw=180&pitch=-5&tod=0.5` | |
 | W4 Neon Monsoon storm surf | `/?mode=system&galaxy=0&star=2&planet=0&view=fly&alt=6&lat=8.826&lon=152.765&yaw=135&pitch=-5&tod=0.5` | |
@@ -157,6 +158,11 @@ cannot dive yet); `wdebug=1` shows SSR hits (R), scene grab (G), Fresnel (B); `w
 * The shore pass wets anything within ~0.2–1 m above the sea next to the camera (also a parked vehicle's
   wheels or a cliff foot: plausible as spray). It does not know the local beach slope, so run-up is expressed
   in metres of height, not distance.
+* Reef: colonies are lit by the scene lights only (no caustics or depth-dependent light on the reef meshes
+  themselves; the underwater effect adds absorption along the view ray). Seagrass/kelp are thin ribbons that
+  alias a little at distance on software GL.
+* From ~1.5–3 km up the km-scale swell trains read as fine horizontal streaks across the sea (intended: wind
+  lanes), slightly regular on a very calm day.
 * Seen from below, the Snell window edge breaks into sharp-edged patches where ripples push the view past the
   critical angle (physically right, a little crisp).
 

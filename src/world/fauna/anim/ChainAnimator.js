@@ -52,7 +52,8 @@ export class ChainAnimator {
       const moving = c.speed > 0.03;
       c.trav = (c.trav || 0) + c.speed * dt + dt * 0.08;   // a slow idle ripple even at rest
       const speedK = clamp(c.speed / Math.max(0.1, g.walkSpeed * s), 0, 1.6);
-      const A = g.amp * (0.35 + 0.65 * Math.min(1, speedK)) * (1 - 0.3 * Math.max(0, speedK - 1)) * (1 - 0.5 * (c.alert || 0));
+      // resting serpents lie in a deep S (≈ 1.4× the crawling amplitude); faster → flatter wave
+      const A = g.amp * (1.35 - 0.35 * Math.min(1, speedK)) * (1 - 0.3 * Math.max(0, speedK - 1)) * (1 - 0.35 * (c.alert || 0));
       c.serpA = (c.serpA ?? A) + (A - (c.serpA ?? A)) * damp(1.5, dt);
       const phi = Math.PI * 2 * c.trav / Math.max(0.2, lam);
       const segL = g.L * s * 0.66 / (rig.tail.length - 1);

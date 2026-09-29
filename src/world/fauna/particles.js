@@ -240,7 +240,7 @@ void main(){
   alive *= step(-0.25, below + 0.25 * aVel.w);
   vA = alive * (aVel.w < 0.5 ? (1.0 - k * k) : (1.0 - k) * 0.8);
   vLit = 0.55 + 0.45 * max(dot(up, uSunDir), 0.0);
-  float size = aBirth.z * (aVel.w < 0.5 ? (1.0 - 0.4 * k) : (0.6 + 1.4 * k));
+  float size = aBirth.z * (aVel.w < 0.5 ? (1.0 - 0.4 * k) : (0.7 + 0.8 * k));
   gl_PointSize = clamp(size * uResolution.y / max(-mv.z, 0.1), 1.5, 48.0);
   if (vA < 0.004) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 }`;
@@ -255,14 +255,14 @@ void main(){
   vec2 q = gl_PointCoord * 2.0 - 1.0;
   float r2 = dot(q, q);
   if (r2 > 1.0) discard;
-  float a = (vKind < 0.5 ? smoothstep(1.0, 0.35, r2) : smoothstep(1.0, 0.0, r2) * 0.7) * vA;
+  float a = (vKind < 0.5 ? smoothstep(1.0, 0.35, r2) : smoothstep(1.0, 0.0, r2) * 0.45) * vA;
   vec3 light = uSunColor * min(uSunIntensity, 4.0) * 0.25 * vLit + uAmbient * 1.6 + 0.02;
   vec3 col = vec3(0.92, 0.96, 1.0) * light;
   gl_FragColor = vec4(col * a, a);
 }`;
 
 export class Splashes {
-  constructor(fauna, count = 480) {
+  constructor(fauna, count = 960) {
     this.f = fauna;
     const q = fauna.q || {};
     this.count = Math.round(count * Math.max(0.4, Math.min(1.2, q.particleScale ?? 1)));
@@ -319,7 +319,7 @@ export class Splashes {
     if (Math.hypot(ex, ey, ez) < 0.1) { ex = 0; ey = up[2]; ez = -up[1]; }
     const el = Math.hypot(ex, ey, ez); ex /= el; ey /= el; ez /= el;
     const nx = up[1] * ez - up[2] * ey, ny = up[2] * ex - up[0] * ez, nz = up[0] * ey - up[1] * ex;
-    const nDrop = Math.round(10 + 22 * Math.min(2, k)), nFoam = Math.round(8 + 12 * Math.min(2, k));
+    const nDrop = Math.round(14 + 26 * Math.min(2, k)), nFoam = Math.round(14 + 18 * Math.min(2, k));
     const vUp = 1.8 + 2.4 * Math.sqrt(k);
     for (let j = 0; j < nDrop + nFoam; j++) {
       const i = this.head; this.head = (this.head + 1) % this.count;
@@ -338,7 +338,7 @@ export class Splashes {
       vel[i * 4 + 3] = foam ? 1 : 0;
       birth[i * 4] = now + this._rnd() * 0.06;
       birth[i * 4 + 1] = foam ? 1.4 + this._rnd() * 1.2 : 0.7 + this._rnd() * 0.6;
-      birth[i * 4 + 2] = foam ? 0.1 + 0.12 * k * this._rnd() : 0.035 + 0.05 * this._rnd() * (0.6 + k * 0.5);
+      birth[i * 4 + 2] = foam ? 0.05 + 0.06 * k * this._rnd() : 0.022 + 0.035 * this._rnd() * (0.6 + k * 0.5);
       birth[i * 4 + 3] = this._rnd();
       if (i < this._dirtyLo) this._dirtyLo = i;
       if (i > this._dirtyHi) this._dirtyHi = i;
