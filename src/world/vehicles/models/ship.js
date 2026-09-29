@@ -182,7 +182,7 @@ export function buildShip(mats, liv) {
     const side = (t0, t1, a0, a1, surf, col, o = PL) => { const x0 = sa(a0), x1 = sa(a1); b.add(shellPatch(fus, t0, t1, Math.min(x0, x1), Math.max(x0, x1), o), surf, col); };
     side(0.13, 0.28, -0.07, 0.1, 'pearl', P);
     side(0.355, 0.47, -0.07, 0.1, 'pearl', P);
-    side(0.49, 0.6, -0.06, 0.09, 'paint', S);
+    side(0.49, 0.6, -0.06, 0.09, 'pearl', P);
     side(0.62, 0.79, -0.04, 0.1, 'paint', S, { thick: 0.025, bevel: 0.03, seg: [12, 6] });
     side(0.02, 0.11, 0.0, 0.12, 'gunmetal', TR, { thick: 0.035, bevel: 0.03, seg: [6, 6] });
   }

@@ -32,8 +32,8 @@ export class WaveSet {
     this.liquid = liquid;
     // character: calm lakes (Tarkovsky, low wind) … rolling swell (monsoon oceans)
     const visc = liquid === 'lava' ? 0.22 : liquid === 'acid' ? 0.8 : liquid === 'ice' ? 0 : 1;
-    const L0 = THREE.MathUtils.lerp(16, 46, windy) * (liquid === 'lava' ? 1.6 : 1);
-    const slope = (liquid === 'lava' ? 0.035 : THREE.MathUtils.lerp(0.034, 0.08, windy)) * (liquid === 'ice' ? 0 : 1);
+    const L0 = THREE.MathUtils.lerp(20, 58, windy) * (liquid === 'lava' ? 1.6 : 1);
+    const slope = (liquid === 'lava' ? 0.035 : THREE.MathUtils.lerp(0.048, 0.1, windy)) * (liquid === 'ice' ? 0 : 1);
     this.windy = windy;
     this.L0 = L0;
     this.k = new Float64Array(MAX_WAVES);
@@ -48,11 +48,11 @@ export class WaveSet {
     this.short = new Float64Array(MAX_WAVES);   // 1 for the short wind-sea waves (gust-modulated in the shader)
     const n = this.count;
     // Σ Q·k·A ≤ ~1: swell stays smooth (rounded), the wind sea gets the choppy, peaked crests
-    const qSea = liquid === 'lava' ? 0.45 : THREE.MathUtils.lerp(0.66, 0.84, windy);
-    const qSwell = 0.05;
+    const qSea = liquid === 'lava' ? 0.45 : THREE.MathUtils.lerp(0.72, 0.9, windy);
+    const qSwell = 0.1;
     const swellDir = rng.range(-0.45, 0.45);
     const swellL = [5.6, 3.7, 2.5];
-    const swellS = THREE.MathUtils.lerp(0.02, 0.036, windy);
+    const swellS = THREE.MathUtils.lerp(0.03, 0.052, windy);
     for (let i = 0; i < nSwell; i++) {
       const L = L0 * swellL[i] * rng.range(0.92, 1.08);
       const k = TAU / L;

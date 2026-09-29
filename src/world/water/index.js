@@ -51,6 +51,7 @@ float rv_cloudShadow(vec3 p){ return 1.0; }
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _q = { x: 0, y: 0 }, _s = { slopeX: 0, slopeY: 0 };
 const _c = new THREE.Color();
 const QMOD = 4096;
+const QFAR = 245760;      // = 60·4096: far layers use tiles dividing it (682.7 m, 2457.6 m, 20480 m, 61440 m) → seamless wrap
 // golden-ratio sequence over the pipeline's rendered (sub)frames (varies between TAA shot sub-samples too)
 function frameJitter(engine) {
   const f = engine?.pipeline?._frameIndex ?? engine?.time?.frame ?? 0;
@@ -318,6 +319,7 @@ class Water {
       uJit: { value: 0 },
       uTime: { value: 0 },
       uQN: { value: new THREE.Vector2() },
+      uQF: { value: new THREE.Vector2() },
       tBathy: { value: this.bathyTex }, uBathy: { value: new THREE.Vector4(0, 0, 1e-3, 0) },
       uShore: { value: this.shore }, uBathyE: { value: 4 },
       tWaves: { value: this.texWaves }, tFoam: { value: this.texFoam }, tCrust: { value: this.texCrust },
@@ -466,7 +468,7 @@ class Water {
       this._anchorId++;
     }
     // amplitude follows wind strength (smoothed; lava/ice fixed)
-    const target = this.liquid === 'water' || this.liquid === 'acid' ? 0.6 + 0.7 * G.uWindStrength.value : 1;
+    const target = this.liquid === 'water' || this.liquid === 'acid' ? 0.78 + 0.6 * G.uWindStrength.value : 1;
     this._amp += (target - this._amp) * Math.min(1, dt * 0.08 + (this._ampInit ? 0 : 1));
     this._ampInit = true;
     W.amp = this._amp;
@@ -489,6 +491,7 @@ class Water {
       u.uWB.value[i].set(W.Q[i], W.phase[i], W.lambda[i], W.short[i]);
     }
     u.uQN.value.set(qx - Math.floor(qx / QMOD) * QMOD, qy - Math.floor(qy / QMOD) * QMOD);
+    u.uQF.value.set(qx - Math.floor(qx / QFAR) * QFAR, qy - Math.floor(qy / QFAR) * QFAR);
     u.uCrestA.value = Math.max(W.seaA0 * W.amp, 0.05);
     // bathymetry map (worker) — shore swell only near the surface
     const B = this.bathy;
@@ -600,6 +603,11 @@ class Water {
       uEsun: { value: new THREE.Vector3() }, uEamb: { value: new THREE.Vector3() }, uGlow: { value: this.glow },
       uQN: { value: new THREE.Vector2() },
     });
+    {
+      const tier = this.world.quality?.tier || 'high';
+      mat.defines = Object.assign(mat.defines || {}, { SHAFT_STEPS: tier === 'low' ? 8 : tier === 'med' ? 12 : tier === 'ultra' ? 22 : 16 });
+      mat.needsUpdate = true;
+    }
     const quad = new FullscreenQuad(mat);
     return {
       name: 'underwater', order: 130, enabled: true,

@@ -50,7 +50,16 @@ export class Vehicle {
   initCamera(cfg) {
     this.camera = new VehicleCamera(this.world, this, cfg);
     const cam = this.world.params?.cam;
-    if (cam && CINE[cam]) this.camera.cine = CINE[cam];
+    if (cam && CINE[cam]) this.camera.cine = { ...CINE[cam] };
+    // capture framing tweaks: camd = distance multiplier, camyaw = extra yaw (deg), campitch (deg)
+    const p = this.world.params || {};
+    const cd = +p.camd, cy = +p.camyaw, cp = +p.campitch;
+    if ((Number.isFinite(cd) && cd > 0) || Number.isFinite(cy) || Number.isFinite(cp)) {
+      const c = this.camera.cine || (this.camera.cine = { yaw: 0, pitch: 0, dist: 1, height: 1, ahead: 1 });
+      if (Number.isFinite(cd) && cd > 0) { c.dist *= cd; this.camera.zoom = 1; }
+      if (Number.isFinite(cy)) c.yaw += cy * Math.PI / 180;
+      if (Number.isFinite(cp)) c.pitch += cp * Math.PI / 180;
+    }
     if (cam === 'cockpit') this.camera.mode = 'cockpit';
   }
 
