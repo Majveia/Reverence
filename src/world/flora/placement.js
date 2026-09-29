@@ -193,22 +193,32 @@ export function placeGrass(gen, T, cell) {
   const G = T.grass;
   const { L, f, i, j } = cell;
   const R = T.R;
-  const size = cellSize(R, L);
-  const n = Math.max(1, Math.min(48, Math.round(size / G.spacing)));
-  const inst = new Float32Array(n * n * STRIDE);
-  const fl = new Float32Array(n * n * STRIDE);
-  const flm = new Uint16Array(n * n);
+  // patch grid sized from the cell's REAL extent along each axis (cube-sphere cells are not square
+  // and not all the nominal size): a nominal n×n grid stretched over a longer side left rows of
+  // gaps that read as stripes / a lattice in the meadow
+  cellPoint(L, f, i, j, 0, 0.5, _p); const ax0 = _p[0], ay0 = _p[1], az0 = _p[2];
+  cellPoint(L, f, i, j, 1, 0.5, _p); const sideA = Math.hypot(_p[0] - ax0, _p[1] - ay0, _p[2] - az0) * R;
+  cellPoint(L, f, i, j, 0.5, 0, _p); const bx0 = _p[0], by0 = _p[1], bz0 = _p[2];
+  cellPoint(L, f, i, j, 0.5, 1, _p); const sideB = Math.hypot(_p[0] - bx0, _p[1] - by0, _p[2] - bz0) * R;
+  const na = Math.max(1, Math.min(64, Math.round((sideA || cellSize(R, L)) / G.spacing)));
+  const nb = Math.max(1, Math.min(64, Math.round((sideB || cellSize(R, L)) / G.spacing)));
+  const inst = new Float32Array(na * nb * STRIDE);
+  const fl = new Float32Array(na * nb * STRIDE);
+  const flm = new Uint16Array(na * nb);
   cellPoint(L, f, i, j, 0.5, 0.5, _p);
   const ax = _p[0] * R, ay = _p[1] * R, az = _p[2] * R;
   const seed = (T.seed ^ 0x6a55) | 0;
   const cellId = ((f * 8191 + i) * 131071 + j) | 0;
   let cnt = 0, fc = 0;
   const sea = T.sea;
-  for (let gy = 0; gy < n; gy++) {
-    for (let gx = 0; gx < n; gx++) {
-      const k = gy * n + gx;
+  for (let gy = 0; gy < nb; gy++) {
+    for (let gx = 0; gx < na; gx++) {
+      const k = gy * na + gx;
       const r0 = h01(seed, cellId, k), r1 = h01(seed + 1, cellId, k);
-      const a = (gx + r0) / n, b = (gy + r1) / n;
+      // limited jitter (±32 % of the spacing): full-cell jitter lets neighbours drift up to two
+      // spacings apart → bare holes; each patch is a randomly rotated disc of blades, so the
+      // near-regular anchor grid never shows
+      const a = (gx + 0.5 + (r0 - 0.5) * 0.64) / na, b = (gy + 0.5 + (r1 - 0.5) * 0.64) / nb;
       cellPoint(L, f, i, j, a, b, _p);
       const dx = _p[0], dy = _p[1], dz = _p[2];
       const s = sampleLod(gen, dx, dy, dz, 0.22, _s, 1.0);

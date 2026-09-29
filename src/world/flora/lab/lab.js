@@ -162,8 +162,11 @@ scene.add(sun, sun.target);
 // ------------------------------------------------------------------ camera
 const camH = num('h', 1.7);
 const yaw = num('yaw', 0) * DEG, pitch = num('pitch', 2) * DEG;
-const camLocal = origin.clone().addScaledVector(up, camH);
 const fwd = north.clone().multiplyScalar(Math.cos(yaw)).addScaledVector(east, Math.sin(yaw)).multiplyScalar(Math.cos(pitch)).addScaledVector(up, Math.sin(pitch));
+// back=<m>: third-person-like framing (camera pulled back along the horizontal view direction)
+const back = num('back', 0);
+const camLocal = origin.clone().addScaledVector(up, camH)
+  .addScaledVector(north, -Math.cos(yaw) * back).addScaledVector(east, -Math.sin(yaw) * back);
 function placeCamera() {
   camera.position.copy(camLocal);
   camera.up.copy(up);
@@ -199,8 +202,22 @@ function step(dt) {
   sun.target.updateMatrixWorld();
   try { flora?.update?.(dt, t); } catch (e) { console.error('[flora-lab] update', e); }
 }
+// ?atlas=1: show the leaf atlas (R shading as grey, A coverage over magenta) instead of the scene
+let atlasView = null;
+if (qs.get('atlas') && flora?.atlas?.texture) {
+  const m = new THREE.ShaderMaterial({
+    uniforms: { t: { value: flora.atlas.texture } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy * 2.0, 0.0, 1.0); }',
+    fragmentShader: 'uniform sampler2D t; varying vec2 vUv; void main(){ vec4 x = texture2D(t, vec2(vUv.x, 1.0 - vUv.y)); vec3 c = mix(vec3(0.5, 0.0, 0.5), vec3(x.r, x.r * 0.9 + x.g * 0.1, x.r * 0.8 + x.b * 0.2), x.a); gl_FragColor = vec4(c, 1.0); }',
+    depthTest: false,
+  });
+  atlasView = new THREE.Scene();
+  const q = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), m);
+  q.frustumCulled = false;
+  atlasView.add(q);
+}
 function render() {
-  try { renderer.render(scene, camera); } catch (e) { console.error('[flora-lab] render', e); }
+  try { renderer.render(atlasView || scene, camera); } catch (e) { console.error('[flora-lab] render', e); }
 }
 window.__rv = {
   ready: false,

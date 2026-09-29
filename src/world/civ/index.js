@@ -18,6 +18,7 @@ import { makeCivMaterial, makeGlowMaterial } from './material.js';
 import { getStyle, buildLamp, parts as P } from './styles.js';
 import { makeNPCs, makeTraffic, makeBoats, makeElevator } from './life.js';
 import { makePools } from './pools.js';
+import { applyCivCam } from './camera.js';
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _m = new THREE.Matrix4();
 const _X = new THREE.Vector3(), _Y = new THREE.Vector3(), _Z = new THREE.Vector3();
@@ -59,6 +60,8 @@ class Civ {
     const cap0 = this.sites[0];
     this.spawnTarget = cap0 ? cap0.pos.clone().addScaledVector(cap0.up, Math.min(40, cap0.radius * 0.1)) : null;
     try { world.civ = { clearings: this.clearings, sites: this.sites, spawnTarget: this.spawnTarget, capital: cap0 }; world.events?.emit?.('civ:clearings', { clearings: this.clearings }); } catch (_) { /* ignore */ }
+    // capture framing presets (&civcam=plaza|street|hero|aerial|top|edge): writes the player's spawn params
+    try { if (world.params?.civcam) applyCivCam(this, world.params); } catch (e) { console.warn('[civ] civcam failed', e); }
     this._debug = String(world.params?.civdbg || '');
     if (this._debug.includes('npcbig')) globalThis.__civNpcBig = true;
     // far LOD geometry + orbit lights for all sites (time-sliced, but required before ready)
@@ -896,6 +899,7 @@ class Civ {
       fails: this.stats.lotFails + this.stats.jobFails + this.stats.empty, err: this.stats.err, farVis: this.sites.filter((s) => s.far?.visible).length,
       capDist: c ? Math.round(this.world.camera.position.distanceTo(c.pos)) : 0, planMs: this.stats.planMs, ms: this.stats.ms,
       capital: c ? { name: c.name, kind: c.kind, lat: +c.lat.toFixed(4), lon: +c.lon.toFixed(4), r: Math.round(c.radius) } : null,
+      civcam: this.stats.civcam || undefined,
       hamlet: this.sites.find((s) => s.hamlet) ? { lat: +this.sites.find((s) => s.hamlet).lat.toFixed(4), lon: +this.sites.find((s) => s.hamlet).lon.toFixed(4) } : null,
     };
   }

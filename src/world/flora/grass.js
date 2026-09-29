@@ -105,9 +105,6 @@ const GRASS_CORE = /* glsl */`
   float r = aBlade.w - 2.0 * carpet;
   float h1 = gHash(r * 91.7 + iData.x * 13.1), h2 = gHash(r * 47.3 + iData.x * 7.7), h3 = gHash(r * 13.9 + iData.x * 3.3);
   float h4 = gHash(r * 29.1 + iData.x * 5.9);
-  // turf: half the carpet blades are upright short blades, half lie over as thatch that shades
-  // the ground between the stems (the sward reads dense instead of tufts on bare soil)
-  float thatch = carpet * step(0.5, h4);
   vec3 rootL = vec3(aBlade.x, 0.0, aBlade.y) * uPatchR * iPos.w;
   vec3 root = rvQrotG(iRot, rootL);
   vec3 rootW = anchorW + root;
@@ -117,8 +114,8 @@ const GRASS_CORE = /* glsl */`
   float keep = iData.y * uDensity * clamp(pow(uKeep.x / max(d, 1.0), uKeep.y), uKeep.z, 1.0);
   float alive = smoothstep(0.0, 0.08, keep - r) * vFade.x * vFade.y;
   // height: a few tall seed-stalk blades over a carpet of short ones
-  float H = uHeight * iData.z * mix(0.5 + 0.55 * h1 * h1 + 0.25 * h2 + 0.45 * step(0.9, h4), mix(0.34 + 0.34 * h1 * h1, 0.2 + 0.14 * h1, thatch), carpet) * alive;
-  float W = uWidth * mix(0.55 + 0.9 * h2, mix(1.0 + 0.7 * h2, 2.4 + 1.4 * h2, thatch), carpet) * (1.0 + d * uWidenK) * iPos.w;
+  float H = uHeight * iData.z * mix(0.5 + 0.55 * h1 * h1 + 0.25 * h2 + 0.45 * step(0.9, h4), 0.34 + 0.34 * h1 * h1, carpet) * alive;
+  float W = uWidth * mix(0.55 + 0.9 * h2, 1.0 + 0.7 * h2, carpet) * (1.0 + d * uWidenK) * iPos.w;
   float ang = aBlade.z;
   vec3 fl = rvQrotG(iRot, vec3(cos(ang), 0.0, sin(ang)));       // blade facing (normal)
   // per-blade twist along the length: the width vector rotates toward the tip
@@ -137,7 +134,6 @@ const GRASS_CORE = /* glsl */`
   vec3 D = (flow * 0.3 + outward * 0.18 + fl * (h3 - 0.5) * 0.5) * H * droop;
   // turf blades splay in all directions (a matted sward), barely combed by the flow field
   D = mix(D, (flow * 0.22 + fl * (h3 - 0.5) * 0.9 + outward * 0.22) * H, carpet);
-  D = mix(D, normalize(flow * 0.5 + fl * (h3 - 0.5) * 2.0 + outward * 0.6 + 1e-4) * H * 1.7, thatch);
   // wind: travelling gusts (coherent over the field) + per-blade flutter
   vec3 wd = uWindDir - upP * dot(uWindDir, upP);
   wd = length(wd) > 1e-3 ? normalize(wd) : sl;
@@ -178,7 +174,7 @@ const GRASS_CORE = /* glsl */`
   bn = normalize(bn + sl * aSeg.y * 0.5);
   rvGrassN = normalize(mix(bn, upP, 0.5 + 0.3 * carpet));
   // turf reads as the lower part of the sward (base colour, root AO)
-  t *= 1.0 - 0.3 * carpet - 0.35 * thatch;
+  t *= 1.0 - 0.3 * carpet;
   vT = t; vDry = iData.w; vRand = h1; vAO = mix(0.5, 1.0, smoothstep(0.0, 0.7, t)); vCarp = carpet;
   vGW = rootW;
   if (H < 1e-3) rvGrassPos = iPos.xyz;
@@ -283,5 +279,77 @@ export function makeGrassMaterial(p) {
     shader.fragmentShader = fs;
   };
   mat.customProgramCacheKey = () => 'rv-flora-grass-v2';
+  return { material: mat, uniforms: u };
+}
+
+/**
+ * Sward shade: a soft multiplicative "decal" disc under every near grass patch. Real meadows are
+ * dark between the stems (self-shadowing + occlusion in the sward); the terrain shader can't know
+ * where the flora track grew grass, so without this the lit ground shows between blades and dense
+ * grass reads as tufts on a lawn. Each disc multiplies the already-lit ground by shade^(w·k) with a
+ * Gaussian weight w — overlapping discs on the jittered patch grid sum to a nearly uniform
+ * darkening with gentle natural mottling, fading with patch density and distance.
+ */
+export function makeSwardDecal(segs = 12) {
+  const pos = [0, 0, 0];
+  for (let k = 0; k < segs; k++) { const a = (k / segs) * Math.PI * 2; pos.push(Math.cos(a), 0, Math.sin(a)); }
+  const idx = [];
+  for (let k = 0; k < segs; k++) idx.push(0, 1 + ((k + 1) % segs), 1 + k);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 2);
+  g.boundingBox = new THREE.Box3(new THREE.Vector3(-2, -0.5, -2), new THREE.Vector3(2, 0.5, 2));
+  return g;
+}
+
+export function makeSwardMaterial(p) {
+  const u = {
+    uFade: { value: new THREE.Vector4(...(p.fade ?? [0, 0, 16, 24])) },
+    uPatchR: { value: p.patchR ?? 0.8 }, uSize: { value: p.size ?? 1.5 },
+    uShade: { value: new THREE.Color().fromArray(p.shade ?? [0.5, 0.58, 0.42]) }, uStr: { value: p.strength ?? 0.6 },
+    uCamPos: G.uCameraPos,
+  };
+  const mat = new THREE.ShaderMaterial({
+    name: 'flora-sward',
+    uniforms: u,
+    vertexShader: /* glsl */`
+#include <rv_flora>
+attribute vec4 iPos; attribute vec4 iRot; attribute vec4 iData;
+uniform vec4 uFade; uniform float uPatchR; uniform float uSize; uniform vec3 uCamPos;
+varying vec2 vL; varying float vK;
+void main(){
+  vec3 lp = vec3(position.x, 0.0, position.z) * uPatchR * uSize * iPos.w;
+  vec3 up = rvQrot(iRot, vec3(0.0, 1.0, 0.0));
+  vec3 p = iPos.xyz + rvQrot(iRot, lp) + up * 0.08;
+  vec4 wp = modelMatrix * vec4(p, 1.0);
+  float d = length(wp.xyz - uCamPos);
+  vK = iData.y * rvLodFade(d, uFade).y;
+  vec4 mv = viewMatrix * wp;
+  // pulled toward the camera: the rendered terrain (CDLOD, octaves finer than its vertex spacing
+  // removed, geomorphed) deviates from the analytic surface the patches root on by 10–20 cm, so a
+  // disc sitting on the analytic ground vanishes in bands. The pull lifts it ~20 cm vertically
+  // (pull = gap / sin(elevation), capped at grazing angles where blades hide the ground anyway).
+  float vl = length(mv.xyz);
+  float sinT = abs(dot((wp.xyz - uCamPos) / max(d, 1e-3), up));
+  float pull = min(0.2 / max(sinT, 0.05), 1.2) + 0.004 * vl;
+  mv.xyz *= max(0.1, 1.0 - pull / max(vl, 1e-3));
+  gl_Position = projectionMatrix * mv;
+  vL = position.xz;
+  if (vK < 0.01) gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+}`,
+    fragmentShader: /* glsl */`
+uniform vec3 uShade; uniform float uStr;
+varying vec2 vL; varying float vK;
+void main(){
+  float r2 = dot(vL, vL);
+  float w = max(0.0, (exp(-2.4 * r2) - 0.0907) / 0.9093);
+  gl_FragColor = vec4(pow(uShade, vec3(w * vK * uStr)), 1.0);
+}`,
+    transparent: true, depthWrite: false, depthTest: true, fog: false,
+    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+    blendSrc: THREE.DstColorFactor, blendDst: THREE.ZeroFactor,
+    blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
+  });
   return { material: mat, uniforms: u };
 }

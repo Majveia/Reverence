@@ -114,8 +114,13 @@ function leafCluster(ctx, rnd, o) {
     tw.push([x1, y1]);
   }
   const leaves = [];
+  // irregular, lobed cluster outline (a disc of leaves reads as a ball → "broccoli" canopies)
+  const p1 = rnd() * TAU, p2 = rnd() * TAU, p3 = rnd() * TAU;
+  const rLim = (a) => R * (0.8 + 0.12 * Math.sin(2 * a + p1) + 0.1 * Math.sin(3 * a + p2) + 0.06 * Math.sin(5 * a + p3));
   for (let n = 0; n < o.n; n++) {
-    const r = R * Math.pow(rnd(), 0.62), a = rnd() * TAU;
+    const a = rnd() * TAU;
+    // most leaves fill the lobed body; a few stray sprays poke out past the outline
+    const r = rnd() < 0.1 ? rLim(a) * (0.95 + rnd() * 0.2) : rLim(a) * Math.pow(rnd(), 0.58);
     let x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r * 0.94;
     if (o.droop) y += (r / R) * (r / R) * 40 * o.droop * 4;
     const edge = r / R;
@@ -127,7 +132,8 @@ function leafCluster(ctx, rnd, o) {
   for (const lf of leaves) {
     const L = o.L[0] + rnd() * (o.L[1] - o.L[0]), W = o.W[0] + rnd() * (o.W[1] - o.W[0]);
     if (Math.hypot(lf.x - cx, lf.y - cy) + L * 0.9 > 250) continue;
-    const lum = 0.38 + 0.42 * Math.pow(lf.edge, 0.7) + rnd() * 0.25;
+    // mild inner shading only (a bright rim on every card outlines each clump like popcorn)
+    const lum = 0.46 + 0.2 * Math.pow(Math.min(1, lf.edge), 0.7) + rnd() * 0.3;
     drawLeaf(ctx, lf.x, lf.y, lf.dir, L, W, Math.min(1, lum), rnd, o.lobes ? { lobes: 5 + ((rnd() * 3) | 0) * 2, veins: o.veins } : { sharp: o.sharp ?? 0.5, vein: o.vein });
   }
 }

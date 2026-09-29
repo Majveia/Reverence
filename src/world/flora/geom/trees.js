@@ -23,7 +23,7 @@ function leafClump(b, rnd, cl, o) {
     let dx = rnd.gauss(), dy = rnd.gauss() * 0.85 + (o.upBias ?? 0.25), dz = rnd.gauss();
     const dl = Math.hypot(dx, dy, dz) || 1; dx /= dl; dy /= dl; dz /= dl;
     const rr = cl.r * (detail ? 0.55 : 0.35 + 0.65 * Math.pow(rnd(), 0.6));
-    const px = cl.x + dx * rr, py = cl.y + dy * rr * (o.flat ?? 0.85), pz = cl.z + dz * rr;
+    const px = cl.x + dx * rr, py = cl.y + dy * rr * (o.flat ?? 0.85) * (dy < 0 ? (o.flatBottom ?? 1) : 1), pz = cl.z + dz * rr;
     // spherified normal: blend clump + crown outward directions
     let ox = px - cc[0], oy = (py - cc[1]) / (o.crownFlat ?? 1), oz = pz - cc[2];
     const ol = Math.hypot(ox, oy, oz) || 1;
@@ -159,7 +159,7 @@ export function broadleaf(rnd, P) {
   }
   const leafOpts = (detail) => ({
     detail, density: P.leafDensity ?? 7.5, size: P.leafSize ?? 1.6, crown, crownR, crownFlat: crownH / crownR,
-    colA: P.leafA, colB: P.leafB, rect: (r) => P.rects[Math.floor(r() * P.rects.length)], flat: 0.8,
+    colA: P.leafA, colB: P.leafB, rect: (r) => P.rects[Math.floor(r() * P.rects.length)], flat: 0.8, flatBottom: P.flatBottom ?? 0.6,
   });
   const emit = (detail) => {
     const b = new PlantBuilder();

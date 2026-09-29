@@ -336,7 +336,7 @@ const PLANT_AO = /* glsl */`
 const PLANT_ROUGH = /* glsl */`
 #include <roughnessmap_fragment>
 if (rvKind < 0.5) roughnessFactor = 0.92;
-else if (rvKind < 2.5) roughnessFactor = 0.62;
+else if (rvKind < 2.5) roughnessFactor = clamp(0.44 + 0.34 * rvBarkH + 0.16 * fract(vSeed * 7.13 + vAtlasUv.x * 3.0), 0.42, 0.92); // leaf-to-leaf sheen breakup
 else if (rvKind < 4.5) roughnessFactor = 0.38 + 0.4 * rvSolidN;
 else roughnessFactor = 0.1;
 `;

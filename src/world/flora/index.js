@@ -28,7 +28,7 @@ import { buildStyle } from './styles.js';
 import { flowerPatch } from './geom/plants.js';
 import { makeRock } from './geom/rocks.js';
 import { STRIDE, runJob } from './placement.js';
-import { makeGrassPatch, makeGrassMaterial } from './grass.js';
+import { makeGrassPatch, makeGrassMaterial, makeSwardDecal, makeSwardMaterial } from './grass.js';
 import { bakeImpostors, makeImpostorQuad, makeImpostorMaterials, MAX_IMP } from './impostor.js';
 
 const _cam = new THREE.Vector3(), _v = new THREE.Vector3();
@@ -286,7 +286,7 @@ class Flora {
     if (!anyGrass) return;
     const R = this.grassR = (low ? 28 : 44) * Math.sqrt(clamp(this.density, 0.3, 1.5));
     const hgt = G.height ?? 0.55;
-    const pR = spacing * 0.74;
+    const pR = spacing * 0.8;
     const common = {
       base: G.base, tip: G.tip, dry: G.dry, glowTip: G.glowTip, glowAmt: 1.6, push: this.pushU,
       height: hgt * 0.66, patchR: pR, transl: 0.9, stiff: 1,
@@ -305,8 +305,22 @@ class Flora {
     const LF = new InstanceLayer(far, mF.material, null, { capacity: 8192, parent: this.group, castShadow: false, name: 'flora-grass-far', boundsPad: 3 });
     LD.uniforms = mD.uniforms; LS.uniforms = mS.uniforms; LF.uniforms = mF.uniforms;
     this.layers.push(LD, LS, LF);
+    // sward shade: dark ground between the stems under near grass (see grass.js makeSwardDecal)
+    const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+    const mid = mix(G.base, G.tip, 0.4);
+    const mx = Math.max(1e-3, ...mid);
+    const shade = mix([0.55, 0.55, 0.55], mid.map((v) => (0.62 * v) / mx), 0.5);
+    const swFar = midF[1] + 2;
+    const decal = makeSwardDecal(low ? 8 : 12);
+    let swDbg = false;
+    try { swDbg = (new URL(window.location.href).searchParams.get('floradbg') || '').includes('sward'); } catch (_) { /* no window */ }
+    const mW = makeSwardMaterial({ fade: [0, 0, swFar * 0.6, swFar], patchR: pR, size: 1.45, shade: swDbg ? [1, 0.02, 0.02] : shade, strength: G.shadeAmt ?? 0.9 });
+    const LW = new InstanceLayer(decal, mW.material, null, { capacity: 4096, parent: this.group, castShadow: false, receiveShadow: false, name: 'flora-sward', boundsPad: 2 });
+    LW.uniforms = mW.uniforms;
+    if (swDbg) { try { if (new URL(window.location.href).searchParams.get('floradbg').includes('nodepth')) mW.material.depthTest = false; } catch (_) { /* ignore */ } }
+    this.layers.push(LW);
     this.grass = {
-      dense: LD, sparse: LS, far: LF, nearR: nearF[1] + 1.5, farMin2: Math.max(0, nearF[0] - 2) ** 2,
+      dense: LD, sparse: LS, far: LF, sward: LW, swardMax2: (swFar + 2) ** 2, geoW: decal, nearR: nearF[1] + 1.5, farMin2: Math.max(0, nearF[0] - 2) ** 2,
       midMax2: (midF[1] + 3) ** 2, far0: Math.max(0, midF[0] - 3) ** 2, geoD: dense, geoS: sparse, geoF: far,
     };
   }
@@ -647,7 +661,7 @@ class Flora {
     const D = this.D;
     if (b.name === 'grass') {
       const G = this.grass;
-      G.dense.begin(cx, cy, cz); G.sparse.begin(cx, cy, cz); G.far.begin(cx, cy, cz);
+      G.dense.begin(cx, cy, cz); G.sparse.begin(cx, cy, cz); G.far.begin(cx, cy, cz); G.sward.begin(cx, cy, cz);
       for (const m of this.bandLayers.flower) { m.L0.begin(cx, cy, cz); m.L1.begin(cx, cy, cz); }
       const nr2 = G.nearR * G.nearR, fl0 = (D.f0[1] + 3) ** 2, fl1 = (D.f0[0] - 3) ** 2;
       for (const c of b.cells.values()) {
@@ -657,6 +671,7 @@ class Flora {
           const px = A[0] + I[o], py = A[1] + I[o + 1], pz = A[2] + I[o + 2];
           const d2 = (px - cx) ** 2 + (py - cy) ** 2 + (pz - cz) ** 2;
           if (d2 < nr2) G.dense.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], I[o + 3], I[o + 8], I[o + 9], I[o + 10], I[o + 11]);
+          if (d2 < G.swardMax2) G.sward.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], I[o + 3], I[o + 8], I[o + 9], I[o + 10], I[o + 11]);
           if (d2 > G.farMin2) {
             // distance thinning: fewer, larger patches far away (keeps the silhouette, cuts triangles)
             const keep = d2 < 400 ? 1 : Math.max(0.22, Math.pow(400 / d2, 0.75));
@@ -678,7 +693,7 @@ class Flora {
           if (d2 > fl1) m.L1.push(px, py, pz, F[o + 4], F[o + 5], F[o + 6], F[o + 7], F[o + 3], F[o + 8], F[o + 9], F[o + 10], F[o + 11]);
         }
       }
-      G.dense.end(1); G.sparse.end(1); G.far.end(1);
+      G.dense.end(1); G.sparse.end(1); G.far.end(1); G.sward.end(1.5);
       for (const m of this.bandLayers.flower) { m.L0.end(1.5); m.L1.end(1.5); }
       return;
     }
@@ -823,7 +838,7 @@ class Flora {
     for (const b of this.bands || []) for (const c of b.cells.values()) this._dropCell(c);
     for (const L of this.layers) { L.dispose(); L.material?.dispose?.(); L.depthMaterial?.dispose?.(); }
     for (const m of this.models) { m.geo0?.dispose(); m.geo1?.dispose(); }
-    this.grass?.geoD?.dispose(); this.grass?.geoS?.dispose(); this.grass?.geoF?.dispose();
+    this.grass?.geoD?.dispose(); this.grass?.geoS?.dispose(); this.grass?.geoF?.dispose(); this.grass?.geoW?.dispose();
     this.impQuad?.dispose();
     this.impBake?.albedo.dispose(); this.impBake?.normal.dispose();
     this.atlas?.texture?.dispose(); this.bark?.dispose(); this.rockTex?.dispose();

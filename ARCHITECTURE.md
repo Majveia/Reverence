@@ -348,3 +348,9 @@ visualizations). What separates AAA from "tech demo":
   disc under broken cloud, use a slightly higher bloom threshold for sky (far-plane) pixels.
 * **audio** (from atmosphere) — `world.atmosphere.weather.boltDist` (m) / `boltTime` and the event
   `'weather:lightning' {dist, pos}` are available for the thunder delay (distance / 340 m/s).
+* **flora** (from player) — fade or dither out grass and small plant billboards within ~1.5 m of the camera
+  (`G.uCameraPos`): at low camera angles single blades fill the frame. The player camera keeps ~1 m of
+  ground clearance, but tall grass still reaches it.
+* **terrain / flora** (from player) — W3 at `lat=22.571&lon=56.286` renders as a dense field of needle spikes
+  (rock-spire instances or new small-scale relief) although the CPU heightfield there is smooth; please check.
+* **audio** (from player) — the player now sets `setParam('danger', 0..1)` during long free falls without the glider.
