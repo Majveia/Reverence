@@ -219,6 +219,13 @@ vec3 rvPattern(float pat, vec2 uv, vec3 col){
 `;
 
 const PLANT_MAP = /* glsl */`
+// cheap rejections first (LOD crossfade, near-camera dissolve): discarded fragments skip every
+// texture fetch below — foliage overdraw is the dominant cost of forest views
+float dth = rvDither(gl_FragCoord.xy);
+if (vFade.y < 0.999 && dth >= vFade.y) discard;
+if (vFade.x < 0.999 && (1.0 - dth) >= vFade.x) discard;
+// dissolve foliage/branches right in front of the camera so they never smother the view
+{ float cd = length(vViewPosition); if (cd < 3.2 && dth > smoothstep(1.0, 3.2, cd)) discard; }
 float kind = floor(vInfo.x / 16.0 + 0.001);
 float pat = vInfo.x - kind * 16.0;
 rvKind = kind;
@@ -245,6 +252,10 @@ if (kind < 0.5) {
   vec2 dx = dFdx(px), dy = dFdy(px);
   float mip = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
   alpha = tx.a * (1.0 + mip * 0.14);
+  // soft alpha-tested leaf edges: jitter the coverage threshold (TAA averages it into a soft edge);
+  // test here, before the relief fetches and lighting
+  if (uDitherA > 0.0) alpha += (dth - 0.5) * uDitherA;
+  if (alpha < 0.5) discard;
   albedo = mix(vCol, uTint2, tx.g) * (0.38 + tx.r * 0.95);
   rvBarkH = tx.r;
   {
@@ -274,15 +285,11 @@ if (kind < 0.5) {
   rvWrap = 0.2;
 }
 // bounce light from the plant's own glowing parts (baked per vertex, see PlantBuilder._bakeGlow)
-if (uGlowStr > 0.0 && kind < 3.5) rvGlow += (albedo + 0.05) * vGlowL * uGlowStr * 0.6 * (0.03 + 0.97 * uNight);
-// LOD crossfade (complementary dither, temporally shifted so TAA resolves it)
-float dth = rvDither(gl_FragCoord.xy);
-// soft alpha-tested leaf edges: jitter the coverage threshold (TAA averages it into a soft edge)
-if (uDitherA > 0.0 && kind > 0.5 && kind < 2.5) alpha += (dth - 0.5) * uDitherA;
-// dissolve foliage/branches right in front of the camera so they never smother the view
-{ float cd = length(vViewPosition); if (cd < 3.2 && dth > smoothstep(1.0, 3.2, cd)) discard; }
-if (vFade.y < 0.999 && dth >= vFade.y) discard;
-if (vFade.x < 0.999 && (1.0 - dth) >= vFade.x) discard;
+if (uGlowStr > 0.0 && kind < 3.5) {
+  // bark relief modulates the bounce (furrows stay dark) so glow-lit trunks keep their texture
+  float relief = kind < 0.5 ? (0.25 + 1.1 * rvBarkH * rvBarkH) : 1.0;
+  rvGlow += (albedo + 0.05) * vGlowL * uGlowStr * 0.6 * (0.03 + 0.97 * uNight) * relief;
+}
 diffuseColor.rgb *= albedo;
 diffuseColor.a = alpha;
 `;
@@ -407,7 +414,7 @@ export function makePlantMaterials(p) {
     fs = fs.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n{ float fr = (rvKind > 3.5 && rvKind < 4.5) ? mix(0.3, 1.0, pow(clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 1.3)) : 1.0; totalEmissiveRadiance += rvGlow * fr; }');
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-flora-plant-v4';
+  mat.customProgramCacheKey = () => 'rv-flora-plant-v5';
 
   const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide });
   depth.name = 'flora-plant-depth';

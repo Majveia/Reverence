@@ -92,6 +92,36 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
   jobs from before the change are discarded, so trees sit on graded plazas/pads.
 * **Near-camera dissolve**: foliage/branches within 2.6 m of the camera dither out.
 
+* **Round 3 (critic round 1 follow-up)**:
+  * **Turf carpet**: every grass patch now carries short single-triangle turf blades under the tall
+    Bézier blades (dense 64 tall + 150 turf, mid 28 + 56, far 22 + 24); tall blades are ~30 % narrower,
+    so meadows read as a fine continuous sward instead of wide daggers on bare soil.
+  * **Sward shade** (`makeSwardDecal`, layer `flora-sward`): a soft multiplicative Gaussian disc under
+    every near grass patch darkens the lit terrain between the stems (occlusion inside a real sward).
+    Overlapping discs on the patch grid sum to a nearly uniform darkening with natural mottling; it
+    fades with patch density and distance (< ~23 m). The disc is pulled toward the camera by
+    `0.2 m / sin(elevation)` because the rendered CDLOD terrain deviates 10–20 cm from the analytic
+    surface. Debug: `&floradbg=sward` (paints it red), `&floradbg=sward,nodepth`.
+  * **No more lattice/stripes**: grass cells were filled with a nominal n×n grid stretched over the
+    real (non-square, larger) cube-sphere cell, with full-cell jitter → rows of gaps that read as a
+    striped/checkerboard meadow. Now the grid is sized per axis from the real cell extent and jitter
+    is ±32 % of the spacing (patches are randomly rotated blade discs, so the grid never shows).
+    Slope/rock thinning starts at 24°/rock 0.45 (terrain micro-ledges drew contour stripes), and the
+    bare-ground threshold in sparse biomes is a soft ramp instead of a hard step.
+  * **BotW oaks**: 85 % of broadleaf trees fork low (38–62 % of trunk height) into 2–3 S-curved
+    leaders that spread into a wider, flatter-bottomed crown (clumps compressed below their centre);
+    lower trunks (12 m, crown aspect 0.9). No more straight poles through lollipop crowns.
+  * **Leaf clusters**: lobed, irregular cluster outlines with stray sprays past the silhouette, and no
+    bright rim per card (each card had a bright outline → "popcorn/broccoli" canopies). Leaf
+    roughness varies per leaf (sheen breakup instead of uniform plastic).
+  * **Perf**: oak LOD0 cards −40 % (density 6.5 → 3.8, size 1.9 → 2.2), canopy LOD0 range 55–70 m →
+    42–55 m, early discard (LOD fade / near dissolve / alpha) before the relief fetches. Measured in
+    the lab on the W2 forest view: flora frame 54 s → ~28–38 s on the loaded software renderer.
+  * **Night**: the tallest ~10 % of blades on glowing styles glow along their whole upper blade
+    (curved light strokes, Pacific Drive style) instead of only tip dots.
+  * **Flora lab** (`/src/world/flora/lab/`, dev only): the real flora subsystem on the real planet
+    surface with a stand-in ground/sky/sun, captured in ~30–120 s instead of 4–8 min. See below.
+
 ## API (`world.get('flora')`)
 * `.clearAround(pos, radius, keep = 0)` → id (cull vegetation in a disc around a planet-local
   position, e.g. a parked ship); `.removeClear(id)`.

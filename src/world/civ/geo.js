@@ -14,7 +14,7 @@ const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3
 export const PAT = {
   PLAIN: 0, WINDOWS: 1, PLANKS: 2, STONE: 3, PANELS: 4, TILES: 5, GLASS: 6, NEON: 7, LAMP: 8,
   THATCH: 9, CORRUGATED: 10, COBBLE: 11, ASPHALT: 12, DIRT: 13, GLYPH: 14, ARCHWIN: 15, CONCRETE: 16,
-  HOLO: 17, FABRIC: 18, RUST: 19, CRYSTAL: 20, PAVING: 21, SLITS: 22, MOSS: 23,
+  HOLO: 17, FABRIC: 18, RUST: 19, CRYSTAL: 20, PAVING: 21, SLITS: 22, MOSS: 23, SHOP: 24,
 };
 /** Patterns whose uv is in window-cell units on vertical faces. */
 const CELL_PATS = new Set([PAT.WINDOWS, PAT.GLASS, PAT.ARCHWIN, PAT.SLITS]);

@@ -146,6 +146,8 @@ uniform float uLitFrac;
 uniform float uEmitK;
 uniform float uAge;
 uniform vec4 uWinRect;
+uniform float uGroundOcc;
+uniform float uCanyon;
 
 float rvBox(vec2 f, vec4 r, vec2 fw){
   vec2 a = smoothstep(r.xy - fw, r.xy + fw, f);
@@ -176,7 +178,7 @@ float rvGlyph(vec2 f, float h){
 // computes rvAlb / rvRough / rvMetal / rvEmi / rvH / rvBumpK
 const FRAG_SURF = /* glsl */`
 vec3 rvAlb = vColL; float rvRough = vMatA.x; float rvMetal = vMatA.y; vec3 rvEmi = vec3(0.0);
-float rvH = 0.0; float rvBumpK = 0.0; float rvAO = 1.0; float rvGlass = 0.0;
+float rvH = 0.0; float rvBumpK = 0.0; float rvAO = 1.0; float rvGlass = 0.0; float rvSpecOcc = 1.0;
 int rvPat = int(vMatA.w + 0.5);
 vec2 uv = vUvM;
 vec3 lp = vLPos;
@@ -347,9 +349,69 @@ if (rvPat == 1 || rvPat == 6 || rvPat == 15 || rvPat == 22) {
     float glitch = step(0.97, rv_hash11(floor(uTimeC * 9.0) + seed * 3.0));
     k *= scan * mix(0.55, 1.0, bars) * (1.0 - 0.5 * glitch);
     rvAlb *= 0.2;
+    // ad content: scrolling glyph copy (paged every ~2.5 s), a rotating logo roundel and a two-tone
+    // gradient sweep, so a billboard reads as a lit advert instead of a flat coloured sheet
+    vec2 cell = uv / vec2(1.1, 1.45);
+    vec2 cid = floor(cell);
+    float page = floor(uTimeC * 0.4 + seed * 7.0 + rv_hash11(cid.y + seed) * 3.0);
+    float row = step(0.4, rv_hash11(cid.y * 1.31 + page * 0.7 + seed));
+    float gl = rvGlyph(fract(cell), rv_hash12(cid + page * 1.7 + seed)) * row;
+    vec2 bf = fract(uv / 7.5 + vec2(seed, 0.0)) - 0.5;
+    float lr = length(bf);
+    float logo = (1.0 - smoothstep(0.30, 0.30 + fwl * 0.2, lr)) * (0.45 + 0.55 * step(0.0, sin(atan(bf.y, bf.x) * 3.0 + uTimeC * 1.5)));
+    logo += (1.0 - smoothstep(0.012, 0.012 + fwl * 0.15, abs(lr - 0.36))) * 0.8;
+    float cfade = 1.0 - smoothstep(0.25, 0.7, fwl);
+    vec3 c2 = vColL.brg * 0.8 + 0.1;
+    float sweep = 0.5 + 0.5 * sin(uv.y * 0.35 + uv.x * 0.21 + uTimeC * 0.6 + seed * 5.0);
+    vec3 base = mix(vColL, c2, sweep * 0.55);
+    float content = mix(0.75, 0.22 + 1.25 * gl + 0.7 * logo, cfade);
+    rvEmi += base * k * content;
+    k = 0.0;
   }
   rvEmi += vColL * k;
   rvRough = 0.3;
+} else if (rvPat == 24) {
+  // ------------------------------------------------ lit shop interior behind glass (u, v in meters)
+  float bayW = 2.4;
+  float bay = floor(uv.x / bayW); vec2 bf = vec2(fract(uv.x / bayW), uv.y);
+  float hb = rv_hash11(bay * 1.37 + seed * 11.0), hb2 = rv_hash11(bay * 3.1 + seed * 5.0 + 2.0);
+  float cfade = 1.0 - smoothstep(0.08, 0.3, fwl);
+  // ceiling light falloff (bright near the top, pooled on the floor)
+  float lightV = 0.45 + 0.55 * smoothstep(0.2, 2.8, uv.y) + 0.35 * exp(-pow((uv.y - 0.25) * 2.2, 2.0));
+  vec3 inCol = vColL * lightV * (0.75 + 0.5 * hb);
+  float strip = (1.0 - smoothstep(0.03, 0.03 + fw.y, abs(uv.y - 2.75))) * step(0.08, bf.x) * step(bf.x, 0.92);
+  // shelves with goods (colourful product dots) or a counter + menu board
+  float shelf = 0.0, goods = 0.0, counter = 0.0, menu = 0.0;
+  if (hb < 0.55) {
+    for (int i = 0; i < 3; i++) {
+      float sy = 0.55 + float(i) * 0.6;
+      shelf = max(shelf, 1.0 - smoothstep(0.025, 0.025 + fw.y, abs(uv.y - sy)));
+      vec2 gid = vec2(floor(uv.x / 0.18), float(i));
+      float gh = rv_hash12(gid + seed + bay);
+      goods = max(goods, step(0.3, gh) * step(sy + 0.03, uv.y) * step(uv.y, sy + 0.12 + 0.2 * gh) * step(0.15, fract(uv.x / 0.18)));
+    }
+  } else {
+    counter = step(uv.y, 1.0) * step(0.1, bf.x) * step(bf.x, 0.9);
+    menu = rvBox(bf, vec4(0.15, 1.9, 0.85, 2.45), fw / bayW) * (0.6 + 0.4 * rvGlyph(fract(vec2(bf.x * 6.0, (uv.y - 1.9) * 3.6)), floor(bf.x * 6.0) + bay + seed));
+  }
+  // customers / shopkeeper silhouettes
+  float px = 0.3 + 0.4 * hb2;
+  vec2 q = vec2((bf.x - px) * bayW, uv.y);
+  float body = (1.0 - smoothstep(0.2, 0.2 + fw.x * 2.0, abs(q.x) + max(0.0, 0.9 - q.y) * 0.05)) * step(0.0, q.y) * step(q.y, 1.45);
+  float head = 1.0 - smoothstep(0.12, 0.12 + fw.x * 2.0, length(q - vec2(0.0, 1.6)));
+  float person = max(body, head) * step(0.35, hb2);
+  vec3 prodCol = 0.5 + 0.5 * cos(6.2831 * (rv_hash12(floor(uv / vec2(0.18, 0.6)) + seed) + vec3(0.0, 0.33, 0.67)));
+  vec3 inside = inCol;
+  inside = mix(inside, prodCol * lightV * 0.9, goods * cfade);
+  inside = mix(inside, vColL * 0.15, max(shelf, counter * 0.85) * cfade);
+  inside = mix(inside, vec3(1.0, 0.95, 0.85) * 1.2, menu * cfade);
+  inside = mix(inside, vec3(0.02), person * cfade * 0.92);
+  inside += vec3(1.0, 0.97, 0.9) * strip * 2.0 * cfade;
+  // glass: faint diagonal reflection streaks
+  float refl = smoothstep(0.7, 1.0, sin((uv.x + uv.y * 0.6) * 1.7 + seed * 4.0)) * 0.12;
+  rvAlb = vec3(0.02);
+  rvRough = 0.08; rvMetal = 0.0; rvGlass = 1.0;
+  rvEmi += (inside * 0.55 + refl * vColL) * vMatA.z * uEmitK * mix(0.25, 1.0, night);
 } else if (rvPat == 8) {
   // ------------------------------------------------ lamps / lanterns (night emissive)
   rvEmi += vColL * vMatA.z * uEmitK * mix(0.04, 1.0, night);
@@ -457,7 +519,7 @@ if (rvPat == 1 || rvPat == 6 || rvPat == 15 || rvPat == 22) {
 }
 
 // ---------------------------------------------------- weathering & context
-if (rvPat != 7 && rvPat != 8 && rvPat != 17) {
+if (rvPat != 7 && rvPat != 8 && rvPat != 17 && rvPat != 24) {
   float ageK = (0.1 + uAge * 0.5) * (1.0 - rvGlass * 0.85);
   // macro colour variation + grime
   rvAlb *= mix(1.0 - 0.25 * ageK, 1.0 + 0.08 * ageK, macro);
@@ -481,8 +543,17 @@ if (rvPat != 7 && rvPat != 8 && rvPat != 17) {
   rvRough = mix(rvRough, rvRough * 0.25, wet);
   // glass never goes mirror-perfect (the night env map holds stars → sparkle noise)
   rvRough = max(rvRough, 0.12 * rvGlass);
+  // horizon occlusion of env reflections on streets / plazas: in a street canyon a wet pavement mirrors the
+  // (dark, lit-window) facades, not the open sky the env cube holds → without SSR, damp the grazing sky
+  // reflection on up-facing ground so wet asphalt does not turn into a flat sky-coloured sheet
+  float ground = smoothstep(0.75, 0.97, upness) * uGroundOcc;
+  rvSpecOcc = mix(1.0, mix(0.3 + 0.2 * nB, 0.04 + 0.05 * nB, uCanyon), ground);
+  // sky-view occlusion of street floors between tall blocks (env / sky diffuse, incl. lightning env flashes)
+  rvAO *= 1.0 - uCanyon * ground;
   // street-level warm bounce at night (lamps, shopfronts)
-  rvEmi += rvAlb * uWinCol * night * 0.06 * uEmitK * exp(-max(vAux.x, 0.0) * 0.28);
+  // (not on the road/plaza decal mesh: its aux height is not height-above-ground, and the light pools
+  // already carry the real lamp/shopfront footprints there — a uniform bounce read as a beige wash)
+  rvEmi += rvAlb * uWinCol * night * 0.06 * uEmitK * exp(-max(vAux.x, 0.0) * 0.28) * (uGroundOcc > 0.99 ? 0.0 : 1.0);
 }
 `;
 
@@ -502,6 +573,8 @@ export function makeCivMaterial(style = {}, opts = {}) {
     uEmitK: { value: style.emit ?? 1.0 },
     uAge: { value: style.age ?? 0.2 },
     uWinRect: { value: new THREE.Vector4(...(style.winRect ?? [0.26, 0.3, 0.74, 0.82])) },
+    uGroundOcc: { value: opts.key === 'road' ? 1 : 0.35 },
+    uCanyon: { value: opts.canyon ?? 0 },
   };
   m.userData.u = U;
   const anim = opts.anim || null;
@@ -527,7 +600,7 @@ export function makeCivMaterial(style = {}, opts = {}) {
       .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n metalnessFactor = rvMetal;')
       .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n if (rvBumpK > 0.0) normal = rvBumpN(-vViewPosition, normal, rvH, rvBumpK);')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += rvEmi;')
-      .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n reflectedLight.indirectDiffuse *= rvAO; reflectedLight.indirectSpecular *= mix(1.0, rvAO, 0.5);');
+      .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n reflectedLight.indirectDiffuse *= rvAO; reflectedLight.indirectSpecular *= mix(1.0, rvAO, 0.5) * rvSpecOcc;');
   };
   m.customProgramCacheKey = () => key;
   m.name = 'civ-uber' + (opts.key ? '-' + opts.key : '');
@@ -577,7 +650,7 @@ export function makeGlowMaterial() {
           // city glow blob: only from afar (fades in beyond ~2.5 km), keeps a visible core from orbit
           vA *= smoothstep(2500.0, 6000.0, d) * clamp(px / cl, 0.5, 1.0) * mix(0.35, 1.0, smoothstep(2.0, 12.0, px)) * 0.8;
           cl = max(px, 2.2);
-        } else vA *= min(1.0, (px * px) / (cl * cl) * 6.0 + 0.15);
+        } else vA *= min(1.0, (px * px) / (cl * cl) * 6.0 + 0.15) * smoothstep(2.5, 9.0, d); // no giant bokeh discs right at the lens: the lamp geometry itself is visible there
         gl_PointSize = min(cl, 96.0);
         vC = aColor;
         if (vA < 0.002) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);

@@ -38,7 +38,7 @@ export function makePools(pools, reversed = false) {
     vertexShader: /* glsl */`
       attribute vec3 aCol; attribute vec4 aQ; attribute vec3 aUp;
       uniform float uWet; uniform vec3 uSunDirC, uPlanetC;
-      varying vec3 vC; varying vec2 vQ; varying float vStretch; varying float vK;
+      varying vec3 vC; varying vec2 vQ; varying float vStretch; varying float vK; varying float vFres;
       void main(){
         vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
         vec3 up = normalize(aUp);
@@ -49,7 +49,7 @@ export function makePools(pools, reversed = false) {
         vec3 sd = normalize(cross(fw, up)); // (sd, fw) counter-clockwise seen from above → front face
         float wet = clamp(uWet * 1.4, 0.0, 1.0);
         // mirror image of a light at height h, seen from far away, spreads toward the viewer
-        float stretch = 1.0 + wet * (2.0 + aQ.w * 0.35);
+        float stretch = 1.0 + wet * (1.3 + aQ.w * 0.2);
         float R = aQ.z;
         float along = aQ.y > 0.0 ? aQ.y * R * stretch : aQ.y * R;
         vec3 p = wp + sd * aQ.x * R * mix(1.0, 0.45, wet) + fw * along + up * 0.3; // above road (0.18) / pavement (0.09) / plaza (0.2) surfaces
@@ -60,21 +60,27 @@ export function makePools(pools, reversed = false) {
         float dist = length(cameraPosition - wp);
         vK = nightL * (1.0 - smoothstep(900.0, 1400.0, dist));
         vC = aCol * (1.0 + wet * 0.8);
+        // a mirror image on wet ground is bright only at grazing view angles (Fresnel): the part of the streak
+        // right under the viewer must fade, or a nearby lamp washes the whole foreground
+        vec3 vd = normalize(cameraPosition - p);
+        float cosV = abs(dot(vd, up));
+        vFres = 0.04 + 0.96 * pow(1.0 - cosV, 5.0);
+        vFres = clamp(vFres * 3.0, 0.0, 1.0);
         gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
         if (vK < 0.002) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
       }`,
     fragmentShader: /* glsl */`
       uniform float uWet, uTimeC;
-      varying vec3 vC; varying vec2 vQ; varying float vStretch; varying float vK;
+      varying vec3 vC; varying vec2 vQ; varying float vStretch; varying float vK; varying float vFres;
       void main(){
         float r2 = dot(vQ, vQ);
         if (r2 > 1.0) discard;
         // bright core under the lamp + long soft skirt, zero at the rim
-        float pool = (0.55 / (1.0 + 14.0 * r2) + 0.45 * exp(-r2 * 5.0)) * (1.0 - r2);
+        float pool = (0.7 / (1.0 + 18.0 * r2) + 0.3 * exp(-r2 * 6.0)) * (1.0 - r2) * (1.0 - r2);
         // wet streak: long soft tail with rippling breakup along its length
         float wet = clamp(uWet * 1.4, 0.0, 1.0);
-        float tail = step(0.0, vQ.y) * exp(-vQ.x * vQ.x * 9.0) * (1.0 - vQ.y) * (0.75 + 0.25 * sin(vQ.y * 38.0 + uTimeC * 2.0));
-        float k = pool + wet * tail * 0.9;
+        float tail = step(0.0, vQ.y) * exp(-vQ.x * vQ.x * 16.0) * (1.0 - vQ.y) * (0.75 + 0.25 * sin(vQ.y * 38.0 + uTimeC * 2.0));
+        float k = pool * mix(1.0, 0.7, wet) + wet * tail * 2.2 * vFres;
         gl_FragColor = vec4(vC * k * vK, 1.0);
       }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,

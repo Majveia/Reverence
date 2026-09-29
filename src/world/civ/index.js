@@ -78,7 +78,7 @@ class Civ {
       const M = style.mats(this.body, rng);
       const look = style.look || {};
       const mainMat = makeCivMaterial(look, { key: '' });
-      const roadMat = makeCivMaterial(look, { key: 'road', polygonOffset: true, reversed: !!this.world.engine?.reversedDepth });
+      const roadMat = makeCivMaterial(look, { key: 'road', polygonOffset: true, reversed: !!this.world.engine?.reversedDepth, canyon: style.canyon ?? (style.pave ? 0.7 : 0.15) });
       mainMat.userData.shared = true; roadMat.userData.shared = true;
       k = { name, style, M, mainMat, roadMat };
       this.world.lighting?.setupMaterial?.(mainMat);
@@ -453,8 +453,10 @@ class Civ {
       if (!(hgt > 0.4 && hgt < 8.5)) continue;
       _w.divideScalar(lr);
       const bx = _w.x * (s.R + gh) - s.pos.x, by = _w.y * (s.R + gh) - s.pos.y, bz = _w.z * (s.R + gh) - s.pos.z;
-      const k = 0.04 * Math.min(1.5, 4.5 / Math.max(2, hgt));
-      out.push({ x: bx, y: by, z: bz, nx: _w.x, ny: _w.y, nz: _w.z, r: l.r * k, g: l.g * k, b: l.b * k, rad: Math.min(6.5, Math.max(2.2, hgt * 1.15)), hgt, w: lum * k });
+      // pools are additive: overlapping skirts of many lights sum into a flat wash, so keep each dim and
+      // compact (a lit disc under each lamp, dark pavement between)
+      const k = 0.022 * Math.min(1.5, 4.5 / Math.max(2, hgt));
+      out.push({ x: bx, y: by, z: bz, nx: _w.x, ny: _w.y, nz: _w.z, r: l.r * k, g: l.g * k, b: l.b * k, rad: Math.min(5, Math.max(2, hgt * 0.95)), hgt, w: lum * k });
     }
     // over budget: keep the brightest pools (street lamps and shopfronts beat faint window spill)
     if (out.length > max) { out.sort((a, b) => b.w - a.w); out.length = max; }
@@ -825,6 +827,10 @@ class Civ {
   _update(dt) {
     this._t = (this._t || 0) + (dt || 0);
     if (this._debug.includes('npcbig') && !this._npcbig) { this._npcbig = true; this.root.traverse((o) => { if (o.name === 'civ-npcs') o.geometry.attributes.aP.array.forEach((v, i, a) => { if (i % 4 === 2) a[i] = 8; }); }); }
+    if (this._debug && /no(roads|pools|bld|glow|npc)/.test(this._debug)) {
+      const hide = { 'civ-roads': 'noroads', 'civ-pools': 'nopools', 'civ-buildings': 'nobld', 'civ-glow': 'noglow', 'civ-npcs': 'nonpc' };
+      this.root.traverse((o) => { const k = hide[o.name]; if (k && this._debug.includes(k)) o.visible = false; });
+    }
     if (this._debug.includes('noflora')) { const f = this.world.get?.('flora'); if (f?.group) f.group.visible = false; }
     const cam = this.world.camera.position;
     const alt = cam.length() - this.body.radius;

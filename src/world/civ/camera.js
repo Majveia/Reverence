@@ -96,13 +96,40 @@ export function frameSite(civ, s, preset) {
     return res(x, z, lx * 0.45, lz * 0.45, hC + 7, gh + 1.7, { view: 'fp', flat: '0', pitchAdd: 3 });
   }
   if (preset === 'street') {
-    // a main road ~45 % out, looking back toward the centre (houses on both sides, landmark at the end)
-    const b = roadPoint(Math.max(pr + 25, R * 0.45), (p, r) => r.w + (r.type === 'avenue' ? 2 : 0) - Math.abs(Math.cos(Math.atan2(p.z, p.x) - landA - Math.PI)) * 0.5);
-    if (b) {
-      const off = b.r.w * 0.22;
-      const x = b.p.x - b.p.tz * off, z = b.p.z + b.p.tx * off;
+    // walk every road; score spots by how many buildings line BOTH sides of the view down the street
+    // (a street is a canyon of facades, not a path across a meadow), plus the landmark in the view
+    let best = null;
+    for (const r of L.roads) {
+      const len = polyLen(r.pts);
+      for (let t = 4; t < len - 4; t += 6) {
+        const p = along(r.pts, t);
+        const dd = Math.hypot(p.x, p.z);
+        if (dd < pr + 12 || dd > R * 0.8) continue;
+        if (G && !L.water && G.wet(p.x, p.z)) continue;
+        // look along the road, toward the centre
+        const sg = p.tx * -p.x + p.tz * -p.z >= 0 ? 1 : -1;
+        const fx = p.tx * sg, fz = p.tz * sg;
+        let left = 0, right = 0, tall = 0;
+        for (const l of L.lots) {
+          const dx = l.x - p.x, dz = l.z - p.z;
+          const fwd = dx * fx + dz * fz, lat = dx * fz - dz * fx;
+          if (fwd < 3 || fwd > 80 || Math.abs(lat) > 12 + fwd * 0.35) continue;
+          if (l.type === 'garden' || l.type === 'farm') continue;
+          if (lat > 0) right++; else left++;
+          if (l.type === 'landmark' || l.type === 'tower') tall++;
+        }
+        // flat eye line (no looking into a hillside)
+        const g0 = G ? G.g(p.x, p.z) : 0, g1 = G ? G.g(p.x + fx * 30, p.z + fz * 30) : 0;
+        const sc = Math.min(left, right) * 2 + left + right + tall * 2 - Math.abs(g1 - g0) * 0.25 + (r.type === 'avenue' || r.type === 'spoke' ? 1 : 0);
+        if (!best || sc > best.sc) best = { sc, p, r, fx, fz };
+      }
+    }
+    if (best) {
+      const { p, r, fx, fz } = best;
+      const off = r.w * 0.25;
+      const x = p.x - fz * off, z = p.z + fx * off;
       const gh = G ? G.g(x, z) : hC;
-      return res(x, z, 0, 0, hC + 6, gh + 1.7, { view: 'fp', flat: '0', pitchAdd: 2 });
+      return res(x, z, x + fx * 60, z + fz * 60, (G ? G.g(x + fx * 60, z + fz * 60) : gh) + 4, gh + 1.7, { view: 'fp', flat: '0', pitchAdd: 2 });
     }
     return frameSite(civ, s, 'plaza');
   }
@@ -169,6 +196,8 @@ export function applyCivCam(civ, params) {
   if (!given('pitch')) params.pitch = Math.max(-60, Math.min(20, f.pitch + (f.pitchAdd || 0))).toFixed(1);
   if (f.alt !== undefined && !given('alt') && (view === 'fly')) params.alt = f.alt;
   if (f.flat && !given('flat')) params.flat = f.flat;
+  // keep parked props (vehicles track, `props=0` requested) out of settlement framings
+  if (!given('props')) params.props = '0';
   civ.stats.civcam = { preset, site: s.id, lat: +f.lat.toFixed(5), lon: +f.lon.toFixed(5), yaw: Math.round(f.yaw), view };
   return f;
 }

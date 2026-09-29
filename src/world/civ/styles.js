@@ -600,7 +600,7 @@ function bladeSigns(g, ctx, w, d, nb) {
   }
 }
 
-const SHOP = ['#e89a4a', '#3ab0d8', '#d84a98', '#e8c080', '#6ad84a', '#8a5ad8'].map((c) => mat(c, 0.3, 0, PAT.LAMP, 1.0));
+const SHOP = ['#e89a4a', '#3ab0d8', '#d84a98', '#e8c080', '#6ad84a', '#8a5ad8', '#f0e0c8', '#ffd08a'].map((c) => mat(c, 0.3, 0, PAT.SHOP, 1.0));
 function neonDress(g, ctx, w, d, H) {
   const { M, rng } = ctx;
   // shopfront: glowing band, awnings, vertical kanji-like sign, holo billboard, AC units, pipes

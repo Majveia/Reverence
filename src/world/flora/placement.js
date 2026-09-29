@@ -221,7 +221,7 @@ export function placeGrass(gen, T, cell) {
       const a = (gx + 0.5 + (r0 - 0.5) * 0.64) / na, b = (gy + 0.5 + (r1 - 0.5) * 0.64) / nb;
       cellPoint(L, f, i, j, a, b, _p);
       const dx = _p[0], dy = _p[1], dz = _p[2];
-      const s = sampleLod(gen, dx, dy, dz, 0.22, _s, 1.0);
+      const s = sampleLod(gen, dx, dy, dz, 0.22, _s, 2.0);
       const h = s.height;
       if (h < sea + 0.15) continue;
       const px = dx * R, py = dy * R, pz = dz * R;
@@ -232,13 +232,16 @@ export function placeGrass(gen, T, cell) {
       const pn = fieldNoise(seed + 3, px, py, pz, 9);
       const pn2 = fieldNoise(seed + 4, px, py, pz, 31);
       const pat = pn * 0.55 + pn2 * 0.45;
-      let dens = cov * (0.58 + 0.42 * smooth(0.12, 0.5, pat + cov * 0.3)) * (1 - smooth(0.3, 0.55, s.slope)) * (1 - smooth(0.35, 0.7, s.rock));
+      // (grass holds on 20–25° banks; only real cliffs/scree strip it — thinning on small terrain
+      // ledges drew contour stripes across hillsides)
+      let dens = cov * (0.58 + 0.42 * smooth(0.12, 0.5, pat + cov * 0.3)) * (1 - smooth(0.45, 0.85, s.slope)) * (1 - smooth(0.45, 0.8, s.rock));
       dens *= 1 - smooth(0.4, 0.8, s.sand);
-      if (cov < 0.999 && pat < 0.3 * (1 - cov)) dens *= 0.3; // sparse biomes keep real bare ground
+      // sparse biomes keep real bare ground (soft-edged: a hard density step drew crisp borders)
+      if (cov < 0.999) { const th = 0.3 * (1 - cov); dens *= 0.3 + 0.7 * smooth(th - 0.09, th + 0.09, pat); }
       if (dens < 0.04) continue;
       const moist = s.moisture;
       const dry = saturate(G.dryAmount + (0.45 - moist) * 0.9 + (pn2 - 0.5) * 0.6);
-      const hgt = (0.55 + 0.75 * smooth(0.2, 0.9, pn) * (0.6 + moist * 0.6)) * (1 - smooth(0.25, 0.5, s.slope) * 0.5);
+      const hgt = (0.55 + 0.75 * smooth(0.2, 0.9, pn) * (0.6 + moist * 0.6)) * (1 - smooth(0.35, 0.7, s.slope) * 0.4);
       // tilt patches with the terrain so blades root on slopes
       let ux = dx, uy = dy, uz = dz;
       if (s.slope > 0.01) {

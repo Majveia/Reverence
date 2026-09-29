@@ -30,6 +30,7 @@ import { makeRock } from './geom/rocks.js';
 import { STRIDE, runJob } from './placement.js';
 import { makeGrassPatch, makeGrassMaterial, makeSwardDecal, makeSwardMaterial } from './grass.js';
 import { bakeImpostors, makeImpostorQuad, makeImpostorMaterials, MAX_IMP } from './impostor.js';
+import { makeCanopyShadeMaterial } from './shade.js';
 
 const _cam = new THREE.Vector3(), _v = new THREE.Vector3();
 
@@ -213,7 +214,7 @@ class Flora {
     };
     // distances (m)
     const D = this.D = {
-      c0: [55 * dd, 70 * dd], c1: [140 * dd, 180 * dd], cI: [680 * dd, 800 * dd], cS: [30, 38],
+      c0: [42 * dd, 55 * dd], c1: [140 * dd, 180 * dd], cI: [680 * dd, 800 * dd], cS: [30, 38],
       u0: [20 * dd, 28 * dd], uR: 150 * dd * Math.sqrt(this.density),
       r0: [45 * dd, 60 * dd], rR: 560 * dd,
       f0: [14, 20], fR: 48 * Math.sqrt(this.density),
@@ -268,6 +269,20 @@ class Flora {
         console.warn('[flora] impostor bake failed', e);
       }
     }
+    // canopy shade: sky occlusion + far fake shadow under every tree (see shade.js)
+    this.cshade = null;
+    if (canopy.length) {
+      try {
+        const csR = Math.min(700, 600 * dd);
+        this.cshadeGeo = makeSwardDecal(tier === 'low' ? 8 : 12);
+        const cm = makeCanopyShadeMaterial({ fade: [0, 0, csR * 0.75, csR], size: 1.25, strength: (S.canopyShade ?? 1) });
+        const LC = new InstanceLayer(this.cshadeGeo, cm.material, null, { capacity: 4096, parent: this.group, castShadow: false, receiveShadow: false, name: 'flora-canopy-shade', boundsPad: 50 });
+        LC.uniforms = cm.uniforms;
+        this.layers.push(LC);
+        this.cshade = LC;
+        this.cshadeMax2 = csR * csR;
+      } catch (e) { console.warn('[flora] canopy shade failed', e); }
+    }
   }
 
   _buildGrass(S, tier) {
@@ -309,12 +324,12 @@ class Flora {
     const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
     const mid = mix(G.base, G.tip, 0.4);
     const mx = Math.max(1e-3, ...mid);
-    const shade = mix([0.55, 0.55, 0.55], mid.map((v) => (0.62 * v) / mx), 0.5);
+    const shade = mix([0.55, 0.55, 0.55], mid.map((v) => (0.62 * v) / mx), 0.35);
     const swFar = midF[1] + 2;
     const decal = makeSwardDecal(low ? 8 : 12);
     let swDbg = false;
     try { swDbg = (new URL(window.location.href).searchParams.get('floradbg') || '').includes('sward'); } catch (_) { /* no window */ }
-    const mW = makeSwardMaterial({ fade: [0, 0, swFar * 0.6, swFar], patchR: pR, size: 1.45, shade: swDbg ? [1, 0.02, 0.02] : shade, strength: G.shadeAmt ?? 0.9 });
+    const mW = makeSwardMaterial({ fade: [0, 0, swFar * 0.6, swFar], patchR: pR, size: 1.45, shade: swDbg ? [1, 0.02, 0.02] : shade, strength: G.shadeAmt ?? 0.8 });
     const LW = new InstanceLayer(decal, mW.material, null, { capacity: 4096, parent: this.group, castShadow: false, receiveShadow: false, name: 'flora-sward', boundsPad: 2 });
     LW.uniforms = mW.uniforms;
     if (swDbg) { try { if (new URL(window.location.href).searchParams.get('floradbg').includes('nodepth')) mW.material.depthTest = false; } catch (_) { /* ignore */ } }
@@ -723,6 +738,8 @@ class Flora {
     for (const m of list) { m.L0.begin(cx, cy, cz); m.L1.begin(cx, cy, cz); }
     const imp = b.name === 'canopy' && this.imp ? this.imp.near : null;
     if (imp) imp.begin(cx, cy, cz);
+    const cs = b.name === 'canopy' ? this.cshade : null;
+    if (cs) cs.begin(cx, cy, cz);
     for (const c of b.cells.values()) {
       const r = c.res, A = r.anchor, I = r.inst;
       for (let i = 0; i < r.n; i++) {
@@ -734,11 +751,13 @@ class Flora {
         if (d2 < l0max) m.L0.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], I[o + 3], I[o + 8], I[o + 9], I[o + 10], I[o + 11]);
         if (d2 > l1min && d2 < l1max && (!thinRef2 || d2 < thinRef2 || I[o + 9] < Math.max(0.2, Math.pow(thinRef2 / d2, 0.45)) + 0.08)) m.L1.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], I[o + 3], I[o + 8], I[o + 9], I[o + 10], I[o + 11]);
         if (imp && d2 > impMin && m.imp >= 0) imp.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], I[o + 3], I[o + 8], I[o + 9], I[o + 10], m.imp);
+        if (cs && d2 < this.cshadeMax2 && m.imp >= 0) cs.push(px, py, pz, I[o + 4], I[o + 5], I[o + 6], I[o + 7], I[o + 3] * Math.min(m.radius, m.height * 0.6), I[o + 3] * m.height, 1, 0, 0);
       }
     }
     const pad = b.name === 'canopy' ? 2.6 : 2;
     for (const m of list) { m.L0.end(pad); m.L1.end(pad); }
     if (imp) imp.end(pad);
+    if (cs) cs.end(1);
   }
 
   // ================================================================== frame
@@ -838,7 +857,7 @@ class Flora {
     for (const b of this.bands || []) for (const c of b.cells.values()) this._dropCell(c);
     for (const L of this.layers) { L.dispose(); L.material?.dispose?.(); L.depthMaterial?.dispose?.(); }
     for (const m of this.models) { m.geo0?.dispose(); m.geo1?.dispose(); }
-    this.grass?.geoD?.dispose(); this.grass?.geoS?.dispose(); this.grass?.geoF?.dispose(); this.grass?.geoW?.dispose();
+    this.grass?.geoD?.dispose(); this.grass?.geoS?.dispose(); this.grass?.geoF?.dispose(); this.grass?.geoW?.dispose(); this.cshadeGeo?.dispose();
     this.impQuad?.dispose();
     this.impBake?.albedo.dispose(); this.impBake?.normal.dispose();
     this.atlas?.texture?.dispose(); this.bark?.dispose(); this.rockTex?.dispose();

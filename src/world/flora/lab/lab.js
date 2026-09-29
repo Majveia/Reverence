@@ -216,8 +216,14 @@ if (qs.get('atlas') && flora?.atlas?.texture) {
   q.frustumCulled = false;
   atlasView.add(q);
 }
+let renderMs = 0;
+const _px = new Uint8Array(4);
+const hide = (qs.get('hide') || '').split(',').filter(Boolean);
 function render() {
-  try { renderer.render(atlasView || scene, camera); } catch (e) { console.error('[flora-lab] render', e); }
+  if (hide.length && flora?.layers) for (const L of flora.layers) if (hide.some((h) => L.name.includes(h))) L.mesh.visible = false;
+  const t0 = performance.now();
+  try { renderer.render(atlasView || scene, camera); { const gl = renderer.getContext(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, _px); } } catch (e) { console.error('[flora-lab] render', e); }
+  renderMs = Math.round(performance.now() - t0);
 }
 window.__rv = {
   ready: false,
@@ -225,7 +231,7 @@ window.__rv = {
   look(dx, dy) { fwd.applyAxisAngle(up, -dx * DEG); step(1 / 30); render(); },
   state() {
     return { mode: 'flora-lab', body: body.name, style: body.art?.flora, err: err ? String(err) : null, flora: flora?.getState?.(),
-      draw: { calls: renderer.info.render.calls, tris: renderer.info.render.triangles } };
+      draw: { calls: renderer.info.render.calls, tris: renderer.info.render.triangles }, renderMs };
   },
   render,
   hold() {}, press() {}, move() {}, click() {}, go() {},
