@@ -2,6 +2,7 @@
 // main thread. Uses the same SurfaceGen as the terrain, so shore waves line up with the rendered coast.
 import { SurfaceGen } from '../planet/SurfaceGen.js';
 import { waveData, foamData, crustData } from './texdata.js';
+import { reefPlacement } from './reefplace.js';
 
 let gen = null;
 
@@ -36,8 +37,12 @@ self.onmessage = (ev) => {
         }
       }
       self.postMessage({ type: 'bathy', id: m.id, data: out, N, L, qC }, [out.buffer]);
+    } else if (m.type === 'reef') {
+      if (!gen) throw new Error('water worker: no surface');
+      const r = reefPlacement(gen, m.m);
+      self.postMessage({ type: 'reef', id: m.id, pos: r.pos, attr: r.attr, n: r.n, counts: r.counts }, [r.pos.buffer, r.attr.buffer]);
     }
   } catch (e) {
-    self.postMessage({ type: 'error', id: m.id, message: String(e?.message || e) });
+    self.postMessage({ type: 'error', id: m.id, kind: m.type, message: String(e?.message || e) });
   }
 };

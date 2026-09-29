@@ -34,6 +34,7 @@ import { surfaceConfig } from '../planet/SurfaceGen.js';
 import { OCEAN_VERT, OCEAN_FRAG, UNDERWATER_FRAG, SHIMMER_FRAG, SHORE_FRAG, SNOW_VERT, SNOW_FRAG } from './shaders.js';
 import { makeFullscreenMaterial, FullscreenQuad } from '../../post/Pipeline.js';
 import { registerChunk } from '../../shaders/chunks.js';
+import { Reef } from './reef.js';
 
 // fallback when the atmosphere track (which owns rv_cloudshadow) is absent
 function ensureChunks() {
@@ -130,7 +131,7 @@ class Water {
       this.underFx = this._makeUnderwaterEffect();
       this._removers.push(pipe.addEffect(this.underFx));
     }
-    if (pipe && this.liquid !== 'ice' && tier !== 'low') {
+    if (pipe && tier !== 'low') {
       this.shoreFx = this._makeShoreEffect();
       this._removers.push(pipe.addEffect(this.shoreFx));
     }
@@ -140,6 +141,11 @@ class Water {
       this._removers.push(pipe.addEffect(this.shimmerFx));
     }
     G.uSeaLevel.value = this.seaLevel;
+    // seabed life (seagrass, kelp, corals, sponges, boulders) — liquid water only
+    this.reef = null;
+    if (this.liquid === 'water' && world.surface && String(world.params?.reef ?? '') !== '0') {
+      try { this.reef = new Reef(this); } catch (e) { console.warn('[water] reef disabled', e); this.reef = null; }
+    }
     this._startWorker();
   }
 
@@ -157,7 +163,12 @@ class Water {
       if (this._disposed) return;
       if (m.type === 'tex') this._applyTextures(m);
       else if (m.type === 'bathy') this._applyBathy(m);
-      else if (m.type === 'error') { console.warn('[water] worker:', m.message); this.bathy.pending = false; this.bathy.failed = true; }
+      else if (m.type === 'reef') { try { this.reef?.apply(m); } catch (e) { console.warn('[water] reef', e); if (this.reef) this.reef.failed = true; } }
+      else if (m.type === 'error') {
+        console.warn('[water] worker:', m.message);
+        if (m.kind === 'reef') { if (this.reef) { this.reef.pending = false; this.reef.failed = true; } }
+        else { this.bathy.pending = false; this.bathy.failed = true; }
+      }
     };
     w.onerror = (e) => {
       console.warn('[water] worker failed, generating on the main thread', e?.message || e);
@@ -319,7 +330,7 @@ class Water {
       uSigma: { value: this.sigma }, uScatter: { value: this.scatter }, uShallow: { value: new THREE.Vector3(this.shallow.r, this.shallow.g, this.shallow.b) },
       uSSS: { value: this.sss }, uGlow: { value: this.glow },
       uLook: { value: this.look }, uLook2: { value: this.look2 },
-      uNight: G.uNight,
+      uNight: G.uNight, uWet: G.uWetness,
       uDebug: { value: +(this.world.params?.wdebug ?? 0) || 0 },
       uProj: { value: new THREE.Matrix4() },
       rvCloudShadowMap: L?.uniforms?.rvCloudShadowMap ?? { value: null },
@@ -505,6 +516,7 @@ class Water {
     const hw = this.liquid === 'ice' ? 0 : W.heightQ(qx, qy, t);
     this.waveHCam = hw;
     this.under = this.liquid !== 'ice' && camH < hw - 0.05 && camH > -5000;
+    if (this.reef) { try { this.reef.update(cam.position, camH, dt); } catch (e) { console.warn('[water] reef', e); this.reef.failed = true; } }
     if (this.snow) {
       this.snow.visible = this.under;
       if (this.under) {
@@ -620,7 +632,8 @@ class Water {
   _makeShoreEffect() {
     const self = this, su = this.u;
     const mat = makeFullscreenMaterial(SHORE_FRAG, {
-      tColor: { value: null }, tDepth: { value: null }, tGrabDepth: { value: null },
+      tColor: { value: null }, tDepth: { value: null }, tGrabDepth: { value: null }, tPreAO: { value: null },
+      uUnder: { value: 0 }, uShoreOn: { value: 1 },
       tFoam: { value: this.texFoam }, tWaves: { value: this.texWaves },
       tEnv: { value: null }, uHasEnv: { value: 0 },
       uInvProj: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() },
@@ -634,10 +647,16 @@ class Water {
     return {
       name: 'water-shore', order: 95, enabled: true,
       render(renderer, io) {
-        // needs this frame's pre-water depth (grab) to tell land from water; near the surface only
-        if (self.under || self.camH > 700 || self.camH < -1 || !self._grabbed || !self.grab || !io.depth) { io.skip = true; return; }
+        // needs this frame's pre-water depth (grab) to tell land from water. Shore swash near the surface only;
+        // the AO fix for water pixels whenever the pipeline ran GTAO (its fade distance is < 1 km)
+        const pipe = io.pipeline;
+        const aoOn = !!(pipe?._ssaoOn ?? pipe?.stats?.ssao) && !!pipe?.sceneRT;
+        const shoreOn = self.liquid !== 'ice' && !self.under && self.camH <= 700 && self.camH >= -1;
+        if (!self._grabbed || !self.grab || !io.depth || (!shoreOn && !(aoOn && self.camH < 1000))) { io.skip = true; return; }
         const U = mat.uniforms, cam = io.camera;
         U.tColor.value = io.input.texture; U.tDepth.value = io.depth; U.tGrabDepth.value = self.grab.depthTexture;
+        U.tPreAO.value = aoOn ? pipe.sceneRT.texture : io.input.texture;
+        U.uUnder.value = self.under ? 1 : 0; U.uShoreOn.value = shoreOn ? 1 : 0;
         U.tFoam.value = self.texFoam; U.tWaves.value = self.texWaves;
         U.tEnv.value = su.tEnv.value; U.uHasEnv.value = su.uHasEnv.value;
         U.uKeyDir.value.copy(su.uKeyDir.value); U.uKeyColor.value.copy(su.uKeyColor.value);
@@ -705,6 +724,8 @@ class Water {
   // ======================================================================== misc
   isReady() {
     if (!this.texReady) return false;
+    const R = this.reef;
+    if (R && !R.failed && this.worker && this.camH < 260 && this.camH > -200 && !R.valid) return false;
     const B = this.bathy;
     if (!this.worker || B.failed || this.liquid === 'ice' || this.camH > 3000) return true;
     return B.valid && B.anchorId === this._anchorId;
@@ -723,6 +744,7 @@ class Water {
       bathy: this.bathy.valid ? Math.round(this.bathy.L) : (this.bathy.failed ? 'failed' : 'pending'),
       grid: [+this.u.uGrid.value.x.toFixed(2), Math.round(this.u.uGrid.value.y)],
       tris: this.geometry.index.count / 3,
+      reef: this.reef ? { n: this.reef.instances, tris: this.reef.tris(), vis: this.reef.group.visible, counts: this.reef.counts } : null,
       genMs: this.genMs,
     };
   }
@@ -733,6 +755,7 @@ class Water {
     this.bathyTex.dispose();
     for (const r of this._removers) try { r(); } catch (_) { /* ignore */ }
     this.underFx?.dispose(); this.shimmerFx?.dispose(); this.shoreFx?.dispose();
+    try { this.reef?.dispose(); } catch (_) { /* ignore */ }
     if (this.snow) { this.world.scene.remove(this.snow); this.snow.geometry.dispose(); this.snow.material.dispose(); }
     this.world.scene.remove(this.mesh);
     this.geometry.dispose(); this.material.dispose();

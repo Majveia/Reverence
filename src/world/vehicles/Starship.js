@@ -65,7 +65,7 @@ export class Starship extends Vehicle {
 
   build() {
     const mgr = this.mgr, liv = mgr.livery('ship');
-    const mats = mgr.makeMaterials('ship', { panelScale: 0.9, dirtLow: -2.5, dirtHigh: -0.6, dirtMul: 0.7, seed: 7.7 });
+    const mats = mgr.makeMaterials('ship', { panelScale: 1.1, seamDark: 0.5, dirtLow: -2.5, dirtHigh: -0.6, dirtMul: 0.7, seed: 7.7 });
     this.mats = mats;
     this.materials = [mats.body, mats.glow, mats.decal, mats.glass];
     const m = buildShip(mats, liv);

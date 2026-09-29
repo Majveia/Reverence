@@ -16,6 +16,7 @@ export const SURF = {
   paint: { r: 0.3, m: 0.05, p: 1.0, cc: 1.0, w: 1.0, d: 1.0, e: 0, ru: 1.0 },
   paintMatte: { r: 0.62, m: 0.02, p: 1.0, cc: 0.0, w: 1.0, d: 1.0, e: 0, ru: 1.0 },
   paintMetal: { r: 0.28, m: 0.6, p: 1.0, cc: 0.8, w: 1.0, d: 1.0, e: 0, ru: 0.8 },
+  pearl: { r: 0.22, m: 0.38, p: 1.0, cc: 1.0, w: 1.0, d: 1.0, e: 0, ru: 0.8 },   // metallic-flake hull paint (strong sky reflections)
   metal: { r: 0.32, m: 1.0, p: 0.5, cc: 0, w: 0.4, d: 0.7, e: 0, ru: 0.5 },
   brushed: { r: 0.26, m: 1.0, p: 0.0, cc: 0, w: 0.2, d: 0.5, e: 0, ru: 0.2 },
   darkMetal: { r: 0.46, m: 0.85, p: 0.7, cc: 0, w: 0.7, d: 0.9, e: 0, ru: 0.7 },
@@ -87,6 +88,8 @@ uniform vec3 uDissolveColor;
 uniform float uSeed;
 uniform vec3 uEdgeColor;
 uniform float uEmissiveBoost;
+uniform float uSeamDark;
+uniform vec3 uFill;
 ${NOISE_GLSL}
 // Panel seams in a 2D projection (meters). Staggered rows with varying panel widths; some
 // vertical seams are skipped so panels have different lengths. Returns seam coverage 0..1.
@@ -160,7 +163,7 @@ float rvStreak = smoothstep(0.62, 0.9, rvv_vn(vec3(vObjPos.x * 18.0, vObjPos.y *
 // rust patches (grows from edges and seams)
 float rvRust = smoothstep(0.62, 0.82, rvv_fbm(vObjPos * 2.1 + 31.0 + uSeed) + rvEdge * 0.25 + rvSeam * 0.3) * uRust * vSurf2.w;
 vec3 rvRustCol = uRustColor * (0.6 + 0.7 * rvN2);
-rvAlb = mix(rvAlb, rvAlb * 0.28, rvSeam);
+rvAlb = mix(rvAlb, rvAlb * uSeamDark, rvSeam);
 rvAlb = mix(rvAlb, uEdgeColor * (0.75 + 0.35 * rvN2), rvWearMask);
 rvAlb = mix(rvAlb, rvRustCol, rvRust);
 rvAlb = mix(rvAlb, rvAlb * 0.55 + uDirtColor * 0.2, rvStreak * 0.6);
@@ -199,6 +202,12 @@ const UBER_FRAG_NORMAL = /* glsl */`
 
 const UBER_FRAG_EMISSIVE = /* glsl */`
 totalEmissiveRadiance += rvEmissive * (1.0 - rvDirt * 0.7);
+// night fill: bounce from city glow / sky + a soft silhouette rim so vehicles read in the dark
+if (uFill.r + uFill.g + uFill.b > 0.0001) {
+  float rvNV = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+  float rvRim = pow(1.0 - rvNV, 3.0);
+  totalEmissiveRadiance += uFill * (rvAlb * (0.55 + 0.45 * (1.0 - abs(rvN.y))) + rvRim * 0.6 * (1.0 - rvDirt * 0.5));
+}
 if (uHeat > 0.001) {
   float facing = clamp(dot(normalize(vWNrm), uHeatDir), 0.0, 1.0);
   float fl = 0.75 + 0.25 * rvv_vn(vObjPos * 3.0 + vec3(0.0, 0.0, uSeed + uHeat * 40.0));
@@ -243,6 +252,8 @@ export function makeUberMaterial(opts = {}) {
     uSeed: { value: opts.seed ?? 1.7 },
     uEdgeColor: { value: new THREE.Color(opts.edgeColor ?? 0x9a9ea3) },
     uEmissiveBoost: { value: 1 },
+    uSeamDark: { value: opts.seamDark ?? 0.3 },
+    uFill: { value: new THREE.Color(0, 0, 0) },
   };
   mat.userData.u = u;
   mat.onBeforeCompile = (sh) => {
@@ -258,7 +269,7 @@ export function makeUberMaterial(opts = {}) {
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + UBER_FRAG_EMISSIVE)
       .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n' + UBER_FRAG_CLEARCOAT);
   };
-  mat.customProgramCacheKey = () => 'rv-vehicle-uber-v3' + (physical ? 'p' : 's');
+  mat.customProgramCacheKey = () => 'rv-vehicle-uber-v4' + (physical ? 'p' : 's');
   return mat;
 }
 

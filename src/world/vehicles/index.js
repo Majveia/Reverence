@@ -81,7 +81,7 @@ class VehicleManager {
     const hi = this.quality.tier === 'high' || this.quality.tier === 'ultra';
     const body = makeUberMaterial({
       clearcoat: hi, panelScale: opts.panelScale ?? 0.45, dirt: wth.dirt * (opts.dirtMul ?? 1), wear: wth.wear, rust: wth.rust * (opts.rustMul ?? 1),
-      dirtColor: pal.sand || '#8a7a60', edgeColor: liv.edge, seed: opts.seed ?? 1.7, dirtLow: opts.dirtLow ?? 0, dirtHigh: opts.dirtHigh ?? 1.5,
+      dirtColor: pal.sand || '#8a7a60', edgeColor: liv.edge, seed: opts.seed ?? 1.7, dirtLow: opts.dirtLow ?? 0, dirtHigh: opts.dirtHigh ?? 1.5, seamDark: opts.seamDark,
     });
     const glow = makeGlowMaterial();
     const decal = makeDecalMaterial({ wear: 0.25 + wth.wear * 0.35, seed: (opts.seed ?? 1.7) * 3.1 });
@@ -339,6 +339,64 @@ class VehicleManager {
     const face = cpos.clone().sub(p); face.addScaledVector(spot.dir, -face.dot(spot.dir));
     this.placeOnGround(v, spot.dir, face.lengthSq() > 1 ? face.normalize() : dir.clone().negate());
     v.pristine = true;
+    if (v.camera) v.camera.snapped = false;
+    return true;
+  }
+
+  /**
+   * Capture/test helper (URL vramp=<search radius m>): find a real dune crest / terrain lip near the
+   * spawn with the CPU heightfield (a run-up that rises, then a convex drop) and put vehicle v at the
+   * start of the run-up facing it. The jump itself is pure physics (speed= sets the entry speed).
+   */
+  placeRamp(v, maxDist = 400) {
+    const g = this.ground, R = this.world.body.radius, sp = this.spawn;
+    if (!sp) return false;
+    const up = sp.pos.clone().normalize();
+    const e = new THREE.Vector3(), n = new THREE.Vector3();
+    if (Math.abs(up.y) > 0.99) e.set(1, 0, 0); else e.set(up.z, 0, -up.x).normalize();
+    n.crossVectors(up, e);
+    const rnd = new FastRand(4242);
+    const p0 = new THREE.Vector3(), dir = new THREE.Vector3(), q = new THREE.Vector3();
+    const prof = new Float64Array(24);
+    let best = null, bestS = 0;
+    for (let i = 0; i < 360; i++) {
+      const a = rnd.next() * Math.PI * 2, r = Math.sqrt(rnd.next()) * maxDist, h = rnd.next() * Math.PI * 2;
+      p0.copy(sp.pos).addScaledVector(e, Math.cos(a) * r).addScaledVector(n, Math.sin(a) * r).normalize().multiplyScalar(R);
+      const u = q.copy(p0).normalize();
+      dir.copy(e).multiplyScalar(Math.cos(h)).addScaledVector(n, Math.sin(h));
+      dir.addScaledVector(u, -dir.dot(u)).normalize();
+      for (let k = 0; k < prof.length; k++) {
+        q.copy(p0).addScaledVector(dir, k * 3);
+        prof[k] = g.terrainAt(q);
+      }
+      if (g.hasOcean && Math.min(...prof) < g.sea + 0.5) continue;
+      // run-up (0..~30 m) must be smooth and driveable, crest somewhere in 8..16, then a drop
+      for (let c = 6; c <= 14; c++) {
+        let rough = 0, ok = true;
+        for (let k = 1; k <= c; k++) {
+          const s1 = (prof[k] - prof[k - 1]) / 3;
+          if (s1 < -0.08 || s1 > 0.45) { ok = false; break; }
+          if (k > 1) rough += Math.abs(s1 - (prof[k - 1] - prof[k - 2]) / 3);
+        }
+        if (!ok) continue;
+        const lip = (prof[c] - prof[c - 2]) / 6;               // take-off slope
+        const drop = prof[c] - prof[Math.min(prof.length - 1, c + 4)];   // fall over 12 m after the crest
+        const land = prof[Math.min(prof.length - 1, c + 8)];
+        if (lip < 0.1 || lip > 0.5 || drop < 1.2 || drop > 7 || land < prof[c] - 11) continue;
+        let score = Math.min(drop, 5) * 1.0 + lip * 8 - rough * 6;
+        q.copy(p0).addScaledVector(dir, c * 3);
+        const sm = g.sample(q);
+        score += (sm?.dune ?? 0) * 3 + (sm?.sand ?? 0) * 1.5 - (sm?.rock ?? 0) * 2 - (sm?.cliff ?? 0) * 4;
+        if (score > bestS) {
+          if (this.blocked(q.normalize().multiplyScalar(R + prof[c]), 3)) continue;
+          bestS = score; best = { pos: p0.clone(), dir: dir.clone(), crest: c * 3, drop, lip };
+        }
+      }
+    }
+    if (!best) return false;
+    this.placeOnGround(v, best.pos.clone().normalize(), best.dir);
+    v.pristine = true;
+    this.rampInfo = { crest: best.crest, drop: +best.drop.toFixed(1), lip: +best.lip.toFixed(2), score: +bestS.toFixed(2) };
     if (v.camera) v.camera.snapped = false;
     return true;
   }
@@ -607,8 +665,15 @@ class VehicleManager {
     if (v.onWater || v.inWater) v.wet = 1;
     v.wet = Math.max(rain, (v.wet ?? 0) - dt * 0.03);
     u.uWet.value = v.wet;
+    // night fill tinted by the world's accent (neon cities glow magenta, campfire worlds amber)
+    const night = G.uNight.value || 0;
+    if (!this._fillBase) {
+      const acc = new THREE.Color(this.world.body.art?.palette?.accent || '#9fb4ff');
+      this._fillBase = new THREE.Color(0.55, 0.62, 0.8).lerp(acc, 0.45).multiplyScalar(0.05 * (1 + Math.min(4, this.world.body.civ?.level ?? 0) * 0.12));
+    }
+    u.uFill.value.copy(this._fillBase).multiplyScalar(night);
     const ru = v.mats?.rider?.userData?.u;
-    if (ru) ru.uWet.value = v.wet * 0.8;
+    if (ru) { ru.uWet.value = v.wet * 0.8; ru.uFill.value.copy(u.uFill.value); }
     if (v.occupied && v.speed > 3 && !v.onWater && v.type !== 'ship') u.uDirt.value = Math.min(1, u.uDirt.value + dt * v.speed * 0.00035);
     if (v.dustColor) u.uDirtColor.value.lerp(v.dustColor, dampF01(dt * 0.05));
   }
@@ -675,6 +740,7 @@ class VehicleManager {
 
   getState() {
     const st = { active: this.active ? this.active.type : null, count: this.vehicles.length, env: this._envState, placed: this.placed, colliders: this.colliders.count };
+    if (this.rampInfo) st.ramp = this.rampInfo;
     for (const v of this.vehicles) { try { st[v.id] = v.getState(); } catch (_) { /* ignore */ } }
     if (this.active?.camera) st.cam = { mode: this.active.camera.mode, fov: +this.active.camera.fov.toFixed(1) };
     return st;
@@ -706,6 +772,7 @@ export default {
     if (v) {
       try {
         if (world.params?.vnear) mgr.placeNear(v, world.params.vnear, +(world.params.vdist ?? 250) || 250);
+        if (world.params?.vramp) mgr.placeRamp(v, +world.params.vramp > 20 ? +world.params.vramp : 400);
         v.startFromParams?.(world.params);
         mgr.enter(v);
         v.camera?.update(0, { look: null, allowLook: false, speed: v.speed, radialUp: v.radialUp });

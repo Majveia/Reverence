@@ -42,7 +42,7 @@ export function buildShip(mats, liv) {
     { z: 7.1, w: 0.2, ht: 0.16, hb: 0.16, y: -0.08, n: 2.2 },
     { z: 7.5, w: 0.02, ht: 0.02, hb: 0.02, y: -0.1, n: 2.0 },
   ], { radial: 56, along: 72, capStart: true, capEnd: false });
-  b.add(fus.geometry, 'paint', P);
+  b.add(fus.geometry, 'pearl', P);
   // dorsal spine armor in secondary color
   const spine = loft([
     { z: -5.9, w: 0.3, ht: 0.12, hb: 0.05, y: 1.12, n: 3.4 },
@@ -101,7 +101,7 @@ export function buildShip(mats, liv) {
       { z: 0.6, w: 0.86, ht: 0.84, hb: 0.84, n: 2.6 },
       { z: 1.3, w: 0.78, ht: 0.76, hb: 0.76, n: 2.4 },
     ], { radial: 40, along: 36, capStart: false, capEnd: true });
-    b.add(nac.geometry, 'paint', P, T([NX * s, NY, 0]));
+    b.add(nac.geometry, 'pearl', P, T([NX * s, NY, 0]));
     // intake lip + fan
     b.add(new THREE.TorusGeometry(0.72, 0.08, 10, 40), 'metal', '#7d8186', T([NX * s, NY, 1.32]));
     b.add(new THREE.CircleGeometry(0.66, 32), 'darkMetal', '#0c0d0e', T([NX * s, NY, 1.34]));

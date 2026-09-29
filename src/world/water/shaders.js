@@ -129,7 +129,7 @@ uniform vec3 uKeyDir, uKeyColor, uAmbSky, uAmbGround;
 uniform vec3 uSigma, uScatter, uShallow, uSSS, uGlow;
 uniform vec4 uLook;                 // x roughness base, y foam amount, z refraction strength, w detail amp
 uniform vec4 uLook2;                // x ssr (0/1), y shore foam, z caustics, w wind 0..1
-uniform float uNight;
+uniform float uNight, uWet;
 uniform float uDebug;
 uniform mat4 uProj;                 // camera projection (for SSR)
 varying vec3 vPos;
@@ -283,6 +283,27 @@ void main(){
     + 0.16 * (1.0 - v3 * (1.0 - smoothstep(0.7, 12.0, lod3))));
   vec2 det = (d0 + d1 + d2 + d3) * dAmp;
   sx += det.x; sy += det.y;
+  // rain: expanding drop rings near the camera, a dimpled (rougher) surface further out
+  if (uWet > 0.02){
+    float rf = (1.0 - smoothstep(12.0, 45.0, wDist)) * (1.0 - smoothstep(0.02, 0.06, fp));
+    if (rf > 0.0){
+      vec2 rr = vec2(0.0);
+      for (int l = 0; l < 2; l++){
+        float S = l == 0 ? 0.85 : 0.53;
+        vec2 p = (vQ + uQN) / S + float(l) * 3.7;
+        vec2 c = mod(floor(p), 512.0);
+        vec2 o = vec2(rv_hash12(c + 3.1), rv_hash12(c + 7.7)) - 0.5;
+        vec2 dd = fract(p) - 0.5 - o * 0.5;
+        float r = length(dd);
+        float ph = fract(uTime * (0.7 + 0.2 * float(l)) + rv_hash12(c + float(l) * 17.0));
+        float ring = r - ph * 0.55;
+        float env = exp(-ring * ring * 300.0) * (1.0 - ph) * (1.0 - ph) * step(rv_hash12(c + 1.3), uWet);
+        rr += dd / max(r, 1e-3) * cos(ring * 70.0) * env;
+      }
+      sx += rr.x * 0.35 * rf; sy += rr.y * 0.35 * rf;
+    }
+    varS += uWet * 0.006;
+  }
   vec3 N = normalize(nS * max(1.0 - ny, 0.2) - t1 * sx - t2 * sy);
   // far away: blend to the smooth sphere (all detail is roughness by then)
   float farF = smoothstep(4000.0, 60000.0, wDist);
@@ -450,7 +471,7 @@ void main(){
       // transmission falls off gradually towards the critical angle (soft, rippled window rim)
       float F = max(0.02 + 0.98 * pow(1.0 - cost, 5.0), pow(1.0 - cost, 2.2));
       // the sky through the window is strongly distorted by the ripples
-      vec3 Tw = normalize(Tt + (t1 * ((w1.r - 0.5) + (w0.g - 0.5)) + t2 * ((w1.g - 0.5) - (w0.r - 0.5))) * 0.55);
+      vec3 Tw = normalize(Tt + (t1 * ((w1.r - 0.5) * v1 + (w0.g - 0.5) * v0) + t2 * ((w1.g - 0.5) * v1 - (w0.r - 0.5) * v0)) * 0.55);
       vec3 sky = mix(envSky(Tw), envSky(normalize(Tw + nS * 2.0)), 0.45) * 0.8;
       float sunD = pow(max(dot(Tt, L), 0.0), 900.0) * 60.0 + pow(max(dot(Tt, L), 0.0), 40.0) * 0.6;
       c = mix(sky * 0.6 + uKeyColor * sunVis * sunD, under, F);
@@ -463,7 +484,7 @@ void main(){
     // foam seen from underneath: lacy, dim silhouettes against the window
     float fwb = texture2D(tFoam, lay(vQ, 11.0, vec2(0.5, 0.0))).a;
     float fwb2 = texture2D(tFoam, layR(ROT2, vQ, 3.7, vec2(0.25, 0.0))).a;
-    float fm = smoothstep(0.45, 0.1, fold) * smoothstep(0.3, 0.8, fwb * 0.7 + fwb2 * 0.5) * 0.5;
+    float fm = smoothstep(0.45, 0.1, fold) * smoothstep(0.3, 0.8, fwb * 0.7 + fwb2 * 0.5) * 0.5 * smoothstep(8.0, 30.0, 11.0 / fp);
     c = mix(c, (Esun * 0.2 + Eamb) * 0.3 / RV_PI * (0.5 + 0.8 * fwb2), fm * uLook.y);
     gl_FragColor = vec4(c, 1.0);
     return;
@@ -750,7 +771,8 @@ void main(){
 // its front, and sand that stays dark and glossy up to the highest run-up. Lava seas instead heat their rocky rims.
 export const SHORE_FRAG = /* glsl */ `
 #include <rv_common>
-uniform sampler2D tColor, tDepth, tGrabDepth, tFoam, tWaves;
+uniform sampler2D tColor, tDepth, tGrabDepth, tFoam, tWaves, tPreAO;
+uniform float uUnder, uShoreOn;
 uniform samplerCube tEnv;
 uniform float uHasEnv;
 uniform mat4 uInvProj, uCamWorld;
@@ -773,11 +795,20 @@ void main(){
 #else
   if (d >= 1.0) return;
 #endif
-  if (abs(d - dg) > 1e-7 + abs(d) * 1e-5) return;                     // the water itself (or drawn after it)
+  bool isWater = abs(d - dg) > 1e-7 + abs(d) * 1e-5;                  // the water itself (or drawn after it)
   vec4 v = uInvProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
   vec3 dirV = normalize(v.xyz / v.w);
   float D = rv_viewZFromDepth(d, uNearFar.x, uNearFar.y) / max(-dirV.z, 1e-3);
-  if (D > 1200.0) return;
+  // Screen-space AO (pipeline, before the effects) turns the smooth, grazing water surface into a hatched
+  // noise pattern and has no meaning on a liquid: water pixels take the pre-AO scene colour. Underwater, AO
+  // also fades out with distance (the grazing seabed / surface underside far away).
+  if (uUnder > 0.5){
+    vec3 pre = texture2D(tPreAO, vUv).rgb;
+    gl_FragColor = vec4(mix(col, pre, isWater ? 1.0 : smoothstep(10.0, 30.0, D)), 1.0);
+    return;
+  }
+  if (isWater){ gl_FragColor = vec4(texture2D(tPreAO, vUv).rgb, 1.0); return; }
+  if (uShoreOn < 0.5 || D > 1200.0) return;
   vec3 dir = normalize((uCamWorld * vec4(dirV, 0.0)).xyz);
   vec3 P = uCam + dir * D;
   vec3 nS = normalize(P - uPC);
