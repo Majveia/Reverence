@@ -399,3 +399,70 @@ export function loftOrientation(lft) {
 }
 
 export { mergeGeometries };
+
+/**
+ * Raised armour plate that follows a loft's surface: a curved slab covering the param rectangle
+ * [t0,t1] × [a0,a1] (see loft), `thick` m proud of the hull, with a flat-shaded chamfer (width
+ * `bevel` m) down to the hull — the chamfer catches rim light and shows edge wear, so plates read as
+ * separate machined panels instead of painted-on lines. Non-indexed; normals point outward.
+ */
+export function shellPatch(lft, t0, t1, a0, a1, { thick = 0.025, bevel = 0.02, seg = [12, 8], lift = 0.002 } = {}) {
+  const [nu, nv] = seg;
+  const P = new THREE.Vector3(), N = new THREE.Vector3(), Q = new THREE.Vector3(), M = new THREE.Vector3();
+  const tc = (t0 + t1) / 2, ac = (a0 + a1) / 2;
+  lft.evaluate(tc, ac, P, N);
+  const s0 = lft.param(tc);
+  const sign = ((P.x - s0.x) * N.x + (P.y - s0.y) * N.y) >= 0 ? 1 : -1;
+  lft.evaluate(Math.min(1, tc + 0.01), ac, Q, M); const st = Math.max(Q.distanceTo(P) / 0.01, 1e-3);
+  lft.evaluate(tc, ac + 0.01, Q, M); const sa = Math.max(Q.distanceTo(P) / 0.01, 1e-3);
+  const dt = Math.min(bevel / st, (t1 - t0) * 0.3), da = Math.min(bevel / sa, (a1 - a0) * 0.3);
+  const at = (t, a, off, out, outN) => { lft.evaluate(t, a, out, outN); outN.multiplyScalar(sign); return out.addScaledVector(outN, off); };
+  const top = [], topN = [];
+  for (let j = 0; j <= nv; j++) for (let i = 0; i <= nu; i++) {
+    const t = t0 + dt + (t1 - t0 - 2 * dt) * (i / nu), a = a0 + da + (a1 - a0 - 2 * da) * (j / nv);
+    at(t, a, lift + thick, P, N);
+    top.push(P.clone()); topN.push(N.clone());
+  }
+  const pos = [], nor = [];
+  const tri = (A, B, C, nA, nB, nC, ref) => {
+    // orient each triangle so its geometric normal agrees with the outward reference
+    const e1 = Q.subVectors(B, A), e2 = M.subVectors(C, A);
+    const fx = e1.y * e2.z - e1.z * e2.y, fy = e1.z * e2.x - e1.x * e2.z, fz = e1.x * e2.y - e1.y * e2.x;
+    const flip = fx * ref.x + fy * ref.y + fz * ref.z < 0;
+    const L = flip ? [A, C, B] : [A, B, C], LN = flip ? [nA, nC, nB] : [nA, nB, nC];
+    for (let k = 0; k < 3; k++) { pos.push(L[k].x, L[k].y, L[k].z); nor.push(LN[k].x, LN[k].y, LN[k].z); }
+  };
+  const id = (i, j) => j * (nu + 1) + i;
+  for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) {
+    const a = id(i, j), b = id(i + 1, j), c = id(i, j + 1), d = id(i + 1, j + 1);
+    tri(top[a], top[b], top[d], topN[a], topN[b], topN[d], topN[a]);
+    tri(top[a], top[d], top[c], topN[a], topN[d], topN[c], topN[a]);
+  }
+  // perimeter (ordered loop) → chamfer quads down to the hull
+  const ring = [];
+  for (let i = 0; i < nu; i++) ring.push([i, 0]);
+  for (let j = 0; j < nv; j++) ring.push([nu, j]);
+  for (let i = nu; i > 0; i--) ring.push([i, nv]);
+  for (let j = nv; j > 0; j--) ring.push([0, j]);
+  const base = ring.map(([i, j]) => {
+    const t = i === 0 ? t0 : i === nu ? t1 : t0 + dt + (t1 - t0 - 2 * dt) * (i / nu);
+    const a = j === 0 ? a0 : j === nv ? a1 : a0 + da + (a1 - a0 - 2 * da) * (j / nv);
+    return at(t, a, lift, new THREE.Vector3(), new THREE.Vector3());
+  });
+  const fn = new THREE.Vector3(), e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
+  for (let k = 0; k < ring.length; k++) {
+    const k2 = (k + 1) % ring.length;
+    const A = top[id(...ring[k])], B = top[id(...ring[k2])], C = base[k2], D = base[k];
+    const ref = topN[id(...ring[k])];
+    // chamfer face normal (flat), oriented away from the hull and outward from the plate
+    e1.subVectors(B, A); e2.subVectors(D, A);
+    fn.crossVectors(e1, e2).normalize();
+    if (fn.dot(ref) < 0) fn.negate();
+    tri(A, B, C, fn, fn, fn, fn);
+    tri(A, C, D, fn, fn, fn, fn);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  return g;
+}

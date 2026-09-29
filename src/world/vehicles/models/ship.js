@@ -6,7 +6,7 @@
 // Returns { root, body, glow, decals, glass, sprites, rider, gear: [{group, axis, rest}], flames,
 //           vtol, anchors }.
 import * as THREE from 'three';
-import { Builder, loft, rbox, bcyl, lathe, extrude, tube, slats, T, mergeGeometries } from '../geom.js';
+import { Builder, loft, rbox, bcyl, lathe, extrude, tube, slats, shellPatch, T, mergeGeometries } from '../geom.js';
 import { SpriteBatch } from '../fx/glow.js';
 import { buildRider } from './rider.js';
 
@@ -21,6 +21,15 @@ function nozzle(b, x, y, z, r, len, hot, ch) {
   b.add(new THREE.TorusGeometry(r * 1.02, r * 0.05, 8, 36), 'metal', '#8a6a55', T([x, y, z - len]));
   b.glow(new THREE.CircleGeometry(r * 0.66, 32), hot, ch, T([x, y, z - len * 0.2], [0, Math.PI, 0]));
   b.glow(new THREE.TorusGeometry(r * 0.78, r * 0.06, 6, 32), hot.map((c) => c * 0.6), ch, T([x, y, z - len * 0.55]));
+  // turkey-feather petals around the bell + actuator rods: the mechanical read of a real engine
+  const np = r > 0.5 ? 14 : 10;
+  for (let k = 0; k < np; k++) {
+    const a = (k / np) * Math.PI * 2;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    b.add(rbox(r * 0.34, 0.02, len * 0.46, 0.006, 1), 'metal', k % 2 ? '#6c5f55' : '#4d4945',
+      T([x + ca * r * 0.97, y + sa * r * 0.97, z - len * 0.74], [0, 0, a + Math.PI / 2]).multiply(new THREE.Matrix4().makeRotationX(-0.16)));
+    if (k % 2 === 0 && r > 0.3) b.add(bcyl(0.018, len * 0.5, 0.004, 6), 'chrome', '#b0b4b8', T([x + ca * r * 0.8, y + sa * r * 0.8, z - len * 0.2], [Math.PI / 2 + 0.25, 0, 0]));
+  }
 }
 
 export function buildShip(mats, liv) {
@@ -156,11 +165,81 @@ export function buildShip(mats, liv) {
   // hull hatches, vents, bolts
   for (const s of [-1, 1]) {
     b.add(slats(0.9, 0.5, 6, 0.05), 'darkMetal', '#1b1c1d', T([1.46 * s, 0.3, -2.0], [0, Math.PI / 2 * s, 0]));
-    b.add(rbox(0.06, 0.9, 1.3, 0.03, 1), 'gunmetal', TR, T([1.45 * s, 0.3, 0.6]));
+    b.add(rbox(0.06, 0.9, 1.3, 0.03, 1), 'gunmetal', TR, T([1.485 * s, 0.3, 0.6]));
     for (let k = 0; k < 8; k++) b.add(bcyl(0.018, 0.02, 0.004, 8), 'metal', '#9a9ea4', T([1.5 * s, -0.25, -4.2 + k * 0.9], [0, 0, Math.PI / 2]));
   }
   // rear engine block between nacelles (center exhaust)
   nozzle(b, 0, 0.3, -6.1, 0.4, 0.55, hot, 0);
+
+  // ---------------------------------------------------------------- armour plates + greebles
+  // Raised, chamfered hull plates (shellPatch) in paint over a darker structural hull: a dark
+  // gunmetal belly, two-tone nacelles, exposed mechanical tail — the hard-surface density that
+  // makes NMS/Starfield ships read as machines rather than smooth toys.
+  const PL = { thick: 0.03, bevel: 0.035, seg: [14, 6] };
+  const mirror = new THREE.Matrix4().makeScale(-1, 1, 1);
+  for (const s of [-1, 1]) {
+    const sa = (a) => (s > 0 ? a : 0.5 - a);   // mirror the loft 'around' parameter to the -X side
+    const side = (t0, t1, a0, a1, surf, col, o = PL) => { const x0 = sa(a0), x1 = sa(a1); b.add(shellPatch(fus, t0, t1, Math.min(x0, x1), Math.max(x0, x1), o), surf, col); };
+    side(0.13, 0.28, -0.07, 0.1, 'pearl', P);
+    side(0.355, 0.47, -0.07, 0.1, 'pearl', P);
+    side(0.49, 0.6, -0.06, 0.09, 'paint', S);
+    side(0.62, 0.79, -0.04, 0.1, 'paint', S, { thick: 0.025, bevel: 0.03, seg: [12, 6] });
+    side(0.02, 0.11, 0.0, 0.12, 'gunmetal', TR, { thick: 0.035, bevel: 0.03, seg: [6, 6] });
+  }
+  // belly: dark structural plates (two-tone underside)
+  for (const [t0, t1] of [[0.08, 0.32], [0.34, 0.56], [0.58, 0.74]]) b.add(shellPatch(fus, t0, t1, 0.6, 0.9, { thick: 0.035, bevel: 0.04, seg: [14, 10] }), 'gunmetal', TR);
+  // nose cap plate
+  b.add(shellPatch(fus, 0.8, 0.9, 0.05, 0.45, { thick: 0.02, bevel: 0.025, seg: [8, 10] }), 'gunmetal', TR);
+  // nacelle plates (built for the +X nacelle, mirrored for -X)
+  const nacL = loft([
+    { z: -5.4, w: 0.95, ht: 0.95, hb: 0.95, n: 2.6 },
+    { z: -4.0, w: 1.02, ht: 1.05, hb: 1.0, n: 2.8 },
+    { z: -1.0, w: 0.98, ht: 1.0, hb: 0.95, n: 2.8 },
+    { z: 0.6, w: 0.86, ht: 0.84, hb: 0.84, n: 2.6 },
+    { z: 1.3, w: 0.78, ht: 0.76, hb: 0.76, n: 2.4 },
+  ], { radial: 8, along: 8, capStart: false, capEnd: false });
+  nacL.geometry.dispose();
+  const NP = { thick: 0.03, bevel: 0.035, seg: [12, 6] };
+  const nacPlates = [
+    [0.1, 0.34, 0.17, 0.34, 'paint', S], [0.41, 0.72, 0.17, 0.34, 'pearl', P],
+    [0.1, 0.34, 0.025, 0.15, 'pearl', P], [0.41, 0.72, 0.025, 0.15, 'pearl', P],
+    [0.1, 0.34, -0.15, -0.025, 'gunmetal', TR], [0.41, 0.72, -0.15, -0.025, 'gunmetal', TR],
+    [0.76, 0.93, -0.12, 0.34, 'gunmetal', TR],
+  ];
+  for (const s of [-1, 1]) {
+    const m = T([NX * s, NY, 0]);
+    if (s < 0) m.multiply(mirror);
+    for (const [t0, t1, a0, a1, surf, col] of nacPlates) b.add(shellPatch(nacL, t0, t1, a0, a1, NP), surf, col, m);
+    // bolts along the plate seams
+    for (let k = 0; k < 7; k++) {
+      const P0 = new THREE.Vector3(), N0 = new THREE.Vector3();
+      nacL.evaluate(0.12 + k * 0.1, 0.16, P0, N0);
+      P0.addScaledVector(N0, 0.012); P0.x *= s; P0.x += NX * s; P0.y += NY; N0.x *= s;
+      b.add(bcyl(0.022, 0.03, 0.006, 8), 'metal', '#a4a8ad', new THREE.Matrix4().compose(P0, new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), N0.normalize()), V(1, 1, 1)));
+    }
+  }
+  // exposed tail structure between fuselage and nacelles: truss tubes, coolant lines, tanks, heat sinks
+  for (const s of [-1, 1]) {
+    b.add(tube([[0.55 * s, 0.35, -5.2], [1.2 * s, 0.42, -5.0], [NX * s - 0.85 * s, 0.3, -4.9]], 0.07, 12, 8), 'darkMetal', '#2a2b2d');
+    b.add(tube([[0.6 * s, -0.05, -4.3], [1.25 * s, -0.25, -4.6], [NX * s - 0.9 * s, -0.25, -4.85]], 0.055, 12, 8), 'darkMetal', '#232426');
+    b.add(tube([[0.7 * s, 0.7, -4.0], [1.3 * s, 0.85, -4.5], [NX * s - 0.8 * s, 0.7, -4.4]], 0.035, 12, 6), 'metal', '#8a6c4a');
+    b.add(tube([[0.72 * s, 0.6, -3.9], [1.35 * s, 0.7, -4.3], [NX * s - 0.85 * s, 0.55, -4.2]], 0.03, 12, 6), 'metal', '#4f6e7c');
+    b.add(bcyl(0.2, 1.2, 0.04, 18), 'gunmetal', S, T([1.32 * s, 0.1, -4.6], [Math.PI / 2, 0, 0]));
+    for (let k = 0; k < 3; k++) b.add(new THREE.TorusGeometry(0.205, 0.018, 6, 20), 'metal', '#6a6e73', T([1.32 * s, 0.1, -4.15 - k * 0.45]));
+    b.add(rbox(0.32, 0.26, 0.5, 0.04, 2), 'darkMetal', '#1e1f21', T([1.1 * s, 0.62, -5.25]));
+    b.add(slats(0.44, 0.3, 5, 0.03), 'metal', '#50545a', T([1.1 * s, 0.76, -5.25], [-Math.PI / 2, 0, 0]));
+    b.glow(rbox(0.3, 0.012, 0.36, 0.004, 1), [1.6, 0.45, 0.12], 4, T([1.1 * s, 0.745, -5.25]));
+    // heat-sink stacks each side of the dorsal fin
+    for (let k = 0; k < 6; k++) b.add(rbox(0.03, 0.22, 0.55, 0.008, 1), 'darkMetal', '#303134', T([(0.22 + k * 0.07) * s, 1.12 - k * 0.035, -4.6]));
+    // hydraulic rams on the pylon trailing edge
+    b.add(tube([[1.05 * s, 0.18, -3.5], [1.9 * s, 0.1, -3.75]], 0.03, 3, 6), 'chrome', '#c0c4c8');
+    // access hatch outlines + handles on the belly keel sides
+    b.add(rbox(0.02, 0.18, 0.9, 0.01, 1), 'metal', '#7c8086', T([0.86 * s, -0.55, -0.4]));
+    for (let k = 0; k < 3; k++) b.add(rbox(0.03, 0.05, 0.22, 0.01, 1), 'darkMetal', '#141516', T([0.86 * s, -0.5, -3.4 + k * 0.7]));
+  }
+  // tail cross-beam tying the nacelles together (reads as spaceframe from the chase camera)
+  b.add(rbox(2 * NX - 1.6, 0.16, 0.3, 0.05, 2), 'gunmetal', TR, T([0, -0.22, -5.1]));
+  b.add(rbox(2 * NX - 1.9, 0.08, 0.2, 0.03, 2), 'metal', '#6d7176', T([0, -0.1, -5.1]));
 
   // ---------------------------------------------------------------- lights
   b.glowPair(new THREE.SphereGeometry(0.07, 10, 8), [5, 0.3, 0.2], [0.3, 5, 0.6], 1, T([7.32, NY - 0.45, -3.9]));
@@ -172,16 +251,16 @@ export function buildShip(mats, liv) {
   for (const s of [-1, 1]) b.glow(rbox(0.02, 0.02, 2.4, 0.006, 1), hot, 4, T([1.42 * s, -0.3, 0.8], [0, 0.05 * s, 0]));
 
   // ---------------------------------------------------------------- decals
-  b.decalPatch(fus, 4, 0.34, 0.44, 0.02, 0.07, liv.decal, [0.05, 0.12, 0.95, 0.9], [8, 4], 0.006, true);
-  b.decalPatch(fus, 4, 0.34, 0.44, 0.48, 0.43, liv.decal, [0.05, 0.12, 0.95, 0.9], [8, 4], 0.006, false);
-  b.decalPatch(fus, 12, 0.14, 0.3, 0.03, 0.09, liv.decal, [0, 0.05, 1, 0.75], [8, 4], 0.006, true);
-  b.decalPatch(fus, 12, 0.14, 0.3, 0.47, 0.41, liv.decal, [0, 0.05, 1, 0.75], [8, 4], 0.006, false);
+  b.decalPatch(fus, 4, 0.36, 0.44, 0.02, 0.07, liv.decal, [0.05, 0.12, 0.95, 0.9], [8, 4], 0.033, true);
+  b.decalPatch(fus, 4, 0.36, 0.44, 0.48, 0.43, liv.decal, [0.05, 0.12, 0.95, 0.9], [8, 4], 0.033, false);
+  b.decalPatch(fus, 12, 0.15, 0.27, 0.03, 0.08, liv.decal, [0, 0.05, 1, 0.75], [8, 4], 0.033, true);
+  b.decalPatch(fus, 12, 0.15, 0.27, 0.47, 0.42, liv.decal, [0, 0.05, 1, 0.75], [8, 4], 0.033, false);
   b.decalPatch(fus, 0, 0.8, 0.86, 0.9, 0.6, 0xffffff, [0, 0, 1, 0.25], [6, 6], 0.006, false);
   for (const s of [-1, 1]) {
     b.decal(8, [4.8 * s, NY + 0.06, -2.2], [0, 1, 0], [0, 0, 1], [1.1, 0.7], liv.decal);
-    b.decal(14, [(NX + 0.98) * s, NY + 0.1, -3.6], [s, 0, 0], [0, 1, 0], [0.9, 0.5], 0xffffff, [0, 0, 1, 1], s < 0);
-    b.decal(7, [(NX + 0.97) * s, NY - 0.25, -0.5], [s, 0, 0], [0, 1, 0], [0.8, 0.35], liv.decal, [0, 0.1, 1, 0.85], s < 0);
-    b.decal(6, [1.49 * s, 0.35, 0.6], [s, 0, 0], [0, 1, 0], [0.7, 0.42], 0xffffff, [0, 0.2, 1, 0.8], s < 0);
+    b.decal(14, [(NX + 1.035) * s, NY + 0.12, -3.6], [s, 0, 0], [0, 1, 0], [0.9, 0.5], 0xffffff, [0, 0, 1, 1], s < 0);
+    b.decal(7, [(NX + 1.02) * s, NY - 0.25, -0.5], [s, 0, 0], [0, 1, 0], [0.8, 0.35], liv.decal, [0, 0.1, 1, 0.85], s < 0);
+    b.decal(6, [1.522 * s, 0.35, 0.6], [s, 0, 0], [0, 1, 0], [0.7, 0.42], 0xffffff, [0, 0.2, 1, 0.8], s < 0);
   }
   b.decal(5, [0, 1.71, -2.2], [0, 1, 0], [0, 0, 1], [0.8, 0.8], liv.decal);
 
