@@ -28,6 +28,8 @@ const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _u = new THREE.Vector3
 const _e = new THREE.Vector3(), _no = new THREE.Vector3();
 
 const KINDS = { bike: Hoverbike, rover: Rover, ship: Starship };
+// minimum distance (m) between a parked vehicle and the player's spawn
+const KEEP = { bike: 3.5, rover: 6, ship: 18 };
 
 class VehicleManager {
   constructor(world) {
@@ -97,7 +99,7 @@ class VehicleManager {
 
   // ------------------------------------------------------------------ spawning
   /** Find a flat, dry spot near `center` (planet-local) at ~dist m in direction `dir` (tangent). */
-  findSpot(center, dir, dist, { maxSlope = 0.18, footprint = 2, dry = true, tries = 48, avoid = [], clear = 0 } = {}) {
+  findSpot(center, dir, dist, { maxSlope = 0.18, footprint = 2, dry = true, tries = 48, avoid = [], clear = 0, keep = 0 } = {}) {
     const g = this.ground, R = this.world.body.radius;
     const up = _u.copy(center).normalize();
     const base = orthoForward(up, dir, new THREE.Vector3());
@@ -126,14 +128,50 @@ class VehicleManager {
       for (const o of avoid) { const d = o.distanceTo(_w.copy(p).multiplyScalar(R + h)); if (d < footprint * 2 + 3) score -= 8; }
       const blocked = clear > 0 && this.blocked(_w.copy(p).multiplyScalar(R + h), clear);
       if (blocked) score -= 20;
+      const pen = this._placePenalty(_w.copy(p).multiplyScalar(R + h), keep);
+      score -= pen;
       if (score > bestScore) { bestScore = score; best = { dir: p.clone(), h, slope }; }
-      if (slope < maxSlope * 0.35 && i > 2 && !blocked) break;
+      if (slope < maxSlope * 0.35 && i > 2 && !blocked && pen === 0) break;
     }
     if (!best) {
       const d = _v.copy(center).addScaledVector(base, dist).normalize();
-      best = { dir: d.clone(), h: g.terrainAt(d.clone().multiplyScalar(R)), slope: 1 };
+      const h = g.terrainAt(d.clone().multiplyScalar(R));
+      best = { dir: d.clone(), h, slope: 1, wet: dry && g.hasOcean && h < g.sea + 0.3 };
     }
     return best;
+  }
+
+  /**
+   * Placement penalty for a surface point q (planet-local, on the ground): civ plazas/clearings and
+   * town POIs (civ asks us not to park on graded plazas), and the player's spawn (keep ≥ `keep` m so
+   * a parked ship never hides the first frame). Returns 0 when the spot is fine.
+   */
+  _placePenalty(q, keep = 0) {
+    let pen = 0;
+    const w = this.world;
+    const C = w.civ?.clearings || w.get?.('civ')?.clearings;
+    if (C && C.length && !this._ignoreCiv) {
+      const l = q.length() || 1, dx = q.x / l, dy = q.y / l, dz = q.z / l;
+      for (let i = 0; i < C.length; i++) {
+        const c = C[i];
+        if (!c) continue;
+        const d = dx * c[0] + dy * c[1] + dz * c[2];
+        if (d > c[3]) { pen += 18; break; }
+      }
+    }
+    const pois = w.pois;
+    if (pois && pois.length && !this._ignoreCiv) {
+      for (let i = 0; i < pois.length; i++) {
+        const p = pois[i];
+        if (!p?.pos?.isVector3 || (p.kind !== 'city' && p.kind !== 'village')) continue;
+        if (p.pos.distanceTo(q) < (p.radius || 100) * 0.9) { pen += 12; break; }
+      }
+    }
+    if (keep > 0 && this.spawn?.pos) {
+      const d = this.spawn.pos.distanceTo(q);
+      if (d < keep) pen += 14 * (1 - d / keep) + 4;
+    }
+    return pen;
   }
 
   /** True when static colliders (trees, rocks, buildings) crowd a disc of radius r around pos. */
@@ -155,7 +193,7 @@ class VehicleManager {
   /** Park a starship + hoverbike at the edge of the nearest settlements (deterministic: sorted by distance). */
   spawnAtSettlements() {
     const sp = this.spawn;
-    if (!sp || this.params.view === 'orbit') return;
+    if (!sp || this.params.view === 'orbit' || this.noProps) return;
     const pois = (this.world.pois || []).filter((p) => (p.kind === 'city' || p.kind === 'village') && p.pos?.isVector3);
     if (!pois.length) return;
     const R = this.world.body.radius;
@@ -200,11 +238,19 @@ class VehicleManager {
     for (const v of this.vehicles) {
       if (!v.pristine) continue;
       const r = v.clearRadius ?? 2;
-      if (!this.blocked(v.pos, r)) continue;
+      const inStart = v.occupied && this.params.view === v.type;
+      if (inStart) { if (!this.blocked(v.pos, r)) continue; }
+      else {
+        const gh = this.ground.terrainAt(v.pos);
+        const wet = v.type !== 'bike' && this.ground.hasOcean && gh < this.ground.sea + 0.3;
+        const gp = v.pos.clone().normalize().multiplyScalar(this.world.body.radius + gh);
+        if (!wet && !this.blocked(v.pos, r) && this._placePenalty(gp, KEEP[v.type] ?? 0) === 0) continue;
+      }
       const up = _u.copy(v.pos).normalize();
       const f = _w.copy(v.pos).sub(sp.pos).addScaledVector(up, -_w.copy(v.pos).sub(sp.pos).dot(up));
       const dir = f.lengthSq() > 1 ? f.normalize().clone() : v.fwdVec.clone();
-      const spot = this.findClearing(v.pos, dir, v.type === 'ship' ? 220 : 60, { footprint: v.type === 'ship' ? 7 : 2, maxSlope: v.type === 'ship' ? 0.16 : 0.3, dry: v.type !== 'bike', clear: r, avoid: this.vehicles.filter((o) => o !== v).map((o) => o.pos) });
+      const spot = this.findClearing(v.pos, dir, v.type === 'ship' ? 220 : 60, { footprint: v.type === 'ship' ? 7 : 2, maxSlope: v.type === 'ship' ? 0.16 : 0.3, dry: v.type !== 'bike', clear: r, keep: inStart ? 0 : (KEEP[v.type] ?? 0), avoid: this.vehicles.filter((o) => o !== v).map((o) => o.pos) });
+      if (spot.wet && !inStart) continue;
       this.placeOnGround(v, spot.dir, v.fwdVec.clone());
       v.startFromParams?.(v.occupied ? this.params : {});
       if (v.camera) v.camera.snapped = false;
@@ -212,7 +258,7 @@ class VehicleManager {
   }
 
   /** Spiral search for an open, flat, dry spot (no trees/buildings, low canopy cover) within maxDist. */
-  findClearing(center, dir, maxDist, { maxSlope = 0.2, footprint = 3, dry = true, clear = 3, avoid = [] } = {}) {
+  findClearing(center, dir, maxDist, { maxSlope = 0.2, footprint = 3, dry = true, clear = 3, avoid = [], keep = 0 } = {}) {
     const g = this.ground, R = this.world.body.radius, fl = this.world.get?.('flora');
     const up = _u.copy(center).normalize();
     const base = orthoForward(up, dir, new THREE.Vector3());
@@ -238,13 +284,15 @@ class VehicleManager {
         try { dens = fl?.densityAt ? fl.densityAt(p) : 0; } catch (_) { dens = 0; }
         q.copy(p).multiplyScalar(R + h);
         const blocked = this.blocked(q, clear);
-        let score = -slope * 12 - dens * 5 - (blocked ? 25 : 0) - rad / maxDist * 2 - (slope > maxSlope ? 6 : 0);
+        let score = -slope * 12 - dens * 5 - (blocked ? 25 : 0) - rad / maxDist * 2 - (slope > maxSlope ? 6 : 0) - this._placePenalty(q, keep);
         for (const o of avoid) if (o.distanceTo(q) < clear * 2 + 3) score -= 10;
         if (score > bestScore) { bestScore = score; best = { dir: p.clone(), h, slope }; }
       }
       if (best && bestScore > -2.5) break;
     }
-    return best || { dir: center.clone().normalize(), h: g.terrainAt(center), slope: 1 };
+    if (best) return best;
+    const h0 = g.terrainAt(center);
+    return { dir: center.clone().normalize(), h: h0, slope: 1, wet: dry && g.hasOcean && h0 < g.sea + 0.3 };
   }
 
   spawnPoint() {
@@ -260,6 +308,39 @@ class VehicleManager {
     const h = this.ground.terrainAt(dir.clone().multiplyScalar(R));
     const pos = dir.clone().multiplyScalar(R + Math.max(h, this.ground.hasOcean ? this.ground.sea : -1e9));
     return { pos, fwd: headingDir(dir, p.yaw ?? 30, new THREE.Vector3()) };
+  }
+
+  /**
+   * Capture helper (URL vnear=capital|hamlet|<civ site id>, vdist=<m>): move vehicle v to a flat, open,
+   * dry spot `dist` m outside that settlement's edge (on the side facing the player spawn, or `yaw`),
+   * facing the settlement — robust framing for "vehicle with the city in the distance" shots.
+   */
+  placeNear(v, which, dist) {
+    const w = this.world, civ = w.civ || w.get?.('civ');
+    const sites = civ?.sites;
+    if (!sites?.length) return false;
+    const site = which === 'capital' ? sites[0] : which === 'hamlet' ? sites.find((x) => x.hamlet) : sites[+which];
+    if (!site?.pos?.isVector3) return false;
+    const r = site.radius ?? 150;
+    const center = site.pos.clone().normalize();
+    const R = w.body.radius, g = this.ground;
+    const cpos = site.pos.clone();
+    const up = center.clone().normalize();
+    let dir;
+    if (this.params.yaw !== undefined) dir = headingDir(up, +this.params.yaw + 180, new THREE.Vector3());
+    else if (this.spawn?.pos) {
+      dir = this.spawn.pos.clone().sub(cpos); dir.addScaledVector(up, -dir.dot(up));
+      if (dir.lengthSq() < 1) dir = headingDir(up, 200, new THREE.Vector3()); else dir.normalize();
+    } else dir = headingDir(up, 200, new THREE.Vector3());
+    const target = cpos.clone().addScaledVector(dir, r + dist).normalize().multiplyScalar(R);
+    void g;
+    const spot = this.findClearing(target, dir, Math.max(60, dist * 0.6), { footprint: v.type === 'ship' ? 7 : 3, maxSlope: 0.12, clear: v.clearRadius ?? 3 });
+    const p = spot.dir.clone().multiplyScalar(R + spot.h);
+    const face = cpos.clone().sub(p); face.addScaledVector(spot.dir, -face.dot(spot.dir));
+    this.placeOnGround(v, spot.dir, face.lengthSq() > 1 ? face.normalize() : dir.clone().negate());
+    v.pristine = true;
+    if (v.camera) v.camera.snapped = false;
+    return true;
   }
 
   add(kind, opts = {}) {
@@ -293,26 +374,33 @@ class VehicleManager {
     const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
     const view = this.params.view;
     const taken = [];
+    // props=0 (civcam, creature showcases with &fauna=): only the vehicle we start in
+    const pp = this.params.props;
+    const noProps = pp === '0' || pp === 0 || pp === false || pp === 'false' || (this.params.fauna !== undefined && this.params.fauna !== null && this.params.fauna !== '');
+    this.noProps = noProps;
     const mk = (kind, angleDeg, dist, opts) => {
       if (!KINDS[kind]) return null;
-      const v = this.add(kind);
-      if (!v) return null;
+      if (noProps && view !== kind) return null;
       let spot;
       if (view === kind) spot = { dir: sp.pos.clone().normalize() };
       else {
         const a = angleDeg * Math.PI / 180;
         const dir = fwd.clone().multiplyScalar(Math.cos(a)).addScaledVector(right, Math.sin(a)).normalize();
         spot = this.findSpot(sp.pos, dir, dist, { ...opts, avoid: taken });
+        // never park a rover/ship on the seabed (e.g. when the player spawns swimming)
+        if (spot.wet) return null;
       }
+      const v = this.add(kind);
+      if (!v) return null;
       const heading = view === kind ? fwd.clone() : fwd.clone().applyAxisAngle(up, (opts?.turn ?? 0) * Math.PI / 180);
       this.placeOnGround(v, spot.dir, heading);
       v.pristine = true;
       taken.push(v.pos.clone());
       return v;
     };
-    mk('bike', 38, 5.5, { footprint: 1.2, maxSlope: 0.35, dry: false, turn: -20 });
-    mk('rover', -48, 9.5, { footprint: 2.2, maxSlope: 0.25, turn: 25 });
-    mk('ship', -18, 34, { footprint: 7, maxSlope: 0.12, turn: 35 });
+    mk('bike', 38, 5.5, { footprint: 1.2, maxSlope: 0.35, dry: false, turn: -20, keep: KEEP.bike });
+    mk('rover', -48, 9.5, { footprint: 2.2, maxSlope: 0.25, turn: 25, keep: KEEP.rover });
+    mk('ship', -18, 34, { footprint: 7, maxSlope: 0.12, turn: 35, keep: KEEP.ship });
   }
 
   // ------------------------------------------------------------------ enter / exit
@@ -337,6 +425,7 @@ class VehicleManager {
     if (this.active === v) this.active = null;
     this.audio('play', 'vehicle.exit', { type: v.type });
     this.audio('set', 'engine', 0); this.audio('set', 'boost', 0);
+    if (this._danger) { this._danger = 0; this.audio('set', 'danger', 0); }
     this.world.events?.emit?.('vehicle:exit', { type: v.type, vehicle: v });
     this.engine.ui?.setTelemetry?.(null);
     const cam = this.world.camera;
@@ -372,7 +461,7 @@ class VehicleManager {
   }
 
   _hintFor(v) {
-    const dev = this.engine.input?.lastDevice;
+    const dev = this.engine.ui?.device || this.engine.input?.lastDevice;
     if (dev === 'touch') return v.type === 'ship' ? 'Left stick throttle/roll · drag to steer · buttons: boost, up/down' : 'Left stick drive · drag to look · boost & jump buttons';
     if (dev === 'gamepad') return v.type === 'ship' ? 'LS throttle/roll · RS steer · RT boost · A up · B down · Y exit' : 'LS drive · RS look · RT boost · A jump · Y exit';
     if (v.type === 'ship') return 'Mouse steer · W/S throttle · A/D roll · Shift boost/pulse · Space up · C down · V view · F exit';
@@ -386,7 +475,8 @@ class VehicleManager {
     const pl = this.world.player;
     if (!pl?.pos) return;
     const kind = this.lastUsed && KINDS[this.lastUsed] ? this.lastUsed : 'bike';
-    const v = this.vehicles.find((x) => x.type === kind);
+    let v = this.vehicles.find((x) => x.type === kind);
+    if (!v) v = this.add(kind);          // props=0 sessions spawn nothing parked
     if (!v || v.occupied) return;
     const up = _u.copy(pl.pos).normalize();
     const f = pl.forward ? orthoForward(up, pl.forward, new THREE.Vector3()) : headingDir(up, 0, new THREE.Vector3());
@@ -546,9 +636,19 @@ class VehicleManager {
     this.audio('set', 'speed', sp);
     this.audio('set', 'boost', a.boost ?? 0);
     if (a.type === 'ship') this.audio('set', 'altitude', a.alt ?? 0);
+    // danger: reentry heat, diving at the ground, or a rover about to roll
+    let danger = 0;
+    if (a.type === 'ship') {
+      danger = clamp((a.heat ?? 0) * 0.9, 0, 1);
+      if (a.state !== 'landed' && a.agl < 120) {
+        const vDown = -a.vel.dot(a.radialUp);
+        danger = Math.max(danger, clamp((vDown - 20) / 45, 0, 1) * clamp(1 - a.agl / 120, 0, 1));
+      }
+    } else if (a.type === 'rover') danger = clamp((0.55 - a.upVec.dot(a.radialUp)) / 0.4, 0, 1);
+    if (Math.abs(danger - (this._danger ?? 0)) > 0.02 || (danger === 0 && this._danger)) { this._danger = danger; this.audio('set', 'danger', danger); }
     // speed blur toward the focus of expansion
     if (this.blur) {
-      const k = a.blurAmount ? a.blurAmount() : clamp((sp - 28) / 45, 0, 1) * 0.55 + (a.boost ?? 0) * 0.35;
+      const k = a.blurAmount ? a.blurAmount() : clamp((sp - 34) / 50, 0, 1) * 0.4 + (a.boost ?? 0) * 0.22;
       this.blur.strength = damp(this.blur.strength, a.camera?.mode === 'cockpit' ? k * 0.5 : k, 4, dt);
       const cam = this.world.camera;
       _v.copy(a.vel);
@@ -605,6 +705,7 @@ export default {
     const v = mgr.vehicles.find((x) => x.type === view);
     if (v) {
       try {
+        if (world.params?.vnear) mgr.placeNear(v, world.params.vnear, +(world.params.vdist ?? 250) || 250);
         v.startFromParams?.(world.params);
         mgr.enter(v);
         v.camera?.update(0, { look: null, allowLook: false, speed: v.speed, radialUp: v.radialUp });

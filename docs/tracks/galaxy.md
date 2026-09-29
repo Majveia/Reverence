@@ -41,6 +41,7 @@ GalaxyModel works in ly.
 | `StarField.js` + `shaders/stars.js` + `starWorker.js` + `starPack.js` | 1.2 M (× `particleScale`) GPU points generated in workers; blackbody colours, flux-conserving PSF (core + halo + diffraction spikes for bright stars), sub-pixel handling, per-star dust extinction toward the camera through the same dust field, differential rotation in the vertex shader. Local LOD population (up to 240k × `particleScale`) streamed by workers around the camera target; global tracers fade out inside the LOD sphere. |
 | `BlackHole.js` | Full-screen effect (pipeline one-shot effect, order 150) within 20 000 r_s: Schwarzschild null geodesics per pixel (velocity-Verlet on x'' = −3/2 h² x / r⁵), weak-field deflection far out, thin disk with Novikov–Thorne-like temperature, ISCO from spin (Kerr-inspired), Doppler beaming g³ + gravitational redshift + blackbody shift, Keplerian turbulent streaks, multiple crossings → photon ring and lensed far side of the disk. The background frame is re-sampled along bent rays. |
 | `Nebulae.js` | Up to 3 nearest nebulae raymarched at reduced resolution when within ~60 radii: emission clouds (wind-blown cavity, ionised walls, dust lanes with ionisation-front rims, reflection haze), pillars (Pillars-of-Creation columns with lit tips, teal/gold haze), planetary nebulae (prolate shell, [OIII] core, Hα rim, cometary knots, white dwarf), SN remnants (filamentary shell, pulsar). Hubble or natural palette. Discovery toast + markers. |
+| `FaintStars.js` | The unresolved crowd of faint dwarfs in the stellar neighbourhood: ~175k (tier-scaled) procedural GPU points in a world-anchored 12-ly grid around the camera (stable while moving), counts follow the disk map × sech² vertical profile, dwarf-dominated luminosity function, same single-star gain as the LOD stars. Not pickable (the catalogued LOD stars are). |
 | `Backdrop.js` | ~2 600 distant background galaxies (spiral / elliptical / edge-on, redshifted colours) + foreground halo stars, one instanced draw at infinity. |
 | `GalaxyCamera.js` | Log-distance orbit rig over ~15 orders of magnitude, zoom toward the cursor point on the disk, pan, cinematic `flyTo`, idle drift, target in the pattern frame (co-rotates). |
 | `Reticle.js` | Selection ring. |
@@ -55,6 +56,39 @@ GalaxyModel works in ly.
 * Picking is a screen-space search over all GPU star positions (same rotation maths as the shader),
   scored by apparent brightness and distance to the tap; touch uses a larger radius (26 px).
 
+## Round 2 changes (critic r1 → fixes)
+
+* **Framing**: the default whole-galaxy distance is *fitted* to the projected visible extent (disk rim,
+  ring + offset, Sombrero dust ring, elliptical) and a lens shift (`camera.setViewOffset`) centres the
+  inclined disk (its near side looms larger); both fade out as you zoom in. Galaxies now fill the frame
+  like the Hubble references. Sombrero-like S0s default to a 6.5° edge-on view.
+* **Colour / structure**: bluer, dimmer young arms (no white "cotton" ridges), star-tracer share of the
+  disk light 0.4 → 0.26 (old-disk tracer weight 0.45 → 0.3) → far less point grain; arm clumps and in-arm
+  dust are now sampled in a **log-polar frame sheared by differential rotation** (long strands along a
+  slightly tighter spiral, periodic cos/sin embedding) — M51-like "fingerprint" dust filaments instead of
+  isotropic crumpled ridged noise; the isotropic dust web is much weaker on spirals.
+* **Sombrero**: bright flat lens inside the dust ring, the stellar disk (map + GalaxyModel star
+  positions) truncated just outside the ring, granular optically-thick lane (brown where reddened light
+  leaks through), bigger/brighter extended envelope so the lane silhouettes against the bulge,
+  neutral white-lavender palette.
+* **Pillars**: new shading — umber dust bodies with self-shadowed direct light from the cluster
+  (above-right), gold ionisation skins, backlit translucent edges, vertical striations; reshaped columns
+  (bending, pinching, swollen heads, broad base mound); a textured **cavity wall** (HII-region shell of
+  radius 2.6 R, two analytic samples per ray) fills the frame with teal/gold nebulosity and dark clouds
+  (no more circular teal disc).
+* **Stellar neighbourhood**: `FaintStars` crowd + 2.2× local star gain with a softer luminosity
+  exponent; the view defaults to looking along the disk toward the galactic centre (pitch 5°); the
+  galaxy's diffuse band stays visible (floor 0.16); magnified map texels (HII knots, dust) are faded /
+  smoothed inside the disk (no blocky knots or checkerboards).
+* **Black hole**: next to the hole the nucleus glow and the faint-star crowd are exposed down to black
+  and a procedural sky of sharp stars is lensed by direction (Einstein-ring arcs) → Interstellar look
+  from any `focus=core` view.
+* **Cartwheel**: spokes end at the collisional ring (model + map). Emission-nebula envelope noise reduced.
+* Inbox: the `VALIDATE_STATUS` shader error no longer reproduces (all galaxy shaders include `rv_common`
+  where they use its helpers; `check.mjs` galaxy scene is clean).
+* `&gx=` gained A/B keys: `tm:agx|aces|reinhard|none`, `sat`, `fsat`, `fpow`, `bloom`, `Detail` (0 = no
+  full-res detail transfer), in addition to uniform names (`DustNoise`, `DiskW`, `YoungL`, …).
+
 ## URL parameters
 
 `&galaxy=<i>` · `&yaw=<deg>` `&pitch=<deg>` `&dist=<kly>` · `&focus=core | local | star:<i> | neb:<k>`
@@ -68,19 +102,18 @@ Galaxy types for seed 1: 0 ring (4 arms), 1 spiral (3), 2 barred (3), 3/4/6/16/1
 
 | view | URL |
 |---|---|
-| grand-design spiral (Whirlpool-like) | `/?mode=galaxy&galaxy=2` |
-| ring galaxy, whole disk | `/?mode=galaxy&galaxy=0` |
-| 2-arm spiral face-on | `/?mode=galaxy&galaxy=19&pitch=58&yaw=20` |
-| barred spiral | `/?mode=galaxy&galaxy=7&pitch=70` or `galaxy=14&pitch=65` |
-| Sombrero (edge-on lenticular) | `/?mode=galaxy&galaxy=5&dist=100&pitch=7` |
-| edge-on spiral with dust lane | `/?mode=galaxy&galaxy=1&dist=150&pitch=4` |
-| elliptical | `/?mode=galaxy&galaxy=8&pitch=25` |
+| grand-design spiral (Whirlpool-like, fills frame) | `/?mode=galaxy&galaxy=3` |
+| barred spiral | `/?mode=galaxy&galaxy=7` or `galaxy=2` |
+| cartwheel ring galaxy | `/?mode=galaxy&galaxy=0` |
+| Sombrero (edge-on lenticular, default view) | `/?mode=galaxy&galaxy=5` (also `galaxy=17`) |
+| elliptical | `/?mode=galaxy&galaxy=8` |
 | irregular | `/?mode=galaxy&galaxy=9` |
-| black hole (lensing, disk, photon ring) | `/?mode=galaxy&galaxy=0&focus=core&pitch=16&yaw=40` (or plain `focus=core`) |
+| face-on spiral | `/?mode=galaxy&galaxy=3&pitch=89` |
+| black hole (lensing, disk, photon ring, lensed stars) | `/?mode=galaxy&galaxy=0&focus=core` (or `&pitch=16&yaw=40`) |
 | pillars nebula | `/?mode=galaxy&galaxy=0&focus=neb:1` |
 | emission nebula | `/?mode=galaxy&galaxy=0&focus=neb:4` (also `neb:0`) |
 | planetary nebula | `/?mode=galaxy&galaxy=0&focus=neb:3` |
-| stellar neighbourhood (LOD stars, open cluster) | `/?mode=galaxy&galaxy=0&focus=local&dist=2.5&pitch=12` |
+| stellar neighbourhood (band + dust ahead, dense starfield) | `/?mode=galaxy&galaxy=3&focus=local` (also `galaxy=0&focus=local`) |
 | selected star + UI | `/?mode=galaxy&galaxy=0&focus=local` + `--ui --steps '[{"advance":1},{"click":[520,248]},{"advance":0.6}]'` (960×540) |
 
 ## Performance
@@ -90,7 +123,9 @@ Galaxy types for seed 1: 0 ring (4 arms), 1 spiral (3), 2 barred (3), 3/4/6/16/1
 * Volume raymarch: 48–144 steps at 34–60 % resolution (pixel cap per tier); nebulae 36–110 steps at
   34–60 %, only when close; black hole 110–320 geodesic steps, only within 20 000 r_s (full-res; strong
   field only inside ~320 r_s impact parameter, weak-field analytic deflection elsewhere).
-* Draw calls ≈ 15–18. Generation fully in workers (main-thread fallback time-sliced).
+* Faint neighbourhood stars: 26³×10 (high) / 22³×10 (med) / 18³×6 (low) procedural points, only drawn
+  inside the LOD range; one texture fetch per vertex.
+* Draw calls ≈ 15–21. Generation fully in workers (main-thread fallback time-sliced).
 
 ## Known issues
 
@@ -99,6 +134,14 @@ Galaxy types for seed 1: 0 ring (4 arms), 1 spiral (3), 2 barred (3), 3/4/6/16/1
 * Picking scans all global stars on the CPU on tap (~10–30 ms for 1.2 M) — fine for taps, not per-frame hover.
 * Emission nebulae still read somewhat spherical from some angles; pillars are always the 3-column motif.
 * Edge-on spirals: the dust lane is correct but the edge-on disk is thin and a bit faint at default exposure.
+* Emission nebulae (`neb:0`, `neb:4`) still have a box-like silhouette from some angles (the tileable
+  lattice noise drives their shape; not the envelope) — needs a proper investigation.
+* From inside the disk (`focus=local` a few hundred ly above the plane) the dust layer below reads as a
+  smooth, slightly streaky floor: the map + 3-D noise have no structure below ~70 ly.
+* Pillar bodies are lit plausibly but their surface texture is lumpy ("sponge") rather than the Hubble
+  image's flowing striations; cartwheel spokes still leave a few stray stars just outside the ring.
+* `node tools/check.mjs`: ALL OK in the final run; `system-surface` can intermittently exceed the 180 s readiness timeout
+  on the shared software renderer (136 s standalone) — not caused by this track.
 
 ## Requests
 

@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { RNG } from '../../core/rng.js';
 
-export const MAX_WAVES = 12;
+export const MAX_WAVES = 16;
 const TAU = Math.PI * 2;
 
 const _n = new THREE.Vector3();
@@ -24,13 +24,16 @@ export class WaveSet {
     const art = body.art || {};
     const wx = art.weather || {};
     const windy = THREE.MathUtils.clamp((wx.wind ?? 0.35) + (wx.rain ?? 0) * 0.35 + (body.type === 'ocean' ? 0.12 : 0), 0.05, 1);
-    this.count = Math.min(MAX_WAVES, opts.count ?? MAX_WAVES);
+    // long swell (generated far away, arrives smooth and wind-independent) + the local wind sea
+    const nSwell = liquid === 'water' || liquid === 'acid' ? (opts.swell ?? 3) : 0;
+    this.nSwell = nSwell;
+    this.count = Math.min(MAX_WAVES, (opts.count ?? 12) + nSwell);
     this.g = Math.max(2, body.gravity || 9.81);
     this.liquid = liquid;
     // character: calm lakes (Tarkovsky, low wind) … rolling swell (monsoon oceans)
     const visc = liquid === 'lava' ? 0.22 : liquid === 'acid' ? 0.8 : liquid === 'ice' ? 0 : 1;
     const L0 = THREE.MathUtils.lerp(16, 46, windy) * (liquid === 'lava' ? 1.6 : 1);
-    const slope = (liquid === 'lava' ? 0.035 : THREE.MathUtils.lerp(0.03, 0.075, windy)) * (liquid === 'ice' ? 0 : 1);
+    const slope = (liquid === 'lava' ? 0.035 : THREE.MathUtils.lerp(0.034, 0.08, windy)) * (liquid === 'ice' ? 0 : 1);
     this.windy = windy;
     this.L0 = L0;
     this.k = new Float64Array(MAX_WAVES);
@@ -42,28 +45,50 @@ export class WaveSet {
     this.phi0 = new Float64Array(MAX_WAVES);
     this.phase = new Float64Array(MAX_WAVES);   // phase at the camera nadir, this frame (mod 2π)
     this.lambda = new Float64Array(MAX_WAVES);
+    this.short = new Float64Array(MAX_WAVES);   // 1 for the short wind-sea waves (gust-modulated in the shader)
     const n = this.count;
-    const qTotal = liquid === 'lava' ? 0.45 : 0.78;
+    // Σ Q·k·A ≤ ~1: swell stays smooth (rounded), the wind sea gets the choppy, peaked crests
+    const qSea = liquid === 'lava' ? 0.45 : THREE.MathUtils.lerp(0.66, 0.84, windy);
+    const qSwell = 0.05;
+    const swellDir = rng.range(-0.45, 0.45);
+    const swellL = [5.6, 3.7, 2.5];
+    const swellS = THREE.MathUtils.lerp(0.02, 0.036, windy);
+    for (let i = 0; i < nSwell; i++) {
+      const L = L0 * swellL[i] * rng.range(0.92, 1.08);
+      const k = TAU / L;
+      const A = swellS * (1 - 0.18 * i) * rng.range(0.9, 1.1) / k;
+      const ang = swellDir + rng.range(-0.14, 0.14) + (i === 2 ? 0.3 : 0);
+      this.k[i] = k; this.A[i] = A; this.lambda[i] = L;
+      this.dx[i] = Math.cos(ang); this.dy[i] = Math.sin(ang);
+      this.w[i] = Math.sqrt(this.g * k) * visc;
+      this.Q[i] = qSwell / (k * A);
+      this.phi0[i] = rng.range(0, TAU);
+    }
+    const nSea = n - nSwell;
     let lam = L0;
-    for (let i = 0; i < n; i++) {
-      const t = i / Math.max(1, n - 1);
+    for (let j = 0; j < nSea; j++) {
+      const i = nSwell + j;
+      const t = j / Math.max(1, nSea - 1);
       const L = lam * rng.range(0.9, 1.1);
       lam *= 0.74;
       const k = TAU / L;
       // direction: wind ± spread growing for shorter waves; a few cross-swells
       const spread = 0.25 + 0.75 * t;
       let ang = rng.range(-spread, spread);
-      if (i === 2) ang += 0.55; if (i === 3) ang -= 0.5;
+      if (j === 2) ang += 0.55; if (j === 3) ang -= 0.5;
       const s = slope * (1.0 - 0.5 * t) * rng.range(0.8, 1.15);
       const A = s / k;
       this.k[i] = k; this.A[i] = A; this.lambda[i] = L;
       this.dx[i] = Math.cos(ang); this.dy[i] = Math.sin(ang);
       this.w[i] = Math.sqrt(this.g * k) * visc * (liquid === 'lava' ? 0.6 : 1);
-      this.Q[i] = qTotal / (k * Math.max(A, 1e-6) * n);
+      this.Q[i] = qSea / (k * Math.max(A, 1e-6) * nSea);
       this.phi0[i] = rng.range(0, TAU);
+      this.short[i] = j >= 2 ? 1 : 0;
     }
-    // clamp Q·k·A sum ≤ qTotal (no loops) — already by construction; keep Q ≤ 1/(kA)
+    // keep Q ≤ 1/(kA) per wave (no loops from a single wave)
     for (let i = 0; i < n; i++) this.Q[i] = Math.min(this.Q[i], 1 / (this.k[i] * this.A[i] + 1e-9) * 0.95);
+    // amplitude of the dominant wind-sea wave (crest normaliser for foam / subsurface glow)
+    this.seaA0 = this.A[nSwell] || this.A[0] || 0.1;
     this.amp = 1;            // runtime amplitude multiplier (wind strength)
     // wave frame
     this.anchor = new THREE.Vector3(0, 1, 0);

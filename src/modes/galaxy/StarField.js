@@ -24,7 +24,7 @@ export class StarField {
       uEps: { value: 0.0025 }, uHaloR: { value: 2.2 }, uHaloFrac: { value: 0.035 }, uCoreSigma: { value: 0.62 },
       uSpikeFrac: { value: 0.035 }, uSpikeMin: { value: 2.2 }, uSphW: { value: S.type === 'elliptical' ? 1.0 : 0.4 },
       // old-disk tracers (differential rotation): unresolved at galaxy scale → mostly diffuse light, faint grain
-      uDiskW: { value: S.type === 'lenticular' ? 0.6 : 0.3 },
+      uDiskW: { value: S.type === 'lenticular' ? (S.dustRing ? 0.22 : 0.5) : 0.3 },
     };
     this.common = common;
     // gain of ONE real star (local LOD stars, and global tracers seen up close): a long-exposure

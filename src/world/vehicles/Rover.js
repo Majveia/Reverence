@@ -171,6 +171,15 @@ export class Rover extends Vehicle {
       kind = snow > 0.5 ? 'snow' : sand > 0.5 ? 'sand' : rock > 0.5 ? 'rock' : 'ground';
     }
     grip *= 1 - (G.uWetness.value || 0) * 0.18;
+    // loose material under the tyres: sand/snow/dry soil kick up plumes, wet or paved ground barely any
+    let dusty = s ? 0.3 + (s.sand ?? 0) * 0.9 + (s.dune ?? 0) * 0.3 + (s.snow ?? 0) * 0.6 + (1 - (s.moisture ?? 0.5)) * 0.45 : 0.7;
+    dusty *= 1 - clamp(G.uWetness.value || 0, 0, 1) * 0.75;
+    const C = this.world.civ?.clearings;
+    if (C) {
+      const l = this.pos.length() || 1, dx = this.pos.x / l, dy = this.pos.y / l, dz = this.pos.z / l;
+      for (let i = 0; i < C.length; i++) { const c = C[i]; if (c && c[4] === 0 && dx * c[0] + dy * c[1] + dz * c[2] > c[3]) { dusty *= 0.2; break; } }
+    }
+    this.dusty = clamp(Number.isFinite(dusty) ? dusty : 0.7, 0.08, 1.3);
     this.grip = clamp(grip, 0.45, 1.15);
     this.surfaceKind = kind;
   }
@@ -497,7 +506,7 @@ export class Rover extends Vehicle {
       const slip = wh.slip;
       const sp = Math.abs(wh.vLong);
       const surf = this.surfaceKind === 'rock' ? 0.25 : this.surfaceKind === 'sand' ? 1.3 : this.surfaceKind === 'snow' ? 1.0 : 0.55;
-      const rate = (sp * 0.3 + slip * 22 + (sp > 4 ? 1 : 0)) * q * surf * (wh.front ? 0.6 : 1);
+      const rate = (sp * 0.3 + slip * 22 + (sp > 4 ? 1 : 0)) * q * surf * (wh.front ? 0.6 : 1) * (water ? 1 : (this.dusty ?? 0.7));
       wh.emit += dt * rate;
       while (wh.emit >= 1) {
         wh.emit -= 1;
@@ -510,10 +519,10 @@ export class Rover extends Vehicle {
         const vz = this.vel.z * back + up.z * lift + this.rightVec.z * side;
         if (water) {
           _col.setRGB(0.82, 0.88, 0.92);
-          mgr.fx.spray.spawn(gp.x, gp.y, gp.z, vx + up.x * 3, vy + up.y * 3, vz + up.z * 3, { life: 0.8 + rnd.next() * 0.6, size0: 0.3, size1: 1.8, alpha: 0.55, color: _col, drag: 1.0, grav: 8, rot: rnd.next() * 6 });
+          mgr.fx.spray.spawn(gp.x, gp.y, gp.z, vx + up.x * 3, vy + up.y * 3, vz + up.z * 3, { life: 0.8 + rnd.next() * 0.6, size0: 0.3, size1: 1.8, alpha: 0.55, color: _col, drag: 1.0, grav: 8, rot: rnd.next() * 6, ground: wh.cp.length() });
         } else {
           _col.copy(this.dustColor).multiplyScalar(0.85 + rnd.next() * 0.3);
-          mgr.fx.dust.spawn(gp.x, gp.y, gp.z, vx, vy, vz, { life: 1.2 + rnd.next() * 1.4 + slip, size0: 0.3, size1: 1.6 + sp * 0.05 + slip * 2.2, alpha: 0.26 + slip * 0.18, color: _col, drag: 1.4, grav: -0.15, rot: rnd.next() * 6, rotSpeed: rnd.signed() * 0.5 });
+          mgr.fx.dust.spawn(gp.x, gp.y, gp.z, vx, vy, vz, { life: 1.2 + rnd.next() * 1.4 + slip, size0: 0.3, size1: 1.6 + sp * 0.05 + slip * 2.2, alpha: 0.26 + slip * 0.18, color: _col, drag: 1.4, grav: -0.15, rot: rnd.next() * 6, rotSpeed: rnd.signed() * 0.5, ground: wh.cp.length() });
         }
       }
     }
@@ -525,7 +534,7 @@ export class Rover extends Vehicle {
         _p.copy(this.model.anchors.exhaust).applyQuaternion(this.quat).add(this.pos);
         _col.setRGB(0.22, 0.21, 0.2);
         mgr.fx.dust.spawn(_p.x, _p.y, _p.z, this.vel.x * 0.6 - this.fwdVec.x * 1.5 + up.x * 0.5, this.vel.y * 0.6 - this.fwdVec.y * 1.5 + up.y * 0.5, this.vel.z * 0.6 - this.fwdVec.z * 1.5 + up.z * 0.5,
-          { life: 1.0 + rnd.next() * 0.8, size0: 0.12, size1: 0.9 + this.throttle * 0.6, alpha: 0.25 + this.throttle * 0.15, color: _col, drag: 1.5, grav: -0.6, rot: rnd.next() * 6 });
+          { life: 0.9 + rnd.next() * 0.8, size0: 0.1, size1: 0.6 + this.throttle * 0.5, alpha: 0.13 + this.throttle * 0.1, color: _col, drag: 1.5, grav: -0.6, rot: rnd.next() * 6 });
       }
     }
   }

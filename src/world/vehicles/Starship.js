@@ -492,9 +492,12 @@ export class Starship extends Vehicle {
     });
   }
 
-  blurAmount() { return clamp((this.speed - 150) / 300, 0, 1) * 0.35 * (this.rho > 0.02 ? 1 : 0.3) + this.pulse * 0.28 + this.heat * 0.25; }
+  // no speed blur in vacuum: nothing near the camera streams past (stars are at infinity) — only
+  // the pulse-drive tunnel and reentry buffeting blur the view there
+  blurAmount() { return clamp((this.speed - 150) / 300, 0, 1) * 0.3 * clamp(this.rho * 20, 0, 1) + this.pulse * 0.28 + this.heat * 0.25; }
   streakAmount() {
     if (this.pulse > 0.05) return { power: this.pulse, mode: 'pulse' };
+    if (!(this.rho > 0.002)) return { power: 0, mode: 'wind' };
     return { power: clamp((this.speed - 110) / 220, 0, 1) * clamp(this.rho * 3, 0, 1) * 0.8, mode: 'wind' };
   }
 

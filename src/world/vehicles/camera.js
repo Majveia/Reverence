@@ -227,6 +227,8 @@ export const CINE = {
   rear: { yaw: Math.PI * 0.08, pitch: -0.05, dist: 0.8, height: 0.3, ahead: 1.2 },
   hero: { yaw: Math.PI * 0.8, pitch: 0.02, dist: 0.95, height: 0.2, ahead: 0.0, side: 0 },
   chase3q: { yaw: Math.PI * 0.2, pitch: -0.02, dist: 0.95, height: 0.45, ahead: 0.8 },
+  track: { yaw: Math.PI * 0.4, pitch: 0.0, dist: 0.78, height: 0.12, ahead: 0.25 },     // low tracking shot, slightly ahead of the side
+  follow: { yaw: Math.PI * 0.14, pitch: -0.01, dist: 0.72, height: 0.2, ahead: 0.7 },  // tight low 3/4 rear
 };
 
 export { smoothstep };

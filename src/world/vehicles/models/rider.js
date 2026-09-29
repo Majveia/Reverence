@@ -135,26 +135,27 @@ export function buildRider(mats, liv, pose = 'bike', anchors = {}) {
   b.add(helm.geometry, 'gloss', shell, new THREE.Matrix4().compose(head, hq, V(1, 1, 1)));
   // visor: a big wrap-around gold-mirror shield proud of the shell
   const vis = loft([
-    { z: -0.005, w: 0.135, ht: 0.085, hb: 0.06, y: 0.01, n: 2.5 },
-    { z: 0.07, w: 0.142, ht: 0.09, hb: 0.066, y: 0.01, n: 2.5 },
-    { z: 0.13, w: 0.11, ht: 0.07, hb: 0.052, y: 0.008, n: 2.4 },
-    { z: 0.172, w: 0.02, ht: 0.02, hb: 0.02, y: 0.005, n: 2 },
+    { z: -0.03, w: 0.15, ht: 0.1, hb: 0.078, y: 0.0, n: 2.6 },
+    { z: 0.06, w: 0.158, ht: 0.106, hb: 0.084, y: 0.0, n: 2.6 },
+    { z: 0.13, w: 0.13, ht: 0.088, hb: 0.07, y: 0.0, n: 2.5 },
+    { z: 0.178, w: 0.03, ht: 0.03, hb: 0.03, y: 0.0, n: 2 },
   ], { radial: 24, along: 12, capStart: false });
   b.add(vis.geometry, 'visor', visorCol, new THREE.Matrix4().compose(head.clone().add(V(0, 0.012, 0.01)), hq, V(1, 1, 1)));
   // visor frame / brow ridge
-  b.add(rbox(0.28, 0.03, 0.08, 0.012, 2), 'gloss', shell, new THREE.Matrix4().compose(head.clone().add(new THREE.Vector3(0, 0.1, 0.1).applyQuaternion(hq)), hq, V(1, 1, 1)));
+  b.add(rbox(0.26, 0.028, 0.07, 0.012, 2), 'gloss', shell, new THREE.Matrix4().compose(head.clone().add(new THREE.Vector3(0, 0.118, 0.085).applyQuaternion(hq)), hq, V(1, 1, 1)));
   // centre crest stripe in accent (front to back)
   b.add(rbox(0.035, 0.02, 0.26, 0.009, 2), 'paint', accent, new THREE.Matrix4().compose(head.clone().add(new THREE.Vector3(0, 0.163, -0.01).applyQuaternion(hq)), hq, V(1, 1, 1)));
   // side comm pods with a lamp
   for (const s of [-1, 1]) {
     const pc = head.clone().add(new THREE.Vector3(0.155 * s, 0.0, -0.01).applyQuaternion(hq));
     const pq = hq.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2)));
-    b.add(bcyl(0.05, 0.035, 0.01, 18), 'darkMetal', under, new THREE.Matrix4().compose(pc, pq, V(1, 1, 1)));
-    b.add(bcyl(0.028, 0.02, 0.006, 14), 'paint', accent, new THREE.Matrix4().compose(pc.clone().add(new THREE.Vector3(0.018 * s, 0, 0).applyQuaternion(hq)), pq, V(1, 1, 1)));
+    b.add(bcyl(0.046, 0.03, 0.01, 18), 'gloss', shell, new THREE.Matrix4().compose(pc, pq, V(1, 1, 1)));
+    b.add(bcyl(0.03, 0.016, 0.005, 14), 'darkMetal', '#3a3c40', new THREE.Matrix4().compose(pc.clone().add(new THREE.Vector3(0.016 * s, 0, 0).applyQuaternion(hq)), pq, V(1, 1, 1)));
+    b.add(bcyl(0.012, 0.012, 0.003, 10), 'paint', accent, new THREE.Matrix4().compose(pc.clone().add(new THREE.Vector3(0.024 * s, 0, 0).applyQuaternion(hq)), pq, V(1, 1, 1)));
   }
   b.glow(rbox(0.018, 0.018, 0.03, 0.006, 1), [2.4, 2.3, 2.1], 3, new THREE.Matrix4().compose(head.clone().add(new THREE.Vector3(0.16, 0.06, 0.07).applyQuaternion(hq)), hq, V(1, 1, 1)));
-  // antenna stub on the left pod
-  b.add(bcyl(0.004, 0.16, 0.001, 6), 'darkMetal', '#222', new THREE.Matrix4().compose(head.clone().add(new THREE.Vector3(-0.16, 0.12, -0.06).applyQuaternion(hq)), hq.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.5, 0, 0))), V(1, 1, 1)));
+  // short antenna stub on the left pod
+  b.add(bcyl(0.004, 0.09, 0.001, 6), 'metal', '#9a9ca0', new THREE.Matrix4().compose(head.clone().add(new THREE.Vector3(-0.162, 0.07, -0.05).applyQuaternion(hq)), hq.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.5, 0, 0))), V(1, 1, 1)));
 
   // ---------------------------------------------------------------- arms
   const shoulderY = 0.45;

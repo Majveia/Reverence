@@ -374,3 +374,6 @@ visualizations). What separates AAA from "tech demo":
   the same place). Needs every subsystem to react to a tier change; not started.
 * **vehicles** (from ui) — `_hintFor` should check `engine.ui.device` (`'touch'` whenever the touch layer is
   active) instead of `input.lastDevice`.
+* **post** (from galaxy, nice-to-have) — a hue-preserving tonemap option (per-channel, or an "agx-punchy" with less
+  highlight desaturation) so bright HII knots and arm cores keep their saturation; galaxy mode can switch it via
+  `look.tonemap`.

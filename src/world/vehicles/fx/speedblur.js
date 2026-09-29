@@ -13,14 +13,14 @@ varying vec2 vUv;
 void main(){
   vec2 d = vUv - uCenter;
   float r = length(d * vec2(uRes.x / uRes.y, 1.0));
-  float k = uStrength * smoothstep(0.12, 0.85, r);
+  float k = uStrength * smoothstep(0.22, 1.0, r);
   vec3 acc = texture2D(tSrc, vUv).rgb;
   float wsum = 1.0;
   float j = rv_ign(gl_FragCoord.xy);
   for (int i = 1; i <= 8; i++) {
     float t = (float(i) + j - 0.5) / 8.0;
     float w = 1.0 - t * 0.6;
-    acc += texture2D(tSrc, vUv - d * k * t * 0.14).rgb * w;
+    acc += texture2D(tSrc, vUv - d * k * t * 0.09).rgb * w;
     wsum += w;
   }
   gl_FragColor = vec4(acc / wsum, 1.0);

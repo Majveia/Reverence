@@ -310,7 +310,7 @@ export class Hoverbike extends Vehicle {
       this.pool.position.copy(up).multiplyScalar(R + hC + 0.07);
       orthoForward(_n, this.heading, _f);
       quatFromFrame(_n, _f, this.pool.quaternion);
-      this.pool.material.uniforms.uPower.value = poolK * (occ ? 0.5 + 0.35 * this.boost : 0.3) * (0.1 + night * 1.3);
+      this.pool.material.uniforms.uPower.value = poolK * (occ ? 0.5 + 0.35 * this.boost : 0.3) * (0.025 + night * 1.3);
     }
     // headlight pool at night
     const hk = occ ? smoothstep(0.25, 0.7, night) : 0;
@@ -339,7 +339,14 @@ export class Hoverbike extends Vehicle {
     const mgr = this.mgr, grd = this.ground, R = this.world.body.radius;
     if (!this.visible) return;
     this.dustSampleT -= dt;
-    if (this.dustSampleT <= 0) { this.dustSampleT = 0.35; grd.dustColor(this.pos, this.dustColor); }
+    if (this.dustSampleT <= 0) {
+      this.dustSampleT = 0.35; grd.dustColor(this.pos, this.dustColor);
+      // how much loose material the repulsors can lift: lush meadows give a faint pollen haze,
+      // sand / dry rock / snow give full rooster tails
+      const sm = grd.sample(this.pos);
+      const dd = sm ? 0.18 + (sm.sand ?? 0) * 1.0 + (sm.dune ?? 0) * 0.5 + (sm.rock ?? 0) * 0.35 + (sm.snow ?? 0) * 0.8 + (1 - (sm.moisture ?? 0.5)) * 0.4 : 0.6;
+      this.dustiness = clamp(Number.isFinite(dd) ? dd : 0.6, 0.15, 1);
+    }
     const up = this.radialUp;
     const hC = grd.supportAt(this.pos);
     const water = grd.onWater;
@@ -348,7 +355,8 @@ export class Hoverbike extends Vehicle {
     if (near <= 0) return;
     const sp = this.speed;
     const q = mgr.quality.particleScale ?? 1;
-    const rate = (this.occupied ? (6 + sp * 1.4 + this.boost * 30) : 2.5) * near * q;
+    const dusty = water ? 1 : (this.dustiness ?? 0.6);
+    const rate = (this.occupied ? (6 + sp * 1.4 + this.boost * 30) : 2.5) * near * q * (0.35 + 0.65 * dusty);
     this.dustT += dt * rate;
     const rnd = this.rand;
     const tang = _b.copy(this.vel).addScaledVector(up, -this.vel.dot(up));
@@ -369,13 +377,13 @@ export class Hoverbike extends Vehicle {
         const vx = _a.x * out * 0.6 - tang.x * 0.15 + up.x * (2.5 + sp * 0.12);
         const vy = _a.y * out * 0.6 - tang.y * 0.15 + up.y * (2.5 + sp * 0.12);
         const vz = _a.z * out * 0.6 - tang.z * 0.15 + up.z * (2.5 + sp * 0.12);
-        mgr.fx.spray.spawn(gp.x, gp.y, gp.z, vx, vy, vz, { life: 0.9 + rnd.next() * 0.6, size0: 0.25, size1: 1.6 + sp * 0.03, alpha: 0.55, color: _col, drag: 1.2, grav: 7, rot: rnd.next() * 6, rotSpeed: rnd.signed() });
+        mgr.fx.spray.spawn(gp.x, gp.y, gp.z, vx, vy, vz, { life: 0.9 + rnd.next() * 0.6, size0: 0.25, size1: 1.6 + sp * 0.03, alpha: 0.55, color: _col, drag: 1.2, grav: 7, rot: rnd.next() * 6, rotSpeed: rnd.signed(), ground: R + hC });
       } else {
         _col.copy(this.dustColor).multiplyScalar(0.95 + rnd.next() * 0.3);
         const vx = _a.x * out - tang.x * 0.12 + up.x * (0.6 + rnd.next() * 1.2);
         const vy = _a.y * out - tang.y * 0.12 + up.y * (0.6 + rnd.next() * 1.2);
         const vz = _a.z * out - tang.z * 0.12 + up.z * (0.6 + rnd.next() * 1.2);
-        mgr.fx.dust.spawn(gp.x, gp.y, gp.z, vx, vy, vz, { life: 1.4 + rnd.next() * 1.4 + sp * 0.02, size0: 0.4, size1: 2.4 + sp * 0.045 + this.boost * 1.5, alpha: 0.42 + 0.2 * this.boost, color: _col, drag: 1.4, grav: -0.25, rot: rnd.next() * 6, rotSpeed: rnd.signed() * 0.6 });
+        mgr.fx.dust.spawn(gp.x, gp.y, gp.z, vx, vy, vz, { life: 1.4 + rnd.next() * 1.4 + sp * 0.02, size0: 0.3, size1: (1.2 + sp * 0.045 + this.boost * 1.5) * (0.55 + 0.45 * dusty), alpha: (0.3 + 0.2 * this.boost) * (0.35 + 0.65 * dusty), color: _col, drag: 1.4, grav: -0.25, rot: rnd.next() * 6, rotSpeed: rnd.signed() * 0.6, ground: R + hC });
       }
     }
     // rooster tail behind at speed
@@ -392,11 +400,11 @@ export class Hoverbike extends Vehicle {
         if (water) {
           _col.setRGB(0.9, 0.94, 0.98);
           mgr.fx.spray.spawn(gp.x, gp.y, gp.z, tang.x * k + up.x * lift * 2 + _a.x, tang.y * k + up.y * lift * 2 + _a.y, tang.z * k + up.z * lift * 2 + _a.z,
-            { life: 1.1 + rnd.next() * 0.5, size0: 0.35, size1: 2.2 + sp * 0.03, alpha: 0.6, color: _col, drag: 1.0, grav: 8.5, rot: rnd.next() * 6 });
+            { life: 1.1 + rnd.next() * 0.5, size0: 0.35, size1: 2.2 + sp * 0.03, alpha: 0.6, color: _col, drag: 1.0, grav: 8.5, rot: rnd.next() * 6, ground: R + hC });
         } else {
           _col.copy(this.dustColor).multiplyScalar(0.8 + rnd.next() * 0.35);
           mgr.fx.dust.spawn(gp.x, gp.y, gp.z, tang.x * k + up.x * lift + _a.x, tang.y * k + up.y * lift + _a.y, tang.z * k + up.z * lift + _a.z,
-            { life: 2.2 + rnd.next() * 1.8, size0: 0.6, size1: 3.5 + sp * 0.06 + this.boost * 2, alpha: 0.45 + this.boost * 0.15, color: _col, drag: 1.1, grav: -0.35, rot: rnd.next() * 6, rotSpeed: rnd.signed() * 0.4 });
+            { life: 2.2 + rnd.next() * 1.8, size0: 0.6, size1: (3.5 + sp * 0.06 + this.boost * 2) * (0.6 + 0.4 * dusty), alpha: (0.45 + this.boost * 0.15) * (0.3 + 0.7 * dusty), color: _col, drag: 1.1, grav: -0.35, rot: rnd.next() * 6, rotSpeed: rnd.signed() * 0.4, ground: R + hC });
         }
       }
     }

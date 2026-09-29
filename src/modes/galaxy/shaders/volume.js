@@ -164,6 +164,10 @@ void main(){
     float footM = pixA * max(tcr, 1e-4) / max(abs(rd.y), 0.2);
     float lodM = max(0.0, log2(footM / uMapTexel) - 0.5);
     vec4 M = (abs(uv.x - 0.5) < 0.5 && abs(uv.y - 0.5) < 0.5) ? textureLod(tMap, uv, lodM) : vec4(0.0);
+    // magnified far beyond the map's resolution (camera inside the disk) bilinear texels would show
+    // as a checkerboard: blend toward a smoother (coarser) level there
+    float magK = smoothstep(0.04, 0.35, footM / uMapTexel);
+    if (magK < 1.0 && M.b + M.r > 0.0) M = mix(textureLod(tMap, uv, 2.5), M, 0.25 + 0.75 * magK);
     float rm = length(pm.xz);
     float fl = 1.0 + uFlare * (rm / uR) * (rm / uR);
     float flT = 1.0 + 0.35 * (fl - 1.0);               // young stars and dust stay thin (little flare)
@@ -185,7 +189,6 @@ void main(){
     float gm = mix(1.0, clamp(0.55 + 0.9 * N1.a + 0.5 * w2 * (N2.b - 0.5), 0.2, 2.0), uDustNoise);
     // magnified far beyond its resolution (inside the disk) the map's HII / cluster knots would show
     // as blocky texels: they fade out there (the individual nebulae and LOD stars take over)
-    float magK = smoothstep(0.04, 0.35, footM / uMapTexel);
     vec3 E = uColOld * (M.r * uOldL * IO) + (uColYoung * (M.g * uYoungL * mix(0.35, 1.0, magK)) + uColHII * (M.a * uHiiL * magK)) * (IY * gm);
     // clumpy dust mixed with the stars: local obscuration of this sample's own light
     float yl = pm.y / (1.6 * hD);

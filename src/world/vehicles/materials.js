@@ -13,7 +13,7 @@ import { G } from '../../core/Uniforms.js';
 // ------------------------------------------------------------------ surface presets
 // r: roughness, m: metalness, p: panel seams, cc: clearcoat, w: edge wear, d: dirt, e: emissive, ru: rust
 export const SURF = {
-  paint: { r: 0.36, m: 0.05, p: 1.0, cc: 1.0, w: 1.0, d: 1.0, e: 0, ru: 1.0 },
+  paint: { r: 0.3, m: 0.05, p: 1.0, cc: 1.0, w: 1.0, d: 1.0, e: 0, ru: 1.0 },
   paintMatte: { r: 0.62, m: 0.02, p: 1.0, cc: 0.0, w: 1.0, d: 1.0, e: 0, ru: 1.0 },
   paintMetal: { r: 0.28, m: 0.6, p: 1.0, cc: 0.8, w: 1.0, d: 1.0, e: 0, ru: 0.8 },
   metal: { r: 0.32, m: 1.0, p: 0.5, cc: 0, w: 0.4, d: 0.7, e: 0, ru: 0.5 },
@@ -224,8 +224,8 @@ export function makeUberMaterial(opts = {}) {
   const physical = opts.clearcoat !== false;
   const Ctor = physical ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial;
   const mat = new Ctor({ color: 0xffffff, roughness: 0.5, metalness: 0.0, vertexColors: true });
-  if (physical) { mat.clearcoat = 1.0; mat.clearcoatRoughness = 0.08; }
-  mat.envMapIntensity = opts.envMapIntensity ?? 1.0;
+  if (physical) { mat.clearcoat = 1.0; mat.clearcoatRoughness = 0.1; }
+  mat.envMapIntensity = opts.envMapIntensity ?? 1.25;
   const u = {
     uPanelScale: { value: opts.panelScale ?? 0.45 },
     uSeam: { value: opts.seam ?? 1.0 },

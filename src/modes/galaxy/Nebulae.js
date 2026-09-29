@@ -52,7 +52,8 @@ vec4 emissionCloud(vec3 q, vec3 s, float hub){
   // wind-blown cavity around the cluster, surrounded by a thick irregular wall of ionized gas
   float cav = smoothstep(0.12, 0.42, dc + 0.35 * (big - 0.5) + 0.12 * (det - 0.5));
   float lobe = N(q * 1.05 + s * 0.4).r;
-  float outer = 1.0 - smoothstep(0.2, 0.9, r + 0.8 * (big - 0.5) + 1.3 * (lobe - 0.5));
+  // (moderate noise on the envelope: strong low-frequency lattice noise reads as a box silhouette)
+  float outer = 1.0 - smoothstep(0.3, 0.95, r + 0.4 * (big - 0.5) + 0.55 * (lobe - 0.5) + 0.25 * (det - 0.5));
   float gas = cav * outer * pow(clamp(det * 1.2 + fine * 0.5 + big * 0.4 - 0.55, 0.0, 1.0), 1.6);
   // cold dust lanes and globules in the outer wall, lit on their cluster-facing side
   float dustF = smoothstep(0.72, 0.86, fil * 0.85 + big * 0.3 + (fine - 0.5) * 0.3) * smoothstep(0.25, 0.5, dc) * outer;

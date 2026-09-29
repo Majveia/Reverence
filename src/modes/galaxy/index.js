@@ -119,7 +119,7 @@ export default class GalaxyMode extends Mode {
     const pitch = params.pitch !== undefined ? parseFloat(params.pitch) * DEG : (gal.type === 'lenticular' && S.dustRing ? 6.5 : 44) * DEG;
     // default framing: fit the visible disk into the frame (Hubble-like: the galaxy fills the shot)
     this.frameExt = gal.type === 'lenticular' && S.dustRing ? S.dustRing.r / 1000 * 1.18
-      : S.ringStyle === 'cartwheel' || S.ringStyle === 'hoag' ? (S.ringOut + 2.5 * S.ringW) / 1000
+      : S.ringStyle === 'cartwheel' || S.ringStyle === 'hoag' ? (S.ringOut + 2.5 * S.ringW + Math.hypot(S.ringOff[0], S.ringOff[1])) / 1000
       : R * (gal.type === 'elliptical' ? 0.62 : gal.type === 'lenticular' ? 0.7 : gal.type === 'irregular' ? 0.95 : 1.0);
     this.frameH = R * (gal.type === 'elliptical' ? 0.4 : gal.type === 'lenticular' ? 0.3 : 0.08);
     const dist = params.dist !== undefined ? parseFloat(params.dist) : this._fitDistance(yaw, pitch, gal.type === 'lenticular' ? 0.84 : 0.88);

@@ -50,6 +50,11 @@ float rv_cloudShadow(vec3 p){ return 1.0; }
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _q = { x: 0, y: 0 }, _s = { slopeX: 0, slopeY: 0 };
 const _c = new THREE.Color();
 const QMOD = 4096;
+// golden-ratio sequence over the pipeline's rendered (sub)frames (varies between TAA shot sub-samples too)
+function frameJitter(engine) {
+  const f = engine?.pipeline?._frameIndex ?? engine?.time?.frame ?? 0;
+  return (f * 0.6180339887) % 1;
+}
 
 class Water {
   constructor(world) {
@@ -70,7 +75,7 @@ class Water {
     this.NS = tier === 'low' ? 128 : tier === 'med' ? 160 : tier === 'ultra' ? 256 : 208;
     const nw = tier === 'low' ? 8 : tier === 'med' ? 10 : 12;
     this.waves = new WaveSet(body, { liquid: this.liquid, count: nw });
-    this.nw = nw;
+    this.nw = this.waves.count;                          // wind sea + long swell
     this._anchored = false;
     this._amp = 1;
     this.camH = 1e9;
@@ -298,6 +303,8 @@ class Water {
       uGrid: { value: new THREE.Vector4(1, 1000, this.NR, 0.05) },
       uWA: { value: Array.from({ length: this.nw }, () => new THREE.Vector4()) },
       uWB: { value: Array.from({ length: this.nw }, () => new THREE.Vector4()) },
+      uCrestA: { value: 0.3 },
+      uJit: { value: 0 },
       uTime: { value: 0 },
       uQN: { value: new THREE.Vector2() },
       tBathy: { value: this.bathyTex }, uBathy: { value: new THREE.Vector4(0, 0, 1e-3, 0) },
@@ -367,6 +374,8 @@ class Water {
     const u = this.u;
     u.uHasScene.value = 0;
     if (camera !== this.world.camera) return;
+    // decorrelated noise per rendered (sub)frame: TAA / shot supersampling averages it out
+    u.uJit.value = frameJitter(this.engine);
     u.uProj.value.copy(camera.projectionMatrix);
     u.uNearFar.value.set(camera.near, camera.far);
     const pipe = this.engine.pipeline;
@@ -466,9 +475,10 @@ class Water {
     W.updatePhases(qx, qy, t);
     for (let i = 0; i < this.nw; i++) {
       u.uWA.value[i].set(W.dx[i], W.dy[i], W.k[i], W.A[i] * W.amp);
-      u.uWB.value[i].set(W.Q[i], W.phase[i], W.lambda[i], 0);
+      u.uWB.value[i].set(W.Q[i], W.phase[i], W.lambda[i], W.short[i]);
     }
     u.uQN.value.set(qx - Math.floor(qx / QMOD) * QMOD, qy - Math.floor(qy / QMOD) * QMOD);
+    u.uCrestA.value = Math.max(W.seaA0 * W.amp, 0.05);
     // bathymetry map (worker) — shore swell only near the surface
     const B = this.bathy;
     if (this.liquid !== 'ice' && camH < 3000) this._requestBathy(qx, qy, camH);
@@ -573,7 +583,7 @@ class Water {
       uNearFar: { value: new THREE.Vector2() },
       uCam: { value: new THREE.Vector3() }, uPC: G.uPlanetCenter, uUp: { value: new THREE.Vector3() },
       uT1: { value: new THREE.Vector3() }, uT2: { value: new THREE.Vector3() }, uL: { value: new THREE.Vector3() },
-      uRs: { value: this.Rs }, uCamDepth: { value: 0 }, uTime: { value: 0 }, uUnder: { value: 1 },
+      uRs: { value: this.Rs }, uCamDepth: { value: 0 }, uTime: { value: 0 }, uUnder: { value: 1 }, uJit: { value: 0 },
       uSigma: { value: this.sigma }, uScatter: { value: this.scatter },
       uEsun: { value: new THREE.Vector3() }, uEamb: { value: new THREE.Vector3() }, uGlow: { value: this.glow },
       uQN: { value: new THREE.Vector2() },
@@ -593,6 +603,7 @@ class Water {
         U.uL.value.copy(su.uKeyDir.value).normalize();
         U.uCamDepth.value = Math.max(0, self.waveHCam - self.camH);
         U.uTime.value = su.uTime.value;
+        U.uJit.value = +(self.world.params?.wdebug ?? 0) === 7 ? -1 : frameJitter(self.engine);
         U.uQN.value.copy(su.uQN.value);
         const kc = su.uKeyColor.value, sunUp = Math.max(0, U.uUp.value.dot(U.uL.value));
         const cs = Math.min(1, sunUp * 12);

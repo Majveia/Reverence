@@ -14,7 +14,7 @@ registerChunk('rv_water_common', /* glsl */ `
 #ifndef RV_WATER_COMMON
 #define RV_WATER_COMMON
 uniform vec3 uUp, uE1, uE2, uT1, uT2, uPC;
-uniform float uRs, uCamH;
+uniform float uRs, uCamH, uCrestA, uJit;
 uniform vec4 uGrid;                 // dMin, dMax, ring count, spacing factor
 uniform vec4 uWA[NW];               // dir.x, dir.y, k, A (amp applied)
 uniform vec4 uWB[NW];               // Q, phase at nadir, wavelength, unused
@@ -26,6 +26,7 @@ uniform float uBathyE;              // bathymetry texel (m)
 uniform vec2 uQN;                   // nadir wave coordinate mod 4096 m (texture layers)
 const mat2 ROT1 = mat2(0.8253, 0.5646, -0.5646, 0.8253);   // +0.6 rad
 const mat2 ROT2 = mat2(0.4536, -0.8912, 0.8912, 0.4536);   // -1.1 rad
+const mat2 ROT3 = mat2(-0.5885, 0.8085, -0.8085, -0.5885); // +2.2 rad
 // texture layer coordinate: tile size S (m), drift velocity vel (m/s) in the layer frame
 vec2 lay(vec2 q, float S, vec2 vel){ return (q + uQN) / S - vel * (uTime / S); }
 vec2 layR(mat2 R, vec2 q, float S, vec2 vel){ return (R * (q + uQN)) / S - vel * (uTime / S); }
@@ -170,9 +171,9 @@ float smithVis(float NdL, float NdV, float a){
 vec4 ssr(vec3 posV, vec3 dirV, vec3 posW, vec3 dirW){
   float t = 0.5 + 0.03 * length(posV);
   float tPrev = 0.0;
-  float jitter = rv_ign(gl_FragCoord.xy);
+  float jitter = fract(rv_ign(gl_FragCoord.xy + 5.588 * floor(uJit * 64.0)) + uJit);
   for (int s = 0; s < 22; s++){
-    float tj = t * (1.0 + 0.2 * jitter);
+    float tj = t * (1.0 + 0.12 * jitter);
     vec3 p = posV + dirV * tj;
     vec4 c = uProj * vec4(p, 1.0);
     if (c.w <= 0.0) break;
@@ -218,13 +219,20 @@ void main(){
   // ------------------------------------------------ normals (analytic Gerstner + detail maps)
   vec2 fq = fwidth(vQ);
   float fp = max(max(fq.x, fq.y), 1e-4);               // meters per pixel
+  // gusts: calm / rough patches drifting down-wind at 0.4–4 km scales (cat's paws up close, slicks and
+  // streaks in the sun path from altitude). 0 = calm, 1 = rough.
+  float gA = texture2D(tWaves, lay(vQ, 1530.0, vec2(4.0, 0.5))).a;
+  float gB = texture2D(tWaves, layR(ROT1, vQ, 437.0, vec2(2.6, -0.3))).a;
+  float gC = texture2D(tWaves, layR(ROT2, vQ, 4096.0, vec2(3.0, 0.4))).a;
+  float gust = smoothstep(-1.15, 1.15, ((gA - 0.5) * 0.8 + (gB - 0.5) * 0.45 + (gC - 0.5) * 0.7) / 0.18);
+  float gk = mix(0.28, 1.3, gust);
   float sx = 0.0, sy = 0.0, ny = 0.0, varS = 0.0;
   vec2 bd = bathy(vQ);
   float damp = mix(1.0, smoothstep(-0.2, 3.0, bd.x), bd.y);
   for (int k = 0; k < NW; k++){
     vec4 a = uWA[k]; vec4 b = uWB[k];
     float f = smoothstep(1.5, 5.0, b.z / fp);
-    float wa = a.z * a.w * damp;
+    float wa = a.z * a.w * damp * mix(1.0, gk, b.w);
     float ph = a.z * dot(a.xy, vQ) + b.y;
     float S = sin(ph), C = cos(ph);
     sx += a.x * wa * C * f; sy += a.y * wa * C * f;
@@ -246,40 +254,46 @@ void main(){
     vec2 dh = g * (swellA * 3.0 * sn * sn * 0.5 * cos(ph) * uShore.y);
     sx += dh.x; sy += dh.y;
   }
-  float dAmp = uLook.w * mix(0.35, 1.0, damp);
+  float dAmp = uLook.w * mix(0.35, 1.0, damp) * mix(0.5, 1.2, gust);
+  // four FFT-spectrum layers (157 / 41 / 13.7 / 4.3 m tiles, rotated, drifting). A layer fades out before its
+  // tile shrinks to a few dozen pixels (no visible repetition lattice); its slopes then live on as roughness.
+  vec2 uv3 = layR(ROT3, vQ, 157.0, vec2(2.1, 0.2));
   vec2 uv0 = lay(vQ, 41.0, vec2(1.3, 0.0));
   vec2 uv1 = layR(ROT1, vQ, 13.7, vec2(0.9, 0.1));
   vec2 uv2 = layR(ROT2, vQ, 4.3, vec2(0.55, 0.0));
+  float v3 = smoothstep(10.0, 40.0, 157.0 / fp), v0 = smoothstep(10.0, 40.0, 41.0 / fp);
+  float v1 = smoothstep(10.0, 40.0, 13.7 / fp), v2 = smoothstep(10.0, 40.0, 4.3 / fp);
   vec4 w0 = texture2D(tWaves, uv0);
   vec4 w1 = texture2D(tWaves, uv1);
-  vec2 d0 = (w0.rg * 2.0 - 1.0) * SLOPE_RANGE * 0.32;
-  vec2 d1 = ((w1.rg * 2.0 - 1.0) * SLOPE_RANGE * 0.26) * ROT1;
+  vec4 w3 = texture2D(tWaves, uv3);
+  vec2 d3 = ((w3.rg * 2.0 - 1.0) * SLOPE_RANGE * 0.22) * ROT3 * v3;
+  vec2 d0 = (w0.rg * 2.0 - 1.0) * SLOPE_RANGE * 0.32 * v0;
+  vec2 d1 = ((w1.rg * 2.0 - 1.0) * SLOPE_RANGE * 0.26) * ROT1 * v1;
   vec2 d2 = vec2(0.0);
-  float nearF = 1.0 - smoothstep(60.0, 260.0, wDist);
-  if (nearF > 0.0){
+  if (v2 > 0.0){
     vec4 w2 = texture2D(tWaves, uv2);
-    d2 = ((w2.rg * 2.0 - 1.0) * SLOPE_RANGE * 0.22) * ROT2 * nearF;
+    d2 = ((w2.rg * 2.0 - 1.0) * SLOPE_RANGE * 0.22) * ROT2 * v2;
   }
-  // variance lost to mip filtering (texel = tile/256) → roughness
-  float lod0 = fp / (41.0 / 256.0), lod1 = fp / (13.7 / 256.0), lod2 = fp / (4.3 / 256.0);
-  varS += dAmp * dAmp * 0.048 * (0.30 * smoothstep(0.7, 12.0, lod0) + 0.18 * smoothstep(0.7, 12.0, lod1) + 0.13 * smoothstep(0.7, 12.0, lod2));
-  vec2 det = (d0 + d1 + d2) * dAmp;
+  // variance lost to mip filtering (texel = tile/256) or to the fade → roughness
+  float lod0 = fp / (41.0 / 256.0), lod1 = fp / (13.7 / 256.0), lod2 = fp / (4.3 / 256.0), lod3 = fp / (157.0 / 256.0);
+  varS += dAmp * dAmp * 0.048 * (
+      0.30 * (1.0 - v0 * (1.0 - smoothstep(0.7, 12.0, lod0)))
+    + 0.18 * (1.0 - v1 * (1.0 - smoothstep(0.7, 12.0, lod1)))
+    + 0.13 * (1.0 - v2 * (1.0 - smoothstep(0.7, 12.0, lod2)))
+    + 0.16 * (1.0 - v3 * (1.0 - smoothstep(0.7, 12.0, lod3))));
+  vec2 det = (d0 + d1 + d2 + d3) * dAmp;
   sx += det.x; sy += det.y;
   vec3 N = normalize(nS * max(1.0 - ny, 0.2) - t1 * sx - t2 * sy);
   // far away: blend to the smooth sphere (all detail is roughness by then)
   float farF = smoothstep(4000.0, 60000.0, wDist);
   N = normalize(mix(N, nS, farF));
   float alpha = clamp(sqrt(uLook.x * uLook.x + 2.0 * varS), 0.02, 0.6);
-  // wind slicks and streaks at kilometre scales: calm (mirror) vs. rough (matte) patches seen from altitude
-  float slick = 0.5;
-  float slF = smoothstep(120.0, 1200.0, wDist) * (1.0 - smoothstep(40000.0, 140000.0, wDist));
-  if (slF > 0.0){
-    float s1 = texture2D(tWaves, lay(vQ, 4096.0, vec2(3.0, 0.4))).a;
-    float s2 = texture2D(tWaves, lay(vQ, 1024.0, vec2(1.6, -0.3))).a;
-    slick = mix(0.5, smoothstep(0.38, 0.62, s1 * 0.8 + s2 * 0.45 - 0.125), slF);
-  }
-  alpha *= mix(0.6, 1.35, slick);
-  alpha = mix(alpha, mix(0.1, 0.2, slick), farF);                 // orbit: broad but bright sun glint
+  // seen from far away the gust patches are what is left of the waves: mirror-calm vs. matte-rough
+  float slF = smoothstep(150.0, 1500.0, wDist);
+  alpha *= mix(1.0, mix(0.4, 1.7, gust), slF);
+  // orbit: glint as broad as the sea state, mottled by the km-scale roughness patches
+  float gO = texture2D(tWaves, layR(ROT1, vQ, 17000.0, vec2(0.0))).a;
+  alpha = mix(alpha, clamp(mix(0.09, 0.24, gust) * (0.8 + 1.6 * (gO - 0.5)), 0.06, 0.32), farF);
 
   // ------------------------------------------------ scene behind the surface
   vec2 suv = gl_FragCoord.xy * uInvRes;
@@ -289,8 +303,8 @@ void main(){
   float thick = max(sDist - wDist, 0.0);
 
   // fold / crest measures
-  float fold = vFold - w0.b * 0.35 * dAmp - w1.b * 0.2 * dAmp;
-  float crest = clamp(vH / max(uWA[0].w * 2.2, 0.05) * 0.5 + 0.5, 0.0, 1.0);
+  float fold = vFold - w0.b * 0.35 * dAmp * v0 - w1.b * 0.2 * dAmp * v1 - w3.b * 0.25 * dAmp * v3;
+  float crest = clamp(vH / max(uCrestA * 2.2, 0.05) * 0.5 + 0.5, 0.0, 1.0);
 
   vec3 col;
   float cloud = rv_cloudShadow(vPos);
@@ -303,37 +317,54 @@ void main(){
   // ================================================= LAVA: basalt crust rafts on an incandescent, convecting melt
   // heat 0..1 → emitted radiance (dull red → orange → yellow-white, ~T^4 brightness)
   #define LAVA_RAMP(t) (mix(mix(vec3(0.4, 0.012, 0.0), vec3(1.0, 0.11, 0.006), smoothstep(0.0, 0.5, t)), vec3(1.0, 0.4, 0.07), smoothstep(0.5, 1.0, t)) * (0.03 + 3.4 * t * t * t))
-  vec2 flowV = vec2(0.22, 0.07);
+  // flow: the melt drifts down-slope/down-wind (wave-frame +x) with a slowly meandering direction
+  vec2 fw = texture2D(tWaves, lay(vQ, 740.0, vec2(0.0))).rg - 0.5;
+  vec2 flowV = vec2(0.34, 0.08) + fw * 0.5;                    // m/s, spatially varying (melt)
+  vec2 raftV = vec2(0.24, 0.06);                               // rafts drift as rigid plates
   vec2 warp = (texture2D(tWaves, lay(vQ, 90.0, vec2(0.35, 0.1))).rg - 0.5) * 0.22;
-  // activity: large regions of open melt vs. solid crust fields (slowly drifting)
-  float act0 = texture2D(tWaves, lay(vQ, 610.0, flowV * 0.5)).a;
-  float act1 = texture2D(tWaves, layR(ROT2, vQ, 230.0, flowV)).a;
-  float act = smoothstep(0.3, 0.64, act0 * 0.65 + act1 * 0.55 - 0.1);
-  vec4 cM = texture2D(tCrust, layR(ROT2, vQ, 260.0, flowV * 0.6) + warp * 0.3);   // mega plates (~29 m)
-  vec4 c0 = texture2D(tCrust, lay(vQ, 55.0, flowV) + warp);                     // rafts (~6 m)
-  vec4 c1 = texture2D(tCrust, layR(ROT1, vQ, 16.4, flowV * 0.5) + warp * 0.5);  // fine fissures
+  // activity: large regions of open, churning melt vs. solid crust fields (slowly drifting)
+  float act0 = texture2D(tWaves, lay(vQ, 610.0, raftV * 0.5)).a;
+  float act1 = texture2D(tWaves, layR(ROT2, vQ, 230.0, raftV)).a;
+  float actN = act0 * 0.65 + act1 * 0.55 - 0.1;
+  float act = smoothstep(0.36, 0.6, actN);
+  vec4 cM = texture2D(tCrust, layR(ROT2, vQ, 260.0, raftV * 0.6) + warp * 0.3);   // mega plates (~29 m)
+  vec4 c0 = texture2D(tCrust, lay(vQ, 55.0, raftV) + warp);                     // rafts (~6 m)
+  vec4 c1 = texture2D(tCrust, layR(ROT1, vQ, 16.4, raftV * 0.5) + warp * 0.5);  // fine fissures
   // pixel footprint relative to the crack widths → fade fine structure to its average (no shimmer)
   float fr0 = smoothstep(0.012, 0.05, fp / 55.0), fr1 = smoothstep(0.012, 0.05, fp / 16.4);
-  // gaps between rafts widen where the melt is active; rafts shrink into floating islands
-  float gapW = mix(0.035, 0.34, act);
+  // gaps between rafts widen where the melt is active: the crust breaks into drifting islands, then opens
+  float gapW = mix(0.035, 0.8, act * act);
   float gap = 1.0 - smoothstep(gapW * 0.55, gapW, c0.r + (c1.a - 0.5) * 0.08);
-  gap = mix(gap, gapW * 1.6, fr0);
-  float megaCrack = 1.0 - smoothstep(0.015, 0.06 + 0.1 * act, cM.r);
+  gap = mix(gap, min(gapW * 1.6, 1.0), fr0);
+  float megaCrack = 1.0 - smoothstep(0.015, 0.06 + 0.14 * act, cM.r);
   float fis = (1.0 - smoothstep(0.01, 0.04, c1.b)) * (1.0 - fr1) + 0.06 * fr1;
   float molten = max(gap, megaCrack);
-  // melt surface: convection cells + advected streaks — never a flat colour
-  float conv = texture2D(tWaves, layR(ROT1, vQ + warp * 40.0, 37.0, flowV * 1.6)).a;
-  float strk = texture2D(tWaves, lay(vQ * vec2(1.0, 3.0) + warp * 25.0, 48.0, flowV * 2.0)).a;
-  float meltHeat = clamp(0.55 + (conv - 0.5) * 1.1 + (strk - 0.5) * 0.6 + act * 0.2, 0.2, 1.0);
+  // melt surface: convection cells + streaks stretched along the flow, advected with a two-phase flow map
+  // (seamless, never a static texture)
+  float fT = 7.0;
+  float ph0 = fract(uTime / fT), ph1 = fract(uTime / fT + 0.5);
+  float wB = abs(ph0 * 2.0 - 1.0);
+  vec2 qa = vQ - flowV * (ph0 * fT), qb = vQ - flowV * (ph1 * fT) + vec2(13.1, 7.7);
+  vec2 wa2 = warp * 40.0;
+  float conv = mix(texture2D(tWaves, layR(ROT1, qa + wa2, 37.0, vec2(0.0))).a, texture2D(tWaves, layR(ROT1, qb + wa2, 37.0, vec2(0.0))).a, wB);
+  vec2 sa = (qa + warp * 25.0) * vec2(0.3, 1.0), sb = (qb + warp * 25.0) * vec2(0.3, 1.0);
+  float strk = mix(texture2D(tWaves, lay(sa, 16.0, vec2(0.0))).a, texture2D(tWaves, lay(sb, 16.0, vec2(0.0))).a, wB);
+  float strk2 = mix(texture2D(tFoam, lay(sa * 1.3, 9.0, vec2(0.0))).a, texture2D(tFoam, lay(sb * 1.3, 9.0, vec2(0.0))).a, wB);
+  float fstr = 1.0 - smoothstep(0.02, 0.12, fp / 9.0);         // fine streak detail only where resolved
+  // breathing: the melt glows up and dims in slow, region-wide pulses (pressure from below)
+  float breath = 0.5 + 0.5 * sin(uTime * 0.55 + act0 * 40.0 + act1 * 17.0);
+  float meltHeat = clamp(0.52 + (conv - 0.5) * 1.3 + (strk - 0.5) * 0.9 + (strk2 - 0.35) * 0.35 * fstr + act * 0.22 + breath * 0.1, 0.18, 1.0);
+  // upwellings: incandescent yellow-white boils where convection brings fresh melt up
+  meltHeat = max(meltHeat, smoothstep(0.64, 0.8, conv + (breath - 0.5) * 0.08) * (0.85 + 0.15 * act));
   // crust: cooled near its centre, still glowing dull red towards its edges (cooling gradient)
   float edgeD = c0.r / max(gapW, 0.03);
   float rim = exp(-max(edgeD - 1.0, 0.0) * 3.5) * (0.35 + 0.65 * act) * (1.0 - fr0 * 0.5);
-  float crustHeat = rim * 0.38 + fis * (0.25 + 0.35 * act) + (1.0 - smoothstep(0.0, 0.25, cM.r)) * 0.18;
+  float crustHeat = rim * 0.4 + fis * (0.28 + 0.35 * act) + (1.0 - smoothstep(0.0, 0.25, cM.r)) * 0.18;
   // shore: melt pooled against rock stays open and hot
   float shoreHot = uHasScene > 0.5 ? 1.0 - smoothstep(0.0, 2.5, thick) : 0.0;
   molten = max(molten, shoreHot * 0.85);
   float heat = mix(crustHeat, meltHeat, molten);
-  vec3 emis = LAVA_RAMP(heat) * mix(0.7, 1.0, molten) * (0.85 + 0.3 * sin(uTime * 0.9 + conv * 12.0) * molten);
+  vec3 emis = LAVA_RAMP(heat) * mix(0.7, 1.0, molten) * (0.8 + 0.35 * breath * molten);
   // basalt: near-black, ropy (pahoehoe) relief from the detail slopes, glassy where fresh
   float rope = 1.0 - smoothstep(25.0, 140.0, wDist);
   vec3 Nl = normalize(nS - t1 * ((w0.r - 0.5) * 0.7 * rope + (w1.r - 0.5) * 0.35) - t2 * ((w0.g - 0.5) * 0.7 * rope + (w1.g - 0.5) * 0.35));
@@ -450,7 +481,11 @@ void main(){
   float rThick = max(rDist - wDist, 0.0);
   vec3 refr = uHasScene > 0.5 ? texture2D(tSceneColor, ruv).rgb : vec3(0.0);
   vec3 bed = cameraPosition + (-V) * min(rDist, 1e6);
-  float depthBelow = rDist > 1e8 ? 1e4 : max(uRs - length(bed - uPC), 0.0);
+  float hb = length(bed - uPC) - uRs;
+  float depthBelow = rDist > 1e8 ? 1e4 : max(-hb, 0.0);
+  // land above the sea seen through a long water path is terrain beyond the wave horizon (an island behind
+  // the curvature), not a shore: treat it as deep water (no shore foam / surf lines there)
+  if (hb > 0.0 && rThick > 50.0 + wDist * 0.03) depthBelow = 1e4;
   if (uHasScene < 0.5){ rThick = 1e4; depthBelow = 1e4; }
 
   // caustics on the seabed (projected along the refracted sun)
@@ -458,9 +493,9 @@ void main(){
     vec3 Lt = L - nS * dot(L, nS);
     vec3 relB = bed - (cameraPosition - uUp * uCamH);
     vec2 qb = vec2(dot(relB, uT1), dot(relB, uT2)) - vec2(dot(Lt, uT1), dot(Lt, uT2)) * depthBelow * 0.75 / max(sunUp, 0.25);
-    vec3 ca = texture2D(tFoam, lay(qb, 7.0, vec2(0.45, 0.1))).rgb;
-    vec3 cb = texture2D(tFoam, layR(ROT1, qb, 9.3, vec2(0.35, -0.2))).rgb;
-    vec3 caus = min(ca, cb) * 2.4 + (ca + cb) * 0.35;
+    vec3 ca = texture2D(tFoam, lay(qb, 6.1, vec2(0.45, 0.1))).rgb;
+    vec3 cb = texture2D(tFoam, layR(ROT1, qb, 8.9, vec2(0.35, -0.2))).rgb;
+    vec3 caus = ca * cb * 6.5 + (ca + cb) * 0.22 - 0.2;
     float cf = smoothstep(0.02, 0.4, depthBelow) * (1.0 - smoothstep(4.0, 38.0, depthBelow)) * uLook2.z * sunVis * (1.0 - smoothstep(0.0, 400.0, rDist));
     refr += refr * caus * cf * 2.2;
   }
@@ -501,14 +536,29 @@ void main(){
   float VdH = max(dot(V, H), 0.0);
   float Fs = 0.02 + 0.98 * pow(1.0 - VdH, 5.0);
   vec3 spec = Esun * ggx(max(dot(N, H), 0.0), alpha) * smithVis(NdL, NdV, alpha) * Fs * NdL;
-  // glitter: sparse, sharp facets inside a broad lobe (sun path sparkle)
-  float aB = min(alpha * 2.2 + 0.08, 0.7);
-  float lobe = ggx(max(dot(N, H), 0.0), aB) * smithVis(NdL, NdV, aB) * Fs * NdL;
-  float gl1 = texture2D(tFoam, layR(ROT2, vQ, 1.9 + wDist * 0.004, vec2(1.6, 0.3))).r;
-  float gl2 = texture2D(tFoam, lay(vQ, 2.7 + wDist * 0.006, vec2(-0.9, 1.1))).g;
-  float glit = pow(clamp(gl1 * gl2 * 3.0, 0.0, 1.0), 2.0) * (1.0 - farF);
-  spec += Esun * lobe * glit * 6.0 * uLook2.w;
-  spec *= 1.0 + 2.5 * farF;                                      // orbital glint survives the aerial perspective
+  // glitter: individual wave facets flashing the sun inside a broad lobe (the granular sun path). Stochastic:
+  // world-space cells (≥ 1.5 px, power-of-two sized so they never swim) light up with a probability that follows
+  // the broad GGX lobe, each flash carrying the lobe's peak energy → same mean brightness as the smooth lobe.
+  float aB = min(alpha * 1.6 + 0.04, 0.42);
+  float NdH = max(dot(N, H), 0.0);
+  float dB = NdH * NdH * (aB * aB - 1.0) + 1.0;
+  float lobeN = clamp(aB * aB / max(dB, 1e-5), 0.0, 1.0); lobeN *= lobeN;        // GGX(NdH)/GGX(1)
+  float lobeRest = smithVis(NdL, NdV, aB) * Fs * NdL / (RV_PI * aB * aB);
+  if (lobeN > 0.002 && farF < 0.999){
+    float lc = log2(fp * 1.6);
+    float cs = exp2(ceil(lc));
+    vec2 cq = (vQ + uQN) / cs;
+    vec2 ci = mod(floor(cq), 1024.0);
+    float tw = mod(floor(uTime * 7.0 + rv_hash12(ci + 17.0) * 7.0), 512.0);
+    float hs = rv_hash13(vec3(ci, tw));
+    float pr = 0.3 * lobeN * lobeN * (0.6 + 0.8 * gust);
+    // soft round glints inside the cell (no square pixels up close)
+    vec2 fc = fract(cq) - 0.5;
+    float spot = 1.0 - smoothstep(0.18, 0.5, length(fc));
+    float sp = smoothstep(1.0 - pr, 1.0 - pr * 0.7, hs) * spot;
+    spec += Esun * sp * lobeRest * 3.0 * uLook2.w * (1.0 - farF);
+  }
+  spec *= 1.0 + 1.2 * farF;                                      // orbital glint survives the aerial perspective
   spec = min(spec, vec3(3.0e4));
 
   col = mix(body, refl, F) + spec;
@@ -517,7 +567,7 @@ void main(){
   float web = texture2D(tFoam, lay(vQ, 11.0, vec2(0.5, 0.0))).a;
   float web2 = texture2D(tFoam, layR(ROT2, vQ, 3.7, vec2(0.25, 0.0))).a;
   float patchN = texture2D(tWaves, layR(ROT1, vQ, 150.0, vec2(1.2, 0.0))).a;
-  float crestF = smoothstep(0.62 - 0.25 * uLook2.w, 0.12, fold) * uLook.y * smoothstep(0.38, 0.62, patchN + web * 0.25);
+  float crestF = smoothstep(0.62 - 0.25 * uLook2.w, 0.12, fold) * uLook.y * smoothstep(0.4, 0.66, patchN * 0.55 + gust * 0.45 + web * 0.25);
   float foam = crestF * smoothstep(0.15, 0.6, web * 0.8 + web2 * 0.5);
   if (uHasScene > 0.5 && uLook2.y > 0.0){
     float n1 = texture2D(tWaves, lay(vQ, 57.0, vec2(0.3, 0.0))).a;
@@ -557,7 +607,7 @@ uniform sampler2D tColor, tDepth, tFoam;
 uniform mat4 uInvProj, uCamWorld;
 uniform vec2 uNearFar;
 uniform vec3 uCam, uPC, uUp, uT1, uT2, uL;
-uniform float uRs, uCamDepth, uTime, uUnder;
+uniform float uRs, uCamDepth, uTime, uUnder, uJit;
 uniform vec3 uSigma, uScatter, uEsun, uEamb, uGlow;
 uniform vec2 uQN;
 varying vec2 vUv;
@@ -581,44 +631,53 @@ void main(){
   float D = min(dist(vUv, dirV), 2000.0);
   // light available at a depth z below the surface
   float up = dot(dir, uUp);
-  // in-scatter: integrate fog colour along the ray with depth-dependent light (analytic in 8 steps)
+  // in-scatter: integrate along the ray (exact per-segment extinction, samples denser near the eye), with
+  // depth-dependent sunlight and god-ray shafts. The shaft pattern is the SMOOTH (mip-filtered) focusing
+  // pattern of the surface projected along the refracted sun: shafts are broad, only their edges are soft,
+  // and the per-pixel jitter changes every rendered (sub)frame so TAA / shot supersampling resolves it.
   vec3 Tr = exp(-uSigma * D * 0.85);
   vec3 acc = vec3(0.0);
-  float jit = rv_ign(gl_FragCoord.xy + uTime * 60.0);
-  const int STEPS = 10;
-  float seg = min(D, 160.0) / float(STEPS);
+  float jit = uJit < 0.0 ? 0.5 : fract(rv_ign(gl_FragCoord.xy + 5.588 * floor(uJit * 64.0)) + uJit);
+  const int STEPS = 14;
+  float Dm = min(D, 180.0);
   vec3 trAcc = vec3(1.0);
   float sunUp = max(dot(uUp, uL), 0.05);
   vec3 Lt = uL - uUp * dot(uL, uUp);
+  vec2 Lq = vec2(dot(Lt, uT1), dot(Lt, uT2)) / sunUp;
+  float phase = 0.3 + 0.7 * pow(max(dot(dir, uL), 0.0), 5.0) + 0.25 * pow(max(dot(dir, uL), 0.0), 60.0);
+  float tPrev = 0.0;
   for (int i = 0; i < STEPS; i++){
-    float t = (float(i) + jit) * seg;
-    vec3 p = dir * t;
+    float u1 = (float(i) + 1.0) / float(STEPS);
+    float t1 = Dm * u1 * u1;
+    float tm = mix(tPrev, t1, 0.25 + 0.5 * jit);
+    vec3 p = dir * tm;
     float z = max(uCamDepth - dot(p, uUp), 0.0);               // depth of the sample below the surface
-    vec3 Ez = uEsun * exp(-uSigma * z / sunUp) ;
-    // god rays: light through the wavy surface projected along the sun (shaft pattern)
-    vec2 q = vec2(dot(p, uT1), dot(p, uT2)) + vec2(dot(Lt, uT1), dot(Lt, uT2)) * z / sunUp;
-    float sh = texture2D(tFoam, lay(q, 23.0, vec2(0.6, 0.1))).r + texture2D(tFoam, lay(q.yx, 37.0, vec2(-0.4, 0.2))).g;
-    float shaft = mix(1.0, 0.12 + 3.0 * sh * sh, exp(-z * 0.03));
-    float phase = 0.25 + 0.75 * pow(max(dot(dir, uL), 0.0), 6.0);
+    vec3 Ez = uEsun * exp(-uSigma * z / sunUp);
+    vec2 q = vec2(dot(p, uT1), dot(p, uT2)) + Lq * z;
+    float sh = textureLod(tFoam, lay(q, 23.0, vec2(0.6, 0.1)), 2.5).r * textureLod(tFoam, lay(q.yx, 37.0, vec2(-0.4, 0.2)), 2.0).g;
+    float shaft = mix(1.0, 0.15 + 9.0 * sh, exp(-z * 0.025));
     vec3 Ls = uScatter * (Ez * shaft * phase * 2.2 + uEamb * exp(-uSigma * z * 0.5)) / RV_PI + uGlow * 0.2;
-    vec3 stepTr = exp(-uSigma * seg * 0.85);
+    vec3 stepTr = exp(-uSigma * (t1 - tPrev) * 0.85);
     acc += trAcc * (1.0 - stepTr) * Ls;
     trAcc *= stepTr;
+    tPrev = t1;
   }
   // beyond the marched span: constant fog of the deep
   vec3 far = uScatter * (uEsun * exp(-uSigma * (uCamDepth + 20.0) / sunUp) * 0.35 + uEamb * exp(-uSigma * uCamDepth * 0.5)) / RV_PI;
-  acc += trAcc * (1.0 - exp(-uSigma * max(D - 160.0, 0.0) * 0.85)) * far;
-  // seabed caustics (scene surfaces below the surface)
+  acc += trAcc * (1.0 - exp(-uSigma * max(D - Dm, 0.0) * 0.85)) * far;
+  // seabed caustics (scene surfaces below the surface): two dispersive caustic layers at different scales and
+  // drift directions; their product is the sharp, bright interference web, their mean the soft ambient focus
   if (D < 150.0){
     vec3 P = uCam + dir * D;
     float zb = uRs - length(P - uPC);
     if (zb > 0.1){
       vec3 rel = dir * D;
-      vec2 qb = vec2(dot(rel, uT1), dot(rel, uT2)) - vec2(dot(Lt, uT1), dot(Lt, uT2)) * zb * 0.75 / sunUp;
-      vec3 ca = texture2D(tFoam, lay(qb, 7.0, vec2(0.45, 0.1))).rgb;
-      vec3 cb = texture2D(tFoam, lay(qb.yx, 9.3, vec2(0.35, -0.2))).rgb;
-      float cf = (1.0 - smoothstep(4.0, 38.0, zb)) * smoothstep(0.1, 0.8, zb);
-      col += col * (min(ca, cb) * 2.4 + (ca + cb) * 0.35) * 2.2 * cf * exp(-uSigma.g * zb * 0.4);
+      vec2 qb = vec2(dot(rel, uT1), dot(rel, uT2)) - Lq * zb * 0.75;
+      vec3 ca = texture2D(tFoam, lay(qb, 6.1, vec2(0.45, 0.1))).rgb;
+      vec3 cb = texture2D(tFoam, lay(qb.yx * 0.93 + 3.7, 8.9, vec2(-0.3, 0.26))).rgb;
+      vec3 caus = ca * cb * 6.5 + (ca + cb) * 0.22;
+      float cf = (1.0 - smoothstep(5.0, 38.0, zb)) * smoothstep(0.1, 0.8, zb) * (1.0 - smoothstep(40.0, 150.0, D));
+      col += col * (caus - 0.2) * 2.4 * cf * exp(-uSigma.g * zb * 0.4);
     }
   }
   vec3 outc = col * Tr + acc;
@@ -744,7 +803,8 @@ void main(){
     return;
   }
   float amp = uShore.x;
-  float runMax = 0.12 + amp * 0.85 + (n3 - 0.5) * 0.35 + (n1 - 0.5) * 0.15;
+  float runMax = max(0.12 + amp * 0.85 + (n3 - 0.5) * 0.35 + (n1 - 0.5) * 0.15, 0.05);
+  float period = RV_TAU / max(uShore.z, 0.05);
   // swash cycle: fast run-up, slow backwash; phase drifts along the beach
   float cyc = fract(uShore.z * uTime / RV_TAU + n3 * 1.3 + n1 * 0.3);
   float rise = smoothstep(0.0, 0.24, cyc);
@@ -752,35 +812,48 @@ void main(){
   float front = runMax * rise * sqrt(max(fall, 0.0));
   float frontJ = front + (n2 - 0.5) * 0.06;
   float film = (1.0 - smoothstep(frontJ - 0.035, frontJ + 0.005, h)) * smoothstep(0.005, 0.05, front);
-  float wet = 1.0 - smoothstep(runMax + 0.02, runMax + 0.2 + 0.1 * n2, h);
-  wet = max(wet, film);
-  // darker, more saturated wet sand
+  // time since the backwash uncovered this height: freshly drained sand keeps a mirror sheen for ~2 s
+  float r = clamp(h / runMax, 0.0, 1.0);
+  float cDown = 0.24 + 0.73 * (0.5 - sin(asin(clamp(2.0 * r * r - 1.0, -1.0, 1.0)) / 3.0));
+  float since = fract(cyc - cDown) * period;
+  float sheen = h < runMax ? exp(-since / 2.2) * (1.0 - film) : 0.0;
+  // moisture: saturated up to the highest run-up, then a long capillary gradient (damp → dry) above it
+  float hr = h - runMax + (n1 - 0.5) * 0.14 + (n2 - 0.5) * 0.05;
+  float moist = 1.0 - smoothstep(-0.03, 0.75 + 0.35 * n3, hr);
+  moist *= moist;
+  float sat = max(1.0 - smoothstep(-0.03, 0.06, hr), film);   // fully saturated band (below the run-up)
+  // darker, more saturated wet sand, graded
   float lu = dot(col, vec3(0.2126, 0.7152, 0.0722));
-  vec3 wetCol = max(mix(vec3(lu), col, 1.25), 0.0) * 0.52;
-  col = mix(col, wetCol, wet * fadeD);
-  // thin water sheet: slight tint, sky reflection (Fresnel), sun glint; wet sand keeps a grazing sheen
+  vec3 wetCol = max(mix(vec3(lu), col, 1.25), 0.0) * 0.5;
+  col = mix(col, wetCol, max(sat, moist * 0.7) * fadeD);
+  // thin water sheet: slight tint, sky reflection (Fresnel), sun glint. Roughness grades from the mirror film
+  // and the draining sheen to matte damp sand.
   vec3 R = reflect(dir, nS);
   R = normalize(R + nS * max(0.0, -dot(R, nS)) * 2.0);
   float NdV = max(dot(nS, V), 0.02);
   float F = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);
-  float gloss = (wet * 0.35 + film * 0.65) * fadeD;
+  float glossy = max(film, sheen * 0.85);
+  float gloss = (glossy * 0.8 + sat * 0.22 + moist * 0.08) * fadeD;
   vec3 sky = uHasEnv > 0.5 ? textureCube(tEnv, R).rgb : uAmbSky * 0.3;
   col = mix(col, col * mix(vec3(1.0), uShallow * 1.6, 0.35), film * fadeD);
   col = col * (1.0 - F * gloss) + sky * F * gloss;
   vec3 H = normalize(L + V);
-  float a = mix(0.28, 0.05, film);
+  float a = mix(mix(0.42, 0.22, sat), 0.045, glossy);
   float NdH = max(dot(nS, H), 0.0);
   float Fh = 0.02 + 0.98 * pow(1.0 - max(dot(V, H), 0.0), 5.0);
   float vis = 0.25 / max(NdL * NdV + 0.05, 0.05);
-  col += uKeyColor * sunUp * ggxS(NdH, a) * vis * Fh * NdL * gloss * (0.6 + 0.8 * n2);
-  // foam lace at the swash front (bright while running up, thinning as it drains) + bubbles left behind
+  col += uKeyColor * sunUp * ggxS(NdH, a) * vis * Fh * NdL * max(gloss, sat * 0.3 * fadeD) * (0.6 + 0.8 * n2);
+  // foam lace at the swash front (bright while running up, thinning to bubbles as it drains), a bubble line
+  // left at the top of the run-up that dissolves, never a solid white stripe
   float web = texture2D(tFoam, lay(q, 4.3, vec2(0.12, 0.0))).a;
   float web2 = texture2D(tFoam, lay(q, 1.7, vec2(0.0))).a;
-  float band = film * (1.0 - smoothstep(0.0, 0.05 + 0.07 * n1, frontJ - h));
-  float trail = film * smoothstep(0.35, 0.8, web) * 0.45 * (1.0 - rise * 0.5);
-  float foam = clamp((band * mix(1.0, 0.45, smoothstep(0.24, 0.6, cyc)) + trail) * smoothstep(0.2, 0.6, web * 0.7 + web2 * 0.5), 0.0, 1.0);
+  float band = film * (1.0 - smoothstep(0.0, 0.06 + 0.08 * n1, frontJ - h));
+  float trail = film * smoothstep(0.35, 0.8, web) * 0.4 * (1.0 - rise * 0.5);
+  float topLine = (1.0 - smoothstep(0.0, 0.04, abs(h - runMax * 0.97))) * exp(-fract(cyc - 0.24) * period / 3.5) * 0.5;
+  float lace = smoothstep(0.28, 0.72, web * 0.7 + web2 * 0.5);
+  float foam = clamp((band * mix(0.9, 0.35, smoothstep(0.24, 0.6, cyc)) + trail + topLine) * lace, 0.0, 1.0);
   vec3 foamC = vec3(0.9, 0.92, 0.94) * (uKeyColor * sunUp * (0.5 + 0.5 * NdL) + uAmbSky) / RV_PI;
-  col = mix(col, foamC, foam * fadeD * (uLiquid < 0.5 ? 1.0 : 0.6));
+  col = mix(col, foamC, foam * fadeD * (uLiquid < 0.5 ? 0.9 : 0.55));
   gl_FragColor = vec4(max(col, 0.0), 1.0);
 }
 `;

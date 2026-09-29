@@ -11,7 +11,10 @@ attribute vec3 iPos;
 attribute vec4 iData;   // size, alpha, rotation, age01
 attribute vec4 iColor;  // rgb, seed
 attribute vec3 iVel;
+attribute float iH;     // height of the particle centre above the ground (m), < -1e3 = no ground fade
 uniform float uStretch;
+uniform vec3 uUpAnchor;  // planet-local direction of 'up' at the pool anchor
+varying float vH;
 varying vec2 vUv;
 varying vec4 vColor;
 varying float vAlpha;
@@ -37,6 +40,9 @@ void main(){
     off = vec2(c.x * co - c.y * s, c.x * s + c.y * co) * size;
   }
   mv.xy += off;
+  // height of this billboard corner above the ground plane → soft contact instead of a hard cut
+  vec3 upV = normalize(mat3(viewMatrix) * uUpAnchor);
+  vH = iH < -1000.0 ? 1e4 : iH + dot(vec3(off, 0.0), upV);
   // keep particles from swallowing the camera
   float dz = -mv.z;
   vAlpha = iData.y * smoothstep(0.25, 1.6, dz);
@@ -61,6 +67,7 @@ varying float vAlpha;
 varying float vAge;
 varying vec3 vSunV;
 varying float vSeed;
+varying float vH;
 float pvn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
   float a = rv_hash12(i), b = rv_hash12(i + vec2(1,0)), c = rv_hash12(i + vec2(0,1)), d = rv_hash12(i + vec2(1,1));
   return mix(mix(a,b,f.x), mix(c,d,f.x), f.y); }
@@ -81,7 +88,7 @@ void main(){
   float n = pvn(q * 1.3) * 0.6 + pvn(q * 3.1 + 5.0) * 0.4;
   float edge = 1.0 - r2;
   float dens = smoothstep(0.0, 0.55 + vAge * 0.3, edge * (0.55 + n * 0.9) - vAge * 0.25);
-  a = dens * vAlpha;
+  a = dens * vAlpha * smoothstep(-0.05, 0.6, vH);
   if (a < 0.003) discard;
   // sphere impostor lighting
   vec3 nrm = normalize(vec3(vUv, sqrt(max(0.0, 1.0 - r2)) + 0.35));
@@ -110,6 +117,7 @@ export class Particles {
     this.seed = new Float32Array(max);
     this.drag = new Float32Array(max); this.grav = new Float32Array(max);
     this.order = new Uint16Array(max); this.depth = new Float32Array(max);
+    this.gr = new Float64Array(max);   // ground radius under the particle (0 = none)
 
     const geo = new THREE.InstancedBufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
@@ -119,6 +127,8 @@ export class Particles {
     this.aData = new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4).setUsage(THREE.DynamicDrawUsage);
     this.aColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4).setUsage(THREE.DynamicDrawUsage);
     this.aVel = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this.aH = new THREE.InstancedBufferAttribute(new Float32Array(max), 1).setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('iH', this.aH);
     geo.setAttribute('iPos', this.aPos); geo.setAttribute('iData', this.aData); geo.setAttribute('iColor', this.aColor); geo.setAttribute('iVel', this.aVel);
     geo.instanceCount = 0;
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e9);
@@ -127,6 +137,7 @@ export class Particles {
       vertexShader: VERT, fragmentShader: FRAG,
       uniforms: {
         uStretch: { value: stretch ? 1 : 0 }, uLit: { value: lit ? 1 : 0 }, uAdditive: { value: additive ? 1 : 0 },
+        uUpAnchor: { value: new THREE.Vector3(0, 1, 0) },
         uSunDir: G.uSunDir, uSunCol: G.uSunColor, uAmbSky: G.uAmbientSky, uAmbGround: G.uAmbientGround,
       },
       transparent: true, depthWrite: false, blending: THREE.CustomBlending,
@@ -148,7 +159,8 @@ export class Particles {
     this._cmp = (a, b) => this.depth[b] - this.depth[a];
   }
 
-  /** Spawn one particle. o: {life, size0, size1, alpha, color (THREE.Color), rot, rotSpeed, drag, grav} */
+  /** Spawn one particle. o: {life, size0, size1, alpha, color (THREE.Color), rot, rotSpeed, drag, grav,
+   *  ground (planet-local radius of the ground under it → soft fade where the puff meets the ground)} */
   spawn(x, y, z, vx, vy, vz, o) {
     let i;
     if (this.count < this.max) i = this.count++;
@@ -168,6 +180,7 @@ export class Particles {
     this.cr[i] = c ? c.r : 1; this.cg[i] = c ? c.g : 1; this.cb[i] = c ? c.b : 1;
     this.seed[i] = o.seed ?? ((i * 0.618034) % 1);
     this.drag[i] = o.drag ?? 1.5; this.grav[i] = o.grav ?? 0;
+    this.gr[i] = o.ground ?? 0;
     return i;
   }
 
@@ -205,14 +218,16 @@ export class Particles {
   }
 
   _move(from, to) {
-    const arrs = [this.px, this.py, this.pz, this.vx, this.vy, this.vz, this.age, this.life, this.s0, this.s1, this.a0, this.rot, this.rs, this.cr, this.cg, this.cb, this.seed, this.drag, this.grav];
+    const arrs = [this.px, this.py, this.pz, this.vx, this.vy, this.vz, this.age, this.life, this.s0, this.s1, this.a0, this.rot, this.rs, this.cr, this.cg, this.cb, this.seed, this.drag, this.grav, this.gr];
     for (const a of arrs) a[to] = a[from];
   }
 
   _upload() {
     const n = this.count;
     const ax = this.anchor.x, ay = this.anchor.y, az = this.anchor.z;
-    const P = this.aPos.array, D = this.aData.array, C = this.aColor.array, V = this.aVel.array;
+    const P = this.aPos.array, D = this.aData.array, C = this.aColor.array, V = this.aVel.array, H = this.aH.array;
+    const al = Math.hypot(ax, ay, az) || 1;
+    this.mat.uniforms.uUpAnchor.value.set(ax / al, ay / al, az / al);
     const order = this.order;
     if (this.sorted && n > 1) {
       // back-to-front by distance to camera
@@ -234,10 +249,12 @@ export class Particles {
       D[j * 4 + 2] = this.rot[i];
       D[j * 4 + 3] = t;
       C[j * 4] = this.cr[i]; C[j * 4 + 1] = this.cg[i]; C[j * 4 + 2] = this.cb[i]; C[j * 4 + 3] = this.seed[i];
+      const g = this.gr[i];
+      H[j] = g > 0 ? Math.sqrt(this.px[i] * this.px[i] + this.py[i] * this.py[i] + this.pz[i] * this.pz[i]) - g : -1e4;
       V[j * 3] = this.vx[i] * 0.05; V[j * 3 + 1] = this.vy[i] * 0.05; V[j * 3 + 2] = this.vz[i] * 0.05;
     }
     this.geo.instanceCount = n;
-    this.aPos.needsUpdate = true; this.aData.needsUpdate = true; this.aColor.needsUpdate = true; this.aVel.needsUpdate = true;
+    this.aPos.needsUpdate = true; this.aData.needsUpdate = true; this.aColor.needsUpdate = true; this.aVel.needsUpdate = true; this.aH.needsUpdate = true;
   }
 
   clear() { this.count = 0; this.geo.instanceCount = 0; }
