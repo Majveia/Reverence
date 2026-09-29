@@ -156,7 +156,7 @@ void main(){
     float fogD = uFogV.x * exp(-clamp(h - uFogV.z, -2.0 * uFogV.y, 1e5) / uFogV.y);
     // shadowed air & fog lose the single scattering the atmosphere pass gave them; lit haze glows
     vec3 dL = vis * hz * phH * Ts * uMarch.w;
-    vec3 dS = (1.0 - vis) * ((sR * phR + sM * phM) * uSkyGain * Ts * uMarch.w + fogD * phF * uFogSunV);
+    vec3 dS = (1.0 - vis) * ((sR * phR * uSkyGain + sM * phM * uMieGain) * Ts * uMarch.w + fogD * phF * uFogSunV);
     float dSl = dot(dS, vec3(0.2126, 0.7152, 0.0722));
     float sr = 0.0;
 #ifdef HAS_CLOUDS

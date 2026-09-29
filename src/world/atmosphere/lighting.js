@@ -31,6 +31,11 @@ function patchSunShadowChunk(n) {
     s = s.replace(a, 'vec3 rvShadowPos = vSunShadowWorldPosition.xyz;');
     s = s.replace(b, 'sunShadowMatrix[ cascadeOffset + i ] * vec4( rvShadowPos + vSunShadowWorldNormal * sunLightShadow.shadowNormalBias * max( cascade.w, 0.0 ), 1.0 )');
   }
+  // softer PCF on the middle cascades (22–900 m): trunk / rock / building shadows there are ~20 cm texels
+  // at capture resolution; the near cascade keeps crisp contact shadows
+  if (s.split('sunLightShadow.shadowRadius,').length === 2) {
+    s = s.replace('sunLightShadow.shadowRadius,', 'sunLightShadow.shadowRadius * ( i == 1 ? 1.9 : ( i >= 2 ? 1.35 : 1.0 ) ),');
+  }
   THREE.ShaderChunk.shadowmap_pars_fragment = s;
   _patchedCascades = n;
   return n;

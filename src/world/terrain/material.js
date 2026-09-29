@@ -195,8 +195,8 @@ void rvTerrain( inout vec3 albedo ) {
 
   // ---- rock: triplanar on the geometric normal — 64 m macro facets (far), 8 m stochastic, 2 m micro
   if ( wRock > 0.02 && fFar > 0.0 ) {
-    vec4 accM = vec4( 0.0 ), accA = vec4( 0.0 ), accN = vec4( 0.0 );
-    vec3 gM = vec3( 0.0 ), gA = vec3( 0.0 ), gN = vec3( 0.0 ); float ws = 0.0;
+    vec4 accM = vec4( 0.0 ), accA = vec4( 0.0 ), accN = vec4( 0.0 ), accB = vec4( 0.0 );
+    vec3 gM = vec3( 0.0 ), gA = vec3( 0.0 ), gN = vec3( 0.0 ), gB = vec3( 0.0 ); float ws = 0.0;
     for ( int a = 0; a < 3; a++ ) {
       float wa = rvWa( a, wg );
       if ( wa <= 0.0 ) continue;
@@ -211,6 +211,12 @@ void rvTerrain( inout vec3 albedo ) {
       vec4 t2 = rvTexO( 0.0, uv * ( 1.0 / 256.0 ) + ( mA.rb - 0.5 ) * 1.4, gx * ( 1.0 / 256.0 ), gy * ( 1.0 / 256.0 ), 23.0 + fa * 3.0, 1.0 );
       t = vec4( 0.5 + ( t.rg - 0.5 ) * 1.0 + ( t2.rg - 0.5 ) * 0.6, t.b * 0.5 + t2.b * 0.5, t.a * 0.4 + t2.a * 0.6 );
       accM += wa * t; gM += wa * rvGw( a, t.rg * 2.0 - 1.0 );
+      // 32 m blocks: the scale between the macro crags and the 8 m detail (walls 50-500 m away
+      // otherwise read as smooth plaster with fine doodles)
+      if ( dist < 1800.0 ) {
+        vec4 tB = rvTexO( 0.0, uv * ( 1.0 / 32.0 ) + ( mA.gr - 0.5 ) * 0.7, gx * ( 1.0 / 32.0 ), gy * ( 1.0 / 32.0 ), 41.0 + fa * 5.0, 1.0 );
+        accB += wa * tB; gB += wa * rvGw( a, tB.rg * 2.0 - 1.0 );
+      }
       if ( fMid > 0.0 ) {
         t = rvFetchS( 0.0, uv * 0.125, gx * 0.125, gy * 0.125, kS + fa * 0.37, 1.0 );
         accA += wa * t; gA += wa * rvGw( a, t.rg * 2.0 - 1.0 );
@@ -221,16 +227,19 @@ void rvTerrain( inout vec3 albedo ) {
       }
     }
     float iw = 1.0 / ws;
-    accM *= iw; accA *= iw; accN *= iw;
+    accM *= iw; accA *= iw; accN *= iw; accB *= iw;
+    float fB = 1.0 - smoothstep( 900.0, 1800.0, dist );
     // relief strength: full on real faces, gentler where "rock" is only a generator hint on a mild
     // slope (under low sun, strong mid-scale bumps on near-flat ground read as brush strokes / fur)
     float kRel = 0.45 + 0.55 * max( rockS, smoothstep( 0.08, 0.3, slope ) );
-    gradT += ( gM * iw * fFar * 0.75 + gA * iw * fMid * 0.75 + gN * iw * fNear * 0.6 ) * wRock * kRel;
+    gradT += ( gM * iw * fFar * 0.75 + gB * iw * fB * 0.55 + gA * iw * fMid * 0.6 + gN * iw * fNear * 0.6 ) * wRock * kRel;
     hRock = mix( 0.5, accM.b, fFar );
+    hRock = mix( hRock, hRock * 0.6 + accB.b * 0.4, fB );
     hRock = mix( hRock, hRock * 0.4 + accA.b * 0.6, fMid );
     hRock = mix( hRock, hRock * 0.7 + accN.b * 0.3, fNear );
     aMacro = mix( 0.5, accM.a, fFar ); accMdbg = accA.a;
-    aRock = mix( aMacro, aMacro * 0.45 + accA.a * 0.55, fMid );
+    aRock = mix( aMacro, aMacro * 0.6 + accB.a * 0.4, fB );
+    aRock = mix( aRock, aRock * 0.5 + accA.a * 0.5, fMid );
     aRock = mix( aRock, aRock * 0.7 + accN.a * 0.3, fNear );
   }
   // ---- ground layers: projected along the planet's up (one axis loop for all of them)
@@ -262,9 +271,12 @@ void rvTerrain( inout vec3 albedo ) {
   //      desert-varnish streaks (layer 7). Both project on the two vertical planes of the local
   //      frame (u-facing → v,alt and v-facing → u,alt), blended by the geometric normal.
   float bandH = 16.0 + 14.0 * uRvS.x;
-  float band = alt / bandH + 2.2 * n2 + 1.4 * n4 + 0.8 * n1;
+  // gentle undulation only (≤ ~1 band over 512 m): stronger / finer warps folded the bands into
+  // contour loops on big faces ("topographic map" / agate look instead of sedimentary layers)
+  float band = alt / bandH + 0.9 * n2 + 0.35 * n1 + 0.1 * n4;
   float bi = floor( band ), bf = fract( band );
-  float bh = fract( sin( bi * 12.9898 + 4.1 ) * 43758.5453 );
+  // band tone, cross-faded over the top 30 % of each band (hard steps drew crisp jagged lines)
+  float bh = mix( fract( sin( bi * 12.9898 + 4.1 ) * 43758.5453 ), fract( sin( ( bi + 1.0 ) * 12.9898 + 4.1 ) * 43758.5453 ), smoothstep( 0.7, 1.0, bf ) );
   float streakD = 0.0, streakL = 0.0, strA = 0.5, streakM = 0.0;
   float sideW = wg.x + wg.z;
   // macro drainage stains on big walls (layer 7 at 2 km: 6-50 m wide, 300-1700 m long dark water /
@@ -404,7 +416,9 @@ void rvTerrain( inout vec3 albedo ) {
   hD = mix( hD, hSnow, bSnow * 0.7 );
   // one occlusion budget: albedo cavity + ambient AO never stack below a sane floor (the old
   // multiplicative chain drove shadowed rock toward black, especially under ambient-only light)
-  rvAO = clamp( ( 1.0 - 0.35 * cav ) * mix( mix( 0.62, 0.5, bRock ), 1.06, hD ), 0.45, 1.0 );
+  // (sky-ambient occlusion kept moderate: shadowed faces at low sun must still read their relief
+  //  in sky light — atmosphere-track request; the floor keeps cavity + detail AO from going black)
+  rvAO = clamp( ( 1.0 - 0.3 * cav ) * mix( mix( 0.74, 0.64, bRock ), 1.05, hD ), 0.55, 1.0 );
   float occ = mix( 1.0, 0.74 + 0.46 * hD, bRock ) * ( 1.0 - 0.16 * cav * ( 1.0 - bSnow ) );
   col *= max( occ, 0.66 );
   col *= 1.0 + ( 0.1 + 0.1 * bRock ) * clamp( -curv, 0.0, 1.0 );
@@ -532,7 +546,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v19' + (opts.lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-v20' + (opts.lite ? 'L' : '');
   return mat;
 }
 

@@ -31,7 +31,7 @@ const AMBK = 1.1;
 export const CLOUD_TYPES = {
   cumulus: { alt: 1.0, thick: 1500, dens: 0.065, scale: 5200, detail: 900, erode: 0.42, topMin: 0.45, soft: 0.08, topSoft: 0.55, anvil: 0.0, stretch: 0.0, coverMul: 1.0, coverAdd: 0.0, weatherFreq: 9, ambient: 1.0, lump: 0.10, grad: 0.62, baseMax: 2600, sunGain: 5.2, tupK: 0.07 },
   storm: { alt: 0.8, thick: 3800, dens: 0.07, scale: 6400, detail: 1000, erode: 0.4, topMin: 0.35, soft: 0.05, topSoft: 0.6, anvil: 0.9, stretch: 0.0, coverMul: 1.1, coverAdd: 0.1, weatherFreq: 6, ambient: 0.8, lump: 0.22, grad: 0.75, baseMax: 1500, sunGain: 4.2, tupK: 0.05 },
-  stratus: { alt: 0.75, thick: 800, dens: 0.035, scale: 7000, detail: 1100, erode: 0.34, topMin: 0.7, soft: 0.18, topSoft: 0.5, anvil: 0.0, stretch: 0.4, coverMul: 1.05, coverAdd: 0.18, weatherFreq: 4, ambient: 1.1, lump: 0.3, grad: 0.7, baseMax: 2400, sunGain: 4.2, tupK: 0.05 },
+  stratus: { alt: 0.75, thick: 800, dens: 0.035, scale: 7000, detail: 1100, erode: 0.4, topMin: 0.7, soft: 0.18, topSoft: 0.72, anvil: 0.0, stretch: 0.4, coverMul: 1.05, coverAdd: 0.18, weatherFreq: 4, ambient: 1.1, lump: 0.42, grad: 0.7, baseMax: 2400, sunGain: 4.2, tupK: 0.05 },
   wisp: { alt: 2.3, thick: 450, dens: 0.012, scale: 7000, detail: 1200, erode: 0.5, topMin: 0.8, soft: 0.3, topSoft: 0.3, anvil: 0.0, stretch: 0.85, coverMul: 0.9, coverAdd: 0.05, weatherFreq: 7, ambient: 1.2, lump: 0.1, grad: 1.0, baseMax: 1e9, sunGain: 3.4, tupK: 0.04 },
   haze: { alt: 1.6, thick: 1100, dens: 0.008, scale: 11000, detail: 2000, erode: 0.2, topMin: 0.8, soft: 0.4, topSoft: 0.4, anvil: 0.0, stretch: 0.6, coverMul: 0.8, coverAdd: 0.25, weatherFreq: 3, ambient: 1.3, lump: 0.05, grad: 1.0, baseMax: 1e9, sunGain: 3.0, tupK: 0.03 },
   fogsea: { alt: 0.0, thick: 520, dens: 0.035, scale: 6000, detail: 900, erode: 0.22, topMin: 0.75, soft: 0.02, topSoft: 0.5, anvil: 0.0, stretch: 0.3, coverMul: 1.2, coverAdd: 0.35, weatherFreq: 5, ambient: 1.1, lump: 0.3, grad: 0.8, baseMax: 1e9, sunGain: 4.6, tupK: 0.05 },
@@ -197,7 +197,8 @@ float cl_base(vec3 p, float h, vec4 wx, out float prof){
     float far = clamp(wx.a * 0.62 + (f1 - 0.5) * 0.55 + (f2 - 0.45) * 0.5 + 0.1, 0.0, 1.0);
     base = mix(base, far, cl_lod);
   }
-  base = cl_remap(base * prof, 1.0 - cover, 1.0, 0.0, 1.0) * cover;
+  // far away the coverage edge widens: thin, translucent fringes around cloud fields (no cut-out chips)
+  base = cl_remap(base * prof, 1.0 - cover - 0.16 * cl_lod, 1.0, 0.0, 1.0) * cover;
   // denser toward the top (wispy, translucent bases; bright, solid tops)
   base *= mix(uShape4.y, 1.0, smoothstep(0.0, 0.65, h));
   return max(base, 0.0);
@@ -346,6 +347,10 @@ void main(){
       a *= 0.5; b *= 0.35; c *= 0.5;
     }
     float powder = mix(1.0, 1.0 - exp(-2.0 * od - s * 90.0), powderAmt);
+    // soft-limit the forward (silver-lining) peak: the art gain lifts the sunlit sides; without the limit
+    // thin edges next to the sun reach ~100× sky radiance and bloom into a white veil over the frame
+    lum = lum / (1.0 + lum * 2.2);
+    lumMS = lumMS / (1.0 + lumMS * 2.2);
     // diffuse transmission through the column above (thick decks: mottled, darker where thicker)
     float Tup = 1.0 / (1.0 + uShape5.y * odUp);
     float day = smoothstep(-0.12, 0.3, muS) * (0.35 + 0.65 * clamp(muS, 0.0, 1.0)) / 0.805;
@@ -427,7 +432,7 @@ void main(){
   float ph = mix(cl_hg(nu, 0.7), cl_hg(nu, -0.2), 0.3);
   vec3 sunT = atmo_sunTransmittance(r, dot(n, uLightDir)) * uLightIll;
   vec3 sunTd = mix(sunT, vec3(dot(sunT, vec3(0.2126, 0.7152, 0.0722))), 0.45);
-  vec3 Lc = sunT * exp(-od) * ph * 3.2 + sunTd * (exp(-od * 0.25) * 0.12 + exp(-od * 0.08) * 0.16) + mix(uAmbBot, uAmbTop, 0.6) * uShape3.w;
+  vec3 Lc = sunT * exp(-od) * (ph / (1.0 + ph * 2.2)) * 3.2 + sunTd * (exp(-od * 0.25) * 0.12 + exp(-od * 0.08) * 0.16) + mix(uAmbBot, uAmbTop, 0.6) * uShape3.w;
   vec3 L = Lc * (1.0 - T);
   vec2 ta = atmo_raySphere(ro, dir, uAtmoRt);
   vec3 Tair = mix(vec3(1.0), pow(atmo_transSegment(ro + dir * max(ta.x, 0.0), p), vec3(uAPScale)), 0.85);

@@ -40,6 +40,7 @@ uniform float uOzoneCenter;     // ozone layer center altitude (m)
 uniform float uOzoneInvHalfW;   // 1 / ozone half width
 uniform float uSkyGain;         // art gain on in-scattered light (sky brighter than sunlit ground, as in games)
 uniform float uSkyViewGain;     // extra gain for the sky dome seen from inside the atmosphere (sky-view LUT)
+uniform float uMieGain;         // art gain on the Mie term (≤ uSkyGain: keeps the sun aureole from blowing out)
 uniform vec2  uTopFade;
 uniform float uSunsetK;         // sun-path reddening power for low suns (see atmo_sunTransmittance)         // density fades to 0 between x and y (altitude, m)
 uniform vec3  uGroundAlbedo;
@@ -190,7 +191,7 @@ AtmoInscatter atmo_march(vec3 ro, vec3 rd, float t0, float t1, vec3 sunDir, floa
 }
 
 vec3 atmo_combine(AtmoInscatter a, float cosTheta){
-  return (a.Lr * atmo_phaseRayleigh(cosTheta) + a.Lm * atmo_phaseMie(cosTheta, uMieG) + a.Lms) * uSkyGain;
+  return (a.Lr * atmo_phaseRayleigh(cosTheta) + a.Lms) * uSkyGain + a.Lm * atmo_phaseMie(cosTheta, uMieG) * uMieGain;
 }
 
 // Segment of a ray (planet-centered origin) inside the atmosphere, clipped to [0, tMax].
@@ -242,7 +243,7 @@ vec3 atmo_skyLUT(vec3 dir, vec3 up, float viewR, vec3 sunDir, float nu){
   vec3 Lr = texture(uSkyR, uv).rgb;
   vec3 Lm = texture(uSkyM, uv).rgb;
   vec3 Lms = texture(uSkyMS, uv).rgb;
-  return (Lr * atmo_phaseRayleigh(nu) + Lm * atmo_phaseMie(nu, uMieG) + Lms) * uSkyGain * uSkyViewGain;
+  return ((Lr * atmo_phaseRayleigh(nu) + Lms) * uSkyGain + Lm * atmo_phaseMie(nu, uMieG) * uMieGain) * uSkyViewGain;
 }
 #endif
 `);

@@ -117,7 +117,7 @@ class Atmosphere {
     // night ambient (starlight + airglow), art-directed to keep nights readable
     const night = 1 - THREE.MathUtils.smoothstep(muS, -0.3, -0.02);
     const tint = this.model.tint;
-    this.nightAmbient.setRGB(0.020 + tint.r * 0.006, 0.026 + tint.g * 0.008, 0.052 + tint.b * 0.012).multiplyScalar(night * E * 0.55);
+    this.nightAmbient.setRGB(0.020 + tint.r * 0.006, 0.026 + tint.g * 0.008, 0.052 + tint.b * 0.012).multiplyScalar(night * E * 0.55 * (1 + 0.4 * (this.model.moody || 0)));   // moody (neon-noir) nights: glow-lit silhouettes read further
     const present = this.model.present;
     // night sky: scattered starlight + airglow continuum, art-lifted so a moonless sky reads deep blue
     // (not a void) after eye adaptation; airglow emission layer = faint green band along the horizon

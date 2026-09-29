@@ -64,7 +64,7 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
   in 4096 m and anchored with a float64 origin offset → no precision loss or pattern jumps on
   origin shifts.
 * `detailTex.js` — procedural tileable layers baked in the worker at startup (~1.6 s, 8×256² RGBA8):
-  rock (planar facets + joint sets + ridged grain + lichen), ground (soil + grass clumps), sand
+  rock (angular plane facets + stepped ledges + sparse fractures + weathering + lichen), ground (soil + grass clumps), sand
   ripples, snow drifts/sastrugi, pebbles/scree, eroded macro relief (+ 4 noise channels), strata,
   drainage/varnish streaks.
 
@@ -102,31 +102,69 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
   triangles at 1080p high (was ≈ 1.8 M); shadow casters limited to ≤ 0.45·shadowDist and small chunks.
 * Debug: `tdebug=3` unlit albedo (as emissive), `tdebug=4` NaN finder.
 
-## Capture URLs (verified)
-Use `view=fly` for terrain-only framing (no player body). Golden-hour `tod` (0.28–0.33 / 0.62–0.70)
-reads relief best. Vistas come from a horizon-profile search (script idea: sample land points, march
-16 azimuths with `heightLod`, score elevation angle / distance / water).
-Round-2 finals (1280×720, all verified):
-* **W1 fjord spires, aerial (hero)** — granite towers over a fjord, green ledges, no cloud deck
-  (replaces the clouded 2.5 km massif view):
-  `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=1800&lat=-8.83&lon=101.969&yaw=180&pitch=-12&tod=0.3`
-* **W1 fjord spires, low with reflections**:
-  `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=400&lat=-8.83&lon=101.969&yaw=180&pitch=0&tod=0.3`
-* **W1 lake cliffs (the streak test)**:
-  `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=30&lat=3.96&lon=-29.58&yaw=315&pitch=-3&tod=0.3`
-  (night: same with `tod=0.02`)
-* **W2 archipelago**: `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=60&lat=18.18&lon=-50.80&yaw=22&pitch=-8&tod=0.3`
-* **W3 on foot (third person, ground level — Moebius mesas across a lake)**:
-  `/?mode=system&galaxy=0&star=9&planet=2&view=surface&lat=36.264&lon=19.456&yaw=337.5&pitch=6&tod=0.68`, steps `[{"advance":1}]`
-  (first person: `view=fp&pitch=4`)
-* W3 mesa with strata from 60 m: `/?mode=system&galaxy=0&star=9&planet=2&view=fly&alt=60&lat=38.65&lon=51.31&yaw=67.5&pitch=-4&tod=0.68`
+### Round 3 changes (critic round 1 follow-up: fur / brush-stroke rock, smooth clay walls, combs)
+* **Root cause of the "fur / brush-stroke / wood-grain" look found in the GEOMETRY, not the shader**:
+  every fine-scale landform (fractal detail 720 m → 0.2 m, outcrops, kopjes, spires, karst towers,
+  sea stacks, atolls, sinkholes, hills, dune modulation) was evaluated in the *continent-warped*
+  coordinates. That warp's Jacobian is strongly anisotropic (measured over the sphere: median 2.3:1,
+  10 % of the planet > 6:1, 1 % > 17:1), so all small-scale relief was stretched into parallel strokes
+  (and cellular towers into blades). They now use the true unit direction (isotropic); only
+  continent-scale masks, plateaus, mesas, canyons, rivers and lakes keep the warped frame.
+* **Mountain ridged multifractal**: its own domain warp was multiplied into every octave (q·LAC per
+  octave), so 100–500 m ridges inherited the same ~10:1 stretch → thin parallel stripes that aliased
+  into combs / chevrons / needle rows on steep faces. The warp displacement now grows only with the
+  first two octaves (finer octaves see a near-constant offset).
+* **Big walls get structure**: steep-face detection (full ridge-noise slope + the slope of the range
+  mask, finite-differenced only inside its ramp — kilometre walls where ranges rise out of the coast
+  come from the mask, which the noise gradient never saw) drives (1) a wall-scaled buttress / chute
+  relief (softened ridged noise, ≈9 % of each wavelength, first wavelength ≈ 0.9 × wall height) and
+  (2) stronger big crag octaves. Mesa, plateau and canyon cliffs feed the same term. Canyon walls inside
+  mountain ranges use a smooth V instead of 5 terrace steps (staircase lines on 60° slopes).
+* **Rock detail texture (layer 0) rewritten**: angular plane facets with soft seams + stepped ledges
+  (continuous terraced fbm) + a few long fractures + isotropic weathering. The old per-block joint-set
+  hatching (aliased into fur at mid range) and the voronoi "dried-mud" outlines are gone.
+* **Strata colour bands**: warp limited to ~1 band per 512 m (the fine 64 m warp folded the bands into
+  contour loops — the "agate / topographic map" look on close mesa walls).
+* **Shader**: a 32 m rock-block scale between the macro crags and the 8 m detail (walls 50–500 m away
+  no longer read as plaster); macro drainage stains on big walls (layer 7 at 2 km → 6–50 m wide,
+  300–1700 m long dark streaks visible from kilometres); warm iron-oxide staining patches on faces;
+  palette rock less desaturated; sky-ambient AO floor raised (0.45 → 0.55, atmosphere request).
+* Cost: `height()` ≈ +10–25 % (≈ 6–10 µs full detail); bake unchanged (~1.5 s in the worker).
+* Tools (scratch, not in repo): an offline hillshade renderer + anisotropy statistics + a vista finder
+  (ray-marched heightLod views scored for sky/water/layering/relief) were used to find the causes and
+  the new vistas.
+
+## Capture URLs (verified this round, 1280×720)
+Use `view=fly` for terrain-only framing (no player body). Side light reads relief best: pick `tod` so the
+sun is ~60–120° off the view direction (sun ≈ east at tod 0.3, ≈ west at 0.68 on these worlds).
+Aerial heroes add `tk=1.7` (finer capture LOD; ~+50 % chunks — do NOT use it on foot).
+* **W1 fjord spires, aerial (hero)**:
+  `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=1800&lat=-8.83&lon=101.969&yaw=180&pitch=-12&tod=0.3&tk=1.7`
+* **W1 buttressed mountain face over a fjord (new wall relief)**:
+  `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=1500&lat=7.691&lon=-131.848&yaw=0&pitch=-10&tod=0.3&tk=1.7`
+* **W3 Moebius mesa country + lake, aerial**:
+  `/?mode=system&galaxy=0&star=9&planet=2&view=fly&alt=1500&lat=35.662&lon=112.465&yaw=180&pitch=-10&tod=0.3&tk=1.7`
+* **W3 on foot under a strata wall (ground level, third person)**:
+  `/?mode=system&galaxy=0&star=9&planet=2&view=surface&lat=-43.2326&lon=-28.5306&yaw=90&pitch=8&tod=0.62`, steps `[{"advance":1}]`
+* **W1 on foot, meadow under a rock wall with boulders**:
+  `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=-13.8425&lon=155.4463&yaw=210&pitch=8&tod=0.3`, steps `[{"advance":1}]`
+* W3 badlands / mesa strata from 60 m (the old "fur" test):
+  `/?mode=system&galaxy=0&star=9&planet=2&view=fly&alt=60&lat=38.65&lon=51.31&yaw=67.5&pitch=-4&tod=0.68`
+* W1 lake cliffs (streak test): `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=30&lat=3.96&lon=-29.58&yaw=315&pitch=-3&tod=0.3`
+  (front-lit at this tod; night: `tod=0.02`)
 * W12 arctic fjord cliffs (snow, moody): `/?mode=system&galaxy=0&star=9&planet=5&view=fly&alt=300&lat=-34.389&lon=-165.406&yaw=225&pitch=0&tod=0.3`
-* W1 underwater shelf (seam fix): `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=4&lat=15.8013&lon=34.3048&yaw=330&pitch=-10&tod=0.4&uw=3&disable=vehicles`
-* More candidates: W2 on foot `view=surface&lat=-38.182&lon=82.623&yaw=135`, W8 mesas `lat=5.46&lon=-156.48&yaw=135`,
-  W5 `lat=43.85&lon=37.76&yaw=337.5`.
+* W2 archipelago: `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=60&lat=18.18&lon=-50.80&yaw=22&pitch=-8&tod=0.3`
+* W1 fjord spires, low with reflections: `…star=6&planet=1&view=fly&alt=400&lat=-8.83&lon=101.969&yaw=180&pitch=0&tod=0.3`
+* W1 underwater shelf: `…star=6&planet=1&view=fly&alt=4&lat=15.8013&lon=34.3048&yaw=330&pitch=-10&tod=0.4&uw=3&disable=vehicles`
+* More vista-finder candidates (not all verified): W1 `alt=350&lat=-22.778&lon=172.483&yaw=315&pitch=-5&tod=0.7`
+  (lake between ridges, backlit); W3 `alt=350&lat=33.456&lon=-85.957&yaw=315&pitch=-5&tod=0.68` (savanna,
+  lake, mesa range); W8 `alt=1500&lat=58.49&lon=132.906&yaw=0&pitch=-10`; W12 `alt=350&lat=0.209&lon=-112.919&yaw=270`.
 
 Debug URL params: `tdebug=1` (blend weights: red rock, green ground, blue sand, white snow),
-`tdebug=2` (generator hints: rock/cliff, sand, wetness), `tdebug=3` (unlit albedo), `tdebug=4` (NaN finder), `tk=<K>` (LOD range override),
+`tdebug=2` (generator hints: rock/cliff, sand, wetness), `tdebug=3` (unlit albedo), `tdebug=4` (NaN finder),
+`tdebug=5` albedo without wall streaks, `6` lit without streaks, `7` + no detail normals, `8` rock detail albedo,
+`9` triplanar weights, `10` (rock mid albedo, strata, rock height), `11` |face tangent|, `12` macro noise;
+`tgen=1` disables the new steep-face buttresses (A/B), `tk=<K>` (LOD range override),
 `tlite=0|1` (force PBR / Lambert terrain lighting).
 
 `__rv.state().terrain` → `{chunks, casters, desired, inflight, uploads, maxLevel, K, workers, tex,
@@ -150,29 +188,35 @@ inView, levels, ms, msMax}`.
 * The white "iceberg" shapes on the W2 horizon are NOT terrain: they are the water track's shore foam
   drawn where the ocean surface occludes islands beyond the horizon (A/B: `tdebug=1` leaves them white,
   `disable=terrain` removes the islands) — see Requests (water).
-* Airless bodies (M1 `star=0&planet=2.0`) render the terrain pure black with the atmosphere subsystem
-  enabled; `only=terrain,player` shows it lit/albedo fine — see Requests (atmosphere).
 * Cube-face edges (12 great-circle arcs per planet) are a discontinuity of the detail-texture pattern
   (not of colour or geometry) since the local frame is per face.
-* Shot mode (`shot=1`) uses K = 1.05, below the CDLOD nesting limit: neighbouring chunks can differ by
-  two levels; cracks are filled by skirts that are now shaded invisibly, so it does not show.
+* Shot mode (`shot=1`) uses K = 1.05 (below the CDLOD nesting limit: neighbouring chunks can differ by
+  two levels; skirts fill the cracks invisibly). Far terrain then reads slightly faceted from the air —
+  aerial hero URLs add `tk=1.7`. Ground-level views should not (≈3.8 M triangles near big walls).
+* Near-vertical heightfield walls (fjord spires, W12 cliffs) still shade with fine vertical streaks at
+  1–5 km (one vertex column per streak); no overhangs / arches (heightfield).
+* A few thin fins can appear on the crest of very steep ranges where the buttress relief meets the
+  ridge (W1 `lat=7.691&lon=-131.848`, right of frame); `tgen=1` A/B disables the term.
+* Landforms changed at the < 2 km scale this round (isotropic detail, mountain warp): other tracks'
+  hard-coded lat/lon spawn notes may land a few metres higher/lower or on a different slope; macro
+  layout (continents, coasts, ranges, mesas, rivers, lakes) is unchanged.
 * Software GL frames are still ~8–20 s at 720p under load; captures take 2–6 min on the shared box.
-* Big granite walls can still read soft at 3–5 km (aerial perspective + heightfield); no overhangs/arches.
 * No occlusion culling yet (terrain behind ridges is drawn; early-Z rejects its pixels).
 * Flatten stamps reach flora/water workers only through `surfaceConfig(body)` at their init (see
   Requests: flora should forward `surface.onFlattenChange`).
 
 ## Requests
-* **water**: (1) shore foam appears on the ocean surface wherever it occludes terrain beyond the horizon
+* **water** (still visible on W2 this round): (1) shore foam appears on the ocean surface wherever it occludes terrain beyond the horizon
   (W2 `lat=18.18&lon=-50.80&yaw=22`: white flat "icebergs" under every distant island). In
   `shaders.js` `depthBelow = max(uRs - length(bed - uPC), 0)` is 0 when the reconstructed bed point is
   ABOVE sea level (an island's slope behind the horizon), so `shoreD = 0` → full edge foam. Treat
   `length(bed - uPC) > uRs` as deep water (e.g. `depthBelow = rThick`) and/or fade shore foam with
   `rThick`. (2) The seabed seam you reported is fixed on the terrain side (skirt shading).
-* **atmosphere**: on airless bodies (M1 `star=0&planet=2.0&view=fp&lat=-25.555&lon=-70.154&tod=0.5`, and
-  `view=orbit`) all terrain pixels come out (0,0,0) while `only=terrain,player` renders them; probably
-  the aerial-perspective/transmittance path with density 0 (NaN or zero transmittance). Also consider a
-  small bounce/earthshine ambient on airless moons so shadows are not pure black.
+* **atmosphere**: (1) the airless-body black terrain is fixed (lead: NaN in the env cubemap) — consider a
+  small bounce/earthshine ambient on airless moons so shadows are not pure black. (2) Cloud billboards /
+  low cumulus intersect the W1 fjord walls and read as flat cut-outs in front of them (W1 hero URL, left
+  and right of frame); a softer depth fade against terrain would help. (3) Done on the terrain side: the
+  sky-ambient AO floor is raised (0.45 → 0.55) so shadowed slopes keep their relief under sky light.
 * **flora**: forward flatten stamps to your workers — `world.surface.onFlattenChange((f, all) =>
   worker.postMessage({ type: 'flats', flats: all }))` and call `gen.setFlattens(flats)` in the worker
   (terrain does the same), so trees never float/sink on civ plazas graded after your workers started.

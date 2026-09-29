@@ -124,23 +124,22 @@ export function bakeDetail(size = DETAIL_SIZE) {
       // stepped ledges: terraced warped fbm → flat-ish planes with sharp risers (chipped / layered)
       const base = pfbm(h3, wu + 0.2, wv + 0.7, 3, 4, 0.5) * 3.2 + big * 1.5;
       const bi = Math.floor(base), bf = base - bi;
-      const step = bi + sst(0.55, 0.95, bf) + 0.25 * bf;
-      // long winding fractures: thin zero-crossings of low-frequency noise, masked into segments
-      const fn = pnoise(h4, wu, wv, 5) + 0.35 * pnoise(h4, wu + 0.3, wv + 0.8, 11);
-      const crack = (1 - sst(0.0, 0.035, Math.abs(fn))) * sst(0.0, 0.35, pnoise(h2, u + 0.9, v + 0.2, 3));
-      const fn2 = pnoise(h1, wu + 0.6, wv + 0.1, 9);
-      const crack2 = (1 - sst(0.0, 0.03, Math.abs(fn2))) * sst(0.1, 0.4, pnoise(h3, u + 0.2, v + 0.5, 4)) * 0.6;
+      const step = bi + 0.75 * sst(0.55, 0.95, bf) + 0.25 * bf;   // continuous across steps
+      // a few long, gently curving fractures (zero-crossings of low-frequency noise, masked into
+      // segments; no high-frequency term → no worm-like loops)
+      const fn = pnoise(h4, u * 1 + 0.2 * pnoise(h1, u, v, 2), v, 4) + 0.15 * pnoise(h4, wu + 0.3, wv + 0.8, 8);
+      const crack = (1 - sst(0.0, 0.022, Math.abs(fn))) * sst(0.05, 0.4, pnoise(h2, u + 0.9, v + 0.2, 3));
       const weath = pfbm(h2, u + 0.17, v + 0.61, 8, 4, 0.5);
       let rid = 0, amp = 0.5, pp = 32;
       for (let o = 0; o < 3; o++) { rid += amp * (1 - Math.abs(pnoise(h1, u + o * 0.17, v + o * 0.31, pp))); amp *= 0.5; pp *= 2; }
       const pits = sst(0.52, 0.8, pfbm(h1, u + 0.21, v + 0.63, 20, 3)) * 0.06;
-      const hgt = 0.16 * step + 0.35 * big + 0.1 * weath + 0.035 * rid - 0.16 * crack - 0.04 * crack2 - pits;
+      const hgt = 0.16 * step + 0.45 * big + 0.09 * weath + 0.03 * rid - 0.08 * crack - pits;
       H[y * S + x] = hgt;
       const lich = sst(0.35, 0.6, pfbm(h3, u, v, 6, 4)) * sst(0.45, 0.75, pnoise(h1, u, v, 28) * 0.5 + 0.5);
       const speck = pnoise(h4, u, v, 96) * 0.5 + pnoise(h4, u + 0.3, v + 0.8, 160) * 0.5;
       const riser = sst(0.55, 0.75, bf) * (1 - sst(0.85, 0.98, bf));
       A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.18 * (bid - 0.5) + 0.1 * ((bi * 0.618) % 1 - 0.5) + 0.12 * weath + 0.05 * speck
-        - 0.08 * riser - 0.35 * crack - 0.08 * crack2 - 0.8 * pits + 0.1 * lich));
+        - 0.08 * riser - 0.18 * crack - 0.8 * pits + 0.1 * lich));
     }
     norm(); put(0, 0.10);
   }

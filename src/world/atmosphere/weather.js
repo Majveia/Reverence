@@ -122,7 +122,7 @@ export class Weather {
     this.forceBolt = Params.bool?.('lightning') || false;
     this.seed = ((body.seed ?? 1) % 997) / 997;
     this.state = atmo.weather;
-    Object.assign(this.state, { rain: 0, snow: 0, dust: 0, fog: this.base.fog, storm: 0, wind: this.base.wind, coverBoost: 0, sunDim: 1, flash: 0 });
+    Object.assign(this.state, { rain: 0, snow: 0, dust: 0, fog: this.base.fog, storm: 0, wind: this.base.wind, coverBoost: 0, sunDim: 1, flash: 0, boltDist: 0, boltTime: -1 });
     this.wet = 0; this.snowCover = cold ? 0.5 : 0;
 
     // ---- particles
@@ -312,6 +312,11 @@ export class Weather {
     const top = this.atmo.clouds?.Rc0 ?? R + 2000;
     const gR = R + Math.max(gh, 0);
     this._boltLocal.copy(ground).multiplyScalar((gR + top) * 0.5);
+    // audio hook: distance to the strike (thunder delay ≈ boltDist / 340 m/s) + event
+    const st = this.state;
+    st.boltDist = _v6.copy(ground).multiplyScalar(gR).distanceTo(camLocal);
+    st.boltTime = t;
+    try { w.events?.emit?.('weather:lightning', { dist: st.boltDist, pos: this._boltLocal.clone(), force: !!force }); } catch (_) { /* ignore */ }
     // fractal channel (midpoint displacement: big meanders + fine jaggedness), scene-space ribbon
     const o = w.origin;
     const rs = { s: ((Math.floor(t * 1000) ^ Math.floor(sd * 1e6)) >>> 0) || 1 };
