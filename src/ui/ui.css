@@ -110,6 +110,7 @@ body.rv-shot #rv-ui * { transition: none !important; animation: none !important;
   position: absolute; right: calc(var(--ui-gut) + var(--safe-right)); top: calc(58px + var(--safe-top));
   display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none;
 }
+.rv-toasts.left { right: auto; left: calc(var(--ui-gut) + var(--safe-left)); align-items: flex-start; }
 .rv-toast {
   position: relative; display: flex; align-items: center; gap: 11px; min-width: 190px; max-width: 300px;
   padding: 9px 16px 9px 12px; border-radius: 12px;
@@ -187,6 +188,16 @@ body.rv-shot #rv-ui * { transition: none !important; animation: none !important;
 .rv-tv.big .rv-tv-v small { font-size: 10px; margin-left: 5px; }
 .rv-tv-bar { width: 100%; min-width: 64px; height: 2px; border-radius: 1px; background: rgba(255,255,255,.12); overflow: hidden; margin-top: 4px; }
 .rv-tv-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, rgba(174,224,255,.5), #fff); }
+/* status pill (ship drive PULSE / LANDED / REENTRY) */
+.rv-tv.badge { align-self: flex-end; margin-bottom: 3px; }
+.rv-tv.badge .rv-tv-v { font-size: 8.5px; font-weight: 650; letter-spacing: .3em; text-indent: .3em; padding: 4px 8px 4px 8px; border-radius: 999px;
+  color: var(--ui-accent); border: 1px solid rgba(174, 224, 255, .45); background: rgba(174, 224, 255, .08); text-shadow: 0 0 8px rgba(174, 224, 255, .55); }
+.rv-tv.badge[data-k="status"] .rv-tv-v { color: var(--ui-gold); border-color: rgba(255, 220, 160, .45); background: rgba(255, 220, 160, .07); text-shadow: none; }
+/* target readout (ship: nearest body + distance) */
+.rv-tv.tgt .rv-tv-k { display: inline-flex; align-items: center; gap: 5px; color: var(--ui-accent); opacity: .8; }
+.rv-tv-ic { width: 10px; height: 10px; display: inline-block; font-style: normal; }
+.rv-tv.tgt .rv-tv-v { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+.rv-tv.tgt .rv-tv-v small { text-transform: none; letter-spacing: .04em; }
 
 .rv-touchmode .rv-tele { right: calc(26px + var(--safe-right)); bottom: calc(222px + var(--safe-bottom)); }
 .rv-touchmode .rv-hint { bottom: calc(18px + var(--safe-bottom)); }
@@ -201,17 +212,42 @@ body.rv-shot #rv-ui * { transition: none !important; animation: none !important;
 .rv-mk.ext .rv-mk-name { margin-top: 0; font-size: 10px; }
 .rv-mk.ext .rv-mk-sub { margin-top: 3px; font-size: 9px; letter-spacing: .14em; color: var(--ui-dim); text-transform: uppercase; }
 .rv-mk.body .rv-mk-name { margin-top: 6px; font-weight: 450; letter-spacing: .18em; }
+/* ship target: bracket reticle around the body dot, label always on */
+.rv-mk-tgt { position: absolute; left: 50%; top: 3.5px; width: 26px; height: 26px; margin: -13px 0 0 -13px; color: var(--ui-accent); display: none; }
+.rv-mk.body.tgt .rv-mk-tgt { display: block; }
+.rv-mk.body.tgt .rv-mk-name { color: var(--ui-accent); }
+.rv-mk.body.tgt .rv-mk-dot { border-color: var(--ui-accent); }
+/* civ capitals: larger gold marker + name */
+.rv-mk.poi.cap .rv-mk-dia { width: 12px; height: 12px; border-width: 2px; }
+.rv-mk.poi.cap .rv-mk-name { font-size: 11px; letter-spacing: .28em; text-indent: .28em; font-weight: 600; }
+.rv-mk.poi.cap .rv-mk-name::after { content: 'capital'; display: block; margin-top: 2px; font-size: 7.5px; letter-spacing: .34em; font-weight: 500; opacity: .7; text-align: center; }
+/* cosmic (external, scene draws its own ring): small centred label only */
+.rv-mk.ext.k-cosmic .rv-mk-name { font-size: 9.5px; font-weight: 500; letter-spacing: .26em; text-indent: .26em; }
+.rv-mk.ext.k-cosmic .rv-mk-sub { font-size: 8.5px; letter-spacing: .2em; color: var(--ui-faint); }
 
 /* ------------------------------------------------------------------ touch layer */
 .rv-stick { position: absolute; left: 0; top: 0; width: 112px; height: 112px; margin: -56px 0 0 -56px; will-change: transform, opacity; }
-.rv-stick-ring { position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, 0.34); background: radial-gradient(circle, rgba(255,255,255,0.02) 40%, rgba(255,255,255,0.07)); box-shadow: 0 0 20px rgba(0,0,0,.18); }
+/* Ring reads over bright grass and sky alike: dark tinted glass disc + white rim + a dark outer hairline. */
+.rv-stick-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.58);
+  background: radial-gradient(circle, rgba(6, 8, 14, 0.16) 30%, rgba(6, 8, 14, 0.34) 72%, rgba(6, 8, 14, 0.40));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28), inset 0 0 0 1px rgba(0, 0, 0, 0.22), inset 0 0 18px rgba(0, 0, 0, 0.25), 0 4px 18px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(5px) saturate(1.15); -webkit-backdrop-filter: blur(5px) saturate(1.15);
+}
+.rv-stick-ring::before { /* inner guide ring */
+  content: ''; position: absolute; inset: 27%; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.16);
+}
+.rv-stick-ticks { position: absolute; inset: 0; color: rgba(255, 255, 255, 0.7); }
+.rv-stick-ticks svg { width: 100%; height: 100%; }
 .rv-stick-knob {
-  position: absolute; left: 50%; top: 50%; width: 42px; height: 42px; margin: -21px 0 0 -21px; border-radius: 50%;
-  background: radial-gradient(circle at 40% 35%, rgba(255,255,255,.75), rgba(255,255,255,.42)); box-shadow: 0 2px 10px rgba(0,0,0,.3);
+  position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%;
+  background: radial-gradient(circle at 42% 36%, rgba(255,255,255,.96), rgba(236,240,250,.78) 60%, rgba(210,218,232,.72));
+  box-shadow: 0 0 0 1px rgba(0,0,0,.18), 0 3px 12px rgba(0,0,0,.38), inset 0 -2px 4px rgba(0,0,0,.12);
   will-change: transform;
 }
-.rv-stick.sprint .rv-stick-ring { border-color: rgba(174, 224, 255, 0.7); }
-.rv-stick-lbl { position: absolute; left: 0; right: 0; top: 118px; text-align: center; font-size: 9px; letter-spacing: .26em; text-transform: uppercase; color: var(--ui-faint); }
+.rv-stick.sprint .rv-stick-ring { border-color: rgba(174, 224, 255, 0.9); box-shadow: 0 0 0 1px rgba(0,0,0,.28), 0 0 18px rgba(174, 224, 255, .35); }
+.rv-stick-lbl { position: absolute; left: 0; right: 0; top: 120px; text-align: center; font-size: 8.5px; font-weight: 600; letter-spacing: .3em; text-indent: .3em; text-transform: uppercase; color: var(--ui-dim); }
 .rv-lookdot { position: absolute; left: 0; top: 0; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; border: 1px solid rgba(255,255,255,.28); will-change: transform, opacity; }
 .rv-tbtns { position: absolute; right: 0; bottom: 0; width: 1px; height: 1px; }
 .rv-tb {
@@ -219,17 +255,19 @@ body.rv-shot #rv-ui * { transition: none !important; animation: none !important;
   pointer-events: auto; touch-action: none; -webkit-tap-highlight-color: transparent; will-change: transform, opacity;
 }
 .rv-tb > span {
-  width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: rgba(255,255,255,.92);
-  background: rgba(12, 14, 20, 0.26); border: 1.5px solid rgba(255, 255, 255, 0.34);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); transition: transform .08s, background .12s;
+  width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: #fff;
+  background: rgba(8, 10, 16, 0.34); border: 1.5px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25), 0 3px 12px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(6px) saturate(1.15); -webkit-backdrop-filter: blur(6px) saturate(1.15); transition: transform .08s, background .12s;
 }
+.rv-tb > span > svg { filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.45)); }
 .rv-tb > span > svg { width: 19px; height: 19px; }
 .rv-tb.sm > span { width: 36px; height: 36px; } .rv-tb.sm > span > svg { width: 15px; height: 15px; }
 .rv-tb.lg { width: 72px; height: 72px; margin: -36px 0 0 -36px; }
-.rv-tb.lg > span { width: 58px; height: 58px; border-color: rgba(255,255,255,.5); } .rv-tb.lg > span > svg { width: 23px; height: 23px; }
+.rv-tb.lg > span { width: 58px; height: 58px; border-color: rgba(255,255,255,.66); background: rgba(8, 10, 16, 0.4); } .rv-tb.lg > span > svg { width: 23px; height: 23px; }
 .rv-tb.on > span { transform: scale(.88); background: rgba(255, 255, 255, 0.3); }
 .rv-tb.accent > span { border-color: rgba(255, 220, 160, 0.8); color: var(--ui-gold); }
-.rv-tb-lbl { position: absolute; top: 100%; margin-top: -6px; font-size: 8px; letter-spacing: .22em; text-transform: uppercase; color: var(--ui-faint); white-space: nowrap; }
+.rv-tb-lbl { position: absolute; top: 100%; margin-top: -6px; font-size: 8px; font-weight: 600; letter-spacing: .22em; text-transform: uppercase; color: var(--ui-dim); white-space: nowrap; }
 .rv-pinch { position: absolute; right: calc(28px + var(--safe-right)); bottom: calc(30px + var(--safe-bottom)); display: flex; align-items: center; gap: 8px; font-size: 9px; letter-spacing: .24em; text-transform: uppercase; color: var(--ui-dim); }
 .rv-pinch > span { width: 22px; height: 22px; }
 
@@ -336,6 +374,7 @@ body.rv-shot #rv-ui * { transition: none !important; animation: none !important;
 .rv-warp-label { position: fixed; left: 0; right: 0; bottom: calc(14vh + env(safe-area-inset-bottom, 0px)); z-index: 61; pointer-events: none; text-align: center; font-family: 'RV Inter', var(--rv-font); color: #fff; opacity: 0; display: none; }
 .rv-warp-label .k { font-size: 9px; font-weight: 600; letter-spacing: .5em; text-indent: .5em; color: rgba(228,234,255,.5); }
 .rv-warp-label .n { margin-top: 10px; font-size: 17px; font-weight: 250; letter-spacing: .42em; text-indent: .42em; text-transform: uppercase; }
+.rv-warp-label .s { margin-top: 9px; font-size: 9.5px; font-weight: 450; letter-spacing: .24em; text-indent: .24em; text-transform: uppercase; color: rgba(228,234,255,.5); min-height: 1em; }
 .rv-warp-label .bar { width: 120px; height: 1px; margin: 16px auto 0; background: rgba(255,255,255,.12); overflow: hidden; position: relative; }
 .rv-warp-label .bar i { position: absolute; top: 0; bottom: 0; width: 40%; left: var(--x, 0); background: linear-gradient(90deg, transparent, rgba(255,255,255,.85), transparent); }
 body.rv-shot .rv-warp:not(.rv-warp-force), body.rv-shot .rv-warp-label:not(.rv-warp-force) { display: none !important; }

@@ -15,20 +15,20 @@ const SLOTS = {
 
 const LAYOUTS = {
   character: [
-    { id: 'jump', slot: 'A', action: 'jump', icon: 'jump', size: 'lg' },
+    { id: 'jump', slot: 'A', action: 'jump', icon: 'jump', size: 'lg', label: ' ' },
     { id: 'slide', slot: 'B', action: 'descend', icon: 'slide', label: 'slide' },
     { id: 'vehicle', slot: 'C', action: 'vehicle', icon: 'vehicle', ctx: 'vehicle', label: 'ride' },
     { id: 'interact', slot: 'D', action: 'interact', icon: 'interact', ctx: 'interact', accent: true },
     { id: 'view', slot: 'E', action: 'view', icon: 'view', size: 'sm' },
   ],
   vehicle: [
-    { id: 'boost', slot: 'A', action: 'boost', icon: 'boost', size: 'lg' },
-    { id: 'jump', slot: 'B', action: 'jump', icon: 'jump' },
+    { id: 'boost', slot: 'A', action: 'boost', icon: 'boost', size: 'lg', label: 'boost' },
+    { id: 'jump', slot: 'B', action: 'jump', icon: 'jump', label: 'hop' },
     { id: 'exit', slot: 'C', action: 'vehicle', icon: 'exit', size: 'sm', label: 'exit' },
     { id: 'view', slot: 'E', action: 'view', icon: 'view', size: 'sm' },
   ],
   flight: [
-    { id: 'boost', slot: 'A', action: 'boost', icon: 'boost', size: 'lg' },
+    { id: 'boost', slot: 'A', action: 'boost', icon: 'boost', size: 'lg', label: 'boost' },
     { id: 'up', slot: 'B', action: 'ascend', icon: 'ascend' },
     { id: 'down', slot: 'D', action: 'descend', icon: 'descend' },
     { id: 'exit', slot: 'C', action: 'vehicle', icon: 'exit', size: 'sm', label: 'exit' },
@@ -36,6 +36,23 @@ const LAYOUTS = {
   ],
   orbit: [],
 };
+
+// four tiny direction chevrons inside the ring (100×100 viewBox)
+const TICKS = `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M45 13l5-5 5 5"/><path d="M45 87l5 5 5-5"/><path d="M13 45l-5 5 5 5"/><path d="M87 45l5 5-5 5"/></svg>`;
+
+/**
+ * Resting anchor of the move stick: a fixed inset from the true bottom-left safe corner (never width-relative,
+ * so it lands in the same thumb spot on every phone and stays out of the mid-ground). Vehicle/flight schemes
+ * sit a little higher so the ring clears the vehicle silhouette and the bottom edge swipe zone.
+ */
+export function stickAnchor(W, H, safeL, safeB, scheme) {
+  const portrait = H > W;
+  const mx = portrait ? 86 : 104;
+  const my = portrait ? 132 : (H < 460 ? 104 : 124);
+  const lift = scheme === 'vehicle' || scheme === 'flight' ? (portrait ? 18 : 10) : 0;
+  return [mx + safeL, H - my - lift - safeB];
+}
 
 export class Touch {
   constructor(ui, parent) {
@@ -48,7 +65,7 @@ export class Touch {
     this.el.className = 'rv-touch';
     this.el.style.display = 'none';
     this.el.innerHTML = `
-      <div class="rv-stick rv-hide"><div class="rv-stick-ring"></div><div class="rv-stick-knob"></div><div class="rv-stick-lbl">move</div></div>
+      <div class="rv-stick rv-hide"><div class="rv-stick-ring"></div><div class="rv-stick-ticks">${TICKS}</div><div class="rv-stick-knob"></div><div class="rv-stick-lbl">move</div></div>
       <div class="rv-lookdot rv-hide"></div>
       <div class="rv-tbtns"></div>
       <div class="rv-pinch rv-hide"><span>${icon('pinch')}</span>pinch to zoom · drag to look</div>`;
@@ -56,6 +73,7 @@ export class Touch {
     this.stickEl = this.el.querySelector('.rv-stick');
     this.knobEl = this.el.querySelector('.rv-stick-knob');
     this.stickLbl = this.el.querySelector('.rv-stick-lbl');
+    this.ticksEl = this.el.querySelector('.rv-stick-ticks');
     this.lookEl = this.el.querySelector('.rv-lookdot');
     this.btnsEl = this.el.querySelector('.rv-tbtns');
     this.pinchEl = this.el.querySelector('.rv-pinch');
@@ -148,8 +166,8 @@ export class Touch {
       sx = m.ox; sy = m.oy; kx = m.x * m.radius; ky = m.y * m.radius; sa = 1; this.usedStick = true;
       this.stickEl.classList.toggle('sprint', !!m.sprint);
     } else if (scheme !== 'orbit') {
-      sx = Math.max(96, W * 0.16) + ctx.safeL; sy = H - Math.max(118, H * 0.24) - ctx.safeB;
-      sa = this.usedStick ? 0.32 : 0.62;
+      [sx, sy] = stickAnchor(W, H, ctx.safeL, ctx.safeB, scheme);
+      sa = this.usedStick ? 0.5 : 0.9;
       this.stickEl.classList.remove('sprint');
     }
     this.stickA += (sa - this.stickA) * (1 - Math.exp(-dt * (sa > this.stickA ? 18 : 6)));
@@ -158,7 +176,10 @@ export class Touch {
       if (sx !== this._last.sx || sy !== this._last.sy) { this.stickEl.style.transform = `translate3d(${sx}px,${sy}px,0)`; this._last.sx = sx; this._last.sy = sy; }
       if (kx !== this._last.kx || ky !== this._last.ky) { this.knobEl.style.transform = `translate3d(${kx}px,${ky}px,0)`; this._last.kx = kx; this._last.ky = ky; }
       this.stickEl.style.opacity = this.stickA.toFixed(3);
-      this.stickLbl.style.opacity = this.usedStick ? '0' : '1';
+      const lo = this.usedStick ? '0' : '1';
+      if (this._lblOp !== lo) { this.stickLbl.style.opacity = lo; this._lblOp = lo; }
+      const to = m?.active ? '0.25' : '1';
+      if (this._tkOp !== to) { this.ticksEl.style.opacity = to; this._tkOp = to; }
     } else this.stickEl.classList.add('rv-hide');
 
     // ---- look touch feedback
@@ -193,10 +214,23 @@ export class Touch {
       b.a += (want - b.a) * (1 - Math.exp(-dt * 10));
       const vis = b.a > 0.02;
       if (vis !== b.shown) { b.el.style.visibility = vis ? '' : 'hidden'; b.shown = vis; }
-      if (vis) { b.el.style.opacity = b.a.toFixed(3); b.el.style.transform = `scale(${(0.8 + 0.2 * b.a).toFixed(3)})`; }
       if (b.id === 'jump' && scheme === 'character') {
-        const ic = ctx.playerState === 'air' || ctx.playerState === 'glide' ? 'glide' : ctx.playerState === 'swim' ? 'ascend' : 'jump';
-        if (ic !== b.curIcon) { b.span.innerHTML = icon(ic); b.curIcon = ic; }
+        // two-state glyph: up-arrow on the ground, paraglider once airborne (tap again = open glider)
+        const ic = ctx.playerState === 'air' || ctx.playerState === 'glide' || ctx.playerState === 'fall' ? 'glide' : ctx.playerState === 'swim' ? 'ascend' : 'jump';
+        if (ic !== b.curIcon) {
+          b.span.innerHTML = icon(ic); b.curIcon = ic; b.morph = 1;
+          const l = ic === 'glide' ? 'glide' : ic === 'ascend' ? 'swim up' : '';
+          if (b.lbl) b.lbl.textContent = l;
+        }
+      }
+      // icon morph: a quick shrink-and-grow of the glyph when its meaning changes
+      let ms = 1;
+      if (b.morph > 0) { b.morph = Math.max(0, b.morph - dt * 5); ms = 1 - Math.sin(b.morph * Math.PI) * 0.22; }
+      if (vis) {
+        b.el.style.opacity = b.a.toFixed(3);
+        b.el.style.transform = `scale(${(0.8 + 0.2 * b.a).toFixed(3)})`;
+        const svg = b.span.firstChild;
+        if (svg && svg.style) { const t = ms < 0.999 ? `scale(${ms.toFixed(3)})` : ''; if (svg._rvT !== t) { svg.style.transform = t; svg._rvT = t; } }
       }
     }
   }

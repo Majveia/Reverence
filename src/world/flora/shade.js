@@ -43,7 +43,7 @@ void main(){
   vec4 wp = modelMatrix * vec4(p, 1.0);
   wp.xyz += off;
   float d = length(wp.xyz - uCamPos);
-  vK = iData.y * rvLodFade(d, uFade).y * mix(0.6, 1.0, farK);
+  vK = iData.y * rvLodFade(d, uFade).y * mix(0.35, 1.0, farK);
   vec4 mv = viewMatrix * wp;
   float vl = length(mv.xyz);
   float sinT = abs(dot((wp.xyz - uCamPos) / max(d, 1e-3), upW));

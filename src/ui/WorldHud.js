@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { events } from '../core/events.js';
 import { escapeHtml } from './glyphs.js';
+import { icon } from './icons.js';
 
 const KIND_COL = {
   city: '#ffdca0', village: '#ffe9c4', monument: '#e6d4ff', ruin: '#d9ccb4', wonder: '#bff0c8',
@@ -49,6 +50,7 @@ export class WorldHud {
     this.discT = 0;
     this.world = null;
     this.compassPois = [];
+    this.targetName = null;   // ship telemetry 'target' (nearest body) → bracketed body marker
 
     // location reveal
     this.reveal = document.createElement('div');
@@ -68,7 +70,7 @@ export class WorldHud {
     el.className = `rv-mk ${type}`;
     el.style.display = 'none';
     el.innerHTML = type === 'body'
-      ? '<span class="rv-mk-dot"></span><span class="rv-mk-name"></span><span class="rv-mk-dist"></span>'
+      ? `<span class="rv-mk-dot"></span><span class="rv-mk-name"></span><span class="rv-mk-dist"></span><span class="rv-mk-tgt">${icon('target')}</span>`
       : '<span class="rv-mk-dia"></span><span class="rv-mk-name"></span><span class="rv-mk-dist"></span>';
     this.markerLayer.appendChild(el);
     return { el, dia: el.firstChild, name: el.children[1], dist: el.children[2], a: 0, shown: false, key: null, txt: '', dtxt: '', col: '', x: 0, y: 0 };
@@ -152,11 +154,11 @@ export class WorldHud {
           if (prev !== undefined && prev <= dist) continue;
           names.set(p.name, dist);
         }
-        const range = KIND_RANGE[p.kind] ?? 6000;
+        const range = (KIND_RANGE[p.kind] ?? 6000) * (p.data?.capital ? 1.6 : 1);
         const inside = dist < Math.max(60, (p.radius || 0) * 0.9);
         if (dist < range * 1.6 && !inside) this.compassPois.push({ p, dist });
         if (inside || dist > range) continue;
-        this.cands.push({ p, dist, score: dist / range });
+        this.cands.push({ p, dist, score: dist / range * (p.data?.capital ? 0.6 : 1) });
       }
       // keep only the nearest instance of repeated names (e.g. many 'Elder Oak' wonders)
       if (names.size) {
@@ -200,11 +202,13 @@ export class WorldHud {
       m.x = x; m.y = y;
       const name = c ? (c.p.name || KIND_LABEL[c.p.kind] || '') : m.txt;
       if (name !== m.txt) { m.name.textContent = name; m.txt = name; }
-      const col = KIND_COL[c?.p.kind] || KIND_COL.default;
+      const cap = !!c?.p.data?.capital;
+      const col = cap ? KIND_COL.city : KIND_COL[c?.p.kind] || KIND_COL.default;
       if (col !== m.col) { m.el.style.color = col; m.name.style.color = col; m.col = col; }
+      if (c && cap !== m.cap) { m.el.classList.toggle('cap', cap); m.cap = cap; }
       const dt2 = c ? fmtDist(c.dist) : m.dtxt;
       if (dt2 !== m.dtxt) { m.dist.textContent = dt2; m.dtxt = dt2; }
-      const full = i < 2 ? '' : 'none';
+      const full = i < 2 || m.cap ? '' : 'none';
       if (m.full !== full) { m.name.style.display = full; m.dist.style.display = full; m.full = full; }
       m.el.style.transform = `translate3d(${x.toFixed(1)}px,${y.toFixed(1)}px,0) translate(-50%,-6px)`;
       m.el.style.opacity = m.a.toFixed(3);
@@ -244,7 +248,8 @@ export class WorldHud {
     const order = this._bodyOrder || (this._bodyOrder = []);
     order.length = 0;
     for (let i = 0; i < list.length; i++) if (C[i].ok) order.push(i);
-    order.sort((a, b) => (list[a].isMoon - list[b].isMoon) || (C[a].dist - C[b].dist));
+    const tn = this.targetName;
+    order.sort((a, b) => ((list[b].name === tn) - (list[a].name === tn)) || (list[a].isMoon - list[b].isMoon) || (C[a].dist - C[b].dist));
     for (let n = 0; n < order.length; n++) {
       const c = C[order[n]];
       c.label = true;
@@ -257,7 +262,9 @@ export class WorldHud {
     // 3) write
     for (let i = 0; i < this.bodyPool.length; i++) {
       const m = this.bodyPool[i], c = C[i], b = list[i];
-      const want = c?.ok ? alpha * (b.isMoon ? 0.7 : 0.92) : 0;
+      const isT = !!tn && b?.name === tn;
+      if (m.tgt !== isT) { m.el.classList.toggle('tgt', isT); m.tgt = isT; }
+      const want = c?.ok ? alpha * (isT ? 1 : b.isMoon ? 0.7 : 0.92) : 0;
       m.a += (want - m.a) * (1 - Math.exp(-dt * 4));
       if (m.a < 0.01 || !c) { if (m.shown) { m.el.style.display = 'none'; m.shown = false; } continue; }
       if (!m.shown) { m.el.style.display = ''; m.shown = true; }

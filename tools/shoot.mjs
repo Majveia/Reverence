@@ -16,6 +16,7 @@
 //   --q <tier>           quality tier (default high)
 //   --base <url>         dev server (default http://localhost:5173; auto-starts vite if down)
 //   --timeout <sec>      readiness timeout (default 240)
+//   --shot-timeout <sec> per-screenshot timeout (default 420)
 //   --quiet              only print errors + state
 // Steps: {"advance":sec} {"hold":"KeyW","sec":2} {"press":"KeyE"} {"move":[x,y],"sec":2}
 //        {"look":[dxDeg,dyDeg]} {"click":[px,py]} {"go":"galaxy","params":{}} {"shot":"file.png"}
@@ -37,6 +38,7 @@ const base = opt('base', process.env.RV_BASE || 'http://localhost:5173');
 let urlPath = opt('url', '/?mode=cosmic');
 const out = opt('out', 'shots/shot.png');
 const timeout = +opt('timeout', 240) * 1000;
+const shotTimeout = +opt('shot-timeout', 420) * 1000; // one frame of a dense forest on a loaded software renderer can take minutes
 let steps = opt('steps', null);
 if (steps && steps.startsWith('@')) steps = fs.readFileSync(steps.slice(1), 'utf8');
 steps = steps ? JSON.parse(steps) : [{ advance: +opt('advance', 0.5) }];
@@ -137,7 +139,7 @@ try {
     else if (s.state) console.log('[state]', JSON.stringify(await page.evaluate(() => window.__rv.state())));
     if (s.shot) {
       fs.mkdirSync(path.dirname(path.resolve(s.shot)), { recursive: true });
-      await page.screenshot({ path: s.shot, type: s.shot.endsWith('.jpg') ? 'jpeg' : 'png', quality: s.shot.endsWith('.jpg') ? 92 : undefined, timeout: 180000 });
+      await page.screenshot({ path: s.shot, type: s.shot.endsWith('.jpg') ? 'jpeg' : 'png', quality: s.shot.endsWith('.jpg') ? 92 : undefined, timeout: shotTimeout });
       log(`[shoot] saved ${s.shot}`);
     }
   }

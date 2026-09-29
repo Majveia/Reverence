@@ -86,7 +86,6 @@ export function frameSite(civ, s, preset) {
     }
     return best;
   };
-  const sideOk = (x, z) => !(G && !L.water && G.wet(x, z));
   // the vehicles track parks a starship ~34 m (and bike/rover 5-10 m) in front of the player, i.e. BEHIND
   // the lens with camyaw=180; if that spot is cluttered by buildings it drifts into the frame. Prefer
   // viewpoints with a flat, open patch behind the camera.

@@ -50,6 +50,7 @@ class Civ {
     this.enabled = !!this.S && !this.body.isGas && (this.level > 0 || this.styleName === 'monolith');
     if (!this.enabled) return;
     const t0 = now();
+    this._t0 = t0;
     const plan = planSites(world);
     this.spawn = plan.spawn;
     for (const s of plan.sites) this._initSite(s);
@@ -892,6 +893,7 @@ class Civ {
     // sites that should be detailed but have not been queued yet (first frame)
     const alt = cam.length() - this.body.radius;
     if (alt < 9000) for (const s of this.sites) if (!s.detail && !((s.retryAt || 0) > (this._t || 0)) && cam.distanceTo(s.pos) - s.radius < this.detailR) return false;
+    if (this.stats.readyMs === undefined) this.stats.readyMs = Math.round(now() - this._t0);
     return true;
   }
 
@@ -904,7 +906,7 @@ class Civ {
       siteTris: Object.fromEntries(this.sites.filter((s) => s.detail).map((s) => [s.id, s.detail.tris])),
       siteLots: Object.fromEntries(this.sites.filter((s) => s.layout).slice(0, 4).map((s) => [s.id, s.layout.lots.length])),
       fails: this.stats.lotFails + this.stats.jobFails + this.stats.empty, err: this.stats.err, farVis: this.sites.filter((s) => s.far?.visible).length,
-      capDist: c ? Math.round(this.world.camera.position.distanceTo(c.pos)) : 0, planMs: this.stats.planMs, ms: this.stats.ms,
+      capDist: c ? Math.round(this.world.camera.position.distanceTo(c.pos)) : 0, planMs: this.stats.planMs, readyMs: this.stats.readyMs, ms: this.stats.ms,
       capital: c ? { name: c.name, kind: c.kind, lat: +c.lat.toFixed(4), lon: +c.lon.toFixed(4), r: Math.round(c.radius) } : null,
       civcam: this.stats.civcam || undefined,
       hamlet: this.sites.find((s) => s.hamlet) ? { lat: +this.sites.find((s) => s.hamlet).lat.toFixed(4), lon: +this.sites.find((s) => s.hamlet).lon.toFixed(4) } : null,

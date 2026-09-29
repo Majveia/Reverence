@@ -38,7 +38,14 @@ const KIND_TOAST = {
   monument: ['Monument', 'monument'], ruin: ['Ruins', 'ruin'], wonder: ['Natural wonder', 'wonder'],
   landing: ['Landing site', 'landing'], summoned: ['Vehicle', 'vehicle'],
 };
-const TELE_LABEL = { speed: 'Speed', altitude: 'Alt', alt: 'Alt', z: 'Redshift', age: 'Cosmic age', heading: 'Hdg', throttle: 'Thr', gear: 'Gear', mode: 'Mode' };
+const TELE_LABEL = { speed: 'Speed', altitude: 'Alt', alt: 'Alt', z: 'Redshift', age: 'Cosmic age', heading: 'Hdg', throttle: 'Thr', gear: 'Gear', mode: 'Mode', grip: 'Surface', target: 'Target' };
+// string keys rendered as a small status pill instead of a labelled value (ship: drive 'PULSE', status 'LANDED')
+const BADGE_KEYS = new Set(['drive', 'status']);
+// creature archetypes (fauna 'discovery' events) → icon + eyebrow word
+const ARCHETYPE = {
+  grazer: 'Grazer', giant: 'Colossus', hexapod: 'Hexapod', hopper: 'Hopper', critter: 'Critter',
+  bird: 'Avian', ray: 'Sky ray', whale: 'Leviathan', jelly: 'Drifter', fish: 'Aquatic',
+};
 const BAR_KEYS = new Set(['boost', 'throttle', 'fuel', 'energy', 'charge', 'heat']);
 const ease = (t) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
 const approach = (v, t, rate, dt) => v + (t - v) * (1 - Math.exp(-dt * rate));
@@ -63,10 +70,10 @@ export class UI {
       </div>
       <div class="rv-fx"></div>
       <div class="rv-topbtns">
-        <button class="rv-ibtn" data-b="map" aria-label="Map"><span>${icon('map')}</span></button>
-        <button class="rv-ibtn" data-b="menu" aria-label="Menu"><span>${icon('menu')}</span></button>
+        <button class="rv-ibtn" data-b="map" data-sfx="ui.open" aria-label="Map"><span>${icon('map')}</span></button>
+        <button class="rv-ibtn" data-b="menu" data-sfx="ui.open" aria-label="Menu"><span>${icon('menu')}</span></button>
       </div>
-      <button class="rv-ibtn rv-photo-exit" style="display:none" aria-label="Exit photo mode"><span>${icon('close')}</span></button>`;
+      <button class="rv-ibtn rv-photo-exit" data-sfx="ui.back" style="display:none" aria-label="Exit photo mode"><span>${icon('close')}</span></button>`;
     const q = (s) => this.root.querySelector(s);
     this.el = {
       hud: q('.rv-hud'), crumbs: q('.rv-crumbs'), crumbRow: q('.rv-crumb-row'), crumbSub: q('.rv-crumb-sub'),
@@ -130,7 +137,7 @@ export class UI {
 
     // ---- engine events
     events.on('discovery', (d) => this._onDiscovery(d));
-    events.on('mode:enter', () => { this.crumbT = 0; this._renderCrumbs(); this._clearTransient(); this._applyUiPanelParam(); });
+    events.on('mode:enter', () => { this._dofSet = undefined; this.crumbT = 0; this._renderCrumbs(); this._clearTransient(); this._applyUiPanelParam(); });
     events.on('input:scheme', ({ scheme }) => this.setControls(scheme));
     events.on('input:pointerlock', ({ locked }) => this._onPointerLock(locked));
     events.on('vehicle:exit', () => this.setTelemetry(null));
@@ -152,8 +159,9 @@ export class UI {
   showTitle(title, subtitle = '', ms = 3500) {
     this.el.titleMain.textContent = String(title ?? '');
     this.el.titleSub.textContent = String(subtitle ?? '');
-    this.titleS = { t: 0, dur: Math.max(1.5, ms / 1000) };
+    this.titleS = { t: 0, dur: Math.max(1.5, ms / 1000), wait: 0 };
     this.el.title.style.display = '';
+    this.el.title.style.opacity = '0';
   }
 
   prompt(id, text, action) {
@@ -183,6 +191,7 @@ export class UI {
   }
 
   toast(text, { kind = 'info', ms = 4200, eyebrow, icon: ic } = {}) {
+    this._layoutDirty = true;
     const key = `${kind}|${text}`;
     const now = this.engine.time?.real ?? 0;
     if (this._recentToasts.has(key) && now - this._recentToasts.get(key) < 6) return;
@@ -209,25 +218,38 @@ export class UI {
 
   setTelemetry(obj) {
     const s = this.teleS;
-    if (!obj || typeof obj !== 'object') { s.data = null; return; }
+    if (!obj || typeof obj !== 'object') { if (s.data) this._layoutDirty = true; s.data = null; if (this.world) this.world.targetName = null; return; }
+    if (!s.data) this._layoutDirty = true;
     s.data = obj;
     const keys = Object.keys(obj).join('|');
     if (keys !== s.keys) {
       s.keys = keys;
-      this.el.tele.innerHTML = Object.keys(obj).map((k, i) => `<div class="rv-tv${i === 0 ? ' big' : ''}" data-k="${escapeHtml(k)}"><span class="rv-tv-k">${escapeHtml(TELE_LABEL[k] ?? k)}</span><span class="rv-tv-v"></span>${BAR_KEYS.has(k) ? '<span class="rv-tv-bar"><i></i></span>' : ''}</div>`).join('');
+      this._layoutDirty = true;
+      this.el.tele.innerHTML = Object.keys(obj).map((k, i) => {
+        const cls = BADGE_KEYS.has(k) ? ' badge' : k === 'target' ? ' tgt' : i === 0 ? ' big' : '';
+        const lbl = BADGE_KEYS.has(k) ? '' : `<span class="rv-tv-k">${k === 'target' ? `<i class="rv-tv-ic">${icon('target')}</i>` : ''}${escapeHtml(TELE_LABEL[k] ?? k)}</span>`;
+        return `<div class="rv-tv${cls}" data-k="${escapeHtml(k)}">${lbl}<span class="rv-tv-v"></span>${BAR_KEYS.has(k) ? '<span class="rv-tv-bar"><i></i></span>' : ''}</div>`;
+      }).join('');
       s.els = [...this.el.tele.querySelectorAll('.rv-tv')].map((el) => ({ el, v: el.querySelector('.rv-tv-v'), bar: el.querySelector('.rv-tv-bar i'), last: null }));
     }
     const vals = Object.values(obj);
+    let tgtName = null;
     s.els?.forEach((e, i) => {
       const k = e.el.dataset.k;
       const v = vals[i];
       let html;
-      if (BAR_KEYS.has(k) && typeof v === 'number' && v >= 0 && v <= 1.001) {
+      if (k === 'target' && v) {
+        const parts = String(v).split(' · ');
+        tgtName = parts[0];
+        html = `${escapeHtml(parts[0])}${parts[1] ? `<small>${escapeHtml(parts.slice(1).join(' · '))}</small>` : ''}`;
+      } else if (BADGE_KEYS.has(k)) html = escapeHtml(String(v ?? ''));
+      else if (BAR_KEYS.has(k) && typeof v === 'number' && v >= 0 && v <= 1.001) {
         html = `${Math.round(v * 100)}<small>%</small>`;
         if (e.bar) e.bar.style.width = `${(v * 100).toFixed(1)}%`;
       } else html = fmtTele(v);
       if (html !== e.last) { e.v.innerHTML = html; e.last = html; }
     });
+    if (this.world) this.world.targetName = tgtName;
   }
 
   setMarkers(list = []) {
@@ -245,8 +267,10 @@ export class UI {
         e = { el, name: el.firstChild, sub: el.lastChild, a: 0, label: null, subT: null, vis: false, x: 0, y: 0 };
         this._markerEls.set(m.id, e);
       }
+      const kc = m.kind ? `rv-mk ext k-${String(m.kind).replace(/[^a-z0-9_-]/gi, '')}` : 'rv-mk ext';
+      if (e.cls !== kc) { e.el.className = kc; e.cls = kc; }
       e.vis = !!m.visible; e.x = m.x; e.y = m.y; e.dead = false;
-      const parts = String(m.label ?? '').split(' · ');
+      const parts = String(m.label ?? '').replace(/^\s*[◦•·∘○]\s*/, '').split(' · ');
       const label = parts[0];
       let sub = m.sub ?? (parts.length > 1 ? parts.slice(1).join(' · ') : '');
       if (!sub && typeof m.distance === 'string') sub = m.distance;
@@ -281,6 +305,30 @@ export class UI {
     this.el.topbtns.style.display = this.photo ? 'none' : '';
     this.photoBtnT = this.photo ? 3 : 0;
     if (this.photo) { this.menu?.close(); this.map?.close(); }
+    this._syncDof();
+  }
+
+  /**
+   * Cinematic depth of field (post track: pipeline.setLook({ dof })) while the pause menu is open (the
+   * world goes soft behind the glass) and in photo mode (auto-focus centre). Only on high/ultra and only
+   * on planets (perspective scenes with meaningful depth); the previous setting is restored exactly.
+   */
+  _syncDof() {
+    try {
+      const pl = this.engine.pipeline, st = pl?.settings;
+      if (!st?.dof || typeof pl.setLook !== 'function') return;
+      const tier = this.engine.quality?.tier;
+      const want = this.engine.director.currentName === 'system' && (tier === 'high' || tier === 'ultra') && (this.photo || !!this.menu?.open);
+      const val = this.photo ? true : 'menu';
+      if (want) {
+        if (this._dofSet === undefined) this._dofPrev = st.dof.enabled;
+        pl.setLook({ dof: this.photo ? { enabled: true, focus: 0, aperture: 1 } : { enabled: true, focus: 0, aperture: 1.6 } });
+        this._dofSet = val;
+      } else if (this._dofSet !== undefined) {
+        if (st.dof.enabled === true) pl.setLook({ dof: { enabled: this._dofPrev ?? false, aperture: 1 } });
+        this._dofSet = undefined;
+      }
+    } catch (_) { /* post is optional */ }
   }
 
   onPanel(open, which) {
@@ -293,6 +341,7 @@ export class UI {
     this.touch?.releaseAll();
     if (open && this.input.mouse?.locked) { this._expectUnlock = true; try { this.input.exitPointerLock(); } catch (_) { /* ignore */ } }
     void which;
+    this._syncDof();
   }
 
   bodyRef(world) {
@@ -438,6 +487,7 @@ export class UI {
     this._updateHint(dt);
     this._updateTele(dt);
     this._updateOnboard(dt);
+    this._layoutToasts(dt);
     this._updateMarkers(dt, hidden);
     try { this.world?.update(dt, ctx); } catch (e) { if (!this._ww) { console.warn('[ui] world hud', e); this._ww = true; } }
     try { this.touch?.update(dt, ctx); } catch (e) { if (!this._tw) { console.warn('[ui] touch', e); this._tw = true; } }
@@ -448,6 +498,7 @@ export class UI {
 
   onResize(w, h) {
     this._measureSafe();
+    this._layoutDirty = true;
     if (this.map?.open) this.map.render();
     void w; void h;
   }
@@ -491,7 +542,10 @@ export class UI {
     if (!d) return;
     if (d.source === 'ui') return; // location reveal already shows it
     const kind = String(d.kind ?? 'discovery').toLowerCase();
-    this.toast(d.name ? String(d.name) : String(d.kind ?? ''), { kind, ms: 5200 });
+    const arch = d.archetype && ARCHETYPE[d.archetype] ? d.archetype : null;
+    const opts = { kind, ms: 5200 };
+    if (arch) { opts.icon = arch; opts.eyebrow = `New species · ${ARCHETYPE[arch]}`; }
+    this.toast(d.name ? String(d.name) : String(d.kind ?? ''), opts);
   }
 
   _refreshPromptActions() {
@@ -526,6 +580,19 @@ export class UI {
   _updateTitle(dt) {
     const s = this.titleS;
     if (!s) return;
+    // Hold the card until the scene behind it has something to show: never during a director fade, and on
+    // the cosmic web until structure has visibly formed (z < ~26; the first seconds are a near-uniform
+    // primordial fog). Max 5 s of hold so a slow/failed renderer never swallows the title.
+    if (s.t === 0 && s.wait < 5) {
+      const d = this.engine.director;
+      let hold = !!d.busy;
+      if (!hold && d.currentName === 'cosmic') {
+        const m = d.current;
+        const a = m?.a;
+        hold = !(m?.icStage >= 1) || (Number.isFinite(a) && a > 0 && 1 / a - 1 > 26);
+      }
+      if (hold) { s.wait += dt; return; }
+    }
     s.t += dt;
     const t = s.t, D = s.dur;
     const a = ease(t / 1.0) * Math.min(1, Math.max(0, (D - t) / 1.4));
@@ -543,17 +610,95 @@ export class UI {
   }
 
   _updateToasts(dt) {
+    const side = this._toastSide === 'left' ? -1 : 1;
     for (let i = this.toasts.length - 1; i >= 0; i--) {
       const o = this.toasts[i];
       o.t += dt;
       const inA = ease(o.t / 0.55), outA = Math.min(1, Math.max(0, (o.dur - o.t) / 0.7));
       o.el.style.opacity = (inA * outA).toFixed(3);
-      o.el.style.transform = `translate3d(${((1 - inA) * 18 + (1 - outA) * 8).toFixed(2)}px,0,0)`;
+      o.el.style.transform = `translate3d(${(side * ((1 - inA) * 18 + (1 - outA) * 8)).toFixed(2)}px,0,0)`;
       if (!o.w) o.w = o.el.offsetWidth || 220;
       const sh = -80 + ease((o.t - 0.25) / 1.3) * (o.w + 160);
       o.el.style.setProperty('--sh', `${sh.toFixed(1)}px`);
-      if (o.t >= o.dur) { o.el.remove(); this.toasts.splice(i, 1); }
+      if (o.t >= o.dur) { o.el.remove(); this.toasts.splice(i, 1); this._layoutDirty = true; }
     }
+  }
+
+  /**
+   * Collision-free placement of the toast stack. The HUD has several fixed anchors (telemetry, touch
+   * cluster, compass, top buttons, stick …) whose free space depends on the viewport, safe areas and
+   * input scheme, so fixed CSS offsets cannot guarantee separation (e.g. iPhone landscape: 390 px tall).
+   * Every 0.25 s while toasts exist (or when something moved) we scan the right column, then the left
+   * column under the breadcrumb, for the first vertical gap tall enough; if neither fits every toast, the
+   * side with more room wins and the oldest toasts retire early. Never overlaps, never per-frame layout.
+   */
+  _layoutToasts(dt) {
+    this._layoutT = (this._layoutT ?? 0) - dt;
+    if (!this.toasts.length) { this._layoutDirty = false; return; }
+    if (!this._layoutDirty && this._layoutT > 0) return;
+    this._layoutT = 0.25; this._layoutDirty = false;
+    const root = this.root, W = root.clientWidth || window.innerWidth, H = root.clientHeight || window.innerHeight;
+    if (!W || !H) return;
+    const sf = this._safe, gut = W <= 760 || H <= 460 ? 14 : 18;
+    let th = 0, tw = 0;
+    for (const o of this.toasts) { th = Math.max(th, o.el.offsetHeight || 0); tw = Math.max(tw, o.w || o.el.offsetWidth || 0); }
+    th = th || 44; tw = Math.min(tw || 220, W - 2 * gut);
+    const GAP = 8, n = this.toasts.length;
+    const need = (k) => k * (th + GAP) - GAP;
+    // obstacles (viewport rects of visible HUD blocks)
+    const obs = this._obs || (this._obs = []);
+    obs.length = 0;
+    const add = (el) => {
+      if (!el || !el.isConnected) return;
+      const cs = el.style;
+      if (cs.display === 'none' || cs.visibility === 'hidden' || el.classList.contains('rv-hide')) return;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) obs.push(r);
+    };
+    if (this.teleS.data) add(this.el.tele);
+    add(this.el.topbtns); add(this.el.crumbRow);
+    if (this.el.onboard.style.display !== 'none') add(this.el.onboard);
+    if (this.world?.compassA > 0.05) add(this.world.compassEl);
+    if (this._prompts.size) add(this.el.prompts);
+    if (this.touch?.visible) {
+      add(this.touch.stickEl);
+      for (const b of this.touch.buttons) if (b.shown) add(b.el);
+    }
+    const crumbBottom = (this.el.crumbs.getBoundingClientRect().bottom || 50);
+    const scan = (x0, x1, top) => {
+      const iv = obs.filter((r) => r.right > x0 - 4 && r.left < x1 + 4 && r.bottom > top).sort((a, b) => a.top - b.top);
+      let start = top, best = { top, cap: 0 };
+      const bottomLimit = H - sf.b - 12;
+      const consider = (end) => {
+        const cap = Math.max(0, Math.floor((end - start + GAP) / (th + GAP)));
+        if (cap >= n && best.cap < n) best = { top: start, cap };
+        else if (cap > best.cap && best.cap < n) best = { top: start, cap };
+      };
+      for (const r of iv) {
+        if (r.top > start) consider(Math.min(r.top - GAP, bottomLimit));
+        if (best.cap >= n) return best;
+        start = Math.max(start, r.bottom + GAP);
+      }
+      consider(bottomLimit);
+      return best;
+    };
+    const rX1 = W - sf.r - gut, rTop = Math.max(sf.t + 50, (this.el.topbtns.getBoundingClientRect().bottom || 48) + 6);
+    const right = scan(rX1 - tw, rX1, rTop);
+    let pick = right, side = 'right';
+    if (right.cap < n) {
+      const lX0 = sf.l + gut;
+      // the breadcrumb subtitle fades after ~9 s; keep clear of it anyway (it is short)
+      const left = scan(lX0, lX0 + tw, crumbBottom + 10);
+      if (left.cap > right.cap) { pick = left; side = 'left'; }
+    }
+    // keep the stack readable in the upper half when there is room (don't drift to mid-screen)
+    const T = this.el.toasts;
+    if (this._toastSide !== side) { this._toastSide = side; T.classList.toggle('left', side === 'left'); }
+    const top = `${Math.round(pick.top)}px`;
+    if (T.style.top !== top) T.style.top = top;
+    // retire the oldest toasts that cannot fit
+    const cap = Math.max(1, pick.cap);
+    for (let i = 0; i < n - cap; i++) { const o = this.toasts[i]; o.dur = Math.min(o.dur, o.t + 0.3); }
   }
 
   _updatePrompts(dt) {

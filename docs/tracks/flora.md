@@ -104,10 +104,17 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
     surface. Debug: `&floradbg=sward` (paints it red), `&floradbg=sward,nodepth`.
   * **No more lattice/stripes**: grass cells were filled with a nominal n×n grid stretched over the
     real (non-square, larger) cube-sphere cell, with full-cell jitter → rows of gaps that read as a
-    striped/checkerboard meadow. Now the grid is sized per axis from the real cell extent and jitter
-    is ±32 % of the spacing (patches are randomly rotated blade discs, so the grid never shows).
+    striped/checkerboard meadow. Now the grid is sized per axis from the real cell extent, jitter is
+    ±32 % of the spacing, and blades inside a patch follow a truncated Gaussian (σ = 0.5 spacing,
+    patch radius 1.25 spacing), so the overlapping patches sum to an even sward with no rows.
     Slope/rock thinning starts at 24°/rock 0.45 (terrain micro-ledges drew contour stripes), and the
     bare-ground threshold in sparse biomes is a soft ramp instead of a hard step.
+  * **Canopy shade** (`shade.js`, layer `flora-canopy-shade`): a wide soft multiplicative disc under
+    every canopy tree out to ~600 m — sky occlusion under the crown, plus (beyond ~70–180 m, where
+    the cascaded shadow maps end) a fake cast shadow shifted away from the sun by 0.55·H·cot(sun
+    elevation). Forest floors between crowns go dark, so forests read as volume from the air instead
+    of trees on a lawn. Pulled toward the camera by 0.3 m/sin(elev) + 2 % of the distance (coarse
+    far terrain LODs sit metres off the analytic surface). Debug: `&floradbg=cshade`.
   * **BotW oaks**: 85 % of broadleaf trees fork low (38–62 % of trunk height) into 2–3 S-curved
     leaders that spread into a wider, flatter-bottomed crown (clumps compressed below their centre);
     lower trunks (12 m, crown aspect 0.9). No more straight poles through lollipop crowns.
@@ -118,7 +125,9 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
     42–55 m, early discard (LOD fade / near dissolve / alpha) before the relief fetches. Measured in
     the lab on the W2 forest view: flora frame 54 s → ~28–38 s on the loaded software renderer.
   * **Night**: the tallest ~10 % of blades on glowing styles glow along their whole upper blade
-    (curved light strokes, Pacific Drive style) instead of only tip dots.
+    (curved light strokes, Pacific Drive style) instead of only tip dots; glow bounce on bark is
+    modulated by the bark relief (lantern trunks keep their texture instead of flat teal tubes);
+    new showcase framing inside a lantern-tree forest (W4 `lat=16.36&lon=151.86`).
   * **Flora lab** (`/src/world/flora/lab/`, dev only): the real flora subsystem on the real planet
     surface with a stand-in ground/sky/sun, captured in ~30–120 s instead of 4–8 min. See below.
 
@@ -129,7 +138,7 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
   `.getState()` → `{style, ready, readyMs, cells:{band:"cells/jobs/ms"}, instances, drawCalls,
   trisM, top (heaviest layers), colliders}`.
 
-## Capture URLs (verified this round at 960×540 unless noted; all render in ~3–5 min under load)
+## Capture URLs (verified this round at 1280×720 or 960×540; each renders in ~3–6 min under load)
 * W1 golden meadow (turf + sward shade, forked oaks, autumn trees): `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=16.122&lon=5.848&yaw=0&pitch=-2&tod=0.3`
 * W2 forested hill + lake from the air (canopy shade, LOD1 → impostors → far forest): `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=90&lat=-25.292&lon=-104.202&yaw=30&pitch=-8&tod=0.3`
 * W2 noon meadow (steep TP view onto the sward, player push): `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=-15.355&lon=146.556&yaw=0&pitch=-3&tod=0.5`
@@ -138,11 +147,11 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
 * W4 bioluminescent meadow at night from 4 m: `/?mode=system&galaxy=0&star=2&planet=0&view=fly&alt=4&lat=16.432&lon=151.962&yaw=150&pitch=-4&tod=0.02`
 * W5 Rick & Morty jungle: `/?mode=system&galaxy=0&star=1&planet=2&view=surface&lat=31.786&lon=-28.943&yaw=22.5&pitch=-3&tod=0.42`
 * W10 noon meadow on a terraced hillside: `/?mode=system&galaxy=0&star=17&planet=0&view=surface&lat=-15.355&lon=146.556&yaw=0&pitch=-2&tod=0.5`
-* W11 Nausicaä fungus forest (shelf towers, spore trees, dense sward): `/?mode=system&galaxy=0&star=0&planet=0&view=surface&lat=7.276&lon=3.168&yaw=0&pitch=-3&tod=0.45`
-* W2 forest interior (forked BotW oaks, ferns): `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=-25.292&lon=-104.202&yaw=0&pitch=2&tod=0.33`
-  — **heaviest view in the game on software GL**: ~45 s per frame on the loaded capture box, so
-  the 4-sample shot often exceeds shoot.mjs' 180 s screenshot timeout (it did in round 1 too). Use
-  the flora lab for this framing (below) or the aerial view.
+* W11 Nausicaä fungus forest (shelf towers, spore trees, dense sward): `/?mode=system&galaxy=0&star=0&planet=0&view=surface&lat=7.276&lon=3.168&yaw=0&pitch=-3&tod=0.45&taas=2`
+* W2 forest interior, golden hour (forked BotW oaks, sward, ferns): `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=-25.292&lon=-104.202&yaw=0&pitch=2&tod=0.33&taas=2`
+  — the two heaviest views on software GL (~45 s per frame on the loaded capture box): without
+  `taas=2` (2 instead of 4 TAA shot samples, Pipeline param) the shot can exceed shoot.mjs' 180 s
+  screenshot timeout (the W2 one did in round 1 too). Verified at 1280×720 with `taas=2`.
 * W2 capital clearing (ruins among the forest, civ clearings honoured): `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=140&lat=6.45&lon=25.95&pitch=-18&tod=0.35`
 * Debug: `&floradbg=nocast` (flora casts no shadows), `&floradbg=noreceive` (flora ignores shadows),
   `&floradbg=sward` (sward shade painted red), `sward,nodepth`, `grassnodepth`.
@@ -166,7 +175,7 @@ must still be checked in-game.
   Shadow casters: canopy LOD0 < 26 m (was 38), big understory LOD0 < 22 m, rock LOD0, one
   near-impostor depth layer (20–800 m). Grass never casts. Canopy LOD0 < 34–44 m (was 55–70).
 * Measured at the software-capture profile (floraDensity 0.45), round 3: W1 meadow 0.96 M tris
-  (45 draws), W2 aerial 0.82 M (31), W4 lantern forest 2.2 M (44), W2 forest ≈ 2.0 M. Grass ≈ 0.75 M
+  (45 draws), W2 aerial 0.82 M (31), W4 lantern forest 2.2 M (44), W11 fungal 2.25 M (48), W2 forest ≈ 2.0 M. Grass ≈ 0.75 M
   (dense 64 tall × 7 + 150 turf tris, mid 28 × 5 + 56, far 22 × 3 + 24 per patch); the two shade
   layers are ~20–100 k tris of trivially shaded discs.
 * Frame cost is dominated by foliage fill on software GL (lab, W2 forest interior at 960×540:

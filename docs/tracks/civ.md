@@ -14,7 +14,41 @@ Owner paths: `src/world/civ/**`, this file. Subsystem `civ`, order 35.
 | `styles.js` | architecture kits: **village** (Ghibli/Bierstadt cottages, timber frames, jettied upper floors, L-wings, dormers, fences, gardens, barns, windmills, bell-tower church), **hearth** (Outer Wilds plank cabins with porches, lookouts, observatory with telescope, wooden launch tower + ship), **harbor**, **spire** (Moebius domed adobe + slender white bulb towers, needle landmark), **neon** (Blade Runner towers with podiums, setbacks, neon bands, holo billboards, vertical signs, AC units, stepped arcology landmark), **industrial** (Stålenhag: Falu-red houses, corrugated sheds, saw-tooth brick factories with chimneys, cooling towers, silos, pylons, container stacks, radar-dish landmark), **organic** (Roger Dean pods on stems, arches, great arch), **monastery** (white walls, onion domes, chapels, cathedral + bell tower), **ruins** (BotW: mossy shells, broken towers, colonnades, decayed guardians, glowing shrines, ruined citadel with glowing core; living thatched huts), **nomad** (Nausicaä tents, yurts, wagons, Valley-of-the-Wind windmills, pennant poles), **frontier** (Bebop saloons with false fronts + neon, water towers, landing pads + ship), **outpost/nasapunk** (habitat capsules, glass domes, pads, comm tower), **brutalist** (ziggurat monoliths, slit windows), **crystal**, **monolith**, **bizarre** (blob houses, eyeball towers, portals) |
 | `parts.js` | shared parts: doors, timber frames, chimneys, flower boxes, balconies, awnings, antennas, dishes, pipes, signs, 4 lamp types, trees, fences, stalls, clutter, catenary cables with lanterns, windmill, lattice towers, colossal statue, obelisk, beacon, arch |
 | `life.js` | GPU-animated walkers (gait, arm swing, idle, ~40 % carry a swaying hand lantern that glows at night), flying traffic on looping lanes (hover cars / gliders / wooden ships), bobbing boats, space elevator (screen-space tether ≥1.4 px, climbers, beacons) |
+| `camera.js` | `civcam` capture presets: computes a framing from the settlement's own layout (plaza, landmark, roads, lots) at create time and writes the player's spawn params before the player spawns — capture URLs no longer go stale when terrain changes |
 | `pools.js` | ground light pools under every low light (street lamps, lanterns, shopfronts, blade signs): one additive draw per site; on wet ground (`G.uWetness`) each pool stretches into a reflection streak toward the camera (neon on wet asphalt) |
+
+### Round 3 changes (critic round 1, second pass)
+* **Robust capture framing: `&civcam=plaza|street|hero|aerial|top|edge` (+ `&civsite=<id>`)** — settlement positions follow
+  the terrain + predicted spawn, so the round-2 lat/lon table went stale again when the terrain track changed its relief (the
+  W1 capital moved from lat 7.3 to 14.9; the critic's "0 tris" URL pointed at empty land). `camera.js` now derives the camera
+  from the site's layout at create time and writes `lat/lon/yaw/camyaw/pitch/alt/view/flat` into the shared params before the
+  player (order 50) reads them; explicit URL params still win. Presets:
+  `plaza` eye level where a main road enters the plaza, looking across the centrepiece to the landmark;
+  `street` eye level on the road whose view has the most facades on BOTH sides (a street canyon, not a path over a meadow);
+  `hero` ≈28 m over the plaza rim, choosing the rim angle with no building in the lens' way; `aerial` a low oblique establishing
+  shot (under the cloud deck) from the side with a clear line of sight; `top` 110 m straight above the centre; `edge`
+  third-person on the road just outside town. All presets prefer viewpoints with a flat, open patch *behind* the lens, where
+  the vehicles track parks the starship/bike/rover (they no longer drift into the frame); `props=0` is set for them too.
+* **Round-1 critical "capital renders 0 tris at night from 110 m"** — verified with `civcam=top&tod=0.05` on W1:
+  `siteTris {0: 277k}`, lit town. The old URL simply no longer pointed at the capital. `__rv.state().civ` also reports
+  `siteLots`, `readyMs`, `civcam`.
+* **Neon street at night** — the beige wash that covered the street floor was the additive light pools summing up (1600
+  overlapping skirts × wet stretch ≈ 32 m); pools are now compact lit discs under each lamp/shopfront with a narrow wet
+  reflection streak that follows Fresnel (bright only at grazing angles, not under the viewer). Street floors get canyon sky
+  occlusion (env diffuse + a horizon-occluded env reflection, so a wet street mirrors the dark lit facades instead of the open sky).
+  No uniform warm bounce on the road mesh.
+* **Shopfronts** — new `PAT.SHOP`: lit interiors behind glass with shelves of coloured goods or counters + menu boards,
+  ceiling light strips, customer / shopkeeper silhouettes, glass streaks (was a flat emissive colour block).
+* **Holo billboards** — ad content: paged glyph copy, rotating logo roundel, two-tone sweep (was a flat coloured sheet).
+* **Window lights** — lights come on per room (runs of 2–4 windows share a light), some floors are dark offices, rare TV-blue
+  flicker; resolved windows show a ceiling-lamp hotspot, furniture silhouettes and occasional people. Facades read as lived-in
+  rooms instead of a per-window checkerboard.
+* **Pedestrians** — anatomical walkers (shoes, tapered legs, hips, tapered torso, rounded shoulders, arms with hands, neck,
+  head + hair cap, style hats), children (~10 %), same GPU gait. Clearly readable at street level in day and night shots.
+* **Glow sprites** fade out within ~3–9 m of the lens (no giant bokeh discs from a lamp next to the camera).
+* **Site selection** — the civic heart (plaza + first blocks, 8–26 % of the radius) must be dry land for non-water styles
+  (W2's capital plaza used to sit in a lagoon ring of shore foam).
+* **Debug** — `civdbg=noroads|nopools|nobld|noglow|nonpc` hide those layers (diagnostics).
 
 ### Round 2 changes (critic round 1 fixes)
 * **Build validation / diagnostics** — every detailed site now records its triangle count; an empty build is logged
@@ -60,52 +94,59 @@ Owner paths: `src/world/civ/**`, this file. Subsystem `civ`, order 35.
 * `world.get('civ')`: `sites[]` (`{id, name, kind, style→kit, level, up, east, north, pos, radius, lat, lon, capital, hamlet, spaceport}`), `clearings`, `spawnTarget`, `getState()`.
 * `world.civ = { clearings, sites, spawnTarget, capital }` (set at create) and event `civ:clearings`.
 * `clearings`: `[dirX, dirY, dirZ, cosAngularRadius, keepFraction]` per site — for flora/fauna placement.
-* URL `civdbg=noflora` hides the flora group (debug only, to judge architecture).
+* URL `civdbg=noflora` hides the flora group (debug only, to judge architecture); `civdbg=noroads|nopools|nobld|noglow|nonpc`.
+* URL `civcam=plaza|street|hero|aerial|top|edge` (+ `civsite=<id>`): capture framing presets (see Capture URLs).
+* `__rv.state().civ`: `detail`, `tris`, `siteTris`, `siteLots`, `npcs`, `traffic`, `boats`, `fails`, `err`, `planMs`, `readyMs`, `capital`, `civcam`.
 
 ## Capture URLs
-All `/?mode=system&galaxy=0&…`. The capital's lat/lon for any world is in `__rv.state().civ.capital`
-(the planner is deterministic; positions change only when the terrain generator changes — the round-1 table was
-stale after the terrain track's round-1 changes, this one is regenerated). Street views use `view=fp` (or a 10 m
-`view=fly`) with `yaw` pointing *away* and `camyaw=180`, so the vehicles the vehicle track parks in front of the spawn
-end up behind the camera; `flat=0` keeps the exact spot. Add `&civdbg=noflora` to judge architecture without trees.
+All `/?mode=system&galaxy=0&…`. **Use `civcam` presets** — they are computed from the settlement layout, so they stay valid
+when other tracks change the terrain (hard-coded lat/lon for settlements go stale). `civsite=<id>` picks another site
+(ids in `__rv.state().civ`; 0 = capital, 1 = hamlet). Stormy worlds (W4, W8) flash lightning at t≈0.3–0.8 s in shot mode:
+use `--advance 2.5` for the normal night look.
 
 | view | URL |
 |---|---|
-| W4 neon megacity, night, aerial | `/?mode=system&galaxy=0&star=2&planet=0&tod=0.95&view=fly&alt=90&pitch=-8&lat=1.36195&lon=32.89360&yaw=20` |
-| W4 Blade Runner street canyon, night (10 m) | `/?mode=system&galaxy=0&star=2&planet=0&tod=0.95&view=fly&alt=10&pitch=2&lat=1.54880&lon=32.96537&yaw=275&camyaw=180` |
-| W4 street, eye level | `/?mode=system&galaxy=0&star=2&planet=0&tod=0.95&view=fp&flat=0&pitch=6&lat=1.65346&lon=33.01765&yaw=5&camyaw=180` |
-| W1 village street at dusk (lanterns, NPCs, pools) | `/?mode=system&galaxy=0&star=6&planet=1&tod=0.86&view=fp&flat=0&pitch=4&lat=7.34406&lon=26.43407&yaw=311&camyaw=180` |
-| W1 capital plaza, golden hour (statue, crowd, church, windmill) | `/?mode=system&galaxy=0&star=6&planet=1&tod=0.3&view=fly&alt=22&pitch=-22&lat=7.23470&lon=26.51382&yaw=185&camyaw=180` |
-| W1 capital from above at night (was "0 tris" in round 1) | `/?mode=system&galaxy=0&star=6&planet=1&tod=0.05&view=fly&alt=110&lat=7.2848&lon=26.5138` |
-| W7 Tarkovsky kremlin-monastery town | `/?mode=system&galaxy=0&star=3&planet=2&tod=0.4&view=fly&alt=150&pitch=-20&lat=12.29727&lon=28.20922&yaw=20` |
-| W3 Moebius spire town | `/?mode=system&galaxy=0&star=9&planet=2&tod=0.35&view=fly&alt=40&pitch=-8&lat=12.69878&lon=28.22669&yaw=20` |
-| W6 Roger Dean sea metropolis + space elevator | `/?mode=system&galaxy=0&star=1&planet=3&tod=0.4&view=fly&alt=158&pitch=-10&lat=8.14908&lon=34.90067&yaw=20` |
-| W8 Stålenhag industrial metropolis + Loop reactor | `/?mode=system&galaxy=0&star=2&planet=1&tod=0.3&view=fly&alt=120&pitch=-10&lat=11.58900&lon=28.70668&yaw=20` |
-| W10 Hearthian village | `/?mode=system&galaxy=0&star=17&planet=0&tod=0.3&view=fly&alt=45&pitch=-12&lat=12.29934&lon=28.23129&yaw=20` |
-| W2 BotW ruins city | `/?mode=system&galaxy=0&star=11&planet=0&tod=0.4&view=fly&alt=103&pitch=-14&lat=6.25884&lon=26.31260&yaw=20` |
-| W11 Nausicaä nomad town | `/?mode=system&galaxy=0&star=0&planet=0&tod=0.4&view=fly&alt=63&pitch=-14&lat=12.40544&lon=28.75091&yaw=20` |
-| City lights from orbit (night side) | `/?mode=system&galaxy=0&star=9&planet=2&tod=0.0&view=orbit` |
-| M1 Kubrick monolith (civ 0) | `/?mode=system&galaxy=0&star=0&planet=2.0&tod=0.4` (monolith ~200 m ahead of the default spawn) |
+| W4 Blade Runner street canyon, night (10 m, fixed coords — W4 capital has not moved) | `star=2&planet=0&tod=0.95&view=fly&alt=10&pitch=2&lat=1.54880&lon=32.96537&yaw=275&camyaw=180` (advance 2.5) |
+| W4 street, eye level, night | `star=2&planet=0&tod=0.95&civcam=street` (advance 2.5) |
+| W4 neon megacity aerial, night | `star=2&planet=0&tod=0.95&civcam=aerial` (advance 2.5) |
+| W1 village plaza, day (church, statue, stalls, townsfolk) | `star=6&planet=1&tod=0.36&civcam=plaza` |
+| W1 village plaza, night (lantern strings, lit church) | `star=6&planet=1&tod=0.84&civcam=plaza` |
+| W1 village street at dusk (lamps, lantern carriers, lit windows) | `star=6&planet=1&tod=0.84&civcam=street` |
+| W1 capital from 110 m at night (round-1 "0 tris" case) | `star=6&planet=1&tod=0.05&civcam=top` |
+| W1 establishing aerial | `star=6&planet=1&tod=0.35&civcam=aerial` |
+| W3 Moebius spire town (plaza, statue, domes, towers) | `star=9&planet=2&tod=0.33&civcam=hero` |
+| W7 Tarkovsky kremlin-monastery town | `star=3&planet=2&tod=0.4&civcam=aerial` |
+| W6 Roger Dean sea metropolis + space elevator | `star=1&planet=3&tod=0.4&civcam=aerial` |
+| W8 Stålenhag industrial metropolis | `star=2&planet=1&tod=0.3&civcam=aerial` (heavy storm fog at t≈0.5 — atmosphere) |
+| W10 Hearthian village | `star=17&planet=0&tod=0.3&civcam=hero` |
+| W2 BotW ruins city | `star=11&planet=0&tod=0.4&civcam=hero` / `civcam=aerial` |
+| W11 Nausicaä nomad town | `star=0&planet=0&tod=0.4&civcam=hero` |
+| City lights from orbit (night side) | `star=9&planet=2&tod=0.0&view=orbit` |
+| M1 Kubrick monolith (civ 0) | `star=0&planet=2.0&tod=0.4` (monolith ~200 m ahead of the default spawn) |
 
 ## Known issues
-* Round-1 "capital renders 0 tris at night from 110 m" could not be reproduced (same URL now: 515 k tris, lit town);
-  diagnostics above make any recurrence visible in `__rv.state().civ` (`siteTris`, `fails`, `err`).
-* Night exposure on non-neon worlds is bright (terrain reads as moonlit day) so window lights / pools read weaker than on
-  W4 — atmosphere track (see Requests).
-* Light pools are additive (not albedo-modulated); on grass they read as a warm glow rather than lit ground.
-* Street-level neon facades above the podium are still mostly window grids (no balconies/signage on high floors).
-* Layout of each far site is computed on the main thread (50–150 ms per metropolis) during the first frames.
-* Triangle cost: 0.15–0.6 M per detailed town/city, ~0.75–1.0 M for level-5 metropolises at `high` (W6 1.0 M, W8 0.74 M);
-  scaled down on med/low via density, tessellation and walker/traffic counts.
-* Terrain grading covers plazas / monument terraces only (not every building pad): foundations / terraces / stilts still
-  bridge slopes under individual houses.
+* `node tools/check.mjs` passes (ALL OK). Under heavy shared load `system-surface` can exceed its 180 s readiness timeout
+  with or without civ (`disable=civ` is as slow); civ itself is ready ~4 s after create (`readyMs`), flora ~24–28 s.
+* Parked vehicles (vehicles track) still appear in settlement shots when no open, flat patch exists behind the lens
+  (`props=0` not honoured yet — see Requests).
+* W8's storm (rain 0.9, fog 0.45 at t≈0.5 s) buries the industrial metropolis in fog in aerial captures (atmosphere weather).
+* Big green/red bokeh discs in W4 street shots near the lens are not civ (hidden with `civdbg=noglow` they remain): flora
+  bioluminescent motes / post lens effects.
+* Night exposure on non-neon worlds is still brighter than the neon world (atmosphere track).
+* Street-level neon facades above the podium are still mostly window grids (now with room lighting / silhouettes, but no
+  balconies or signage on high floors of every tower type).
+* Layout of each far site is computed on the main thread (50–150 ms per metropolis) during the first frames; planning ~0.3–1 s
+  at create.
+* Triangle cost: 0.15–0.6 M per detailed town/city, ~0.75–1.0 M for level-5 metropolises at `high`.
+* Terrain grading covers plazas / monument terraces only.
 
 ## Requests
-* **atmosphere** — (1) night ambient floor: with the sun 40–70° below the horizon, W1/W7 terrain still reads almost like
-  day (compare W4 at the same sun elevation); lower the night hemi/ambient + exposure so window lights and lamp pools carry
-  the frame. (2) W7 (Solaris Sea) fog 0.6 washes the whole frame one pale green: cooler, less saturated fog colour.
-  (3) the moon / sun disc sprite at dusk showed a hard-edged white rectangle in round 1 (W1 dusk street): radial falloff.
-* **vehicles** — the parked starship spawns on the capital plaza in `view=fly` (W1 plaza shot); please avoid civ POIs of kind
-  city/village (`world.pois`, `radius`) or `world.civ.clearings` when choosing parking spots.
-* **flora** — thanks for honouring `clearings` (W4 streets are now clear). Paved (grid) cities now send `keep = 0`.
-* **player** — (done) faces `world.civ.spawnTarget`; `camyaw` also works in `fp`, which the street captures rely on.
+* **vehicles** — honour `props=0` (skip `spawnAll()` / `spawnAtSettlements()`): the civ `civcam` presets set it so parked
+  starships/bikes stay out of settlement framings. Also avoid parking on civ plazas: `world.civ.clearings` / POIs of kind
+  city/village (`radius`) — the flattest spot found by `findSpot` is often a graded plaza.
+* **atmosphere** — (1) night ambient on W1/W7 is brighter than W4 at the same sun elevation; (2) W8 storm fog at t≈0.5 s whites
+  out the whole valley from 100–400 m; (3) the round-1 hard-edged moon/sun rectangle at dusk (W1) — radial falloff.
+* **flora / post** — W4 street captures show large green/red out-of-focus discs right at the lens (bioluminescent motes or
+  lens droplets); consider fading motes within ~3 m of the camera.
+* **flora** — thanks for honouring `clearings` (W4 streets are clear). Paved (grid) cities send `keep = 0`.
+* **player** — (done) faces `world.civ.spawnTarget`; `camyaw` works in `fp`/`fly`, which `civcam` relies on.

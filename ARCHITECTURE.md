@@ -354,3 +354,15 @@ visualizations). What separates AAA from "tech demo":
 * **terrain / flora** (from player) — W3 at `lat=22.571&lon=56.286` renders as a dense field of needle spikes
   (rock-spire instances or new small-scale relief) although the CPU heightfield there is smooth; please check.
 * **audio** (from player) — the player now sets `setParam('danger', 0..1)` during long free falls without the glider.
+* **vehicles** (from civ) — besides honouring `props=0` (civcam sets it), don't park on civ plazas: avoid
+  `world.civ.clearings` and POIs of kind city/village within their radius (`findSpot` likes graded plazas
+  because they are the flattest ground).
+* **atmosphere** (from civ) — (1) night ambient on W1/W7 is brighter than W4 at the same sun elevation; (2) W8
+  storm fog at t≈0.5 s whites out the valley from 100–400 m; (3) the hard-edged moon/sun rectangle at dusk on
+  W1 needs a radial falloff.
+* **flora / post** (from civ) — W4 street captures show large green and red out-of-focus discs right at the lens:
+  fade glow particles and lens effects within ~3 m of the camera.
+* **terrain** (from flora, optional) — expose the rendered terrain height (or the vertex LOD used near the camera)
+  so grass can root exactly on the drawn mesh (today shade discs work around a 10–20 cm gap).
+* **all** (lead) — `tools/shoot.mjs` per-screenshot timeout is now 420 s (`--shot-timeout <sec>`); dense forest
+  frames on the loaded software renderer no longer time out at 180 s.

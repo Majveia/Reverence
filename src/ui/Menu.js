@@ -102,12 +102,12 @@ export class Menu {
       const s = this.settings;
       const q = this.engine.quality?.tier ?? 'high';
       html += `<div class="rv-mn-list">
-        <button class="rv-row" data-act="resume"><span class="ic">${icon('resume')}</span><span class="lbl">Resume</span>${kb('menu')}</button>
-        <button class="rv-row" data-act="map"><span class="ic">${icon('map')}</span><span class="lbl">Map &amp; scale travel</span>${kb('map')}</button>
-        ${loc.up ? `<button class="rv-row" data-act="up"><span class="ic">${icon('up')}</span><span class="lbl">${escapeHtml(loc.up.label)}</span></button>` : ''}
-        <button class="rv-row" data-act="photo"><span class="ic">${icon('photo')}</span><span class="lbl">Photo mode</span>${kb('photo')}</button>
+        <button class="rv-row" data-act="resume" data-sfx="ui.back"><span class="ic">${icon('resume')}</span><span class="lbl">Resume</span>${kb('menu')}</button>
+        <button class="rv-row" data-act="map" data-sfx="ui.open"><span class="ic">${icon('map')}</span><span class="lbl">Map &amp; scale travel</span>${kb('map')}</button>
+        ${loc.up ? `<button class="rv-row" data-act="up" data-sfx="ui.open"><span class="ic">${icon('up')}</span><span class="lbl">${escapeHtml(loc.up.label)}</span></button>` : ''}
+        <button class="rv-row" data-act="photo" data-sfx="ui.open"><span class="ic">${icon('photo')}</span><span class="lbl">Photo mode</span>${kb('photo')}</button>
         <button class="rv-row" data-act="share"><span class="ic">${icon('share')}</span><span class="lbl">Share this place</span><span class="val" data-share></span></button>
-        <button class="rv-row" data-act="controls"><span class="ic">${icon('controls')}</span><span class="lbl">Controls</span><span class="ic">${icon('chevron')}</span></button>
+        <button class="rv-row" data-act="controls" data-sfx="ui.open"><span class="ic">${icon('controls')}</span><span class="lbl">Controls</span><span class="ic">${icon('chevron')}</span></button>
         <div class="rv-sep"></div>
         <div class="rv-mn-sec" style="margin:4px 10px 6px">Settings</div>
         <div class="rv-set" style="flex-direction:column;align-items:stretch;gap:8px;padding-top:4px;padding-bottom:6px"><div style="display:flex;justify-content:space-between"><span class="lbl">Quality</span><span class="val" style="font-size:10px;color:var(--ui-faint)">${this.engine.quality?.mobile ? 'mobile' : ''}</span></div>
@@ -120,7 +120,7 @@ export class Menu {
     } else if (this.page === 'controls') {
       const d = dev === 'touch' || dev === 'gamepad' ? dev : 'keyboard';
       html += `<div class="rv-mn-list">
-        <button class="rv-row" data-act="main"><span class="ic">${icon('back')}</span><span class="lbl">Controls</span></button>
+        <button class="rv-row" data-act="main" data-sfx="ui.back"><span class="ic">${icon('back')}</span><span class="lbl">Controls</span></button>
         <div class="rv-seg rv-devtabs">${['keyboard', 'gamepad', 'touch'].map((x) => `<button data-dev="${x}" class="${x === d ? 'on' : ''}">${x}</button>`).join('')}</div>
         <div class="rv-help">${HELP[d].map(([lbl, v]) => `<span>${lbl}</span><span class="kb">${
           Array.isArray(v) ? v.map((a) => glyphFor(this.input, a, d === 'touch' ? 'touch' : d)).join('') : `<span style="font-size:10px;letter-spacing:.08em;color:var(--ui-faint)">${v}</span>`}</span>`).join('')}</div>

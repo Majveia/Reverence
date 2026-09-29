@@ -278,7 +278,7 @@ class Flora {
         this.cshadeGeo = makeSwardDecal(tier === 'low' ? 8 : 12);
         let csDbg = false;
         try { csDbg = (new URL(window.location.href).searchParams.get('floradbg') || '').includes('cshade'); } catch (_) { /* no window */ }
-        const cm = makeCanopyShadeMaterial({ fade: [0, 0, csR * 0.75, csR], size: 1.9, strength: 0.65 * (S.canopyShade ?? 1), shade: csDbg ? [1, 0.02, 0.02] : undefined });
+        const cm = makeCanopyShadeMaterial({ fade: [0, 0, csR * 0.75, csR], size: 2.4, strength: 1.0 * (S.canopyShade ?? 1), shade: csDbg ? [1, 0.02, 0.02] : undefined });
         const LC = new InstanceLayer(this.cshadeGeo, cm.material, null, { capacity: 4096, parent: this.group, castShadow: false, receiveShadow: false, name: 'flora-canopy-shade', boundsPad: 60 });
         LC.uniforms = cm.uniforms;
         this.layers.push(LC);

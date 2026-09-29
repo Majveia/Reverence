@@ -93,6 +93,11 @@ export default class GalaxyMode extends Mode {
         else if (k === 'EnvL') this.volume.uniforms.uBulgeH.value.y = +v;
         else if (k === 'EnvA') this.volume.uniforms.uBulgeH.value.x = +v;
         else if (k === 'meter') { this.edgeMeter = +v; this._meterSet = true; }
+        else if (k === 'tm') this.look.tonemap = v;
+        else if (k === 'sat') this.look.saturation = +v;
+        else if (k === 'fsat') this.look.filmLook = { ...this.look.filmLook, saturation: +v };
+        else if (k === 'fpow') this.look.filmLook = { ...this.look.filmLook, power: +v };
+        else if (k === 'bloom') this.look.bloom = { ...this.look.bloom, strength: +v };
       }
     }
     this._startGlobalGeneration(n);
