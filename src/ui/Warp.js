@@ -204,12 +204,27 @@ export class Warp {
     gr.addColorStop(0, `rgba(${core},0.55)`); gr.addColorStop(0.18, `rgba(${core},0.22)`); gr.addColorStop(0.5, `rgba(${arms},0.06)`); gr.addColorStop(1, `rgba(${arms},0)`);
     x.fillStyle = gr; x.fillRect(-rad, -rad, rad * 2, rad * 2);
     x.restore();
-    const armsN = g.arms || 0, spiral = armsN >= 2 && g.type !== 'elliptical';
+    const armsN = g.arms || 0, spiral = armsN >= 2 && g.type !== 'elliptical' && g.type !== 'irregular';
+    const ring = g.type === 'ring', irr = g.type === 'irregular';
     const k = 1 / Math.tan(((g.pitch || 16) * Math.PI) / 180);
-    const n = spiral ? 2600 : 1800;
+    const n = spiral || ring ? 3200 : 2000;
+    const glowA = this._blob(arms), glowH = this._blob(hii), glowC = this._blob(core);
+    const clumps = irr ? Array.from({ length: 7 }, () => [(R() - 0.5) * rad * 1.1, (R() - 0.5) * rad * 0.8, 0.08 + R() * 0.18]) : null;
     for (let i = 0; i < n; i++) {
-      let px, py, col, a, sz;
-      if (spiral && R() < (g.armStrength || 0.7)) {
+      let px, py, col, a, sz, glow = null;
+      if (ring && R() < 0.6) {
+        const th = R() * Math.PI * 2, rr = rad * (0.62 + (R() + R() - 1) * 0.07);
+        px = Math.cos(th) * rr; py = Math.sin(th) * rr;
+        const knot = R() < 0.1;
+        col = knot ? hii : arms; a = knot ? 0.85 : 0.4 + R() * 0.3; sz = knot ? 1.3 + R() * 1.5 : 0.6 + R() * 1.2;
+        if (i % 9 === 0) glow = knot ? glowH : glowA;
+      } else if (irr && R() < 0.75) {
+        const c = clumps[Math.floor(R() * clumps.length)];
+        px = c[0] + (R() + R() - 1) * rad * c[2]; py = c[1] + (R() + R() - 1) * rad * c[2];
+        const knot = R() < 0.12;
+        col = knot ? hii : R() < 0.5 ? arms : core; a = 0.35 + R() * 0.4; sz = 0.6 + R() * 1.4;
+        if (i % 8 === 0) glow = knot ? glowH : glowA;
+      } else if (spiral && R() < (g.armStrength || 0.7)) {
         const arm = Math.floor(R() * armsN);
         const t = Math.pow(R(), 0.8);
         const r = (0.08 + t * 0.92) * rad;
@@ -219,8 +234,9 @@ export class Warp {
         py = Math.sin(th) * r + Math.sin(th + Math.PI / 2) * sc;
         const knot = R() < 0.07 && t > 0.25;
         col = knot ? hii : t < 0.2 ? core : arms;
-        a = knot ? 0.8 : 0.25 + 0.45 * (1 - t);
+        a = knot ? 0.8 : 0.3 + 0.5 * (1 - t);
         sz = knot ? 1.4 + R() * 1.6 : 0.6 + R() * 1.3;
+        if (i % 7 === 0) glow = knot ? glowH : t < 0.25 ? glowC : glowA;
       } else {
         // bulge / elliptical population (gaussian)
         const u = R() + R() + R() - 1.5, v = R() + R() + R() - 1.5;
@@ -228,8 +244,20 @@ export class Warp {
         px = u * s; py = v * s * flat;
         col = core; a = 0.18 + R() * 0.3; sz = 0.5 + R() * 1.1;
       }
+      if (glow) { const gs = 14 + R() * 26; x.globalAlpha = 0.16; x.drawImage(glow, cx + px - gs, cx + py - gs, gs * 2, gs * 2); x.globalAlpha = 1; }
       x.fillStyle = `rgba(${col},${a.toFixed(3)})`;
       x.beginPath(); x.arc(cx + px, cx + py, sz, 0, Math.PI * 2); x.fill();
+    }
+    // dust lanes (subtractive) trailing the arms
+    if (spiral) {
+      x.globalCompositeOperation = 'destination-out';
+      for (let i = 0; i < 260; i++) {
+        const arm = Math.floor(R() * armsN), t = 0.12 + R() * 0.6, r = (0.08 + t * 0.92) * rad;
+        const th = (arm / armsN) * Math.PI * 2 + Math.log(r / (rad * 0.08)) * k * 0.55 - 0.16;
+        const gs = 5 + R() * 9;
+        x.globalAlpha = 0.18; x.drawImage(this._dust || (this._dust = this._blob('0,0,0')), cx + Math.cos(th) * r - gs, cx + Math.sin(th) * r - gs, gs * 2, gs * 2);
+      }
+      x.globalAlpha = 1; x.globalCompositeOperation = 'lighter';
     }
     // bar
     if (g.barLength > 0) {
@@ -394,10 +422,15 @@ export class Warp {
     const onWhite = /255, 255, 255|#fff/i.test(bg);
     const A = this.alpha;
 
-    // ---- 1. nebula tunnel (tinted gas rushing past) — additive sprites
+    // ---- 1. nebula tunnel (tinted gas rushing past) — additive sprites over a faint destination haze
     if (!onWhite) {
       const nb = this.neb;
-      if (draw) ctx.globalCompositeOperation = 'lighter';
+      if (draw) {
+        ctx.globalCompositeOperation = 'lighter';
+        const hz = Math.max(W, H) * 0.9;
+        ctx.globalAlpha = A * 0.28; ctx.drawImage(this.nebSprites[0], cx - hz * 0.9, cy - hz * 0.55, hz * 1.4, hz * 1.0);
+        ctx.globalAlpha = A * 0.2; ctx.drawImage(this.nebSprites[1], cx - hz * 0.3, cy - hz * 0.35, hz * 1.3, hz * 0.9);
+      }
       for (let i = 0; i < NB; i++) {
         nb.z[i] -= v * dt * 0.55;
         if (nb.z[i] < 0.12 || nb.z[i] > 1.6) { this._resetNeb(i, false); continue; }
@@ -407,7 +440,7 @@ export class Warp {
         const px = cx + Math.cos(nb.a[i]) * r, py = cy + Math.sin(nb.a[i]) * r;
         const size = nb.s[i] / z * f * 0.75;
         const near = clamp01((1.5 - z) / 1.2);
-        const a = A * near * (1 - clamp01((0.35 - z) / 0.23)) * 0.5 * (0.35 + 0.65 * clamp01(Math.abs(this.speed) / 1.2 + 0.3));
+        const a = A * near * (1 - clamp01((0.35 - z) / 0.23)) * 0.95 * (0.4 + 0.6 * clamp01(Math.abs(this.speed) / 1.2 + 0.3));
         if (a < 0.01) continue;
         ctx.globalAlpha = a;
         ctx.drawImage(this.nebSprites[nb.c[i] % this.nebSprites.length], px - size, py - size * 0.8, size * 2, size * 1.6);
