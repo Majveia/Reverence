@@ -368,7 +368,7 @@ void rvTerrain( inout vec3 albedo ) {
   rockC = mix( rockC, rockBase * 0.62, smoothstep( 0.35, 0.65, mC.g + 0.3 * n2 ) * 0.3 );
   rockC = mix( rockC, rockBase * 1.18 + 0.02, smoothstep( 0.55, 0.8, mA.g + 0.25 * n3 ) * 0.35 );
   rockC *= 0.68 + 0.64 * aRock;
-  rockC *= 0.8 + 0.4 * strA;
+  rockC *= 0.86 + 0.28 * strA;
   // iron / oxide staining on faces: warm broad patches (tens to hundreds of metres) under ledges
   float iron = smoothstep( 0.55, 0.85, mC.r * 0.6 + mA.b * 0.4 + 0.25 * n3 ) * smoothstep( 0.25, 0.5, slope ) * ( 0.5 + 0.5 * clamp( curv * 2.0, 0.0, 1.0 ) );
   rockC = mix( rockC, rvLum( rockC ) * vec3( 1.35, 0.95, 0.68 ), iron * 0.6 );

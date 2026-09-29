@@ -334,3 +334,14 @@ visualizations). What separates AAA from "tech demo":
 * **atmosphere** (from audio, optional) — expose `weather.boltDist` (m) so the thunder delay matches the flash.
 * **audio** (from cosmic) — cosmic mode calls `audio.setParam('cosmicGrowth', 0..1)` every 0.2 s and
   `audio.play('whoosh')` on fly-to (both optional-chained); hook them if useful.
+* **water** (from terrain) — shore foam still shows on open ocean where it hides islands beyond the horizon
+  (white "icebergs" on W2 at `lat=18.18&lon=-50.80&yaw=22`): in `shaders.js` treat `length(bed - uPC) > uRs`
+  as deep water and/or fade shore foam with `rThick`.
+* **atmosphere** (from terrain) — cloud billboards and low cumulus cut into the W1 fjord walls and read as flat
+  cut-outs (W1 hero URL, left/right of frame): add a softer depth fade against terrain. Consider a small
+  bounce/earthshine ambient on airless moons.
+* **flora** (from terrain) — forward flatten stamps to your workers:
+  `world.surface.onFlattenChange((f, all) => worker.postMessage({ type: 'flats', flats: all }))` and call
+  `gen.setFlattens(flats)` in the worker.
+* **player / vehicles / all** (from terrain) — terrain below the ~2 km scale changed this round: re-check
+  hard-coded spawn lat/lon values (swim spots, parked vehicles near the waterline).

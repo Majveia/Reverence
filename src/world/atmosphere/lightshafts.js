@@ -404,8 +404,12 @@ export class LightShafts {
     if (ef) { vu.uFogV.value.copy(ef.uFog.value); vu.uFogSunV.value.copy(ef.uFogSun.value).multiplyScalar(ef.uFogAlbedo.value.y); }
     // sun cascades
     let csmOn = false;
+    // the sampler2DShadow must always be bound to a depth texture (even when unused, e.g. moon as key light):
+    // any other texture is a GL_INVALID_OPERATION that silently drops the draw
+    const dtex0 = this.csm?.map?.depthTexture;
+    if (this.csm) { if (dtex0) vu.tSunShadow.value = dtex0; else if (!vu.tSunShadow.value) return false; }
     if (this.csm && !L.keyIsMoon) {
-      const dtex = this.csm.map?.depthTexture;
+      const dtex = dtex0;
       if (dtex) {
         csmOn = true;
         vu.tSunShadow.value = dtex;
@@ -466,6 +470,7 @@ export class LightShafts {
       const W = atmo.weather;
       const up = _up.setFromMatrixPosition(cam.matrixWorld).add(atmo.world.origin).normalize();
       const elev = up.dot(keyDir);
+      this._elev = elev;
       const lowSun = 0.55 + 0.9 * (1 - THREE.MathUtils.smoothstep(elev, 0.05, 0.6));
       strength = onScreen * this.haze * lowSun * (1 + (W.fog || 0) * 0.8 + (W.dust || 0)) * THREE.MathUtils.smoothstep(elev, -0.06, 0.03) * (L.keyIsMoon ? 0.35 : 1);
       hasRays = strength >= 0.01 && kc.r + kc.g + kc.b > 1e-4;
@@ -496,7 +501,10 @@ export class LightShafts {
     cu.tVolSub.value = this.vol.textures[1];
     cu.uHasRays.value = hasRays ? 1 : 0;
     cu.uHasVol.value = hasVol ? 1 : 0;
-    cu.uColor.value.set(kc.r, kc.g, kc.b).multiplyScalar(strength * 0.12);
+    // golden hour: a warm, generous glow of streaks (the reddened sun is dim, the scene is backlit);
+    // high sun: subtle streaks only (a bright veil would wash out the contrast)
+    const gold = 1 - THREE.MathUtils.smoothstep(this._elev ?? 1, 0.02, 0.3);
+    cu.uColor.value.set(kc.r, kc.g, kc.b).multiplyScalar(strength * (0.12 + 0.22 * gold));
     cu.uRayDir.value.copy(keyDir);
     this.quad.render(renderer, this.compMat, io.output);
   }

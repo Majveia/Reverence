@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Explorer Lab</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<!-- Player track dev lab: the real Player in a tiny fake world (test terrain: meadow, cliff, dune, sea).
+     Fast iteration on the explorer's materials, poses and camera without the full planet stack.
+     URL: /src/world/player/lab/?sunel=18&sunaz=200&x=0&z=0&yaw=0&camyaw=150&zoom=0.5&pitch=2
+     Same __rv API subset as the game (ready, advance, move, hold, press, look, state, render). -->
+<script type="module" src="./lab.js"></script>
+</body>
+</html>

@@ -378,7 +378,7 @@ export class AtmosphereModel {
       uSkyGain: { value: this.skyGain },
       // the art sky gain only partly applies to the Mie (haze / sun aureole) term: brighter blue sky without
       // a blown-out glare disc around the sun and a milky veil over backlit terrain
-      uMieGain: { value: 1 + (this.skyGain - 1) * 0.3 },
+      uMieGain: { value: 1 + (this.skyGain - 1) * 0.6 },
       uSkyViewGain: { value: 1 },
       uGroundAlbedo: { value: new THREE.Vector3(this.groundAlbedo.r, this.groundAlbedo.g, this.groundAlbedo.b) },
       uSunAngR: { value: 0.005 },

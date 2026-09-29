@@ -18,6 +18,32 @@ Subsystem `atmosphere` (order 20) auto-loaded by `World`. Every pass is fault-is
 | `lighting.js` | `SunLight` key light with custom N-cascade shadows (`RVSunShadow`: 2–4 cascades in one atlas, texel snapping, per-cascade normal bias), moon as key light at night (phase-aware), PMREM environment of the sky + cloud deck (cover / colours follow the weather and time of day) on `scene.environment`, **overcast-aware ambient** (the deck greys and dims the sky dome; blocked direct sun returns as diffuse light), hemisphere fallback, material auto-setup (cloud shadows on the key light) |
 | `index.js` | subsystem glue, per-frame CPU state, pre-render GPU work (LUTs, env map, cloud shadow map) |
 
+### Round 2 (critic fixes)
+* **Clouds read as volumes, not painted blobs**: lighting rebalanced to real cloud albedo — key-light gain per
+  type (`sunGain` 3–5.2) vs sky ambient `AMBK` 1.1 (was 1.6, which flattened sunlit vs shadowed sides to ~1:1;
+  now ~4:1), column self-shadowing `Tup = 1/(1 + tupK·odUp)` with a deep floor (thick towers / storm decks
+  get dark, mottled bases), denser bases (`grad`), multiple-scattering octaves a 0.5 / b 0.35.
+* **Silver lining without a blown-out sun**: the forward (HG 0.8/0.9) peak is soft-limited
+  (`lum/(1+2.2·lum)`): thin edges next to the sun were ~100× sky radiance and bloomed into a white veil over the
+  whole frame (the critic's "overexposed white disc"). The art sky gain applies only partly to the Mie term
+  (`uMieGain` = 1 + 0.6·(skyGain−1)): blue sky stays bright, the aureole and backlit haze no longer wash out.
+* **Temporal sampling**: the cloud march and the volumetric march get a new IGN pattern every render (incl. the
+  TAA sub-frames of a still), so the TAA resolve accumulates them (real time: ~10 frames). High-tier stills march
+  the clouds at full resolution (= the converged image; the 2×2 half-res checker from orbit is gone).
+* **Orbit**: far-field cloud density = weather-map cells + the 3D noise at two incommensurate, rotated planet
+  scales (14 km / 3.8 km) → fractal cloud fields, popcorn cumulus, fibrous cyclone bands; the coverage edge widens
+  with distance (translucent fringes, no cut-out chips, no tiling).
+* **God rays**: screen-space occlusion source = open sky × cloud transmittance² **+ silver-lined cloud edges**
+  (cloud radiance / key-light luminance), three radial passes (1.0 / 0.4 / 0.14), angular falloff so there is
+  no full-screen veil, warmer and stronger at golden hour; volumetric pass keeps the physically based shadow
+  beams (shadowed in-scatter removed) with a much thinner clear-day haze (was a pink milky veil).
+* **Sea of clouds / stratus**: crisper, lumpier deck tops (`topSoft` 0.72, `lump` 0.42, erosion 0.4) → billows
+  read under grazing light.
+* **Shadows**: PCF radius ×1.9 on the middle cascade (22–130 m at high), ×1.35 beyond (flora request).
+* **Nights**: +40 % night ambient on moody (neon-noir) worlds so glow-lit silhouettes read (flora request);
+  moon discs (space track) confirmed in frame at W3 (see capture table).
+* **Audio hook**: `world.atmosphere.weather.boltDist` (m) / `boltTime` + event `weather:lightning {dist, pos}`.
+
 ### Physical model & art direction (the important numbers)
 * Scale heights are ~36 % of the atmosphere shell (miniature planets: mountains up to 7 km must stay
   inside the air); density fades to 0 at the top (`uTopFade`), so the limb is a soft glowing shell.
@@ -75,26 +101,34 @@ world.atmosphere = {
 * `__rv.state().atmosphere` → `{ sunElev, key, night, env, shadows, clouds, weather{…}, wet, snowCover }`.
 
 ## Best capture views (`/?mode=system&galaxy=0&…`)
+Finals of this round (1280×720) are listed first; all are plain URLs (steps only where noted).
+
 | view | URL / steps |
 |---|---|
-| BotW cumulus sky (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.4&pitch=8` |
-| Golden-hour sunset, sunbeams fanning from behind the ridge (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.74&pitch=6&yaw=270` |
-| Crepuscular rays under a broken deck, morning (W1) | `star=6&planet=1&view=fly&alt=800&tod=0.28&pitch=6&yaw=90&cover=0.8` |
-| Storm over the sea: dark cells, rain, branched lightning (W4) | `star=2&planet=0&view=fly&alt=300&tod=0.45&pitch=6` |
-| Blade Runner rain storm in the forest (W4) | `star=2&planet=0&view=surface&tod=0.45` steps `[{"look":[0,8]},{"advance":0.5}]` |
-| Sea of clouds, peaks piercing the deck (W7 Solaris) | `star=3&planet=2&view=fly&alt=3000&tod=0.3&yaw=90` |
-| Night: deep-blue starry sky, horizon glow (W9) | `star=2&planet=2.1&view=fly&alt=600&tod=0.02&pitch=12` |
-| Night over the archipelago (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.02&pitch=12` |
+| **BotW cumulus sky** (W2 noon-ish) | `star=11&planet=0&view=fly&alt=800&tod=0.4&pitch=8` |
+| **Golden hour**, warm streaks fanning from behind the ridge (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.74&pitch=6&yaw=270` |
+| **Morning sun through broken cumulus** (W2, god rays / shadow beams) | `star=11&planet=0&view=fly&alt=800&tod=0.28&pitch=8&yaw=100&cover=0.7` |
+| **Storm over the neon city**: dark scud cells, rain, branched lightning (W4) | `star=2&planet=0&view=fly&alt=300&tod=0.45&pitch=6&lightning=1` |
+| **Sea of clouds**, side-lit, peaks piercing the deck (W7 Solaris — Friedrich) | `star=3&planet=2&view=fly&alt=3000&tod=0.28&yaw=180&pitch=-4` |
+| **Moonrise night**: moon disc, moonlit wisps, deep-blue starry sky (W3 Arzach) | `star=9&planet=2&view=fly&alt=600&tod=0.02&pitch=8&yaw=283` |
+| **Planet from orbit**: cyclone, fractal cloud fields, sunset-lit terminator clouds (W2) | `star=11&planet=0&view=orbit&tod=0.4` |
+| **Terminator from orbit**: orange band, airglow ring (W1) | `star=6&planet=1&view=orbit&tod=0.22` |
+| Overcast stratus deck, sun a dim disc through it (W2) | `star=11&planet=0&view=fly&alt=500&tod=0.3&pitch=12&yaw=108&cover=0.75&clouds=stratus` |
+| Rain storm in the forest (W4, surface; framing depends on the player spawn) | `star=2&planet=0&view=surface&tod=0.45&lightning=1` steps `[{"look":[0,22]},{"advance":0.5}]` |
+| Night over the archipelago (W2, moonless) | `star=11&planet=0&view=fly&alt=800&tod=0.02&pitch=12` |
 | Aurora curtains + stars (W8) | `star=2&planet=1&view=fly&alt=800&tod=0.02&pitch=12&weather=aurora` |
-| Terminator from orbit: orange band, reddened sun at the limb, airglow ring (W1) | `star=6&planet=1&view=orbit&tod=0.22` |
-| Planet from orbit: cyclone, cumulus fields, deep oceans (W2) | `star=11&planet=0&view=orbit&tod=0.4` |
+| Moonlit overcast (W7, moon behind the deck → corona) | `star=3&planet=2&view=fly&alt=600&tod=0.02&pitch=35&yaw=267` |
 | Lava moon at dusk (glowing haze, clear air over lava) | `star=7&planet=4.0&view=fly&alt=300&tod=0.78&pitch=-4` |
 | Snow (W12 arctic) | `star=9&planet=5&view=surface&tod=0.45&weather=snow` steps `[{"look":[0,10]},{"advance":0.5}]` |
 | Low tier clouds | add `&q=low` |
 
+Framing tips: `__rv.state().atmosphere` reports `sunAz` / `sunElev` and `moon {az, elev}` — pass them as
+`yaw` / `pitch` to face the sun or the moon.
+
 **Art / capture overrides:** `&weather=clear|rain|storm|snow|dust|fog|aurora`, `&lightning=1` (forced bolt on
 the captured frame), `&clouds=cumulus|storm|stratus|wisp|haze|fogsea|none`, `&cover=0..1` (cloud coverage).
-Debug: `&atmoDebug=5` shows the volumetric-light terms (R: added light, G: shadowed/removed light, B: 1 − T).
+Debug: `&atmoDebug=5` shows the volumetric-light terms (R: added light, G: shadowed/removed light, B: 1 − T);
+`&shafts=0` disables the volumetric-light pass (A/B); `&clscale=0.25..1` overrides the cloud march resolution.
 `__rv.state().atmosphere` now also reports `moon {name, ill, elev, az}`, `sunAz` (compass, = `yaw` to face
 it) and `overcast`.
 
@@ -102,21 +136,26 @@ it) and `overcast`.
 * high: atmosphere pass (≤ 10–20 samples/pixel, full res) + clouds (half res, ≤ 56 steps (84 in shot mode),
   5 light steps + 2 column samples, early exit, distance LOD skips the detail fetches far away) +
   volumetric light (quarter res, 36 steps: 14 near with the sun cascades, 22 far with the cloud shadow map)
-  + streaks (quarter res, 2 blurs) + weather (6k instanced quads, one draw) + sky-view LUT (192×108) per
+  + streaks (quarter res, 3 radial blurs × 24 taps) + weather (6k instanced quads, one draw) + sky-view LUT (192×108) per
   frame; transmittance/MS LUTs, 3D noise (64³) and weather cube (384² × 6) built once; env map PMREM only
   when the sun / altitude / cloud cover change; cloud shadow map every 3rd frame.
+* Stills (`shot=1`, high/ultra) march the clouds at full res (4 TAA sub-frames cannot converge a half-res
+  jitter); real time stays half res. Far-field orbit detail costs 2 extra 3D-noise fetches per sample only where
+  the distance LOD is active (detail fetches are skipped there).
 * Tiers: low = no shadows, 2D cloud slab, no volumetric light, 1.4k particles; med = 2 cascades, 36 steps,
   1 column sample and no second detail octave (`CL_HQ` off), 22 volumetric steps; ultra = 4 cascades, 80 steps, 96³ noise, 48 volumetric steps. Zero per-frame
   allocations in hot paths.
 
 ## Known issues
-* No temporal reprojection for clouds yet (half-res + spatial jitter + depth-aware upsample): thin cloud
-  edges show a little grain in stills.
+* Real time: clouds are half res, jittered per frame and converged by the post TAA (no dedicated cloud history
+  buffer yet); very fast camera motion can show a little grain on thin edges for a few frames.
 * Volumetric light is quarter res: very thin occluders (a single trunk) give soft shafts; the cloud shadow
   map covers ~26 km × size around the camera, so shafts fade beyond it.
 * Inside the cloud layer the shaft visibility uses the sun-ward fraction of the column (approximation).
 * Crepuscular rays need broken clouds or a ridge near the sun; on clear-sky worlds only the (correct) Mie
-  aureole shows — use `&cover=` to stage them.
+  aureole shows — use `&cover=` to stage them. Under a fully overcast deck there are (correctly) no rays.
+* The W4 surface storm framing depends on the player spawn (currently next to a parked ship); the storm-sea
+  fly view is the reliable storm showcase.
 * Lightning bolts are camera-facing ribbons (no volumetric glow halo; the cloud flash provides that).
 
 ## Requests
@@ -139,7 +178,11 @@ it) and `overcast`.
   are created, and the key light is valid (white sun, env map present — checked in-page). Please look at
   the terrain material path for barren bodies (or the camera spawn inside terrain).
 
-### Done this round (inbox)
+### Done (inbox, round 2)
+* audio: `weather.boltDist` / `boltTime` + `weather:lightning` event.
+* flora: softer PCF on the middle cascades; stronger night ambient on moody worlds (W4).
+
+### Done (inbox, round 1)
 * vehicles/space: no rain/snow streaks above the cloud deck or outside the atmosphere.
 * water: deep-blue oceans from orbit (thinner veil from altitude), lava worlds get clearer low air and a
   glowing lava-lit haze; `lighting.skyCube` exposes the raw planet-local sky cube (same as `cubeRT.texture`).

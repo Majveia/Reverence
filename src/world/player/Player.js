@@ -164,6 +164,7 @@ export class Player {
       this.state = 'swim'; this.grounded = false;
     }
     if (p.act === 'slide' && this.state === 'ground') this._startSlide(true);
+    if (p.act === 'climb' && this.state === 'ground') safe(() => this._spawnClimb(clamp(+p.climbh || 4, 1.2, 40)));
 
     world.player = this;
     world.controller = this;
@@ -277,6 +278,57 @@ export class Player {
     this.cam.pitch = clamp(el * 0.8 - 0.08, -0.8, 0.6);
     this.cam.pivotInit = false; this.cam.fpInit = false;
     if (this.scarf) this.scarf.initialized = false;
+  }
+
+  /**
+   * act=climb: find the nearest real rock face (heading first, then a widening fan), and start the
+   * explorer on it `h` meters above its foot, framed from the ¾ side. Deterministic for captures.
+   */
+  _spawnClimb(h) {
+    const H = this.heights, V = () => new THREE.Vector3();
+    const up0 = this.up.clone(), start = this.pos.clone(), fwd0 = this.forward.clone();
+    const dir = V(), q = V(), nq = V(), nH = V(), S = V(), uq = V(), A = V(), nA = V(), d = V();
+    for (let a = 0; a < 25; a++) {
+      const ang = (a % 2 ? 1 : -1) * Math.ceil(a / 2) * (Math.PI / 12);
+      dir.copy(fwd0).applyAxisAngle(up0, ang);
+      for (let s = 1.5; s <= 90; s += 1.25) {
+        q.copy(start).addScaledVector(dir, s);
+        q.setLength(H.groundR(q));
+        H.normal(q, nq, 0.7);
+        uq.copy(q).normalize();
+        if (nq.dot(uq) > 0.5) continue;                       // not steep (> 60°) here
+        projectOnPlane(nH.copy(nq), uq);
+        if (nH.lengthSq() < 1e-6) continue;
+        nH.normalize();
+        if (nH.dot(dir) > -0.4) continue;                      // must face us (not a drop-off)
+        const wl = H.water(q);
+        if (wl > -1e8 && q.length() < this.R + wl + 0.5) break; // sea cliff foot under water
+        // a point h m up the face, 3 m out in the air, ray back into the rock
+        S.copy(q).addScaledVector(uq, h + 1.3).addScaledVector(nH, 3);
+        if (H.inside(S)) continue;
+        const hit = H.ray(S, d.copy(nH).negate(), 9, 0.05);
+        if (!(hit > 0)) continue;
+        A.copy(S).addScaledVector(nH, -hit);
+        H.normal(A, nA, 0.45);
+        if (nA.dot(uq) > T.walkCos) continue;                  // that part of the face is a ledge
+        this.pos.copy(A).addScaledVector(nH, 0.45).addScaledVector(uq, -1.3);
+        this.up.copy(this.pos).normalize();
+        this.forward.copy(nH).negate();
+        this.state = 'air'; this.grounded = false; this.vel.set(0, 0, 0);
+        d.copy(nH).negate();
+        if (!this._enterClimb(nA, d)) { this.pos.copy(start); this.up.copy(start).normalize(); this.state = 'ground'; this.grounded = true; continue; }
+        this._settle = 0;
+        // ¾ side view of the wall (camyaw still orbits relative to that)
+        const side = this.params.camyaw !== undefined ? 0 : 1;
+        this.cam.fwd.copy(d).applyAxisAngle(this.up, side * 0.85);
+        if (this.params.camyaw !== undefined) this.cam.fwd.applyAxisAngle(this.up, -(+this.params.camyaw) * DEG);
+        this.climbS.side = 1;
+        if (this.params.pitch === undefined) this.cam.pitch = 0.02;
+        this.cam.idleLook = 0;
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Early frames: step off spawn points that ended up inside / hugging a tree or rock (flora request). */
