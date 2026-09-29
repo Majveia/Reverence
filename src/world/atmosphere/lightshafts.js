@@ -48,6 +48,7 @@ uniform sampler2D tCloudRT;  // clouds pass (rgb: light, a: transmittance), half
 uniform float uHasCloudRT;
 uniform vec4 uFogV;        // effect height fog: density at base (1/m), scale height, base altitude, -
 uniform vec3 uFogSunV;     // sun illuminance used by the fog (already dimmed by weather)
+uniform float uFrameJ;     // frame counter (jitter pattern; TAA accumulates it)
 varying vec2 vUv;
 layout(location = 0) out vec4 outAdd;   // rgb: added light (lit haze, rain), a: transmittance
 layout(location = 1) out vec4 outSub;   // r: removed light (shadowed air), luminance (>= 0)
@@ -98,7 +99,7 @@ void main(){
   if (g.x > 0.0) tEnd = min(tEnd, g.x);
   if (tEnd <= 1.0){ outAdd = vec4(0.0, 0.0, 0.0, 1.0); return; }
 
-  float jit = rv_ign(gl_FragCoord.xy);
+  float jit = rv_ign(gl_FragCoord.xy + 5.588238 * uFrameJ);
   float nu = dot(dir, uKeyDir);
   float phR = atmo_phaseRayleigh(nu), phM = atmo_phaseMie(nu, uMieG);
   float phH = mix(atmo_phaseHG(nu, uHaze.w), 1.0 / (4.0 * RV_PI), 0.25);
@@ -192,15 +193,27 @@ uniform sampler2D tDepth;
 uniform sampler2D tClouds;
 uniform float uHasClouds;
 uniform vec3 uLightDir;
+uniform float uKeyLum;     // luminance of the key light illuminance (cloud radiance reference)
 varying vec2 vUv;
+// Occlusion-based light-scattering source (GPU Gems 3, ch. 13): open sky near the key light AND the
+// bright silver-lined cloud edges emit; terrain and dense cloud bodies block. The radial blur toward
+// the light turns every gap / ridge / cloud edge into a streak.
 void main(){
   float d = texture(tDepth, vUv).r;
-  float sky = atmo_isFar(d) ? 1.0 : 0.0;
-  if (uHasClouds > 0.5) sky *= texture(tClouds, vUv).a;
+  float src = 0.0;
+  if (atmo_isFar(d)){
+    src = 1.0;
+    if (uHasClouds > 0.5){
+      vec4 cl = texture(tClouds, vUv);
+      // silver lining: cloud radiance relative to the key light (a lit white cloud ≈ 0.3, forward-scattering rims > 1)
+      float rim = smoothstep(0.35, 1.6, rv_luma(cl.rgb) / max(uKeyLum, 1e-6)) * (1.0 - cl.a);
+      src = cl.a * cl.a + rim * 1.6;
+    }
+  }
   vec3 dir = normalize(mat3(uCamWorld) * atmo_viewDir(vUv));
   float c = max(dot(dir, uLightDir), 0.0);
-  float glow = pow(c, 60.0) * 1.2 + pow(c, 8.0) * 0.25;
-  gl_FragColor = vec4(sky * glow, 0.0, 0.0, 1.0);
+  float glow = pow(c, 64.0) + pow(c, 16.0) * 0.25;
+  gl_FragColor = vec4(src * glow, 0.0, 0.0, 1.0);
 }`;
 
 const BLUR_FRAG = /* glsl */`
@@ -234,6 +247,7 @@ uniform sampler2D tVolSub;
 uniform vec2 uLowRes;
 uniform vec3 uColor;
 uniform float uHasRays;
+uniform vec3 uRayDir;
 uniform float uHasVol;
 uniform float uDebug;
 varying vec2 vUv;
@@ -270,7 +284,12 @@ void main(){
     c = c * v.a + v.rgb;
     if (uDebug > 4.5) c = vec3(rv_luma(v.rgb), sub, 1.0 - v.a) * 4.0;
   }
-  if (uHasRays > 0.5) c += uColor * texture(tRays, vUv).r;
+  if (uHasRays > 0.5){
+    // streaks fade with the angle from the light (no full-screen veil from the radial average)
+    vec3 dir = normalize(mat3(uCamWorld) * atmo_viewDir(vUv));
+    float fa = pow(max(dot(dir, uRayDir), 0.0), 3.0);
+    c += uColor * texture(tRays, vUv).r * fa;
+  }
   gl_FragColor = vec4(c, 1.0);
 }`;
 
@@ -281,7 +300,7 @@ export class LightShafts {
     this.order = 120;
     const q = atmo.world.quality;
     this.tier = q.tier;
-    this.enabled = !!atmo.model.present && this.tier !== 'low';
+    this.enabled = !!atmo.model.present && this.tier !== 'low' && Params.num?.('shafts') !== 0;   // &shafts=0: A/B debug
     this.volOn = true;
     this.quad = new FSQuad();
     this.a = hdrTarget(4, 4); this.b = hdrTarget(4, 4);
@@ -290,7 +309,7 @@ export class LightShafts {
     const cl = atmo.clouds?.present ? atmo.clouds : null;
     this.u = {
       tDepth: { value: null }, tClouds: { value: null }, uHasClouds: { value: 0 },
-      uLightDir: { value: new THREE.Vector3() },
+      uLightDir: { value: new THREE.Vector3() }, uKeyLum: { value: 1 },
       uCamWorld: { value: new THREE.Matrix4() }, uProjParams: { value: new THREE.Vector4(1, 1, 0, 0) },
       uNear: { value: 0.05 }, uFar: { value: 2e10 },
     };
@@ -326,12 +345,13 @@ export class LightShafts {
     this.vu.uFogV = { value: new THREE.Vector4(0, 1, 0, 0) };
     this.vu.tCloudRT = { value: null }; this.vu.uHasCloudRT = { value: 0 };
     this.vu.uFogSunV = { value: new THREE.Vector3() };
+    this.vu.uFrameJ = { value: 0 };
     this.volMat = fsMaterial(VOL_FRAG, this.vu, { defines, glslVersion: THREE.GLSL3 });
     this.maskMat = fsMaterial(MASK_FRAG, this.u);
     this.blurMat = fsMaterial(BLUR_FRAG, { tSrc: { value: null }, uCenter: { value: new THREE.Vector2() }, uLen: { value: 1 } });
     this.cu = {
       tColor: { value: null }, tDepth: this.u.tDepth, tRays: { value: null }, tVol: { value: null }, tVolSub: { value: null },
-      uLowRes: { value: new THREE.Vector2(1, 1) }, uColor: { value: new THREE.Vector3() },
+      uLowRes: { value: new THREE.Vector2(1, 1) }, uColor: { value: new THREE.Vector3() }, uRayDir: { value: new THREE.Vector3(0, 1, 0) },
       uHasRays: { value: 0 }, uHasVol: { value: 0 }, uDebug: { value: +(Params.num?.('atmoDebug') ?? 0) },
       uCamWorld: this.u.uCamWorld, uProjParams: this.u.uProjParams, uNear: this.u.uNear, uFar: this.u.uFar,
     };
@@ -371,10 +391,11 @@ export class LightShafts {
     // extra haze (weather / art): fog, dust, rain; a whisper on clear days
     const fog = W.fog || 0, dust = W.dust || 0, rain = Math.max(W.rain || 0, W.snow || 0);
     const upv = _up.copy(vu.uCamPlanet.value).normalize();
-    const lowSun = 1 + 1.8 * (1 - THREE.MathUtils.smoothstep(upv.dot(kd), 0.08, 0.45));
+    const lowSun = 1 + 0.8 * (1 - THREE.MathUtils.smoothstep(upv.dot(kd), 0.08, 0.45));
     // shafts need something lit to contrast with: more haze when the deck is broken (many shadows)
     const broken = cl ? THREE.MathUtils.clamp(cl.meanCover + (W.coverBoost || 0), 0, 1) : 0;
-    const hz = (0.8 + fog * 2.4 + dust * 3.5 + rain * 1.5 + (m.moody || 0) * 1.5 + broken * 1.2) * lowSun * 1e-5 / this.sizeK;
+    // (kept thin: a thick glowing veil washes out the image; the beams come from the shadowed in-scatter)
+    const hz = (0.03 + Math.max(fog - 0.3, 0) * 1.2 + dust * 3.0 + rain * 1.0 + (m.moody || 0) * 0.6 + broken * 0.08) * lowSun * 1e-5 / this.sizeK;
     const sea = Math.max(0, atmo.world.surface?.seaLevel ?? 0);
     const Hh = THREE.MathUtils.lerp(900, 2200, THREE.MathUtils.clamp(dust + rain * 0.5, 0, 1)) * this.sizeK;
     vu.uHaze.value.set(hz, 1 / Hh, sea, 0.45 + 0.15 * (1 - dust));
@@ -429,7 +450,7 @@ export class LightShafts {
     let hasVol = false;
     if (this.volOn) {
       try { hasVol = this._updateVol(cam); } catch (e) { hasVol = false; }
-      if (hasVol) this.quad.render(renderer, this.volMat, this.vol);
+      if (hasVol) { this.vu.uFrameJ.value = this._rf = ((this._rf || 0) + 1) % 64; this.quad.render(renderer, this.volMat, this.vol); }
     }
 
     // ---- 2. screen-space streaks around the key light
@@ -451,6 +472,7 @@ export class LightShafts {
     }
     if (hasRays) {
       u.uLightDir.value.copy(keyDir);
+      u.uKeyLum.value = Math.max(1e-6, kc.r * 0.2126 + kc.g * 0.7152 + kc.b * 0.0722);
       const cl = atmo.clouds;
       const hasCl = cl?.present && cl.lowRT;
       u.uHasClouds.value = hasCl ? 1 : 0;
@@ -458,20 +480,24 @@ export class LightShafts {
       this.quad.render(renderer, this.maskMat, this.a);
       const bm = this.blurMat.uniforms;
       bm.uCenter.value.set(sx, sy);
-      bm.tSrc.value = this.a.texture; bm.uLen.value = 0.9;
+      // three radial passes (24 taps each → ~13k effective samples): long streaks without banding
+      bm.tSrc.value = this.a.texture; bm.uLen.value = 1.0;
       this.quad.render(renderer, this.blurMat, this.b);
-      bm.tSrc.value = this.b.texture; bm.uLen.value = 0.35;
+      bm.tSrc.value = this.b.texture; bm.uLen.value = 0.4;
       this.quad.render(renderer, this.blurMat, this.a);
+      bm.tSrc.value = this.a.texture; bm.uLen.value = 0.14;
+      this.quad.render(renderer, this.blurMat, this.b);
     }
     if (!hasVol && !hasRays) { io.skip = true; return; }
     const cu = this.cu;
     cu.tColor.value = io.input.texture;
-    cu.tRays.value = this.a.texture;
+    cu.tRays.value = this.b.texture;
     cu.tVol.value = this.vol.textures[0];
     cu.tVolSub.value = this.vol.textures[1];
     cu.uHasRays.value = hasRays ? 1 : 0;
     cu.uHasVol.value = hasVol ? 1 : 0;
-    cu.uColor.value.set(kc.r, kc.g, kc.b).multiplyScalar(strength * 0.24);
+    cu.uColor.value.set(kc.r, kc.g, kc.b).multiplyScalar(strength * 0.12);
+    cu.uRayDir.value.copy(keyDir);
     this.quad.render(renderer, this.compMat, io.output);
   }
 

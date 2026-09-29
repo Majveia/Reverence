@@ -21,18 +21,20 @@ import { registerChunk } from '../../shaders/chunks.js';
 import { Params } from '../../core/Params.js';
 
 const clamp = THREE.MathUtils.clamp;
+// sky ambient on clouds: sky irradiance / π × this (thick-cloud albedo ≈ 0.8 plus a little art lift)
+const AMBK = 1.1;
 
 // ------------------------------------------------------------------ cloud type presets
 // alt: base altitude × body.clouds.altitude · thick: m (× size) · dens: extinction (1/m) at density 1
 // scale: base noise tile (m) · detail: detail tile (m) · erode: detail erosion · topMin: tallness range
 // soft: base softness · anvil · stretch (cirrus streaks) · cover: coverage multiplier / add
 export const CLOUD_TYPES = {
-  cumulus: { alt: 1.0, thick: 1500, dens: 0.065, scale: 5200, detail: 900, erode: 0.42, topMin: 0.45, soft: 0.08, topSoft: 0.55, anvil: 0.0, stretch: 0.0, coverMul: 1.0, coverAdd: 0.0, weatherFreq: 9, ambient: 1.0, lump: 0.10, grad: 0.4, baseMax: 2600 },
-  storm: { alt: 0.8, thick: 3800, dens: 0.07, scale: 6400, detail: 1000, erode: 0.4, topMin: 0.35, soft: 0.05, topSoft: 0.6, anvil: 0.9, stretch: 0.0, coverMul: 1.1, coverAdd: 0.1, weatherFreq: 6, ambient: 0.8, lump: 0.22, grad: 0.55, baseMax: 1500 },
-  stratus: { alt: 0.75, thick: 800, dens: 0.035, scale: 7000, detail: 1100, erode: 0.34, topMin: 0.7, soft: 0.18, topSoft: 0.5, anvil: 0.0, stretch: 0.4, coverMul: 1.05, coverAdd: 0.18, weatherFreq: 4, ambient: 1.1, lump: 0.3, grad: 0.7, baseMax: 2400 },
-  wisp: { alt: 2.3, thick: 450, dens: 0.012, scale: 7000, detail: 1200, erode: 0.5, topMin: 0.8, soft: 0.3, topSoft: 0.3, anvil: 0.0, stretch: 0.85, coverMul: 0.9, coverAdd: 0.05, weatherFreq: 7, ambient: 1.2, lump: 0.1, grad: 1.0, baseMax: 1e9 },
-  haze: { alt: 1.6, thick: 1100, dens: 0.008, scale: 11000, detail: 2000, erode: 0.2, topMin: 0.8, soft: 0.4, topSoft: 0.4, anvil: 0.0, stretch: 0.6, coverMul: 0.8, coverAdd: 0.25, weatherFreq: 3, ambient: 1.3, lump: 0.05, grad: 1.0, baseMax: 1e9 },
-  fogsea: { alt: 0.0, thick: 520, dens: 0.035, scale: 6000, detail: 900, erode: 0.22, topMin: 0.75, soft: 0.02, topSoft: 0.5, anvil: 0.0, stretch: 0.3, coverMul: 1.2, coverAdd: 0.35, weatherFreq: 5, ambient: 1.1, lump: 0.3, grad: 0.8, baseMax: 1e9 },
+  cumulus: { alt: 1.0, thick: 1500, dens: 0.065, scale: 5200, detail: 900, erode: 0.42, topMin: 0.45, soft: 0.08, topSoft: 0.55, anvil: 0.0, stretch: 0.0, coverMul: 1.0, coverAdd: 0.0, weatherFreq: 9, ambient: 1.0, lump: 0.10, grad: 0.62, baseMax: 2600, sunGain: 5.2, tupK: 0.07 },
+  storm: { alt: 0.8, thick: 3800, dens: 0.07, scale: 6400, detail: 1000, erode: 0.4, topMin: 0.35, soft: 0.05, topSoft: 0.6, anvil: 0.9, stretch: 0.0, coverMul: 1.1, coverAdd: 0.1, weatherFreq: 6, ambient: 0.8, lump: 0.22, grad: 0.75, baseMax: 1500, sunGain: 4.2, tupK: 0.05 },
+  stratus: { alt: 0.75, thick: 800, dens: 0.035, scale: 7000, detail: 1100, erode: 0.34, topMin: 0.7, soft: 0.18, topSoft: 0.5, anvil: 0.0, stretch: 0.4, coverMul: 1.05, coverAdd: 0.18, weatherFreq: 4, ambient: 1.1, lump: 0.3, grad: 0.7, baseMax: 2400, sunGain: 4.2, tupK: 0.05 },
+  wisp: { alt: 2.3, thick: 450, dens: 0.012, scale: 7000, detail: 1200, erode: 0.5, topMin: 0.8, soft: 0.3, topSoft: 0.3, anvil: 0.0, stretch: 0.85, coverMul: 0.9, coverAdd: 0.05, weatherFreq: 7, ambient: 1.2, lump: 0.1, grad: 1.0, baseMax: 1e9, sunGain: 3.4, tupK: 0.04 },
+  haze: { alt: 1.6, thick: 1100, dens: 0.008, scale: 11000, detail: 2000, erode: 0.2, topMin: 0.8, soft: 0.4, topSoft: 0.4, anvil: 0.0, stretch: 0.6, coverMul: 0.8, coverAdd: 0.25, weatherFreq: 3, ambient: 1.3, lump: 0.05, grad: 1.0, baseMax: 1e9, sunGain: 3.0, tupK: 0.03 },
+  fogsea: { alt: 0.0, thick: 520, dens: 0.035, scale: 6000, detail: 900, erode: 0.22, topMin: 0.75, soft: 0.02, topSoft: 0.5, anvil: 0.0, stretch: 0.3, coverMul: 1.2, coverAdd: 0.35, weatherFreq: 5, ambient: 1.1, lump: 0.3, grad: 0.8, baseMax: 1e9, sunGain: 4.6, tupK: 0.05 },
 };
 
 // ------------------------------------------------------------------ GLSL
@@ -158,6 +160,7 @@ uniform vec3 uWindDirC;    // wind direction (for cirrus streaks)
 uniform float uCoverBoost; // weather state (rain/storm) coverage boost
 
 uniform vec4 uShape4;      // lumpiness (base/top height noise), bottom density factor, orbit LOD start, LOD end (m)
+uniform vec4 uShape5;      // key-light gain, column-shadow strength, far-field noise scale (1/m), -
 
 // distance LOD: far away (orbit) the tileable noise averages out and the weather map carries the shape
 float cl_lod = 0.0;
@@ -185,7 +188,15 @@ float cl_base(vec3 p, float h, vec4 wx, out float prof){
   cover = pow(cover, cl_remap(clamp(h, 0.65, 0.9), 0.65, 0.9, 1.0, mix(1.0, 0.35, uShape2.w * wx.b)));
   if (prof * cover < 0.01) return 0.0;
   float base = cl_remap(n.r, -(1.0 - fbm), 1.0, 0.0, 1.0);
-  base = mix(base, 0.2 + 0.7 * wx.a, cl_lod);
+  if (cl_lod > 0.0){
+    // far field (altitude / orbit): the weather map's cells + the 3D noise at two incommensurate, rotated
+    // planet scales (no visible tiling) → fractal cloud fields, popcorn cumulus, fibrous frontal edges
+    vec3 pf = p * uShape5.z;
+    float f1 = texture(uNoise, pf + uWindA * 0.25).r;
+    float f2 = texture(uNoise, mat3(0.8, -0.36, 0.48, 0.6, 0.48, -0.64, 0.0, 0.8, 0.6) * pf * 3.71 + 0.37).g;
+    float far = clamp(wx.a * 0.62 + (f1 - 0.5) * 0.55 + (f2 - 0.45) * 0.5 + 0.1, 0.0, 1.0);
+    base = mix(base, far, cl_lod);
+  }
   base = cl_remap(base * prof, 1.0 - cover, 1.0, 0.0, 1.0) * cover;
   // denser toward the top (wispy, translucent bases; bright, solid tops)
   base *= mix(uShape4.y, 1.0, smoothstep(0.0, 0.65, h));
@@ -272,7 +283,7 @@ void main(){
   float thick = Rc1 - Rc0;
   float steps = clamp(uSteps * (0.35 + 0.65 * clamp(len / (thick * 3.0), 0.0, 1.0)), 8.0, uSteps);
   float dt = len / steps;
-  float jit = fract(rv_ign(gl_FragCoord.xy) + uFrameJitter);
+  float jit = rv_ign(gl_FragCoord.xy + 5.588238 * uFrameJitter);
   float nu = dot(dir, uLightDir);
   // dual-lobe HG + silver lining (strong forward peak), mixed per octave below
   float phS = cl_hg(nu, 0.9);
@@ -332,22 +343,22 @@ void main(){
       float ph = mix(mix(cl_hg(nu, 0.8 * c), cl_hg(nu, -0.3 * c), 0.25), phS, 0.1 * c);
       float v = a * ph * exp(-od * b);
       if (o == 0) lum += v; else lumMS += v;
-      a *= 0.55; b *= 0.3; c *= 0.5;
+      a *= 0.5; b *= 0.35; c *= 0.5;
     }
     float powder = mix(1.0, 1.0 - exp(-2.0 * od - s * 90.0), powderAmt);
     // diffuse transmission through the column above (thick decks: mottled, darker where thicker)
-    float Tup = 1.0 / (1.0 + 0.16 * odUp);
+    float Tup = 1.0 / (1.0 + uShape5.y * odUp);
     float day = smoothstep(-0.12, 0.3, muS) * (0.35 + 0.65 * clamp(muS, 0.0, 1.0)) / 0.805;
     vec3 aTop = mix(uAmbRef * day, uAmbTop, uAmbLocal);
     vec3 aBot = mix(uAmbRef * day * 0.5, uAmbBot, uAmbLocal);
     float hk = clamp(h * 1.25, 0.0, 1.0);
-    vec3 amb = (aTop * hk * mix(0.25, 1.0, Tup) + aBot * (1.0 - hk) * mix(0.45, 1.0, Tup)) * uShape3.w;
+    vec3 amb = (aTop * hk * mix(0.12, 1.0, Tup) + aBot * (1.0 - hk) * mix(0.2, 1.0, Tup)) * uShape3.w;
     // overcast / storm: light reaching the base is diffused through the deck → neutral grey, darker
     float oc = clamp(max((wxs.r * uShape3.x + uShape3.y + uCoverBoost) * 1.4 - 0.5, uCoverBoost * 2.2), 0.0, 1.0);
     float ocb = oc * (1.0 - 0.6 * h);
     amb = mix(amb, vec3(dot(amb, vec3(0.2126, 0.7152, 0.0722))) * 0.85, ocb * 0.9) * (1.0 - 0.3 * ocb) * (1.0 - 0.5 * wxs.b * (1.0 - h));
     // key light: truncated octave series (thick clouds reflect ~75%: art gain) + diffuse transmission
-    vec3 S = ((sunT * lum + sunTd * lumMS) * powder * 2.3 + sunTd * (max(muS, 0.0) * Tup * 0.05 * (1.0 - exp(-od * 0.5))) + amb) * s;
+    vec3 S = ((sunT * lum + sunTd * lumMS) * powder * uShape5.x + sunTd * (max(muS, 0.0) * Tup * 0.05 * (1.0 - exp(-od * 0.5))) + amb) * s;
     if (uFlash.w > 0.001){ vec3 fd = p - uFlash.xyz; float fr = min(thick, 2200.0); S += vec3(0.75, 0.82, 1.0) * uFlash.w * 30.0 * exp(-dot(fd, fd) / (fr * fr * 1.5)) * s; }
     float Ts = exp(-s * dt);
     L += T * (S - S * Ts) / max(s, 1e-7);
@@ -451,7 +462,7 @@ void main(){
     vec2 o = vec2(float(k % 3) - 0.5, float(k / 3) - 0.5);
     vec2 uv = (i0 + o + 0.5) / uLowRes;
     vec2 dd = abs(o - f);
-    float wb = max(0.0, 1.2 - dd.x) * max(0.0, 1.2 - dd.y);
+    float wb = max(0.0, 1.05 - dd.x) * max(0.0, 1.05 - dd.y);
     float z = linDist(uv);
     float wz = 1.0 / (1e-3 + abs(log(max(z, 1e-3)) - log(max(dz, 1e-3))) * 12.0);
     float w = wb * wz;
@@ -519,7 +530,12 @@ export class Clouds {
     this.present = atmo.model.present && !body.isGas && body.type !== 'gas' && type !== 'none' && (C.coverage ?? 0) > 0.02;
     this.tier = q.tier || 'high';
     this.mode2D = this.tier === 'low';
-    this.scale = this.tier === 'ultra' ? 0.5 : this.tier === 'high' ? 0.5 : 0.5;
+    // march resolution (fraction of the screen); &clscale= overrides (e.g. 1 for full-res hero stills)
+    const cs = Params.num?.('clscale');
+    // Real time: half res, a new jitter pattern every frame, converged by the TAA resolve (~10 frames).
+    // Stills (shot mode) only get 4 TAA sub-frames, so they march at full res = the converged image.
+    const shotHQ = !!w.engine?.shot && (this.tier === 'high' || this.tier === 'ultra');
+    this.scale = Number.isFinite(cs) ? clamp(cs, 0.25, 1) : shotHQ ? 1 : 0.5;
     const P = CLOUD_TYPES[type] || CLOUD_TYPES.cumulus;
     this.P = P;
     const m = atmo.model;
@@ -551,6 +567,7 @@ export class Clouds {
       uShape2: { value: new THREE.Vector4(P.topMin, P.soft, P.topSoft, P.anvil) },
       uShape3: { value: new THREE.Vector4(P.coverMul, P.coverAdd, P.stretch, P.ambient) },
       uShape4: { value: new THREE.Vector4(P.lump, P.grad, 22000 * sizeK, 70000 * sizeK) },
+      uShape5: { value: new THREE.Vector4(P.sunGain ?? 4.5, P.tupK ?? 0.06, 1 / (14000 * sizeK), 0) },
       uWindA: { value: this.windA.clone() }, uWindB: { value: this.windB.clone() },
       uWindDirC: { value: new THREE.Vector3(1, 0, 0) },
       uCoverBoost: { value: 0 },
@@ -672,7 +689,6 @@ export class Clouds {
     const c = Math.cos(this.weatherAngle), s = Math.sin(this.weatherAngle);
     u.uWeatherRot.value.set(c, 0, s, 0, 1, 0, -s, 0, c);
     const shot = this.world.engine.shot;
-    u.uFrameJitter.value = shot ? 0 : (u.uFrameJitter.value + 0.618034) % 1;
     // stills get no temporal accumulation: spend more samples instead
     u.uSteps.value = this.baseSteps * (shot ? 1.5 : 1);
     u.uCoverBoost.value = ctx.coverBoost || 0;
@@ -698,13 +714,13 @@ export class Clouds {
     // night: the art-boosted terrain night ambient would make clouds glow; keep them dark silhouettes
     const na = _na.copy(this.atmo.nightAmbient).multiplyScalar(0.3), k = 1 / Math.PI;
     m.skyIrradiance(rc, clamp(sunElev, -1, 1), sk, gr);
-    const at = u.uAmbTop.value.set((sk[0] * scE[0] + na.r) * k * 1.6, (sk[1] * scE[1] + na.g) * k * 1.6, (sk[2] * scE[2] + na.b) * k * 1.6);
+    const at = u.uAmbTop.value.set((sk[0] * scE[0] + na.r) * k * AMBK, (sk[1] * scE[1] + na.g) * k * AMBK, (sk[2] * scE[2] + na.b) * k * AMBK);
     // cloud bases see the horizon sky as much as the ground: cool, not brown
     u.uAmbBot.value.set(at.x * 0.5 + gr[0] * scE[0] * 0.35, at.y * 0.5 + gr[1] * scE[1] * 0.35, at.z * 0.5 + gr[2] * scE[2] * 0.35);
     if (!this._refDone) {
       this._refDone = true;
       m.skyIrradiance(rc, 0.7, sk, gr);
-      u.uAmbRef.value.set(sk[0] * scE[0] * k * 1.6, sk[1] * scE[1] * k * 1.6, sk[2] * scE[2] * k * 1.6);
+      u.uAmbRef.value.set(sk[0] * scE[0] * k * AMBK, sk[1] * scE[1] * k * AMBK, sk[2] * scE[2] * k * AMBK);
     }
     const camAlt = ctx.camR - m.Rb;
     u.uAmbLocal.value = 1 - THREE.MathUtils.smoothstep(camAlt, m.height * 0.8, m.height * 2.5);
@@ -776,6 +792,8 @@ export class Clouds {
     const sky = this.atmo.luts?.skyTextures;
     if (sky) { u.uSkyR.value = sky[0]; u.uSkyM.value = sky[1]; u.uSkyMS.value = sky[2]; }
     if (this.lowRT.width < 2 && io.input) this.setSize(io.input.width, io.input.height);
+    // new sample pattern every render (incl. the TAA sub-frames of a still) → the TAA resolve accumulates it
+    u.uFrameJitter.value = this._rf = ((this._rf || 0) + 1) % 64;
     this.quad.render(renderer, this.marchMat, this.lowRT);
     u.tColor.value = io.input.texture;
     u.tClouds.value = this.lowRT.texture;

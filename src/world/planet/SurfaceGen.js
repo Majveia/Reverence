@@ -63,6 +63,8 @@ export function surfaceConfig(body) {
     palette: { ...pal, flora: [...(pal.flora || [])] },
     life: body.life?.flora ?? 0,
     flats: (LIVE.get(body)?.flats || []).map((f) => ({ ...f })),
+    // debug A/B (URL `tgen=<bits>`): 1 = no steep-face buttresses/crag boost
+    dbg: (() => { try { return +(new URLSearchParams(globalThis.location?.search || '').get('tgen') || 0); } catch (_) { return 0; } })(),
   };
 }
 
@@ -301,14 +303,20 @@ export class SurfaceGen {
   _mountain(x, y, z, lod, g) {
     const st = this.st, n = this.nM, d = this._d;
     let wl = st.mtnWl, f = this.R / wl;
-    let qx = x * f, qy = y * f, qz = z * f;
+    const px0 = x * f, py0 = y * f, pz0 = z * f;
+    let wx = 0, wy = 0, wz = 0;
     {
       // two-scale domain warp: bends ridgelines so ranges branch and curve instead of running straight
-      const w1 = 0.55, w2 = 0.22;
+      const w1 = 0.55, w2 = 0.22, qx = px0, qy = py0, qz = pz0;
       const ax0 = n.n3(qx * 0.45 + 11.3, qy * 0.45 + 2.9, qz * 0.45 + 7.7), ay0 = n.n3(qx * 0.45 + 4.2, qy * 0.45 + 9.4, qz * 0.45 + 1.3), az0 = n.n3(qx * 0.45 + 8.8, qy * 0.45 + 5.5, qz * 0.45 + 3.1);
       const bx0 = n.n3(qx * 1.7 + 1.9, qy * 1.7 + 6.1, qz * 1.7 + 2.4), by0 = n.n3(qx * 1.7 + 7.3, qy * 1.7 + 3.8, qz * 1.7 + 9.6), bz0 = n.n3(qx * 1.7 + 5.6, qy * 1.7 + 0.7, qz * 1.7 + 6.9);
-      qx += w1 * ax0 + w2 * bx0; qy += w1 * ay0 + w2 * by0; qz += w1 * az0 + w2 * bz0;
+      wx = w1 * ax0 + w2 * bx0; wy = w1 * ay0 + w2 * by0; wz = w1 * az0 + w2 * bz0;
     }
+    // The warp displacement grows with the octave scale only for the first two octaves; finer octaves
+    // see it as a (nearly) constant offset. Scaling it with every octave inherited the warp's full
+    // Jacobian (anisotropy up to ~10:1 over large areas) at every scale: small ridges were stretched
+    // into thin parallel stripes that aliased into combs/chevrons/needles on steep faces.
+    let sb = 1, sw = 1, cx = 0, cy = 0, cz = 0;
     let sum = 0, a = 0.5, wgt = 1, gx = 0, gy = 0, gz = 0, ax = 0, ay = 0, az = 0, tx = 0, ty = 0, tz = 0;
     const damp = st.mtnDamp;
     const gMin = st.gullyWl * 1.9;
@@ -322,7 +330,7 @@ export class SurfaceGen {
         sum += 0.499 * 0.8 * ta * wgt * dm;
         break;
       }
-      const v = n.n3d(qx, qy, qz, d);
+      const v = n.n3d(px0 * sb + wx * sw + cx, py0 * sb + wy * sw + cy, pz0 * sb + wz * sw + cz, d);
       // smooth |v| keeps crest derivatives continuous (no damping/gully jumps across ridgelines)
       const av = Math.sqrt(v * v + 0.0036);
       const r1 = 1.06 - av;
@@ -344,16 +352,17 @@ export class SurfaceGen {
       tx += sf * rx; ty += sf * ry; tz += sf * rz;   // full (LOD-faded) slope: steep-face detection
       wgt = r * 1.7; if (wgt > 1) wgt = 1;
       a *= st.mtnGain; wl *= ILAC; f *= LAC;
-      qx = qx * LAC + 3.1; qy = qy * LAC + 1.7; qz = qz * LAC + 8.3;
+      sb *= LAC; if (o < 2) sw *= LAC;
+      cx = cx * LAC + 3.1; cy = cy * LAC + 1.7; cz = cz * LAC + 8.3;
     }
     g[0] = gx; g[1] = gy; g[2] = gz; g[3] = tx; g[4] = ty; g[5] = tz;
     return sum;
   }
 
   /** Rib/chute relief for big mountain walls (metres, ~zero-mean). */
-  _buttress(x, y, z, lod) {
+  _buttress(x, y, z, lod, wl0 = 1400) {
     const n = this.nH;
-    let wl = 1400, sum = 0;
+    let wl = wl0, sum = 0;
     for (let o = 0; o < 4; o++) {
       const lw = lodW(wl * 0.5, lod);
       if (lw <= 0) break;
@@ -643,7 +652,7 @@ export class SurfaceGen {
     }
 
     // ---- mountain ranges
-    let mtn = 0, steep = 0;
+    let mtn = 0, steep = 0, wallH = 0;
     if (st.mountains > 0) {
       const mm = this._mtnMask(px, py, pz, c);
       const mp0 = Math.pow(mm, 1.35);
@@ -687,7 +696,7 @@ export class SurfaceGen {
         steep = sstep(0.5, 1.3, Math.hypot(g[3] * sc + mgx, g[4] * sc + mgy, g[5] * sc + mgz)) * sstep(0.2, 0.55, mp);
         // buttresses & couloirs: relief proportional to the wall (≈9 % of each wavelength, 1.4 km →
         // 170 m) — on a steep heightfield face, height bumps become plan-view ribs and chutes
-        if (steep > 0.01) h += steep * this._buttress(x, y, z, lod) * Math.min(1, H / 1500);
+        wallH = H;
       }
     }
 
@@ -704,6 +713,7 @@ export class SurfaceGen {
         const add = st.plateauH * (p1 + 0.8 * p2) * reg * inland;
         h += add;
         const cl = Math.min(1, SurfaceGen.band(v1, -1.0, -0.8, -0.02, 0.06) + SurfaceGen.band(v2, -1.0, -0.8, -0.02, 0.06)) * reg * inland;
+        if (cl * 0.9 > steep) { steep = cl * 0.9; wallH = Math.max(wallH, st.plateauH); }
         if (cl > cliff) cliff = cl;
         if (cl > rock) rock = cl;
       }
@@ -717,6 +727,7 @@ export class SurfaceGen {
         const mh = st.plateauH * (1.2 + 0.8 * sstep(-1, 1, nF.n3(px * f * 0.3, py * f * 0.3 + 3, pz * f * 0.3)));
         h += mh * p * reg * inland;
         const cl = SurfaceGen.band(v, -1.0, -0.8, 0.02, 0.12) * reg * inland;
+        if (cl * 0.9 > steep) { steep = cl * 0.9; wallH = Math.max(wallH, mh); }
         if (cl > cliff) cliff = cl;
         if (cl > rock) rock = cl;
       }
@@ -733,11 +744,17 @@ export class SurfaceGen {
       if (v < 1 && reg > 0) {
         let prof;
         if (v < 0.18) prof = 1;
-        else prof = 1 - SurfaceGen.terrace((v - 0.18) / 0.82, 5, 0.42);
+        else {
+          // terraced strata walls in plateau country; smooth V walls where the canyon cuts a
+          // mountain range (5 stepped ledges on a 60° mountainside read as a staircase of lines)
+          const tv = (v - 0.18) / 0.82;
+          prof = 1 - (SurfaceGen.terrace(tv, 5, 0.42) * (1 - mtn) + sstep(0, 1, tv) * mtn);
+        }
         const carve = st.canyonDepth * reg * prof;
         const floor = this.hasOcean ? Math.min(h, 4) : -1e9;
         h = Math.max(h - carve, floor);
         const wall = SurfaceGen.band(v, 0.1, 0.2, 0.85, 1.0) * reg;
+        if (wall * 0.8 > steep) { steep = wall * 0.8; wallH = Math.max(wallH, st.canyonDepth); }
         if (wall > rock) rock = wall;
         if (wall * 0.8 > cliff) cliff = wall * 0.8;
         sand = Math.max(sand, 0.6 * reg * (1 - sstep(0.12, 0.22, v)));
@@ -1007,6 +1024,14 @@ export class SurfaceGen {
       sand = Math.max(sand, (1 - sstep(st.beachH * 0.15, st.beachH * 0.55, h)) * (1 - cliff));
     }
 
+    // ---- buttresses & chutes on big walls (mountain faces, mesa / plateau / canyon cliffs): relief
+    //      proportional to the wall (≈9 % of each wavelength, first wavelength ~0.9 × wall height)
+    if (this.cfg.dbg & 1) steep = 0;
+    if (steep > 0.01 && wallH > 60) {
+      const wl0 = Math.min(1400, Math.max(160, wallH * 0.9));
+      h += steep * this._buttress(x, y, z, lod, wl0) * Math.min(1, wallH / 1500 + 0.25);
+    }
+
     // ---- fractal detail: meso bumps → decimetre relief (rougher on rock)
     {
       const rk = rock > mtn ? rock : mtn;
@@ -1022,7 +1047,7 @@ export class SurfaceGen {
         // plan-view relief — chutes, ribs, buttresses — instead of reading as smooth clay walls)
         // on steep mountain faces the big octaves grow further (buttresses, ribs and chutes that break
         // kilometre-tall walls into readable structure instead of smooth clay slabs)
-        const big = wl > 200 ? rr * (o === 0 ? 2.4 : 2.0) * (1 + 1.8 * steep) : wl > 120 ? (1 + 0.6 * rr) * (1 + 1.2 * steep) : wl > 60 ? (1 + 0.25 * rr) * (1 + 0.6 * steep) : 1;
+        const big = wl > 200 ? rr * (o === 0 ? 2.4 : 2.0) * (1 + 1.5 * steep) : wl > 120 ? (1 + 0.6 * rr) * (1 + 0.8 * steep) : wl > 60 ? (1 + 0.25 * rr) * (1 + 0.35 * steep) : 1;
         // rock gets sharper (ridged, zero-mean) micro relief, soil stays rounded
         // (big octaves use a softened |v|: a razor crease of a 700 m ridged octave reads as a seam)
         const av = wl > 120 ? Math.sqrt(v * v + 0.004) : (v < 0 ? -v : v);

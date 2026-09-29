@@ -65,10 +65,11 @@ class Terrain {
     const fov = ((world.camera?.fov) || 60) * Math.PI / 180;
     // (triangle budget, lead PERF request: ≈1.1–1.3 M terrain triangles at 1080p high)
     const ppq = { low: 15, med: 11, high: 8.5, ultra: 6 }[q.tier] ?? 8.5;
-    // (deterministic captures run on software GL: slightly coarser target so frames stay renderable)
+    // (deterministic captures: at K ≈ 1 a quad spans ~10 px at 720p and far mesas/ridges read as
+    //  low-poly facets; measured on the shared software-GL box, K 1.7 costs ~+40 % triangles but no
+    //  measurable capture time — the frame is dominated by fill/shading, not vertex work)
     const shotMode = !!world.engine?.shot;
-    const ppqEff = ppq * (shotMode ? 1.3 : 1);
-    this.K = Math.max(shotMode ? 1.05 : 1.3, Math.min(2.2, hPx / (fov * RES * ppqEff) * Math.sqrt(q.terrainDetail ?? 1)));
+    this.K = Math.max(shotMode ? 1.7 : 1.3, Math.min(2.2, hPx / (fov * RES * ppq) * Math.sqrt(q.terrainDetail ?? 1)));
     try { const tk = parseFloat(new URLSearchParams(globalThis.location?.search || '').get('tk')); if (tk > 0.9 && tk < 4) this.K = tk; } catch (_) { /* no url */ }
     const leaf = q.tier === 'low' ? 0.8 : q.tier === 'med' ? 0.5 : 0.35;   // metres between vertices at max depth
     this.maxLevel = Math.max(4, Math.ceil(Math.log2((this.R * Math.PI / 2) / (RES * leaf))));

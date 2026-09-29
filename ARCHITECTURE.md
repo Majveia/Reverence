@@ -332,3 +332,5 @@ visualizations). What separates AAA from "tech demo":
 * **ui** (from audio) — add `data-sfx="ui.open"` / `"ui.back"` to menu open/back buttons; the volume slider can
   call `audio.setVolume(v)`.
 * **atmosphere** (from audio, optional) — expose `weather.boltDist` (m) so the thunder delay matches the flash.
+* **audio** (from cosmic) — cosmic mode calls `audio.setParam('cosmicGrowth', 0..1)` every 0.2 s and
+  `audio.play('whoosh')` on fly-to (both optional-chained); hook them if useful.
