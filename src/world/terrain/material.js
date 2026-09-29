@@ -265,8 +265,19 @@ void rvTerrain( inout vec3 albedo ) {
   float band = alt / bandH + 2.2 * n2 + 1.4 * n4 + 0.8 * n1;
   float bi = floor( band ), bf = fract( band );
   float bh = fract( sin( bi * 12.9898 + 4.1 ) * 43758.5453 );
-  float streakD = 0.0, streakL = 0.0, strA = 0.5;
+  float streakD = 0.0, streakL = 0.0, strA = 0.5, streakM = 0.0;
   float sideW = wg.x + wg.z;
+  // macro drainage stains on big walls (layer 7 at 1 km: 3-25 m wide, 150-800 m long dark water /
+  // varnish streaks that read from kilometres away, like the black streaks on granite big walls)
+  if ( sideW > 0.05 && slope > 0.3 && dist < 40000.0 ) {
+    float wx = wg.x / sideW, wz = wg.z / sideW;
+    float warpM = ( mA.r - 0.5 ) * 380.0;
+    vec4 mx = vec4( 0.0 ), mz = vec4( 0.0 );
+    if ( wx > 0.02 ) mx = textureGrad( uRvDetail, vec3( ( L.z + warpM ) / 1024.0 + 0.61, alt / 1024.0, 7.0 ), vec2( dLx.z, dLx.y ) / 1024.0, vec2( dLy.z, dLy.y ) / 1024.0 );
+    if ( wz > 0.02 ) mz = textureGrad( uRvDetail, vec3( ( L.x + warpM ) / 1024.0 + 0.13, alt / 1024.0 + 0.47, 7.0 ), vec2( dLx.x, dLx.y ) / 1024.0, vec2( dLy.x, dLy.y ) / 1024.0 );
+    streakM = ( mx.b * wx + mz.b * wz ) * smoothstep( 0.3, 0.6, slope ) * smoothstep( 0.3, 0.7, mA.a + 0.3 * n2 )
+            * ( 1.0 - smoothstep( 20000.0, 40000.0, dist ) );
+  }
   if ( rockS > 0.05 && fFar > 0.0 && sideW > 0.05 ) {
     float wx = wg.x / sideW, wz = wg.z / sideW;
     float dAx = dLx.y, dAy = dLy.y;
@@ -334,7 +345,7 @@ void rvTerrain( inout vec3 albedo ) {
   groundC = mix( groundC, uRvSoil * 0.95, wScree * 0.55 * mix( 0.6, dPeb.b, fMid ) );
 
   // rock tone: palette rock pulled toward neutral grey, strata bands only where the style asks for it
-  vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ) * vec3( 0.95, 0.99, 1.07 ), 0.45 );
+  vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ) * vec3( 0.95, 0.99, 1.07 ), 0.32 );
   float sk = uRvS.x * uRvS.x;
   // colour bands only on real faces: on gentle slopes altitude-locked bands become contour rings
   // (the "wood grain" look)
@@ -346,6 +357,10 @@ void rvTerrain( inout vec3 albedo ) {
   rockC = mix( rockC, rockBase * 1.18 + 0.02, smoothstep( 0.55, 0.8, mA.g + 0.25 * n3 ) * 0.35 );
   rockC *= 0.68 + 0.64 * aRock;
   rockC *= 0.8 + 0.4 * strA;
+  // iron / oxide staining on faces: warm broad patches (tens to hundreds of metres) under ledges
+  float iron = smoothstep( 0.55, 0.85, mC.r * 0.6 + mA.b * 0.4 + 0.25 * n3 ) * smoothstep( 0.25, 0.5, slope ) * ( 0.5 + 0.5 * clamp( curv * 2.0, 0.0, 1.0 ) );
+  rockC = mix( rockC, rvLum( rockC ) * vec3( 1.35, 0.95, 0.68 ), iron * 0.45 );
+  rockC *= 1.0 - 0.42 * clamp( streakM * 1.2, 0.0, 1.0 );
   // drainage streaks: dark varnish (slightly warm) and rarer pale mineral streaks
   rockC = mix( rockC, rockC * vec3( 0.6, 0.56, 0.52 ), clamp( streakD * 0.75, 0.0, 0.6 ) );
   rockC = mix( rockC, rockC * 1.12 + vec3( 0.02 ), clamp( streakL * 0.3, 0.0, 0.25 ) );
@@ -517,7 +532,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v18' + (opts.lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-v19' + (opts.lite ? 'L' : '');
   return mat;
 }
 
