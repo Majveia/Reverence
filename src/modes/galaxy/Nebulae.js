@@ -89,10 +89,11 @@ float pillarSDF(vec3 q, vec3 s){
 
 // displaced pillar field: > 0 inside the columns. Striations run along the columns (erosion by the
 // photo-evaporative flow), coarse lumps + fine grit break up the silhouette.
-float pillarField(vec3 q, vec3 s){
+float pillarField(vec3 q, vec3 s, out float smoothF){
   float n1 = N(q * 1.1 + s).r - 0.5, n2 = N(q * 3.0 + s * 2.0).a - 0.5, n3 = N(q * 6.5 + s * 1.3).r - 0.5;
   float st = N(vec3(q.x * 5.5, q.y * 1.1, q.z * 5.5) + s * 0.7).g - 0.5;
-  return pillarSDF(q, s) + 0.9 * n1 + 0.42 * n2 + 0.17 * n3 + 0.16 * st;
+  smoothF = pillarSDF(q, s) + 0.9 * n1 + 0.42 * n2;          // large-scale shape (fronts, lighting)
+  return smoothF + 0.17 * n3 + 0.16 * st;
 }
 
 // Pillars of Creation: cold molecular columns lit from above-front by an O-star cluster.
@@ -102,19 +103,20 @@ float pillarField(vec3 q, vec3 s){
 vec4 pillars(vec3 q, vec3 s, float hub){
   vec3 Ld = normalize(vec3(0.22, 1.0, -0.4));          // cluster above and behind the columns
   float r = length(q);
-  float sdf = pillarField(q, s);
+  float sm, sm1, sm2, sm3;
+  float sdf = pillarField(q, s, sm);
   float body = smoothstep(0.0, 0.18, sdf);
   float fl = 0.0, sh = 1.0;
   if (sdf > -0.3) {
-    float l1 = pillarField(q + Ld * 0.05, s);
-    float l2 = pillarField(q + Ld * 0.16, s);
-    float l3 = pillarField(q + Ld * 0.38, s);
-    fl = clamp((sdf - l1) / 0.05, 0.0, 1.0);                                      // faces the cluster
-    sh = exp(-5.0 * max(l2, 0.0) - 3.0 * max(l3, 0.0));                          // light reaching q
+    pillarField(q + Ld * 0.05, s, sm1);
+    float l2 = pillarField(q + Ld * 0.16, s, sm2);
+    float l3 = pillarField(q + Ld * 0.38, s, sm3);
+    fl = clamp((sm - sm1) / 0.05, 0.0, 1.0);                                       // faces the cluster
+    sh = exp(-5.0 * max(l2, 0.0) - 3.0 * max(l3, 0.0));                           // light reaching q
   }
   float n2 = N(q * 3.0 + s * 2.0).a, n4 = N(q * 9.0 + s * 0.4).a, n5 = N(q * 14.0 + s * 1.9).r;
   // ionisation-front skin
-  float skin = exp(-sdf * sdf / 0.005) * fl * sh * smoothstep(-0.7, 0.1, q.y);
+  float skin = exp(-sm * sm / 0.006) * fl * sh * smoothstep(-0.7, 0.1, q.y) * (0.55 + 0.9 * smoothstep(-0.12, 0.1, sdf - sm));
   // photo-evaporation flow: glow just outside the lit surfaces, streaming toward the cluster
   float ev = smoothstep(-0.2, -0.01, sdf) * (1.0 - body) * (0.25 + 0.75 * fl) * sh * (0.5 + n4);
   // body: dense rust dust, lit where light gets in, fine grit texture
@@ -124,7 +126,7 @@ vec4 pillars(vec3 q, vec3 s, float hub){
   vec3 bodyE = rust * body * tex * tex * (1.5 + 11.0 * sh * (0.25 + 0.75 * fl));
   // cavity haze: teal/blue [OIII] everywhere, gold-green close to the fronts, brighter up toward the stars
   float hz = N(q * 0.35 + s * 0.7).r, hz2 = N(q * 1.2 + s).a, hz3 = N(q * 2.8 + s * 1.7).g;
-  float env = 1.0 - smoothstep(0.7, 1.0, r + 0.25 * (hz - 0.5));
+  float env = 1.0 - smoothstep(0.8, 1.0, r + 0.15 * (hz - 0.5));
   // the cavity wall lies behind the columns (camera on +z): only a thin veil in front of them
   float behind = mix(0.05, 1.0, smoothstep(0.3, -0.25, q.z + 0.35 * (hz2 - 0.5)));
   float haze = clamp(0.35 + hz * 0.8 + hz2 * 0.45 - 0.5 + 0.25 * (hz3 - 0.5), 0.0, 1.2) * env * (1.0 - body) * behind * (0.7 + 0.5 * smoothstep(-0.6, 0.9, q.y));

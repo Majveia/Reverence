@@ -95,7 +95,7 @@ class Civ {
     s.detail = null; s.far = null; s.layout = null; s.building = false;
     const ll = dirToLatLon(s.up);
     s.lat = ll.lat; s.lon = ll.lon;
-    const kind = s.kind === 'metropolis' || s.kind === 'city' ? 'city' : s.kind === 'ruin' ? 'ruin' : s.kind === 'monument' ? 'monument' : 'village';
+    const kind = s.capital || s.kind === 'metropolis' || s.kind === 'city' ? 'city' : s.kind === 'ruin' ? 'ruin' : s.kind === 'monument' ? 'monument' : 'village';
     try { this.world.addPOI({ kind, name: s.name, pos: s.pos.clone(), radius: s.radius, data: { style: s.kit, level: s.level, capital: !!s.capital, civ: this.body.civ?.name } }); } catch (_) { /* ignore */ }
     this.sites.push(s);
   }

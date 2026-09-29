@@ -42,13 +42,13 @@ export class StarField {
       uGain: { value: 1e-4 }, uLumExp: { value: 0.6 }, uSoft: { value: 0.02 }, uWeight: { value: 1 }, uLocal: { value: 0 },
       uFadeNear: { value: new THREE.Vector2(0, 0.001) }, uLodCenter: { value: new THREE.Vector3() }, uLodRadius: { value: 1 },
       uMaxSize: { value: Math.min(64, maxPointSize) }, uClusterBoost: { value: 1.1 },
-      uGainNear: { value: 1.5e-7 }, uNearD: { value: new THREE.Vector2(0.3, 6.0) },
+      uGainNear: { value: 1.5e-7 }, uNearD: { value: new THREE.Vector2(0.3, 6.0) }, uDustMul: { value: 1 },
     });
     this.localMat = mk({
       uGain: { value: 1e-6 }, uLumExp: { value: 0.5 }, uSoft: { value: 0.0005 }, uWeight: { value: 0 }, uLocal: { value: 1 },
       uFadeNear: { value: new THREE.Vector2(0, 1e-6) }, uLodCenter: { value: new THREE.Vector3() }, uLodRadius: { value: 1 },
       uMaxSize: { value: Math.min(44, maxPointSize) }, uClusterBoost: { value: 1 },
-      uGainNear: { value: 0 }, uNearD: { value: new THREE.Vector2(0.3, 6.0) },
+      uGainNear: { value: 0 }, uNearD: { value: new THREE.Vector2(0.3, 6.0) }, uDustMul: { value: 0.3 },
     });
     this.global = null;
     this.local = null;

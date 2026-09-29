@@ -65,6 +65,7 @@ uniform vec2 uFadeNear;
 uniform vec3 uLodCenter;
 uniform float uLodRadius;
 uniform float uClusterBoost, uSphW, uDiskW;
+uniform float uDustMul;        // local stars: short sight lines through clumpy dust are mostly clear
 uniform float uGainNear;       // single-star gain (global tracers only): a tracer stands for ~10^6 stars
 uniform vec2 uNearD;           // far away, but close up it is just one star → blend the gain in log space
 varying vec3 vCol;
@@ -104,7 +105,7 @@ void main(){
   if (lum0 < uEps * 0.03 || mv.z > 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vSize = 1.0; vSpike = 0.0; return; }
   // dust map level ~ the star's pixel footprint (a star is a point but its column is seen through a pixel)
   float lodD = max(0.0, log2(d * uNoiseF.w / uMapTexel) - 0.5);
-  col *= exp(-gx_dustTau(sp, uCamPat, fract(float(gl_VertexID) * 0.61803399), lodD));
+  col *= exp(-uDustMul * gx_dustTau(sp, uCamPat, fract(float(gl_VertexID) * 0.61803399), lodD));
   float lum = Fp * max(col.r, max(col.g, col.b));
   float x = lum * uHaloFrac / (3.14159265 * uHaloR * uHaloR * uEps);
   float rv = x > 1.0 ? uHaloR * sqrt(sqrt(x) - 1.0) : 0.0;

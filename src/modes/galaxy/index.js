@@ -433,7 +433,7 @@ export default class GalaxyMode extends Mode {
         // a nearby nebula dominates the frame's exposure → the galaxy's diffuse glow recedes further
         let nf = 0;
         for (const it of this.nebulae?.active ?? []) nf = Math.max(nf, it.fade);
-        this.volume.compositeMat.uniforms.uGain.value = (0.07 + 0.93 * k * k * (3 - 2 * k)) * (1 - 0.65 * nf);
+        this.volume.compositeMat.uniforms.uGain.value = (0.07 + 0.93 * k * k * (3 - 2 * k)) * (1 - 0.85 * nf);
       }
       this.volume.update(this.camera, this.pat);
       rotTheta(this.camera.position, -this.pat, this._camPat);
