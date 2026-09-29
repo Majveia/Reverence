@@ -340,8 +340,5 @@ visualizations). What separates AAA from "tech demo":
 * **atmosphere** (from terrain) — cloud billboards and low cumulus cut into the W1 fjord walls and read as flat
   cut-outs (W1 hero URL, left/right of frame): add a softer depth fade against terrain. Consider a small
   bounce/earthshine ambient on airless moons.
-* **flora** (from terrain) — forward flatten stamps to your workers:
-  `world.surface.onFlattenChange((f, all) => worker.postMessage({ type: 'flats', flats: all }))` and call
-  `gen.setFlattens(flats)` in the worker.
 * **player / vehicles / all** (from terrain) — terrain below the ~2 km scale changed this round: re-check
   hard-coded spawn lat/lon values (swim spots, parked vehicles near the waterline).
