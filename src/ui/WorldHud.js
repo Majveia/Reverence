@@ -243,6 +243,8 @@ export class WorldHud {
       _p.sub(world.origin).project(cam);
       if (!(_p.z < 1 && _p.z > -1 && Math.abs(_p.x) < 0.98 && Math.abs(_p.y) < 0.95)) continue;
       c.ok = true; c.dist = dist; c.x = (_p.x * 0.5 + 0.5) * W; c.y = (-_p.y * 0.5 + 0.5) * H;
+      // bodies inside the bottom instrument/hint band or the top breadcrumb band: dot only, dimmed
+      c.band = c.y > H - 120 || c.y < 64;
     }
     // 2) declutter labels: planets first, then nearer bodies; a label needs a free ~140×30 px box
     const order = this._bodyOrder || (this._bodyOrder = []);
@@ -252,7 +254,7 @@ export class WorldHud {
     order.sort((a, b) => ((list[b].name === tn) - (list[a].name === tn)) || (list[a].isMoon - list[b].isMoon) || (C[a].dist - C[b].dist));
     for (let n = 0; n < order.length; n++) {
       const c = C[order[n]];
-      c.label = true;
+      c.label = !c.band || list[order[n]].name === tn;
       for (let m = 0; m < n; m++) {
         const o = C[order[m]];
         if (o.label && Math.abs(o.x - c.x) < 130 && Math.abs(o.y - c.y) < 34) { c.label = false; break; }
@@ -264,7 +266,7 @@ export class WorldHud {
       const m = this.bodyPool[i], c = C[i], b = list[i];
       const isT = !!tn && b?.name === tn;
       if (m.tgt !== isT) { m.el.classList.toggle('tgt', isT); m.tgt = isT; }
-      const want = c?.ok ? alpha * (isT ? 1 : b.isMoon ? 0.7 : 0.92) : 0;
+      const want = c?.ok ? alpha * (isT ? 1 : b.isMoon ? 0.7 : 0.92) * (c.band && !isT ? 0.45 : 1) : 0;
       m.a += (want - m.a) * (1 - Math.exp(-dt * 4));
       if (m.a < 0.01 || !c) { if (m.shown) { m.el.style.display = 'none'; m.shown = false; } continue; }
       if (!m.shown) { m.el.style.display = ''; m.shown = true; }

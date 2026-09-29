@@ -24,7 +24,7 @@ uniform vec3 uCam;          // camera position, BH frame, units of r_s
 uniform mat3 uCamRot;       // view dir → BH frame
 uniform mat3 uBhToView;     // BH frame dir → view
 uniform mat4 uProj, uInvProj;
-uniform float uTime, uDiskIn, uDiskOut, uDiskT, uDiskGain, uSeed, uBgGain;
+uniform float uTime, uDiskIn, uDiskOut, uDiskT, uDiskGain, uSeed, uBgGain, uStarF;
 uniform int uSteps;
 varying vec2 vUv;
 
@@ -138,7 +138,8 @@ void main(){
     }
     x = xn; v = vn;
   }
-  vec3 bg = captured ? vec3(0.0) : background(normalize(v)) * uBgGain;
+  // near the hole the nucleus glow is exposed down; a procedural sky of sharp stars stays (lensed by direction)
+  vec3 bg = captured ? vec3(0.0) : background(normalize(v)) * uBgGain + starfield(normalize(v)) * uStarF;
   // smooth hand-over to the unlensed frame at the edge of the strong-field region
   vec3 col = L + Tr * bg;
   gl_FragColor = vec4(col, 1.0);
@@ -167,7 +168,7 @@ export class BlackHole {
       uProj: { value: new THREE.Matrix4() }, uInvProj: { value: new THREE.Matrix4() },
       uTime: { value: 0 }, uDiskIn: { value: isco }, uDiskOut: { value: 16 },
       uDiskT: { value: 5000 + 1800 * bh.spin }, uDiskGain: { value: 5.0 }, uSeed: { value: (S.seed % 997) * 0.37 },
-      uSteps: { value: steps }, uBgGain: { value: 1 },
+      uSteps: { value: steps }, uBgGain: { value: 1 }, uStarF: { value: 0 },
     });
     this.quad = new FullscreenQuad(this.material);
     this._m3 = new THREE.Matrix3();
@@ -193,7 +194,8 @@ export class BlackHole {
     // exposure adapts to the accretion disk: the nucleus' starlight is dimmed close to the hole
     const lr = Math.log10(Math.max(1, this.distanceRs(cam)));
     const k = Math.min(1, Math.max(0, (lr - 2.2) / (4.3 - 2.2)));
-    u.uBgGain.value = 0.018 + 0.982 * k * k * (3 - 2 * k);
+        u.uBgGain.value = 0.02 + 0.98 * k * k * (3 - 2 * k);
+    u.uStarF.value = 1 - k;
     this.quad.render(renderer, io.output);
   }
 

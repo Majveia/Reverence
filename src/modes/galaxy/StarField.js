@@ -24,7 +24,7 @@ export class StarField {
       uEps: { value: 0.0025 }, uHaloR: { value: 2.2 }, uHaloFrac: { value: 0.035 }, uCoreSigma: { value: 0.62 },
       uSpikeFrac: { value: 0.035 }, uSpikeMin: { value: 2.2 }, uSphW: { value: S.type === 'elliptical' ? 1.0 : 0.4 },
       // old-disk tracers (differential rotation): unresolved at galaxy scale → mostly diffuse light, faint grain
-      uDiskW: { value: S.type === 'lenticular' ? 0.6 : 0.45 },
+      uDiskW: { value: S.type === 'lenticular' ? 0.6 : 0.3 },
     };
     this.common = common;
     // gain of ONE real star (local LOD stars, and global tracers seen up close): a long-exposure
@@ -45,7 +45,7 @@ export class StarField {
       uGainNear: { value: 1.5e-7 }, uNearD: { value: new THREE.Vector2(0.3, 6.0) }, uDustMul: { value: 1 },
     });
     this.localMat = mk({
-      uGain: { value: 1e-6 }, uLumExp: { value: 0.5 }, uSoft: { value: 0.0005 }, uWeight: { value: 0 }, uLocal: { value: 1 },
+      uGain: { value: 1e-6 }, uLumExp: { value: 0.44 }, uSoft: { value: 0.0005 }, uWeight: { value: 0 }, uLocal: { value: 1 },
       uFadeNear: { value: new THREE.Vector2(0, 1e-6) }, uLodCenter: { value: new THREE.Vector3() }, uLodRadius: { value: 1 },
       uMaxSize: { value: Math.min(44, maxPointSize) }, uClusterBoost: { value: 1 },
       uGainNear: { value: 0 }, uNearD: { value: new THREE.Vector2(0.3, 6.0) }, uDustMul: { value: 0.3 },

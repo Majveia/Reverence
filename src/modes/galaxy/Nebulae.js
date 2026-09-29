@@ -68,22 +68,25 @@ vec4 emissionCloud(vec3 q, vec3 s, float hub){
 float pillarSDF(vec3 q, vec3 s){
   float best = -2.0;
   for (int j = 0; j < 3; j++) {
-    vec2 base = j == 0 ? vec2(-0.5, 0.05) : j == 1 ? vec2(-0.02, -0.04) : vec2(0.44, 0.08);
-    float h = j == 0 ? 1.3 : j == 1 ? 1.72 : 1.0;
-    float r0 = j == 0 ? 0.23 : j == 1 ? 0.2 : 0.15;
-    vec2 lean = j == 0 ? vec2(0.1, 0.03) : j == 1 ? vec2(0.05, -0.04) : vec2(-0.08, 0.05);
+    vec2 base = j == 0 ? vec2(-0.52, 0.05) : j == 1 ? vec2(0.02, -0.06) : vec2(0.46, 0.1);
+    float h = j == 0 ? 1.62 : j == 1 ? 1.24 : 0.95;
+    float r0 = j == 0 ? 0.21 : j == 1 ? 0.165 : 0.13;
+    vec2 lean = j == 0 ? vec2(0.14, 0.03) : j == 1 ? vec2(0.12, -0.05) : vec2(-0.1, 0.06);
     float fj = float(j);
     float t = (q.y + 1.0) / h;
-    vec2 wig = 0.05 * vec2(sin(q.y * 3.1 + fj * 2.0 + s.x), cos(q.y * 2.3 + fj * 1.3 + s.y));
+    // columns bend (wind-sculpted), bulge and pinch along their height, knobby heads
+    vec2 wig = 0.07 * vec2(sin(q.y * 2.3 + fj * 2.0 + s.x), cos(q.y * 1.7 + fj * 1.3 + s.y)) + vec2(0.1 * t * t * (fj - 1.0), 0.0);
     vec2 axis = base + lean * (q.y + 1.0) + wig;
     float d = length(q.xz - axis);
-    float rad = r0 * (1.45 - 0.8 * clamp(t, 0.0, 1.0));
+    float pinch = 1.0 + 0.55 * (N(vec3(fj * 3.1 + s.x, q.y * 0.9, s.z)).r - 0.5);
+    float rad = r0 * (1.65 - 0.95 * clamp(t, 0.0, 1.0)) * pinch;
     float yTop = -1.0 + h;
-    float body = (rad - length(vec2(d, max(q.y - yTop, 0.0) * 0.8))) / rad;
+    float head = 1.0 + 0.35 * smoothstep(0.75, 0.95, t);          // swollen head below the tip
+    float body = (rad * head - length(vec2(d, max(q.y - yTop, 0.0) * 0.75))) / rad;
     best = max(best, body);
   }
-  // common base mound
-  float mound = (0.62 - length(vec3(q.x * 0.75, (q.y + 1.15) * 1.5, q.z * 1.3))) / 0.4;
+  // common base: broad dark mound the columns grow out of
+  float mound = (0.72 - length(vec3(q.x * 0.62, (q.y + 1.2) * 1.35, q.z * 1.2))) / 0.45;
   return max(best, mound);
 }
 
@@ -93,53 +96,79 @@ float pillarField(vec3 q, vec3 s, out float smoothF){
   float n1 = N(q * 1.1 + s).r - 0.5, n2 = N(q * 3.0 + s * 2.0).a - 0.5, n3 = N(q * 6.5 + s * 1.3).r - 0.5;
   float st = N(vec3(q.x * 5.5, q.y * 1.1, q.z * 5.5) + s * 0.7).g - 0.5;
   smoothF = pillarSDF(q, s) + 0.9 * n1 + 0.42 * n2;          // large-scale shape (fronts, lighting)
-  return smoothF + 0.17 * n3 + 0.16 * st;
+  return smoothF + 0.08 * n3 + 0.26 * st;
 }
 
 // Pillars of Creation: cold molecular columns lit from above-front by an O-star cluster.
 // Lighting is volumetric: light transmission toward the cluster is estimated from the displaced SDF
-// sampled along the light direction (self-shadowing), the ionisation front is a thin bright skin on
-// lit faces, a photo-evaporation glow streams off them, and the teal [OIII] cavity fills the frame.
+// sampled along the light direction (self-shadowing); the ionisation front is a bright skin on lit
+// faces, photo-evaporation flows stream off them, the column bodies are dusty and partly translucent
+// (rust / umber, lit tops glow gold) and backlit edges pick up the cavity light.
 vec4 pillars(vec3 q, vec3 s, float hub){
-  vec3 Ld = normalize(vec3(0.22, 1.0, -0.4));          // cluster above and behind the columns
+  vec3 Ld = normalize(vec3(0.45, 1.0, -0.12));         // cluster above, to the right, slightly behind
   float r = length(q);
   float sm, sm1, sm2, sm3;
   float sdf = pillarField(q, s, sm);
-  float body = smoothstep(0.0, 0.18, sdf);
+  float body = smoothstep(-0.02, 0.2, sdf);
   float fl = 0.0, sh = 1.0;
-  if (sdf > -0.3) {
+  if (sdf > -0.35) {
     pillarField(q + Ld * 0.05, s, sm1);
     float l2 = pillarField(q + Ld * 0.16, s, sm2);
     float l3 = pillarField(q + Ld * 0.38, s, sm3);
     fl = clamp((sm - sm1) / 0.05, 0.0, 1.0);                                       // faces the cluster
-    sh = exp(-5.0 * max(l2, 0.0) - 3.0 * max(l3, 0.0));                           // light reaching q
+    sh = exp(-6.0 * max(l2, 0.0) - 3.5 * max(l3, 0.0));                           // light reaching q
   }
   float n2 = N(q * 3.0 + s * 2.0).a, n4 = N(q * 9.0 + s * 0.4).a, n5 = N(q * 14.0 + s * 1.9).r;
-  // ionisation-front skin
-  float skin = exp(-sm * sm / 0.006) * fl * sh * smoothstep(-0.7, 0.1, q.y) * (0.55 + 0.9 * smoothstep(-0.12, 0.1, sdf - sm));
+  float nStr = N(vec3(q.x * 7.0, q.y * 1.4, q.z * 7.0) + s * 1.1).g;               // striations
+  // ionisation-front skin (thin, bright, gold-white)
+  float skin = exp(-sm * sm / 0.005) * fl * sh * smoothstep(-0.75, 0.05, q.y) * (0.55 + 0.9 * smoothstep(-0.12, 0.1, sdf - sm));
   // photo-evaporation flow: glow just outside the lit surfaces, streaming toward the cluster
-  float ev = smoothstep(-0.2, -0.01, sdf) * (1.0 - body) * (0.25 + 0.75 * fl) * sh * (0.5 + n4);
-  // body: dense rust dust, lit where light gets in, fine grit texture
-  float tex = 0.45 + 0.8 * n2 * (0.6 + 0.8 * n5);
-  vec3 rust = mix(vec3(0.3, 0.07, 0.025), vec3(0.8, 0.3, 0.1), smoothstep(0.25, 0.8, n2));
-  // (the columns are optically thick: visible radiance ≈ emission / extinction)
-  vec3 bodyE = rust * body * tex * tex * (1.5 + 11.0 * sh * (0.25 + 0.75 * fl));
-  // cavity haze: teal/blue [OIII] everywhere, gold-green close to the fronts, brighter up toward the stars
+  float ev = smoothstep(-0.2, -0.01, sdf) * (1.0 - body) * fl * sh * (0.5 + n4);
+  // body: dense dust, lit where light gets in; dark umber lanes along the striations
+  float tex = (0.5 + 0.75 * n2 * (0.6 + 0.8 * n5)) * (0.55 + 0.7 * smoothstep(0.2, 0.75, nStr));
+  vec3 umber = mix(vec3(0.3, 0.075, 0.03), vec3(0.58, 0.22, 0.09), smoothstep(0.3, 0.8, n2));
+  vec3 lit = mix(vec3(0.95, 0.42, 0.14), vec3(1.0, 0.66, 0.3), n4);
+  float light = sh * (0.3 + 0.7 * fl);
+  vec3 bodyC = mix(umber, lit, clamp(light * 0.8, 0.0, 1.0)) * tex;
+  // (optically thick: visible radiance ≈ emission / extinction ≈ bodyC × (ambient + direct))
+  vec3 bodyE = bodyC * body * (1.2 + 8.5 * light * light);
+  // cavity haze: teal [OIII] away from the fronts, gold-green close to them, brighter toward the stars
   float hz = N(q * 0.35 + s * 0.7).r, hz2 = N(q * 1.2 + s).a, hz3 = N(q * 2.8 + s * 1.7).g;
-  float env = 1.0 - smoothstep(0.8, 1.0, r + 0.15 * (hz - 0.5));
+  float env = 1.0 - smoothstep(0.25, 1.0, r + 0.3 * (hz - 0.5));
   // the cavity wall lies behind the columns (camera on +z): only a thin veil in front of them
   float behind = mix(0.05, 1.0, smoothstep(0.3, -0.25, q.z + 0.35 * (hz2 - 0.5)));
-  float haze = clamp(0.35 + hz * 0.8 + hz2 * 0.45 - 0.5 + 0.25 * (hz3 - 0.5), 0.0, 1.2) * env * (1.0 - body) * behind * (0.7 + 0.5 * smoothstep(-0.6, 0.9, q.y));
-  float near = smoothstep(-0.45, -0.02, sdf);
-  vec3 cavC = mix(vec3(0.16, 0.42, 0.62), vec3(0.2, 0.62, 0.66), hz2);
-  vec3 frontC = mix(vec3(0.65, 0.75, 0.35), vec3(1.0, 0.72, 0.36), fl);
-  vec3 hazeCol = mix(cavC, frontC, near * 0.7);
-  vec3 skinC = mix(vec3(1.0, 0.58, 0.28), vec3(1.0, 0.86, 0.58), n4);
-  vec3 em = hazeCol * haze * 2.6
-          + skinC * skin * 40.0
-          + mix(vec3(1.0, 0.72, 0.4), vec3(0.55, 0.85, 0.75), 0.3) * ev * 4.5
+  float haze = clamp(0.3 + hz * 0.8 + hz2 * 0.5 - 0.5 + 0.35 * (hz3 - 0.5), 0.0, 1.3) * env * (1.0 - body) * behind * (0.6 + 0.6 * smoothstep(-0.6, 0.9, q.y));
+  float near = smoothstep(-0.5, -0.02, sdf) * (0.35 + 0.65 * fl);
+  vec3 cavC = mix(vec3(0.13, 0.36, 0.55), vec3(0.2, 0.55, 0.62), hz2);
+  vec3 frontC = mix(vec3(0.62, 0.72, 0.36), vec3(1.0, 0.74, 0.38), fl);
+  vec3 hazeCol = mix(cavC, frontC, near * 0.75);
+  vec3 skinC = mix(vec3(1.0, 0.5, 0.2), vec3(1.0, 0.78, 0.45), n4);
+  // backlit translucent edges: the thin outer layer of each column glows with the light behind it
+  float edge = smoothstep(-0.06, 0.04, sdf) * (1.0 - smoothstep(0.04, 0.16, sdf));
+  vec3 em = hazeCol * haze * 2.4
+          + skinC * skin * 26.0
+          + mix(vec3(1.0, 0.72, 0.4), vec3(0.55, 0.85, 0.75), 0.3) * ev * 5.5
+          + mix(vec3(0.7, 0.42, 0.2), frontC, fl) * edge * (0.5 + 0.9 * n4) * 3.2 * (0.15 + 0.85 * sh * (0.3 + 0.7 * fl))
           + bodyE;
-  return vec4(em * 1.3, body * 26.0 + haze * 0.18 + ev * 0.3);
+  return vec4(em * 1.3, body * 24.0 + haze * 0.16 + ev * 0.3 + edge * 1.5);
+}
+
+// Outer cavity wall of an HII region (Eagle-Nebula-like), seen behind (and faintly in front of) the
+// columns: two samples on a shell of radius RS with multi-octave textured emission and dark globules.
+vec3 cavityWall(vec3 q, vec3 s, float front){
+  vec3 d = normalize(q);
+  vec3 w = q + 0.9 * (N(q * 0.07 + s).rgb - 0.5);
+  float a = N(w * 0.1 + s * 0.4).r, b = N(w * 0.28 + s * 1.3).a, c = N(w * 0.7 + s * 2.2).a, e = N(w * 1.7 + s * 0.9).r;
+  float glob = N(w * 0.16 + s * 2.7).r;
+  float dens = clamp(0.25 + 0.9 * a + 0.55 * (b - 0.5) + 0.35 * (c - 0.5) + 0.2 * (e - 0.5), 0.0, 1.6);
+  float fil = smoothstep(0.55, 0.9, c * 0.6 + e * 0.5) * 0.5;   // brighter ionised wisps
+  float up = smoothstep(-0.6, 0.9, d.y);                  // brighter toward the cluster above
+  vec3 teal = mix(vec3(0.07, 0.2, 0.34), vec3(0.2, 0.5, 0.62), a);
+  vec3 gold = vec3(0.75, 0.62, 0.3);
+  vec3 rust = vec3(0.55, 0.2, 0.12);
+  vec3 col = mix(teal, gold, smoothstep(0.55, 0.95, b) * 0.5 * up) + rust * smoothstep(0.6, 0.9, glob) * 0.25;
+  float dark = 1.0 - 0.7 * smoothstep(0.62, 0.9, glob + 0.25 * (e - 0.5) + 0.2 * (b - 0.5));   // cold dark clouds
+  return col * (dens * (0.35 + 0.8 * up) + fil * up) * dark * (front > 0.5 ? 0.25 : 1.0);
 }
 
 vec4 planetary(vec3 q, vec3 s, float hub){
@@ -191,28 +220,49 @@ void main(){
     vec3 c = uNeb[k].xyz; float R = uNeb[k].w;
     vec3 oc = ro - c;
     float b = dot(oc, rd), cc = dot(oc, oc) - R * R;
-    float disc = b * b - cc;
-    if (disc <= 0.0) continue;
-    float sq = sqrt(disc);
-    float t0 = max(-b - sq, 0.0), t1 = -b + sq;
-    if (t1 <= 0.0) continue;
     int kind = int(uNebP[k].x + 0.5);
     vec3 s = vec3(uNebP[k].y, uNebP[k].y * 1.7, uNebP[k].y * 0.3);
     float hub = uNebP[k].z, fade = uNebP[k].w;
     mat3 M = uNebRot[k];
-    float dt = (t1 - t0) / float(uSteps);
-    float t = t0 + dt * jit;
-    for (int i = 0; i < 160; i++) {
-      if (i >= uSteps || t >= t1) break;
-      vec3 q = M * ((ro + rd * t - c) / R);
-      vec4 d = sampleNeb(kind, q, s, hub);
-      float dl = dt / R;
-      float a = exp(-d.a * dl * fade);
-      // emission integrated over the step with self-absorption
-      L += T * d.rgb * fade * dl * (d.a > 1e-3 ? (1.0 - a) / (d.a * dl * fade + 1e-6) : 1.0);
-      T *= a;
-      if (T < 0.004) break;
-      t += dt;
+    // pillars: the cavity wall of the surrounding HII region (shell of radius RS) — textured
+    // backdrop that fills the frame from inside, fades out once the camera leaves the region
+    float RS = 2.6 * R;
+    float shellK = kind == 1 ? 1.0 - smoothstep(0.85 * RS, 1.15 * RS, length(oc)) : 0.0;
+    float tS0 = 0.0, tS1 = -1.0;
+    if (shellK > 0.0) {
+      float ccS = dot(oc, oc) - RS * RS, discS = b * b - ccS;
+      if (discS > 0.0) { float sqS = sqrt(discS); tS0 = -b - sqS; tS1 = -b + sqS; }
+      if (tS0 > 0.0) {            // front wall (camera outside the shell: faint veil)
+        vec3 qf = M * ((ro + rd * tS0 - c) / R);
+        L += T * cavityWall(qf, s, 1.0) * fade * shellK * 0.6;
+        T *= mix(1.0, 0.85, shellK);
+      }
+    }
+    float disc = b * b - cc;
+    if (disc > 0.0) {
+      float sq = sqrt(disc);
+      float t0 = max(-b - sq, 0.0), t1 = -b + sq;
+      if (t1 > 0.0) {
+        float dt = (t1 - t0) / float(uSteps);
+        float t = t0 + dt * jit;
+        for (int i = 0; i < 160; i++) {
+          if (i >= uSteps || t >= t1) break;
+          vec3 q = M * ((ro + rd * t - c) / R);
+          vec4 d = sampleNeb(kind, q, s, hub);
+          float dl = dt / R;
+          float a = exp(-d.a * dl * fade);
+          // emission integrated over the step with self-absorption
+          L += T * d.rgb * fade * dl * (d.a > 1e-3 ? (1.0 - a) / (d.a * dl * fade + 1e-6) : 1.0);
+          T *= a;
+          if (T < 0.004) break;
+          t += dt;
+        }
+      }
+    }
+    if (shellK > 0.0 && tS1 > 0.0 && T > 0.004) {
+      vec3 qb = M * ((ro + rd * tS1 - c) / R);
+      L += T * cavityWall(qb, s, 0.0) * fade * shellK * 0.6;
+      T *= mix(1.0, 0.45, shellK * fade);          // the wall hides much of the galaxy behind it
     }
     if (T < 0.004) break;
   }

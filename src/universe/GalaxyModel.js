@@ -202,7 +202,8 @@ function buildStructure(g) {
   }
   if (S.ringStyle === 'cartwheel') {
     S.armW *= 0.45;
-    for (let k = 0; k < S.m; k++) { S.armEnd[k] = S.ringOut * 1.02; S.armAmp[k] = 0.45 + 0.5 * U(hash32(hashCombine(g.seed, 0x5b0c + k))); }
+    // spokes run from the inner ring out to (not through) the collisional ring
+    for (let k = 0; k < S.m; k++) { S.armEnd[k] = S.ringOut * 0.9; S.armAmp[k] = 0.35 + 0.45 * U(hash32(hashCombine(g.seed, 0x5b0c + k))); }
   }
   S.armCum = [];
   { let t = 0; for (const a of S.armAmp) { t += a; S.armCum.push(t); } for (let k = 0; k < S.armCum.length; k++) S.armCum[k] /= t; }
@@ -277,8 +278,8 @@ function buildStructure(g) {
   S.rt = R * 0.055;                               // rotation curve turnover
   S.v0 = Math.abs(S.omegaP) * S.rc / (1 - Math.exp(-S.rc / S.rt));
 
-  // local LOD normalization (stars per ly³ → expected count). ~30 stars per mid-disk 200 ly cell.
-  S.localNorm = 2e8 * (R / 55000) * (R / 55000);
+  // local LOD normalization (stars per ly³ → expected count). ~75 stars per mid-disk 200 ly cell.
+  S.localNorm = 5e8 * (R / 55000) * (R / 55000);
 
   // palette (linear rgb) from the universe record
   const col = (c) => (c && c.isColor ? [c.r, c.g, c.b] : c ? [c.r, c.g, c.b] : [1, 1, 1]);
@@ -476,6 +477,8 @@ function placeStar(S, component, ci, young, h, out) {
     // arm choice weighted by strength
     const ua = U(h(8));
     let k = 0; while (k < S.armCum.length - 1 && ua > S.armCum[k]) k++;
+    // collisional-ring spokes end at the ring
+    if (S.ringStyle === 'cartwheel' && r > S.armEnd[k]) r = S.r0 + (S.armEnd[k] - S.r0) * U(h(38));
     // young stars avoid arm gaps (fragmentation): a few deterministic retries along the arm
     if (ci <= 3) {
       for (let j = 0; j < 3; j++) {
@@ -528,7 +531,9 @@ function placeStar(S, component, ci, young, h, out) {
       }
     } else {
       follow = 0;
-      const r = sampleExpDisk(S.rd, U(h(2)), U(h(3)), 1.2 * R, U(h(22)));
+      let r = sampleExpDisk(S.rd, U(h(2)), U(h(3)), 1.2 * R, U(h(22)));
+      // Sombrero-like S0: the stellar disk ends just outside its dust ring (bright lens inside)
+      if (S.dustRing && r > S.dustRing.r * 1.02) r = S.dustRing.r * 1.02 * Math.sqrt(U(h(23)));
       let th = U(h(7)) * TAU;
       if (S.m && U(h(9)) < 0.3) {
         // weak old-star arm enhancement (broad)

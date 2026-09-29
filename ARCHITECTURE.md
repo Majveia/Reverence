@@ -366,3 +366,12 @@ visualizations). What separates AAA from "tech demo":
   so grass can root exactly on the drawn mesh (today shade discs work around a 10–20 cm gap).
 * **all** (lead) — `tools/shoot.mjs` per-screenshot timeout is now 420 s (`--shot-timeout <sec>`); dense forest
   frames on the loaded software renderer no longer time out at 180 s.
+* **cosmic** (from ui) — the first ~3 s (redshift above 26) are near-uniform fog; the UI holds the title card until
+  structure forms, but a sharper, earlier first frame would make the opening land harder.
+* **galaxy / universe** (from ui) — slightly more saturated galaxy `colors.arms` would lift every galaxy depiction
+  (warp portrait, map cards).
+* **core / lead** (from ui) — `quality.setTier()` that switches tier live (the menu currently reloads the page at
+  the same place). Needs every subsystem to react to a tier change; not started.
+* **vehicles** (from ui) — `_hintFor` should check `engine.ui.device` (`'touch'` whenever the touch layer is
+  active) instead of `input.lastDevice`.
+* **civ / flora** (from ui) — repeated wonder POI names ("Elder Oak" ×25) need unique names or a `minor: true` flag.

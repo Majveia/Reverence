@@ -174,7 +174,9 @@ export class Warp {
         const g = U.galaxy(parseInt(p.galaxy ?? 0, 10) || 0);
         this.dest = { kind: 'galaxy', sprite: this._galaxySprite(g), spin: 0.05, tilt: 0.42 + 0.4 * Math.abs(Math.cos(g.tilt || 0)), rot: g.rotation || 0,
           sub: `${g.type} galaxy` };
-        this._pal([rgbStr(g.colors.arms), rgbStr(g.colors.hii), rgbStr(g.colors.core)]);
+        this._pal([rgbStr(g.colors.arms), rgbStr(g.colors.hii), rgbStr(g.colors.core)].map((c) => c.split(',').map((v, i, arr) => {
+          const m = (+arr[0] + +arr[1] + +arr[2]) / 3; return Math.round(Math.max(0, Math.min(255, (m + (v - m) * 1.8) * 0.62)));
+        }).join(',')));
       } else if (to === 'system') {
         const gi = parseInt(p.galaxy ?? 0, 10) || 0, si = parseInt(p.star ?? 0, 10) || 0;
         const sys = U.system(gi, si);
@@ -195,13 +197,13 @@ export class Warp {
   _galaxySprite(g) {
     const S = 512, cv = mkCanvas(S, S), x = cv.getContext('2d'), R = rng((g.seed >>> 0) ^ 0xa11ce);
     const cx = S / 2, rad = S * 0.46;
-    const core = rgbStr(g.colors.core, 0.25), arms = rgbStr(g.colors.arms, 0.2), hii = rgbStr(g.colors.hii, 0.1);
+    const core = rgbStr(g.colors.core, 0.2), arms = rgbStr(g.colors.arms, 0.02), hii = rgbStr(g.colors.hii, 0.0);
     x.globalCompositeOperation = 'lighter';
     // diffuse disc / halo
     const flat = g.type === 'elliptical' ? (g.flatten || 0.7) : 1;
     x.save(); x.translate(cx, cx); x.scale(1, flat);
     let gr = x.createRadialGradient(0, 0, 0, 0, 0, rad);
-    gr.addColorStop(0, `rgba(${core},0.55)`); gr.addColorStop(0.18, `rgba(${core},0.22)`); gr.addColorStop(0.5, `rgba(${arms},0.06)`); gr.addColorStop(1, `rgba(${arms},0)`);
+    gr.addColorStop(0, `rgba(${core},0.6)`); gr.addColorStop(0.18, `rgba(${core},0.26)`); gr.addColorStop(0.45, `rgba(${arms},0.13)`); gr.addColorStop(0.8, `rgba(${arms},0.04)`); gr.addColorStop(1, `rgba(${arms},0)`);
     x.fillStyle = gr; x.fillRect(-rad, -rad, rad * 2, rad * 2);
     x.restore();
     const armsN = g.arms || 0, spiral = armsN >= 2 && g.type !== 'elliptical' && g.type !== 'irregular';
@@ -228,13 +230,13 @@ export class Warp {
         const arm = Math.floor(R() * armsN);
         const t = Math.pow(R(), 0.8);
         const r = (0.08 + t * 0.92) * rad;
-        const th = (arm / armsN) * Math.PI * 2 + Math.log(r / (rad * 0.08)) * k * 0.55;
-        const sc = (0.04 + t * 0.08) * rad * (R() + R() - 1);
+        const th = (arm / armsN) * Math.PI * 2 + Math.log(r / (rad * 0.08)) * k * 0.62;
+        const sc = (0.05 + t * 0.13) * rad * (R() + R() + R() - 1.5);
         px = Math.cos(th) * r + Math.cos(th + Math.PI / 2) * sc;
         py = Math.sin(th) * r + Math.sin(th + Math.PI / 2) * sc;
         const knot = R() < 0.07 && t > 0.25;
         col = knot ? hii : t < 0.2 ? core : arms;
-        a = knot ? 0.8 : 0.3 + 0.5 * (1 - t);
+        a = knot ? 0.8 : 0.2 + 0.36 * (1 - t);
         sz = knot ? 1.4 + R() * 1.6 : 0.6 + R() * 1.3;
         if (i % 7 === 0) glow = knot ? glowH : t < 0.25 ? glowC : glowA;
       } else {
@@ -243,6 +245,11 @@ export class Warp {
         const s = rad * (spiral ? 0.26 : 0.55) * (g.bulgeFrac ? 0.6 + g.bulgeFrac : 1);
         px = u * s; py = v * s * flat;
         col = core; a = 0.18 + R() * 0.3; sz = 0.5 + R() * 1.1;
+        if (spiral && R() < 0.45) {
+          // exponential disc population between the arms
+          const th = R() * Math.PI * 2, rr = -Math.log(1 - R() * 0.95) * rad * 0.28;
+          px = Math.cos(th) * rr; py = Math.sin(th) * rr; col = R() < 0.5 ? arms : core; a = 0.16 + R() * 0.22;
+        }
       }
       if (glow) { const gs = 14 + R() * 26; x.globalAlpha = 0.16; x.drawImage(glow, cx + px - gs, cx + py - gs, gs * 2, gs * 2); x.globalAlpha = 1; }
       x.fillStyle = `rgba(${col},${a.toFixed(3)})`;
@@ -319,32 +326,40 @@ export class Warp {
   _webSprite() {
     const S = 512, cv = mkCanvas(S, S), x = cv.getContext('2d'), R = rng(0xc05a1c);
     x.globalCompositeOperation = 'lighter';
+    const fil = this._blob('120,90,230'), knot = this._blob('255,226,210');
     const nodes = [];
-    for (let i = 0; i < 46; i++) {
-      const a = R() * Math.PI * 2, r = Math.pow(R(), 0.6) * S * 0.46;
-      nodes.push([S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, 0.4 + R() * 0.6]);
+    for (let i = 0; i < 70; i++) {
+      const a = R() * Math.PI * 2, r = Math.pow(R(), 0.55) * S * 0.47;
+      nodes.push([S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, 0.3 + R() * 0.7]);
     }
-    x.lineCap = 'round';
+    const edges = new Set();
     for (let i = 0; i < nodes.length; i++) {
       const d = nodes.map((n, j) => [j, Math.hypot(n[0] - nodes[i][0], n[1] - nodes[i][1])]).sort((a, b) => a[1] - b[1]);
       for (let k = 1; k <= 3; k++) {
         const j = d[k][0], L = d[k][1];
-        if (L > S * 0.24) continue;
+        const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+        if (L > S * 0.2 || edges.has(key)) continue;
+        edges.add(key);
         const [x0, y0] = nodes[i], [x1, y1] = nodes[j];
-        for (let w = 0; w < 3; w++) {
-          x.strokeStyle = `rgba(${w ? '110,90,210' : '170,150,255'},${(w ? 0.05 : 0.14).toFixed(3)})`;
-          x.lineWidth = w ? 5 + w * 4 : 1.2;
-          x.beginPath(); x.moveTo(x0, y0);
-          x.quadraticCurveTo((x0 + x1) / 2 + (R() - 0.5) * L * 0.3, (y0 + y1) / 2 + (R() - 0.5) * L * 0.3, x1, y1); x.stroke();
+        const mx = (x0 + x1) / 2 + (R() - 0.5) * L * 0.35, my = (y0 + y1) / 2 + (R() - 0.5) * L * 0.35;
+        const nd = Math.floor(L * 0.9);
+        for (let q = 0; q < nd; q++) {
+          const t = R(), u = 1 - t;
+          const px = u * u * x0 + 2 * u * t * mx + t * t * x1, py = u * u * y0 + 2 * u * t * my + t * t * y1;
+          const j2 = (R() + R() + R() - 1.5) * 5;
+          const b = R();
+          x.fillStyle = b < 0.12 ? 'rgba(255,225,210,0.55)' : `rgba(${b < 0.5 ? '170,150,255' : '120,110,235'},${(0.22 + R() * 0.3).toFixed(3)})`;
+          x.fillRect(px + j2, py - j2 * 0.6, 1.2, 1.2);
+          if (q % 6 === 0) { const gs = 7 + R() * 9; x.globalAlpha = 0.12; x.drawImage(fil, px - gs, py - gs, gs * 2, gs * 2); x.globalAlpha = 1; }
         }
       }
     }
     for (const [nx, ny, m] of nodes) {
-      const r = 6 + m * 16;
-      const gr = x.createRadialGradient(nx, ny, 0, nx, ny, r);
-      gr.addColorStop(0, `rgba(255,236,220,${(0.5 * m).toFixed(3)})`); gr.addColorStop(0.3, `rgba(190,150,255,${(0.25 * m).toFixed(3)})`); gr.addColorStop(1, 'rgba(120,90,220,0)');
-      x.fillStyle = gr; x.fillRect(nx - r, ny - r, r * 2, r * 2);
+      const r = 5 + m * 15;
+      x.globalAlpha = 0.35 + 0.5 * m; x.drawImage(knot, nx - r, ny - r, r * 2, r * 2);
+      x.globalAlpha = 0.25; x.drawImage(fil, nx - r * 2.2, ny - r * 2.2, r * 4.4, r * 4.4);
     }
+    x.globalAlpha = 1;
     return cv;
   }
 
@@ -428,8 +443,8 @@ export class Warp {
       if (draw) {
         ctx.globalCompositeOperation = 'lighter';
         const hz = Math.max(W, H) * 0.9;
-        ctx.globalAlpha = A * 0.28; ctx.drawImage(this.nebSprites[0], cx - hz * 0.9, cy - hz * 0.55, hz * 1.4, hz * 1.0);
-        ctx.globalAlpha = A * 0.2; ctx.drawImage(this.nebSprites[1], cx - hz * 0.3, cy - hz * 0.35, hz * 1.3, hz * 0.9);
+        ctx.globalAlpha = A * 0.2; ctx.drawImage(this.nebSprites[0], cx - hz * 0.85, cy - hz * 0.5, hz * 1.2, hz * 0.85);
+        ctx.globalAlpha = A * 0.14; ctx.drawImage(this.nebSprites[1], cx - hz * 0.3, cy - hz * 0.35, hz * 1.1, hz * 0.8);
       }
       for (let i = 0; i < NB; i++) {
         nb.z[i] -= v * dt * 0.55;

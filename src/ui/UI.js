@@ -212,7 +212,7 @@ export class UI {
   hint(text, ms = 6000) {
     const h = this.hintS;
     if (!text) { h.ms = 0.001; h.t = 1; return; }
-    if (text !== h.text) { this.el.hint.textContent = this._adaptHint(String(text)); h.text = text; h.a = Math.min(h.a, 0.1); }
+    if (text !== h.text) { this.el.hint.innerHTML = hintHTML(this._adaptHint(String(text))); h.text = text; h.a = Math.min(h.a, 0.1); }
     h.t = 0; h.ms = ms > 0 ? ms / 1000 : Infinity;
   }
 
@@ -433,7 +433,7 @@ export class UI {
       this.root.classList.toggle('rv-touchmode', dev === 'touch');
       for (const [, p] of this._prompts) if (!p.dying) { p.el.innerHTML = promptHTML(input, p.text, p.action, dev); p.dev = dev; }
       this.obS.key = '';
-      if (this.hintS.text) this.el.hint.textContent = this._adaptHint(this.hintS.text);
+      if (this.hintS.text) this.el.hint.innerHTML = hintHTML(this._adaptHint(this.hintS.text));
       if (this.menu?.open) this.menu.render();
     }
 
@@ -632,8 +632,33 @@ export class UI {
    * column under the breadcrumb, for the first vertical gap tall enough; if neither fits every toast, the
    * side with more room wins and the oldest toasts retire early. Never overlaps, never per-frame layout.
    */
+  /**
+   * Hint vs instruments: the free-text hint is centred at the bottom; when telemetry sits bottom-right
+   * (desktop vehicles) and the two would overlap, the hint becomes a left-aligned footnote that wraps
+   * within the space left of the instruments. Measured only when either changes (text, keys, resize).
+   */
+  _layoutHint() {
+    const h = this.el.hint, tele = this.el.tele;
+    const key = `${this.hintS.text}|${this.teleS.keys}|${!!this.teleS.data}|${this.device}|${this.root.clientWidth}x${this.root.clientHeight}`;
+    if (key === this._hintKey) return;
+    this._hintKey = key;
+    let side = false, maxW = '';
+    if (this.teleS.data && this.hintS.text && this.device !== 'touch' && tele.style.display !== 'none') {
+      h.classList.remove('side'); h.style.maxWidth = '';
+      const hr = h.getBoundingClientRect(), tr = tele.getBoundingClientRect();
+      if (hr.width && tr.width && hr.right > tr.left - 12 && hr.bottom > tr.top - 4) {
+        side = true;
+        const gut = this.root.clientWidth <= 760 ? 14 : 18;
+        maxW = `${Math.max(160, Math.floor(tr.left - 2 * gut - this._safe.l - 24))}px`;
+      }
+    }
+    h.classList.toggle('side', side);
+    h.style.maxWidth = maxW;
+  }
+
   _layoutToasts(dt) {
     this._layoutT = (this._layoutT ?? 0) - dt;
+    if (this.hintS.a > 0.01 || this.teleS.a > 0.01) this._layoutHint();
     if (!this.toasts.length) { this._layoutDirty = false; return; }
     if (!this._layoutDirty && this._layoutT > 0) return;
     this._layoutT = 0.25; this._layoutDirty = false;
@@ -781,6 +806,11 @@ export class UI {
       e.el.style.transform = `translate3d(${(+e.x || 0).toFixed(1)}px,${(+e.y || 0).toFixed(1)}px,0) translate(-50%,-100%)`;
     }
   }
+}
+
+/** Hint text → segments that never break internally (a wrapped hint breaks only at ' · '). */
+function hintHTML(t) {
+  return String(t).split(/\s·\s/).map((x) => `<span class="rv-hseg">${escapeHtml(x)}</span>`).join('<span class="rv-hdot"> · </span>');
 }
 
 function fmtTele(v) {

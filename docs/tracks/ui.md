@@ -20,7 +20,35 @@ elements appear when relevant and fade away. Every animation that can appear in 
 | `Touch.js` | touch layer: floating move stick from `input.touchSticks` (ring + knob, sprint ring), look-touch feedback, context-sensitive action cluster per scheme (≥ 44 px hit areas, small visuals), pinch onboarding |
 | `Menu.js` | pause menu (glass panel): resume, map, back-up-one-scale, photo mode, share link, controls reference (keyboard / gamepad / touch), quality tier, look sensitivity, invert Y, volume; persisted in `localStorage['rv.settings']` |
 | `MapNav.js` | map / scale navigation: scale ladder (Universe › Galaxy › Star › World), galaxies (cosmic), notable systems (galaxy), orrery of the current system with planets + moons (system) — click to travel |
-| `Warp.js` | cinematic transitions: warp-streak star field + "ENTERING · <destination>" label above the director's fade veil on every `mode:leaving → mode:enter`; boot wordmark loader. rAF runs only while visible |
+| `Warp.js` | cinematic transitions above the director's fade veil on every `mode:leaving → mode:enter`: tinted nebula tunnel in the destination's palette, a **procedural portrait of the destination** looming out of the dark (the target galaxy with its real type/arm count/pitch/colours/bar/ring + dust lanes; the target star with blackbody colour, diffraction spikes, orbit and the destination world as a lit crescent; the cosmic web as filaments + clusters), seeded star streaks, vignette, "ENTERING · <name> · <type / class · K>" caption. Sprites are pre-rendered once per transition; rAF only while visible; boot wordmark loader |
+
+### Round 2 changes (critic r1 fixes)
+* **Toast ↔ telemetry collision (critical)** — `UI._layoutToasts()` is a real collision solver: 4×/s while toasts exist
+  (or immediately when a toast/telemetry/resize changes) it measures the visible HUD blocks (telemetry, touch
+  cluster + stick, compass, top buttons, breadcrumb, prompts, onboarding) and scans the right column, then the
+  left column under the breadcrumb, for the first vertical gap tall enough for the stack. If neither fits all,
+  the side with more room wins and the oldest toasts retire early. Toasts slide in from their side. Verified on
+  844×390 touch landscape (stack moves under the breadcrumb, speed readout untouched) and 390×844 portrait.
+* **Hint ↔ instruments** — when a vehicle's telemetry sits bottom-right and would overlap the centred hint,
+  the hint becomes a left-aligned footnote wrapping only between ` · ` segments (`_layoutHint`).
+* **Touch stick** — resting anchor is a fixed inset from the bottom-left safe corner (`stickAnchor()`, no
+  width-relative term; lifted slightly in vehicle/flight schemes). Ring = tinted glass disc (blur) + 58 % white
+  rim + dark outer hairline + inner guide ring + four direction chevrons; knob brighter with a dark rim. Reads
+  over grass and sky. Action buttons got the same contrast treatment (50 % rim, dark hairline, icon drop shadow).
+* **Glyphs** — boost is a thruster flame (not ≫); jump is an up-arrow off a ground line; airborne it morphs
+  (shrink-grow) into a paraglider canopy with a `glide` label (`swim up` when swimming). Vehicle buttons
+  labelled `boost` / `hop`.
+* **Cosmic title card** — the card holds (invisible) while the director is fading and, on the cosmic web,
+  until structure has formed (z < 26, max 5 s) so it never sits on the near-uniform primordial fog.
+* **Warp** — see table: the transition is now a scene (destination portrait + nebula), not just streaks.
+* **Breadcrumb legibility** — stronger shadow, brighter secondary crumbs, and a barely-there corner shade.
+* **Requests implemented** — marker labels drop a leading '◦'; marker kinds become classes (`k-cosmic` = small
+  centred label); civ capitals (`data.capital`) get a larger gold marker + "capital" + longer range + priority;
+  creature discoveries use the `archetype` (10 icons, eyebrow "New species · Avian"); ship telemetry renders
+  `drive`/`status` as a status pill and `target` as a "⌖ TARGET name · distance" row, and the target body gets a
+  bracket reticle + forced label among the space body markers; `data-sfx="ui.open"/"ui.back"` on menu / map /
+  photo buttons; depth of field via `pipeline.setLook({dof})` while the pause menu is open and in photo mode
+  (high/ultra, planets only; the previous setting is restored).
 
 ### Behaviour
 * **Breadcrumb** (top-left): scale icon + last two crumbs (`Star — World`), subtitle (art preset · type · civ)
@@ -78,7 +106,13 @@ Input: adds action `menu` (`Escape`, `Pad9`); removes those codes from `back`.
 | pause menu | same | `[{"advance":6},{"press":"Escape"},{"advance":0.6}]` or `&uipanel=menu` / `controls` |
 | touch landscape (bike) | `/?mode=system&galaxy=0&star=6&planet=1&view=bike&tod=0.35&touch=1` (`--w 844 --h 390`) | `[{"advance":5},{"hold":"KeyW","sec":2.5},{"advance":2}]` |
 | touch portrait | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.35` `--mobile` | `[{"advance":5},{"hold":"Space","sec":0.4},{"advance":0.8}]` |
-| warp transition (deterministic) | `/?mode=galaxy&galaxy=0&uipanel=warp` | `[{"advance":1.5}]` |
+| warp → galaxy (deterministic) | `/?mode=galaxy&galaxy=1&uipanel=warp` (ring galaxy: `galaxy=0`) | `[{"advance":2.5}]` |
+| warp → star system | `/?mode=system&galaxy=0&star=6&planet=1&uipanel=warp` | `[{"advance":1.5}]` |
+| warp → cosmic web | `/?mode=cosmic&uipanel=warp` | `[{"advance":2}]` |
+| touch landscape, toasts + telemetry (collision case) | `/?mode=system&galaxy=0&star=6&planet=1&view=bike&tod=0.35&touch=1` (`--w 844 --h 390`) | `[{"advance":5},{"hold":"KeyW","sec":2.5},{"advance":2}]` |
+| touch glide glyph | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.35&touch=1` (`--w 844 --h 390`) | `[{"advance":5},{"hold":"Space","sec":0.25},{"advance":0.35}]` |
+| ship pulse: PULSE pill, target row, hint footnote | `/?mode=system&galaxy=0&star=2&planet=0&view=ship&tod=0.45&alt=120000&pitch=10&pulse=20000` | `[{"advance":2}]` |
+| cosmic title over forming structure | `/?mode=cosmic` | `[{"advance":6}]` |
 
 ## Perf
 DOM only, ~40 nodes at steady state; opacity/transform writes are cached and skipped when unchanged;
@@ -88,17 +122,21 @@ only during transitions. No per-frame allocations in hot paths except the small 
 `Celestial` (space only).
 
 ## Known issues
+* Galaxy portraits in the warp use `Universe.galaxy().colors` which are pale (L = 0.7), so arms read whitish.
+* The toast solver measures DOM rects (≤ 12 `getBoundingClientRect` calls, 4 Hz, only while toasts exist).
 * Quality tier cannot be switched live (engine detects it once) → the menu reloads with `q=` at the same place.
 * Hints from other tracks are free text (keyboard wording even on touch, e.g. vehicle hints check
   `lastDevice`, which is `keyboard` when the touch layer is forced with `&touch=1`).
 * Warp star field uses `Math.random` (cosmetic only).
 
 ## Requests
-* **core** — consider making `Escape`/`Pad9` → `menu` the default binding in `Input.js` (the UI re-binds at
-  runtime today) and a `quality.setTier()` that can switch tiers live.
-* **audio** — expose `audio.setVolume(0..1)` (UI falls back to `setParam('volume')` + `master.gain`);
-  `discovery` events with `source: 'ui'` are POI location reveals (good moment for a sting).
+* **cosmic** — the first ~3 s of the cosmic web (z > 26) are a near-uniform purple fog; the UI now holds the title
+  card until structure forms, but a sharper/earlier first frame would make the opening shot land harder.
+* **galaxy/universe** — galaxy `colors.arms` are very pale; slightly more saturated arm colours would help every
+  galaxy depiction (warp portrait, map cards).
+* **core** — a `quality.setTier()` that can switch tiers live (the menu reloads at the same place today).
+* **audio** — `discovery` events with `source: 'ui'` are POI location reveals (good moment for a sting);
+  UI buttons now carry `data-sfx="ui.open"` / `"ui.back"`.
 * **civ / flora** — POI names repeat a lot for wonders ('Elder Oak' ×25); unique names or a `minor: true`
-  flag would help markers and reveals. Flagging the capital (`data.capital`) is used for nothing yet —
-  a `kind: 'city'` for capitals would give them the gold city marker.
+  flag would help markers and reveals. (`data.capital` is now used: larger gold marker + "capital".)
 * **vehicles** — `_hintFor` could consult `engine.ui.device` (touch layer active) instead of `input.lastDevice`.

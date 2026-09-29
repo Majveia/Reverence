@@ -25,9 +25,11 @@ export function galaxyPalette(S) {
   // Saturated on purpose — mixing along each ray (old + young + dust reddening) desaturates them.
   // early types (E / S0) are pale cream: old metal-rich light without the arms' blue to contrast against
   const early = S.type === 'lenticular' || S.type === 'elliptical';
-  const bulge = norm(mix(early ? [1.0, 0.8, 0.6] : [1.0, 0.64, 0.36], c.core, 0.2));
-  const old = norm(mix(early ? [1.0, 0.86, 0.72] : [1.0, 0.74, 0.5], c.core, 0.15));
-  const young = norm(mix([0.22, 0.44, 1.0], c.arms, 0.12));
+  // (Sombrero-like S0s read almost neutral white-lavender in Hubble colour: strong bulge, no blue arms)
+  const ring = S.type === 'lenticular' && S.dustRing;
+  const bulge = norm(mix(ring ? [1.0, 0.9, 0.8] : early ? [1.0, 0.8, 0.6] : [1.0, 0.64, 0.36], c.core, ring ? 0.08 : 0.2));
+  const old = norm(mix(ring ? [1.0, 0.94, 0.9] : early ? [1.0, 0.86, 0.72] : [1.0, 0.74, 0.5], c.core, ring ? 0.05 : 0.15));
+  const young = norm(mix([0.16, 0.4, 1.0], c.arms, 0.1));
   const hii = norm(mix([1.0, 0.12, 0.34], c.hii, 0.2));
   return { bulge, old, young, hii };
 }
@@ -68,7 +70,7 @@ export class GalaxyVolume {
       const bc = S.bulgeComp;
       bulgeA = new THREE.Vector4(S.nucA * K, bc[0].a * K * 1.2, bc[1].a * K * 1.1, bc[2].a * K * 2.2);
       bulgeW = new THREE.Vector4(0.03, 0.26, 0.5, 0.0);
-      bulgeH = S.dustRing ? new THREE.Vector2(R * 0.14, 2.6) : new THREE.Vector2(bc[2].a * K * 0.9, type === 'lenticular' ? 0.7 : S.barA > 0 ? 0.15 : 0.4);
+      bulgeH = S.dustRing ? new THREE.Vector2(S.dustRing.r * K * 0.42, 3.6) : new THREE.Vector2(bc[2].a * K * 0.9, type === 'lenticular' ? 0.7 : S.barA > 0 ? 0.15 : 0.4);
       bulgeS = new THREE.Vector3(1, S.bulgeQ, 1);
       const fb = galaxy.bulgeFrac;
       bulgeL = (type === 'lenticular' ? (S.dustRing ? 60 : 20) : 24) * (fb / 0.14) * (S.barA > 0 ? 0.45 : 1);
@@ -87,8 +89,8 @@ export class GalaxyVolume {
       uColBar: { value: new THREE.Vector3(...pal.bulge).lerp(new THREE.Vector3(...pal.old), 0.4) },
       uColHalo: { value: new THREE.Vector3(1.0, 0.86, 0.72) },
       uExt: { value: new THREE.Vector3(0.58, 0.76, 1.0) },
-      uOldL: { value: type === 'lenticular' ? (S.dustRing ? 0.08 : 0.4) : type === 'irregular' ? 0.3 : 0.35 },
-      uYoungL: { value: type === 'irregular' ? 0.9 : 0.8 },
+      uOldL: { value: type === 'lenticular' ? (S.dustRing ? 0.22 : 0.4) : type === 'irregular' ? 0.3 : 0.35 },
+      uYoungL: { value: type === 'irregular' ? 0.9 : 0.62 },
       uHiiL: { value: type === 'irregular' ? 2.2 : 2.0 },
       uDustL: { value: 8.0 }, uScreen: { value: 0.9 },
       uBulgeA: { value: bulgeA }, uBulgeH: { value: new THREE.Vector2(bulgeH.x, bulgeH.y * bulgeL) }, uBulgeW: { value: bulgeW }, uBulgeS: { value: bulgeS }, uBulgeL: { value: bulgeL },

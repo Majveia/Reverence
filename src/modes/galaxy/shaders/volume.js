@@ -183,7 +183,10 @@ void main(){
     dn *= mix(1.0, 0.45 + 1.1 * N3.r, w3);
     float dm = mix(1.0, clamp(dn, 0.0, 3.0), uDustNoise);
     float gm = mix(1.0, clamp(0.55 + 0.9 * N1.a + 0.5 * w2 * (N2.b - 0.5), 0.2, 2.0), uDustNoise);
-    vec3 E = uColOld * (M.r * uOldL * IO) + (uColYoung * (M.g * uYoungL) + uColHII * (M.a * uHiiL)) * (IY * gm);
+    // magnified far beyond its resolution (inside the disk) the map's HII / cluster knots would show
+    // as blocky texels: they fade out there (the individual nebulae and LOD stars take over)
+    float magK = smoothstep(0.04, 0.35, footM / uMapTexel);
+    vec3 E = uColOld * (M.r * uOldL * IO) + (uColYoung * (M.g * uYoungL * mix(0.35, 1.0, magK)) + uColHII * (M.a * uHiiL * magK)) * (IY * gm);
     // clumpy dust mixed with the stars: local obscuration of this sample's own light
     float yl = pm.y / (1.6 * hD);
     E *= exp(-uExt * (M.b * uScreen * dm * exp(-yl * yl)));
@@ -277,8 +280,9 @@ void main(){
         float fade = smoothstep(0.04, 0.25, ay) * uDetail;
         float ia = 1.0 / max(ay, 0.25);
         vec3 tf = halfBehind(uExt * (Mf.b * uDustL * ia)), tc = halfBehind(uExt * (Mc.b * uDustL * ia));
-        vec3 ef = (uColOld * (Mf.r * uOldL) + uColYoung * (Mf.g * uYoungL) + uColHII * (Mf.a * uHiiL)) * ia;
-        vec3 ec = (uColOld * (Mc.r * uOldL) + uColYoung * (Mc.g * uYoungL) + uColHII * (Mc.a * uHiiL)) * ia;
+        float mk = smoothstep(0.04, 0.35, foot / uMapTexel);       // (see the raymarch: no magnified knots)
+        vec3 ef = (uColOld * (Mf.r * uOldL) + uColYoung * (Mf.g * uYoungL) + uColHII * (Mf.a * uHiiL * mk)) * ia;
+        vec3 ec = (uColOld * (Mc.r * uOldL) + uColYoung * (Mc.g * uYoungL) + uColHII * (Mc.a * uHiiL * mk)) * ia;
         vec3 dcol = col * (tf / max(tc, vec3(1e-3))) + (ef * tf - ec * tc);
         col = mix(col, max(dcol, col * 0.15), fade);
       }

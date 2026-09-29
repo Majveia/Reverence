@@ -47,6 +47,19 @@ void main(){
   float old = exp(-r / uRd) * cut * (0.88 + 0.24 * n1 + 0.08 * n2);
   float young = 0.0, dust = 0.0, hii = 0.0;
   float armRidge = 0.0;          // where young stars / HII concentrate (for knots)
+  // noise sheared by differential rotation into long strands along a slightly tighter spiral than
+  // the density wave (log-polar frame, periodic in angle via a cos/sin embedding)
+  float sA = 0.5, sB = 0.5, sC = 0.5, sF = 0.0;
+  if (gType <= 2 && gM > 0.5) {
+    float rrF = max(r, R * 0.02);
+    float thF = atan(p.y, p.x + 1e-9);
+    float lrF = log(rrF / gR0);
+    float psiF = thF - lrF / (gTanP * 0.85) + 0.5 * n1 + 0.25 * n2;
+    sA = rv_ridged(vec3(cos(psiF) * 7.0, sin(psiF) * 7.0, lrF * 1.6) + so + 31.0, 4);
+    sB = rv_ridged(vec3(cos(psiF + 0.7 * n3) * 16.0, sin(psiF + 0.7 * n3) * 16.0, lrF * 3.5) + so + 37.0, 3);
+    sC = rv_ridged(vec3(cos(psiF + n2) * 38.0, sin(psiF + n2) * 38.0, lrF * 8.0) + so + 41.0, 2);
+    sF = rv_fbm(vec3(cos(psiF) * 12.0, sin(psiF) * 12.0, lrF * 4.0) + so + 43.0, 3);   // sheared clumps
+  }
 
   if (gType <= 2 && gM > 0.5) {
     GxArm a = gx_arm(p);
@@ -74,9 +87,9 @@ void main(){
     armY = min(armY, 1.4) * bAl;
     float dB = a.dperp / (sig * 4.0);
     float armBroad = exp(-0.5 * dB * dB);
-    float clump = smoothstep(-0.3, 0.55, n2 * 0.85 + n3 * 0.45 + n1 * 0.3);
+    float clump = smoothstep(-0.3, 0.55, sF * 0.9 + n3 * 0.35 + n1 * 0.3);
     float patchA = smoothstep(-0.2, 0.6, n2 + 0.6 * n3);
-    young = win * frag * frag * (armY * (0.1 + 1.5 * clump) + 0.38 * armBroad * (0.25 + 0.9 * patchA) * (0.6 + 0.4 * n1));
+    young = win * frag * frag * (armY * (0.3 + 1.05 * clump) + 0.5 * armBroad * (0.35 + 0.8 * patchA) * (0.6 + 0.4 * n1));
     armRidge = win * frag * armY;
     old *= 1.0 + 0.6 * win * armBroad;
     // spurs / feathers: high-pitch structures leaving the arms downstream
@@ -101,7 +114,7 @@ void main(){
     lane = lane * (0.08 + 1.25 * brk) + 0.55 * exp(-0.5 * dD2 * dD2) * smoothstep(0.35, 0.8, ridF + 0.3 * n3);
     lane *= winD * (0.7 + 0.5 * frag);
     // dust inside the arm (patchy) and feathers crossing it
-    float inArm = armY * win * smoothstep(0.25, 0.75, ridF * 0.9 + n3 * 0.3);
+    float inArm = armY * win * smoothstep(0.35, 0.8, sB * 0.9 + n3 * 0.3);
     float feath = spurPat * exp(-0.5 * dS * dS * 0.5) * win * smoothstep(0.2, 0.7, ridF + 0.3 * n2);
     dust += lane * 1.15 + inArm * 0.75 + uSpur * 0.9 * feath;
     // diffuse HII glow along the young ridge
@@ -178,10 +191,16 @@ void main(){
   // diffuse dust web across star-forming disks
   if (gType != 4 && gType != 3) {
     float web = smoothstep(0.15, 0.65, n2 * 0.8 + n3 * 0.5 + n1 * 0.3) * exp(-r / (0.55 * R)) * smoothstep(gR0 * 0.25, gR0 * 1.1, r);
-    dust += web * 0.35 + 0.1 * exp(-r / uRdY) * cut * smoothstep(gR0 * 0.2, gR0, r);
+    dust += web * (gType <= 2 ? 0.12 : 0.35) + 0.1 * exp(-r / uRdY) * cut * smoothstep(gR0 * 0.2, gR0, r);
   }
-  // fine dust filaments across the whole star-forming disk (Hubble-like texture)
-  if (gType != 4 && gType != 3) {
+  // fine dust filaments sheared by differential rotation into long spiral strands (M51's
+  // "fingerprint" of dust between the arms): ridged noise in a log-polar frame aligned with a
+  // slightly tighter spiral than the density wave; periodic in angle (cos/sin embedding)
+  if (gType <= 2 && gM > 0.5) {
+    float envS = smoothstep(gR0 * 0.03, gR0 * 0.35, r) * (1.0 - smoothstep(0.55 * R, 0.95 * R, r)) * cut;
+    float patchS = smoothstep(0.2, 0.7, n2 * 0.7 + n3 * 0.5 + 0.45);          // strands come and go
+    dust += (0.95 * smoothstep(0.55, 0.9, sA) + 0.75 * smoothstep(0.6, 0.92, sB) + 0.5 * smoothstep(0.62, 0.93, sC)) * envS * patchS * (0.6 + 0.8 * exp(-r / (0.35 * R)));
+  } else if (gType != 4 && gType != 3) {
     vec2 wq = P * 40.0 + vec2(n2, n3) * 2.2;
     float fd = rv_ridged(vec3(wq, 13.3) + so, 4);
     float fd2 = rv_ridged(vec3(P * 85.0 + vec2(n3, n1) * 3.0, 17.9) + so, 3);
@@ -198,14 +217,20 @@ void main(){
     float rn = rv_fbm(vec3(cos(th) * 6.0, sin(th) * 6.0, r / R * 10.0) + so + 3.0, 5);
     float rf = rv_ridged(vec3(cos(th) * 30.0, sin(th) * 30.0, r / R * 60.0) + so + 7.0, 4);
     float core = exp(-0.5 * pow(abs(dr) / 0.75, 3.0));                 // flat-topped lane, sharp edges
-    dust += 2.2 * uDustRing.z * core * (0.6 + 0.6 * smoothstep(-0.4, 0.5, rn)) * (0.75 + 0.5 * rf);
+    // granular lane: dense clumps and thinner gaps (reddened light leaks through → brown, not black)
+    float gr = rv_fbm(vec3(cos(th) * 55.0, sin(th) * 55.0, r / R * 140.0) + so + 11.0, 3);
+    dust += 2.0 * uDustRing.z * core * (0.5 + 0.6 * smoothstep(-0.4, 0.5, rn)) * (0.45 + 0.75 * rf) * (0.4 + 1.2 * smoothstep(-0.25, 0.45, gr));
     float dr2 = (r - uDustRing.x * 0.86) / (uDustRing.y * 0.3);
     dust += 0.9 * uDustRing.z * exp(-0.5 * dr2 * dr2) * smoothstep(0.0, 0.6, rn);
     // fibrous wisps just inside / outside the lane
     dust += 0.7 * uDustRing.z * exp(-0.5 * dr * dr / 4.0) * smoothstep(0.55, 0.9, rf);
     float rim = exp(-0.5 * pow((r - uDustRing.x - 1.3 * uDustRing.y) / (uDustRing.y * 0.7), 2.0));
-    old *= 0.85 + 1.4 * rim + 0.6 * exp(-r / (0.3 * uDustRing.x));
-    young += 0.03 * exp(-0.5 * dr * dr) * smoothstep(0.3, 0.8, rn + n3 * 0.4);
+    // bright flat lens inside the ring (Sombrero's white inner disk), almost nothing beyond the ring
+    float lens = 1.0 - smoothstep(uDustRing.x * 0.7, uDustRing.x * 1.02, r);
+    old = old * (0.85 + 0.6 * exp(-r / (0.3 * uDustRing.x))) + 0.16 * lens * (0.85 + 0.3 * n2);
+    old *= 1.0 - 0.93 * smoothstep(uDustRing.x + 1.2 * uDustRing.y, uDustRing.x + 3.5 * uDustRing.y, r);
+    old += 0.035 * rim;
+    young += 0.06 * exp(-0.5 * dr * dr) * smoothstep(0.3, 0.8, rn + n3 * 0.4) + 0.02 * rim * knots(vec3(P * 90.0, 5.0 + uSeedF), 0.5, 0.3);
     hii += 0.05 * exp(-0.5 * dr * dr) * smoothstep(0.5, 0.9, rn + n3 * 0.4) * knots(vec3(P * 70.0, 3.0 + uSeedF), 0.6, 0.25);
   }
 

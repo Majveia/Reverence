@@ -43,19 +43,27 @@ body.rv-shot #rv-ui * { transition: none !important; animation: none !important;
   position: absolute; left: calc(var(--ui-gut) + var(--safe-left)); top: calc(14px + var(--safe-top));
   max-width: calc(100vw - 150px - var(--safe-left) - var(--safe-right));
   display: flex; flex-direction: column; gap: 5px;
+  text-shadow: 0 0 1px rgba(0, 0, 0, .55), 0 1px 3px rgba(0, 0, 0, .5), 0 0 14px rgba(0, 0, 0, .35);
 }
+/* a barely-there corner shade: invisible over night/space, keeps the crumbs legible over snow, sky and sunlit rock */
+.rv-crumbs::before {
+  content: ''; position: absolute; z-index: -1; pointer-events: none;
+  left: calc(-1 * var(--ui-gut) - var(--safe-left)); top: calc(-14px - var(--safe-top)); width: 420px; height: 110px;
+  background: radial-gradient(ellipse 60% 70% at 18% 30%, rgba(0, 0, 0, .26), rgba(0, 0, 0, 0) 100%);
+}
+.rv-crumbs { isolation: isolate; }
 .rv-crumb-row { display: flex; align-items: center; flex-wrap: nowrap; gap: 0; white-space: nowrap; overflow: hidden; }
 .rv-crumb-ic { width: 13px; height: 13px; margin-right: 9px; color: var(--ui-dim); flex: none; opacity: .9; }
 .rv-crumb {
   font-size: 10px; font-weight: 500; letter-spacing: .2em; text-transform: uppercase;
-  color: var(--ui-faint); pointer-events: auto; cursor: pointer; padding: 3px 0; overflow: hidden; text-overflow: ellipsis;
+  color: rgba(232, 238, 255, .58); pointer-events: auto; cursor: pointer; padding: 3px 0; overflow: hidden; text-overflow: ellipsis;
   transition: color .25s;
 }
 .rv-crumb:hover { color: var(--ui-fg); }
 .rv-crumb.cur { color: var(--ui-fg); cursor: default; font-weight: 550; }
 .rv-crumb-sep { width: 14px; height: 1px; margin: 0 9px; background: var(--ui-hair); flex: none; }
 .rv-crumb-sub {
-  font-size: 10px; font-weight: 400; letter-spacing: .08em; color: var(--ui-faint); padding-left: 22px;
+  font-size: 10px; font-weight: 400; letter-spacing: .08em; color: rgba(232, 238, 255, .55); padding-left: 22px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
@@ -166,6 +174,8 @@ body.rv-shot #rv-ui * { transition: none !important; animation: none !important;
   width: max-content; max-width: min(760px, 86vw); text-align: center; font-size: 11px; font-weight: 400; letter-spacing: .14em;
   color: var(--ui-dim); pointer-events: none; line-height: 1.6;
 }
+.rv-hseg { white-space: nowrap; }
+.rv-hint.side { left: calc(var(--ui-gut) + var(--safe-left)); transform: none; text-align: left; letter-spacing: .1em; }
 .rv-onboard {
   position: absolute; left: calc(var(--ui-gut) + var(--safe-left)); bottom: calc(20px + var(--safe-bottom));
   display: flex; flex-wrap: wrap; gap: 6px 16px; max-width: 64vw; pointer-events: none;
@@ -194,13 +204,15 @@ body.rv-shot #rv-ui * { transition: none !important; animation: none !important;
   color: var(--ui-accent); border: 1px solid rgba(174, 224, 255, .45); background: rgba(174, 224, 255, .08); text-shadow: 0 0 8px rgba(174, 224, 255, .55); }
 .rv-tv.badge[data-k="status"] .rv-tv-v { color: var(--ui-gold); border-color: rgba(255, 220, 160, .45); background: rgba(255, 220, 160, .07); text-shadow: none; }
 /* target readout (ship: nearest body + distance) */
+.rv-tele { flex-wrap: wrap; justify-content: flex-end; row-gap: 10px; }
+.rv-tv.tgt { order: -1; flex-basis: 100%; }
 .rv-tv.tgt .rv-tv-k { display: inline-flex; align-items: center; gap: 5px; color: var(--ui-accent); opacity: .8; }
 .rv-tv-ic { width: 10px; height: 10px; display: inline-block; font-style: normal; }
 .rv-tv.tgt .rv-tv-v { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
 .rv-tv.tgt .rv-tv-v small { text-transform: none; letter-spacing: .04em; }
 
 .rv-touchmode .rv-tele { right: calc(26px + var(--safe-right)); bottom: calc(222px + var(--safe-bottom)); }
-.rv-touchmode .rv-hint { bottom: calc(18px + var(--safe-bottom)); }
+.rv-touchmode .rv-hint { bottom: calc(18px + var(--safe-bottom)); max-width: min(46vw, 380px); }
 
 /* ------------------------------------------------------------------ world / external markers */
 .rv-mk { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; will-change: transform, opacity; }
@@ -417,6 +429,9 @@ body.rv-shot .rv-warp:not(.rv-warp-force), body.rv-shot .rv-warp-label:not(.rv-w
   .rv-hint { bottom: calc(150px + var(--safe-bottom)); font-size: 10px; letter-spacing: .1em; }
   .rv-tele, .rv-touchmode .rv-tele { bottom: auto; top: calc(96px + var(--safe-top)); right: auto; left: 50%; transform: translateX(-50%); gap: 16px; }
   .rv-tv { align-items: center; }
+  /* touch portrait: keep hint + prompts above the stick / action cluster band */
+  .rv-touchmode .rv-hint { bottom: calc(210px + var(--safe-bottom)); max-width: 84vw; }
+  .rv-touchmode .rv-prompts { bottom: calc(246px + var(--safe-bottom)); }
   .rv-menu-pos { justify-content: center; padding-left: calc(16px + var(--safe-left)); }
   .rv-map { padding-left: 10px; padding-right: 10px; }
   .rv-step { min-width: 0; padding: 6px 7px; }

@@ -16,6 +16,7 @@ import { BlackHole } from './BlackHole.js';
 import { Nebulae } from './Nebulae.js';
 import { Backdrop } from './Backdrop.js';
 import { Reticle } from './Reticle.js';
+import { FaintStars } from './FaintStars.js';
 
 const DEG = Math.PI / 180;
 const CLASS_NAMES = ['O', 'B', 'A', 'F', 'G', 'K', 'M'];
@@ -77,6 +78,8 @@ export default class GalaxyMode extends Mode {
     try { const gl = e.renderer.getContext(); maxPt = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] || 64; } catch (_) { /* default */ }
     this.stars = new StarField(e, this.volume.uniforms, S, { maxPointSize: Math.min(128, maxPt || 64) });
     this.scene.add(this.stars.group);
+    this.faint = safe(() => new FaintStars(e, this.volume.uniforms));
+    if (this.faint) this.scene.add(this.faint.points);
     const n = Math.min(GLOBAL_STARS, Math.floor((gal.displayStars || 1.2e6) * e.quality.particleScale));
     this.starCount = n;
     this.stars.initGlobal(n);
@@ -94,6 +97,7 @@ export default class GalaxyMode extends Mode {
         else if (k === 'EnvA') this.volume.uniforms.uBulgeH.value.x = +v;
         else if (k === 'meter') { this.edgeMeter = +v; this._meterSet = true; }
         else if (k === 'tm') this.look.tonemap = v;
+        else if (k === 'Detail') this.volume.compositeMat.uniforms.uDetail.value = +v;
         else if (k === 'sat') this.look.saturation = +v;
         else if (k === 'fsat') this.look.filmLook = { ...this.look.filmLook, saturation: +v };
         else if (k === 'fpow') this.look.filmLook = { ...this.look.filmLook, power: +v };
@@ -111,8 +115,14 @@ export default class GalaxyMode extends Mode {
     // --- camera
     const R = this.R;
     const yaw = params.yaw !== undefined ? parseFloat(params.yaw) * DEG : 0.55;
-    const pitch = params.pitch !== undefined ? parseFloat(params.pitch) * DEG : 44 * DEG;
-    const dist = params.dist !== undefined ? parseFloat(params.dist) : R * (gal.type === 'elliptical' ? 1.5 : gal.type === 'lenticular' ? 2.3 : 1.95);
+    // Sombrero-like lenticulars are shown nearly edge-on (their dust ring is the point)
+    const pitch = params.pitch !== undefined ? parseFloat(params.pitch) * DEG : (gal.type === 'lenticular' && S.dustRing ? 6.5 : 44) * DEG;
+    // default framing: fit the visible disk into the frame (Hubble-like: the galaxy fills the shot)
+    this.frameExt = gal.type === 'lenticular' && S.dustRing ? S.dustRing.r / 1000 * 1.18
+      : S.ringStyle === 'cartwheel' || S.ringStyle === 'hoag' ? (S.ringOut + 2.5 * S.ringW) / 1000
+      : R * (gal.type === 'elliptical' ? 0.62 : gal.type === 'lenticular' ? 0.7 : gal.type === 'irregular' ? 0.95 : 1.0);
+    this.frameH = R * (gal.type === 'elliptical' ? 0.4 : gal.type === 'lenticular' ? 0.3 : 0.08);
+    const dist = params.dist !== undefined ? parseFloat(params.dist) : this._fitDistance(yaw, pitch, gal.type === 'lenticular' ? 0.84 : 0.88);
     const minD = this.blackHole ? this.blackHole.rs * 2.2 : 1e-10;
     this.rig = new GalaxyCamera(this.camera, { distance: dist, yaw, pitch, minDistance: minD, maxDistance: R * 12, maxTarget: R * 1.6 });
     this._applyFocus(params);
@@ -127,6 +137,65 @@ export default class GalaxyMode extends Mode {
     e.ui.showTitle(gal.name.toUpperCase(), `${gal.type} galaxy · ${(gal.starCount / 1e9).toFixed(0)} billion stars`, 3000);
     e.ui.hint('drag to orbit · scroll or pinch to zoom · tap a star to select · double-tap to travel');
     e.audio.setScene('galaxy');
+  }
+
+  /** NDC bounding box of the galaxy's visible extent seen from (yaw, pitch, dist), origin-centred. */
+  _projBox(yaw, pitch, dist, out) {
+    const ext = this.frameExt, hgt = this.frameH;
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const cx = Math.sin(yaw) * cp * dist, cy = sp * dist, cz = Math.cos(yaw) * cp * dist;
+    // camera basis (lookAt origin, up +Y)
+    let fx = -cx, fy = -cy, fz = -cz; const fl = Math.hypot(fx, fy, fz); fx /= fl; fy /= fl; fz /= fl;
+    let rx = -fz, rz = fx; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl;
+    const ux = -(rz * fy), uy = rz * fx - rx * fz, uz = rx * fy; // up = right × forward
+    const ty = Math.tan(this.camera.fov * Math.PI / 360), tx = ty * (this.camera.aspect || 16 / 9);
+    out.x0 = out.y0 = Infinity; out.x1 = out.y1 = -Infinity;
+    const N = 40;
+    for (let i = 0; i < N + 2; i++) {
+      let px, py, pz;
+      if (i < N) { const a = i / N * Math.PI * 2; px = Math.cos(a) * ext; py = 0; pz = Math.sin(a) * ext; }
+      else { px = 0; pz = 0; py = i === N ? hgt : -hgt; }
+      const dx = px - cx, dy = py - cy, dz = pz - cz;
+      const zf = dx * fx + dy * fy + dz * fz;
+      if (zf <= 1e-6) { out.x0 = out.y0 = -9; out.x1 = out.y1 = 9; return out; }
+      const X = (dx * rx + dz * rz) / (zf * tx), Y = (dx * ux + dy * uy + dz * uz) / (zf * ty);
+      if (X < out.x0) out.x0 = X; if (X > out.x1) out.x1 = X;
+      if (Y < out.y0) out.y0 = Y; if (Y > out.y1) out.y1 = Y;
+    }
+    return out;
+  }
+
+  /** Smallest distance at which the (centred) galaxy fits `fill` of the frame. */
+  _fitDistance(yaw, pitch, fill = 0.9) {
+    const b = {};
+    let lo = this.frameExt * 0.8, hi = this.frameExt * 20;
+    for (let it = 0; it < 30; it++) {
+      const d = Math.sqrt(lo * hi);
+      this._projBox(yaw, pitch, d, b);
+      const ok = (b.x1 - b.x0) <= 2 * fill && (b.y1 - b.y0) <= 2 * fill;
+      if (ok) hi = d; else lo = d;
+    }
+    return hi;
+  }
+
+  /** Lens shift that centres the projected galaxy (the near side of an inclined disk looms larger). */
+  _updateFraming() {
+    const rig = this.rig, cam = this.camera;
+    let s = 0;
+    if (!this._noShift && rig.target.lengthSq() < 1e-6) {
+      const d = rig.distance;
+      const k = smoothstep(this.frameExt * 0.9, this.frameExt * 1.6, d);
+      if (k > 0) {
+        const b = this._projBox(rig._yaw, rig._pitch, d, this._box || (this._box = {}));
+        s = clamp(-(b.y0 + b.y1) * 0.25, -0.2, 0.2) * k;
+      }
+    }
+    if (Math.abs(s - (this._shift ?? 0)) > 1e-5 || (s === 0 && this._shift)) {
+      this._shift = s;
+      if (Math.abs(s) < 1e-5) { if (cam.view) cam.clearViewOffset(); }
+      else { const a = this.engine.width / Math.max(1, this.engine.height); cam.setViewOffset(a, 1, 0, s, a, 1); }
+      cam.updateMatrixWorld();
+    }
   }
 
   _applyFocus(params) {
@@ -146,14 +215,16 @@ export default class GalaxyMode extends Mode {
       if (nb) {
         this.rig.setView({ target: new THREE.Vector3(nb.x, nb.y + (nb.kind === 'pillars' ? nb.radius * 0.1 : 0), nb.z).multiplyScalar(1 / 1000) });
         if (nb.kind === 'pillars' && params.yaw === undefined) this.rig.setView({ yaw: nb.tilt[0] });
-        setD(nb.radius / 1000 * (nb.kind === 'pillars' ? 2.1 : nb.kind === 'emission' ? 2.7 : 3.0), nb.kind === 'pillars' ? 4 : 18);
+        setD(nb.radius / 1000 * (nb.kind === 'pillars' ? 2.45 : nb.kind === 'emission' ? 2.7 : 3.0), nb.kind === 'pillars' ? 4 : 18);
         if (params.dist !== undefined) this.rig.setView({ distance: parseFloat(params.dist) * nb.radius / 1000 });
       }
     } else if (f.startsWith('star') || f === 'local' || params.star !== undefined) {
       const idx = f.startsWith('star') ? parseInt(f.split(':')[1] ?? '0', 10) : params.star !== undefined ? parseInt(params.star, 10) : 6;
       const st = this.engine.universe.star(this.galaxyIndex, idx || 0);
       this.rig.setView({ target: st.position.clone().multiplyScalar(1 / 1000) });
-      setD(f === 'local' ? 0.25 : 0.04, 14);
+      // local neighbourhood: look along the disk toward the galactic centre (the band + bulge ahead)
+      if (f === 'local' && params.yaw === undefined) this.rig.setView({ yaw: Math.atan2(st.position.x, st.position.z) });
+      setD(f === 'local' ? 0.25 : 0.04, f === 'local' ? 5 : 14);
       if (f !== 'local') this._select({ index: idx || 0, pos: st.position.clone().multiplyScalar(1 / 1000), follow: 1 });
     }
     void S;
@@ -241,7 +312,7 @@ export default class GalaxyMode extends Mode {
     const diskLight = u.uOldL.value * 2 * Math.PI * rd * rd + u.uBulgeL.value * 0.9;
     // (lumSum is Σ L^0.35; with uLumExp 0.6 the brightest young supergiants carry most of the tracer
     // light → Hubble-like resolved sparkle along the arms over a smooth unresolved disk)
-    const frac = this.galaxy.type === 'elliptical' ? 0.1 : 0.4;
+    const frac = this.galaxy.type === 'elliptical' ? 0.1 : this.galaxy.type === 'irregular' ? 0.14 : 0.26;
     const sum = Math.max(1e-6, this.stars.lumSum);
     this.stars.globalMat.uniforms.uGain.value = frac * diskLight / sum * (this.starGainMul ?? 1);
   }
@@ -255,6 +326,7 @@ export default class GalaxyMode extends Mode {
     if (!want) {
       lod.on = false;
       lm.uWeight.value = 0;
+      if (this.faint) this.faint.points.visible = false;
       this.stars.globalMat.uniforms.uLodRadius.value = 0;
       return;
     }
@@ -277,7 +349,8 @@ export default class GalaxyMode extends Mode {
       lm.uLodRadius.value = lod.radius;
       let nf = 0;
       for (const it of this.nebulae?.active ?? []) nf = Math.max(nf, it.fade);
-      lm.uGain.value = this.stars.singleGain * (1 - 0.7 * nf);
+      lm.uGain.value = this.stars.singleGain * 2.2 * (1 - 0.45 * nf);
+      this.faint?.update(this._camPat, this.pat, this.stars.common.uPixScale.value, k * (this._bk ?? 1), lm.uGain.value * 0.6, this.stars.common.uEps.value);
       const gm = this.stars.globalMat.uniforms;
       gm.uLodCenter.value.copy(lod.center);
       gm.uLodRadius.value = lod.radius * k;
@@ -420,6 +493,7 @@ export default class GalaxyMode extends Mode {
 
       this.rig.handleInput(input, dt, { cursorPoint: (nx, ny) => this._cursorPoint(nx, ny), lockTarget: this._traveling });
       this.rig.update(dt, this.pat);
+      this._updateFraming();
 
       // exposure: edge-on disks are path-integrated (much brighter) → meter them down like a camera
       {
@@ -438,12 +512,16 @@ export default class GalaxyMode extends Mode {
         // a nearby nebula dominates the frame's exposure → the galaxy's diffuse glow recedes further
         let nf = 0;
         for (const it of this.nebulae?.active ?? []) nf = Math.max(nf, it.fade);
-        this.volume.compositeMat.uniforms.uGain.value = (0.07 + 0.93 * k * k * (3 - 2 * k)) * (1 - 0.85 * nf);
+        // next to the black hole the accretion disk sets the exposure: the nucleus' glow recedes to black
+        let bk = 1;
+        if (this.blackHole) bk = smoothstep(2.4, 4.4, Math.log10(Math.max(1, this.blackHole.distanceRs(this.camera))));
+        this._bk = bk;
+        this.volume.compositeMat.uniforms.uGain.value = (0.16 + 0.84 * k * k * (3 - 2 * k)) * (1 - 0.85 * nf) * (0.02 + 0.98 * bk);
       }
       this.volume.update(this.camera, this.pat);
       rotTheta(this.camera.position, -this.pat, this._camPat);
-      this._updateLod();
       this.stars.update(this.camera, this.pat, this.tau, this._camPat, e.pipeline.height);
+      this._updateLod();
       this.backdrop?.update(this.camera);
       this.nebulae?.update(this.camera, this.pat, this._camPat, dt, e.time.t);
       this._updateSelectionUi();
@@ -532,6 +610,7 @@ export default class GalaxyMode extends Mode {
     this.nebulae?.dispose();
     this.backdrop?.dispose();
     this.reticle?.dispose();
+    this.faint?.dispose();
   }
 
   getState() {
