@@ -26,6 +26,7 @@ import { chromium, devices } from '/opt/node22/lib/node_modules/playwright/index
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import net from 'node:net';
 
 const argv = process.argv.slice(2);
@@ -70,7 +71,8 @@ if (!/[?&]q=/.test(urlPath)) urlPath += `&q=${opt('q', 'high')}`;
 const full = baseUrl + urlPath;
 
 // ---- render slots: cap concurrent SwiftShader browsers machine-wide (CPU/RAM protection)
-const SLOTS = +(process.env.RV_SLOTS || 3);
+// software GL is CPU-bound: more browsers than cores/2 just thrash (4 cores -> 2 slots, 6+ -> 3)
+const SLOTS = +(process.env.RV_SLOTS || Math.max(1, Math.min(3, Math.floor(os.cpus().length / 2))));
 const slotDir = '/tmp/rv-shoot-slots';
 fs.mkdirSync(slotDir, { recursive: true });
 let slotPath = null;
