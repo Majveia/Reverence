@@ -119,7 +119,7 @@ export function bakeDetail(size = DETAIL_SIZE) {
       const u = x / S, v = y / S;
       const wu = u + 0.04 * pfbm(h2, u, v, 3, 3), wv = v + 0.04 * pfbm(h2, u + 0.5, v + 0.3, 3, 3);
       // big angular blocks (planes, soft seams)
-      facets(wu, wv, 4, h1, 6);
+      facets(wu, wv, 4, h1, 11);
       const big = res[0], bid = res[2];
       // stepped ledges: terraced warped fbm → flat-ish planes with sharp risers (chipped / layered)
       const base = pfbm(h3, wu + 0.2, wv + 0.7, 3, 4, 0.5) * 3.2 + big * 1.5;
@@ -229,11 +229,15 @@ export function bakeDetail(size = DETAIL_SIZE) {
       const li = Math.floor(layer), lf = layer - li;
       const thick = makeHash(74)(((li % 9) + 9) % 9, 3);
       const ledge = sst(0.0, 0.12 + 0.2 * thick, lf) * (1 - sst(0.85, 1.0, lf) * 0.6);
-      pworley(h2, u, vv * 0.5, 8, 0.9, w);
-      const joint = 1 - (1 - sst(0.0, 0.05, w[1] - w[0])) * sst(0.0, 0.35, pnoise(h1, u, v, 5));
+      // (no vertical joints: thin vertical lines alias into scratches on walls seen from afar)
+      // partings: thin recessed horizontal seams inside each bed, wandering in height
+      let pf = layer * 3 + 0.5 * pnoise(h1, u, v, 4); pf -= Math.floor(pf);
+      const parting = (1 - sst(0.0, 0.1, Math.abs(pf - 0.5) * 2 - 0.82)) * sst(-0.2, 0.4, pnoise(h3, u + 0.4, v, 3));
+      // lenses: horizontally elongated tone patches (cross-bedding, iron bands)
+      const lens = pfbm(h3, u + 0.11, vv * 4 + 0.37, 4, 3, 0.5);
       const grain = pfbm(h3, u, v, 32, 3);
-      H[y * S + x] = (0.5 + 0.35 * thick) * ledge * (0.7 + 0.3 * joint) + 0.12 * grain + 0.1 * pfbm(h1, u + 0.2, v, 6, 3);
-      A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.28 * (thick - 0.5) + 0.1 * grain - 0.2 * (1 - joint) - 0.12 * (1 - ledge)));
+      H[y * S + x] = (0.5 + 0.35 * thick) * ledge - 0.12 * parting + 0.1 * grain + 0.08 * lens + 0.06 * pfbm(h1, u + 0.2, v, 6, 3);
+      A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.3 * (thick - 0.5) + 0.16 * lens + 0.08 * grain - 0.16 * parting - 0.14 * (1 - ledge)));
     }
     norm(); put(6, 0.08);
   }
@@ -246,7 +250,7 @@ export function bakeDetail(size = DETAIL_SIZE) {
     const D = new Float32Array(S * S), L = new Float32Array(S * S);
     for (let k = 0; k < NS; k++) {
       const uc = h1(k, 1), v0 = h1(k, 2), len = 0.15 + 0.7 * h1(k, 3) ** 1.5;
-      const wid = 0.003 + 0.022 * h1(k, 4) ** 2, str = 0.35 + 0.65 * h1(k, 5), light = h1(k, 6) < 0.18;
+      const wid = 0.007 + 0.024 * h1(k, 4) ** 2, str = 0.35 + 0.65 * h1(k, 5), light = h1(k, 6) < 0.18;
       const wf = 1 + Math.floor(h1(k, 7) * 3), wa = 0.004 + 0.01 * h1(k, 8), wp = h1(k, 9) * 6.283;
       const x0 = Math.floor((uc - 0.08) * S), x1 = Math.ceil((uc + 0.08) * S);
       for (let y = 0; y < S; y++) {

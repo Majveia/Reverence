@@ -34,7 +34,8 @@ class Node {
     this.ang = Math.acos(c1);                    // centre → corner angle
     cubeDir(face, u0, v0 + size / 2, _dir); cubeDir(face, u0 + size, v0 + size / 2, _dir2);
     this.side = t.R * Math.acos(Math.min(1, _dir[0] * _dir2[0] + _dir[1] * _dir2[1] + _dir[2] * _dir2[2]));
-    this.D = t.K * this.side;
+    this.rf = parent ? parent.rf : 1;       // relief factor (steep chunks refine earlier), see _makeMesh
+    this.D = t.K * this.side * this.rf;
     this.hMin = parent ? parent.hMin : t.hMin0;
     this.hMax = parent ? parent.hMax : t.hMax0;
   }
@@ -71,6 +72,8 @@ class Terrain {
     const shotMode = !!world.engine?.shot;
     this.K = Math.max(shotMode ? 1.05 : 1.3, Math.min(2.2, hPx / (fov * RES * ppq * (shotMode ? 1.3 : 1)) * Math.sqrt(q.terrainDetail ?? 1)));
     try { const tk = parseFloat(new URLSearchParams(globalThis.location?.search || '').get('tk')); if (tk > 0.9 && tk < 4) this.K = tk; } catch (_) { /* no url */ }
+    // relief-aware split boost (0 = off): up to +60 % range on chunks spanning tall walls
+    this.reliefK = q.tier === 'low' ? 0 : q.tier === 'med' ? 0.35 : 0.6;
     const leaf = q.tier === 'low' ? 0.8 : q.tier === 'med' ? 0.5 : 0.35;   // metres between vertices at max depth
     this.maxLevel = Math.max(4, Math.ceil(Math.log2((this.R * Math.PI / 2) / (RES * leaf))));
     this.hMin0 = this.surface.minHeight ?? -this.surface.amp;
@@ -372,6 +375,18 @@ class Terrain {
     n.mesh = mesh; n.state = 2;
     // refine height bounds for this node and its future children
     n.hMin = m.hMin; n.hMax = m.hMax;
+    // relief-aware range: chunks spanning tall walls refine earlier (a heightfield wall of slope s
+    // has only spacing·s vertical resolution — kilometre walls otherwise read as smooth sheets).
+    // Set once, before children exist (their morph data bakes this D). CDLOD seamlessness needs
+    // D(child) ≤ 0.66·D(parent) ⇒ rf(child) ≤ 1.32·rf(parent).
+    if (!n.children && !n.rfSet && n.level > 2) {
+      n.rfSet = true;
+      const rel = (m.hMax - m.hMin) / Math.max(1, n.side);
+      const want = 1 + this.reliefK * Math.min(1, Math.max(0, (rel - 0.6) / 2.4));
+      const pr = n.parent ? n.parent.rf : 1;
+      n.rf = Math.max(pr * 0.5, Math.min(want, pr * 1.3));
+      n.D = this.K * n.side * n.rf;
+    }
     if (n.children) for (const c of n.children) { if (!c.mesh) { c.hMin = m.hMin; c.hMax = m.hMax; } }
   }
 

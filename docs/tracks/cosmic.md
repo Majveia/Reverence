@@ -73,7 +73,54 @@ opening (the web visibly grows around you while it collapses).
    red-sequence gold in clusters / blue cloud in the field; resolve into oriented spiral / elliptical /
    irregular discs when you fly close (morphology from `universe.galaxy(i).type` for i < 4096).
 6. **Hover ring** + label (UI marker kind `'cosmic'`, name + "N galaxies · d Mpc/h" or "type galaxy · d"),
-   telemetry `z … age …`, title card.
+   telemetry `z … age …`, title card. While the title card is up, a label that would crowd it (central
+   column) is held back (ring only); near the top edge the label flips below the ring.
+
+#### Round 4 additions (critic round 2): what the pipeline does now
+
+* **Emissivity, not plain column density**: every sample (particle, tracer, veil step, subhalo, shell) is
+  weighted by (ρ/4)^γ, so the image is ∫ρ^(1+γ) dl (emission-measure-like, X-ray/Hα ∝ ρ²). γ = 0.5 today,
+  1.0 while the web is young. Evaluated per sample *in 3D, before projection*: a stack of faint sheets
+  along the line of sight no longer adds up to the brightness of one filament → thin bright threads with
+  dim flanks instead of cotton wool.
+* **Hybrid particle + ray-marched rendering** (`VEIL_FRAG`): diffuse matter (sheets, void walls, primordial
+  fog) is ray-marched through the PM render density (CIC of every particle, 2 Mpc/h, trilinear), 24–56 steps
+  by tier, at half the accumulation resolution, then added into the accumulation target. Particles keep the
+  collapsed matter. The split is a smooth partition of unity in ρ (veil below 3 → particles above 10 today;
+  0.9 → 3 while the web is young, so the particles' Lagrangian sheet tracers still draw the Zel'dovich
+  pancakes). Both deposit identical units and weights (mean density ↔ 1/8 reference particle per (Mpc/h)³),
+  so the sum is the same picture minus the Poisson noise of sparsely sampled sheets. Before PM starts
+  (z > 19) a 2LPT field is deposited so the first seconds use the veil too.
+* **Temperature**: the resolve pass's heat is now a log-scaled virial-temperature proxy of the
+  ~2.5 Mpc/h-smoothed density (ρ 6 → 900): warm-hot filament gas (magenta) → shocked group/cluster outskirts
+  (orange) → amber → white-hot only in the innermost cores (and, past the highlight knee, the core whitens
+  with brightness).
+* **Palette**: density ramp cyan-blue (void walls, sheets) → indigo → violet → magenta-rose (filament cores),
+  then the temperature ramp; aerial perspective: matter behind the focus (accumulation alpha channel =
+  Σ·far share) cools toward deep blue-violet and dims; the young web is blue-violet and warms as it collapses.
+* **Highlights**: brightness ∝ Σ^1.15 above the toe; a hue-preserving soft shoulder (max channel → 1.6)
+  before bloom; tonemap `agx-punchy` (hue 0.7); bloom 0.5. Close-ups (> 3.5–12 % of the frame is bright
+  gas): the highlight knee *drops* to the core's outskirts (80th percentile) so the core's whole range is
+  compressed into a visible gradient (it used to be lifted, which parked the core on the shoulder).
+* **Substructure** (accumulated with the particles): (a) **subhalos** — every satellite / central galaxy
+  carries a projected cuspy clump (Σ ∝ (1 + r²/a²)^-1.5, mass ∝ L^0.8, a = 12–50 kpc/h) riding (and orbiting
+  with) its host particle, boosted inside hot cluster gas so it reads against the core, only once resolved
+  and only after the host has long collapsed; (b) **accretion shocks** — one sprite per collapsed cluster
+  deposits a projected thin spherical shell at ~2 R_hot (gas at ~15× mean, 0.28 R thick), limb-brightened,
+  broken into arcs (no shock where filaments feed the cluster), breathing slowly; hot (orange) colour.
+* **Smooth clarity / relief**: the local-contrast and relief estimator is a quarter-resolution 4×4 box of
+  log Σ (plus mass-weighted colour ratios), bilinearly upsampled: noise-free (the per-pixel randomly rotated
+  tap ring printed estimator grain into every filament). Sparse pixels (judged by the smooth level) blend
+  to that field. Relief keeps 40 % in the highlights (cluster cores show shape).
+* **Galaxies**: lognormal scatter (σ ≈ 0.33 dex in luminosity) around the host relation; field dwarfs fade
+  outside the web (bias ∝ density); the brightest 5 % keep a tiny resolved, oriented disc at any distance;
+  the brightest 1 % carry faint fixed-angle diffraction spikes.
+* **Opening timeline**: growth eased with exponent 2.4 (was 1.6): shell crossing (D ≈ 0.3) at ~12 s,
+  crisp web by ~16 s (z ≈ 1.5), mature by ~24 s; young-web kernels 2× smaller; clarity/relief from D1 0.18;
+  a depth slab around the focus while young (thinner projection keeps the first wrinkles' contrast).
+* **Shot-mode levels fix**: `advance(N)` runs N seconds of updates and renders once, so levels measured on
+  the previous rendered frame were stale by N seconds of cosmic time (black or washed-out opening captures).
+  In shot mode the frame now measures and snaps its own levels before compositing.
 
 ### Interaction
 
@@ -108,7 +155,12 @@ Mode `cosmic` (standard Mode contract). URL extras (all optional):
 | `sph`, `kt` | SPH kernel diameter in spacings (2.6); `kt=0` keeps sheet tracers in close-ups |
 | `an`, `asp` | anisotropic Lagrangian kernels on/off (1 on 128³, 0 on 64³) and max axis ratio (5) |
 | `clar`, `relief` | clarity (0.6) and sculpted relief (0.7) strengths; `0` disables |
-| `early` | extra kernel width while the web is young (0.9 → 0 between D1 0.3 and 0.75) |
+| `early` | extra kernel width while the web is young (0.4 → 0 between D1 0.3 and 0.75) |
+| `em` | emission exponent γ today (0.5; +0.5 while young; 0 = plain column density) |
+| `gamma`, `shoulder`, `aerial` | brightness power (1.15), hue-preserving highlight ceiling (1.6), aerial-perspective strength (0.55) |
+| `veil`, `vlo`, `vhi`, `vsteps` | ray-marched veil gain (1; 0 = particles only), partition ρ range (3 → 10 today), march steps |
+| `sub`, `shell` | subhalo and accretion-shock gains (1; 0 disables) |
+| `slab` | young-web depth-slab strength (0.85) |
 
 Test helpers on the mode (`__rv.mode`): `visibleCluster()`, `screenOfCluster(k)`, `hoverAt(x, y)`,
 `debugStats()` (column-density percentiles R, their log levels l, current toe/toeW/knee/bright), `getState()` → `{tau, a, z, ageGyr, pmSteps, particles,

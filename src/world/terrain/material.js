@@ -95,8 +95,8 @@ float rvWa( int a, vec3 w ) { float v = a == 0 ? w.x : ( a == 1 ? w.y : w.z ); r
 // Lattice-preserving orientation (the 8 symmetries of the square: swaps + mirrors). Arbitrary angles
 // would break the exact 4096 m periodicity that keeps patterns stable across origin shifts; the D4
 // group keeps it while still varying the grain/strata DIRECTION between regions.
-mat2 rvOri( float h ) {
-  float e = floor( fract( h ) * 8.0 );
+mat2 rvOri( float h, float rot ) {
+  float e = rot > 1.5 ? floor( fract( h ) * 4.0 ) * 2.0 : floor( fract( h ) * 8.0 );
   float sw = mod( e, 2.0 ), sx = mod( floor( e * 0.5 ), 2.0 ) * 2.0 - 1.0, sy = floor( e * 0.25 ) * 2.0 - 1.0;
   return mat2( sx * ( 1.0 - sw ), sy * sw, sx * sw, sy * ( 1.0 - sw ) );
 }
@@ -105,7 +105,7 @@ float rvH1( float i ) { return fract( sin( i * 17.137 + 1.73 ) * 43758.5453 ); }
 vec4 rvTexO( float layer, vec2 uv, vec2 dx, vec2 dy, float id, float rot ) {
   vec2 o = fract( sin( vec2( 3.0, 7.0 ) * id + vec2( 0.3, 0.7 ) ) * 43758.5453 );
   if ( rot < 0.5 ) return textureGrad( uRvDetail, vec3( uv + o, layer ), dx, dy );
-  mat2 M = rvOri( rvH1( id ) );
+  mat2 M = rvOri( rvH1( id ), rot );
   vec4 t = textureGrad( uRvDetail, vec3( M * uv + o, layer ), M * dx, M * dy );
   t.rg = ( ( t.rg * 2.0 - 1.0 ) * M ) * 0.5 + 0.5;
   return t;
@@ -171,7 +171,7 @@ void rvTerrain( inout vec3 albedo ) {
   float n1 = mA.r - 0.5, n2 = mA.g - 0.5, n3 = mA.b - 0.5, n4 = mC.a - 0.5;
   float kS = mA.a;
 
-  float fNear = ( 1.0 - smoothstep( 18.0, 70.0, dist ) ) * ( 1.0 - uRvLite );
+  float fNear = 1.0 - smoothstep( 22.0, 90.0, dist );
   rvStoch = true;
   float fMid = ( 1.0 - smoothstep( uRvF.x, uRvF.y, dist ) ) * q;
   float fFar = ( 1.0 - smoothstep( uRvF.z, uRvF.w, dist ) ) * q;
@@ -182,10 +182,17 @@ void rvTerrain( inout vec3 albedo ) {
   float rockS = smoothstep( 0.13 + 0.07 * n2 + 0.05 * n4, 0.29 + 0.07 * n2, slope );
   float wRock = clamp( max( rockS, rockA * 0.95 ), 0.0, 1.0 );
   float dryness = smoothstep( 0.3, 0.08, moist + 0.12 * n1 ) * ( 1.0 - 0.6 * uRvS2.x );
-  float wSand = clamp( max( sandA, dryness * 0.9 ) * ( 1.0 - rockS ), 0.0, 1.0 );
+  // (sand edge distorted by two noise scales: no contour-following hard line between sand and grass)
+  float wSand = clamp( ( max( sandA, dryness * 0.9 ) + 0.28 * n4 + 0.18 * ( mC.r - 0.5 ) ) * ( 1.0 - rockS ), 0.0, 1.0 );
   float coldness = smoothstep( 0.12, -0.08, temp + 0.10 * n2 + 0.05 * n4 );
   float snowPot = clamp( coldness + glac * 0.7 + uRvS.y + uRvS2.w, 0.0, 1.0 );
-  float wScree = clamp( smoothstep( 0.06, 0.16, slope ) * ( 1.0 - rockS ) * smoothstep( 0.2, 0.6, mtn + rockA ) + wetA * 0.5, 0.0, 1.0 );
+  // talus / scree aprons: 30-40° concave slopes below rock (cliff feet, mountain flanks)
+  float nearRock = smoothstep( 0.15, 0.55, mtn + rockA + 0.3 * rockS );
+  float meadow0 = smoothstep( 0.3, 0.55, moist + 0.1 * n3 ) * smoothstep( 0.1, 0.3, temp ) * uRvS2.x;
+  float wTalus = smoothstep( 0.07, 0.15, slope ) * ( 1.0 - rockS ) * nearRock * smoothstep( 0.05, 0.5, curv + 0.3 * n4 + 0.25 * ( mC.b - 0.5 ) ) * ( 1.0 - 0.55 * meadow0 );
+  // gravel / pebble patches on gentle ground (dry soil, around outcrops, worn paths)
+  float wPebG = smoothstep( 0.74, 0.9, mC.b * 0.5 + mA.r * 0.25 + 0.3 * n3 + 0.3 * rockA + 0.15 * n4 ) * ( 1.0 - rockS ) * ( 1.0 - 0.9 * meadow0 );
+  float wScree = clamp( max( wTalus, wPebG * 0.75 ) + wetA * 0.5, 0.0, 1.0 );
   float wGround = ( 1.0 - wRock ) * ( 1.0 - wSand );
 
   vec3 gradT = vec3( 0.0 );
@@ -207,21 +214,22 @@ void rvTerrain( inout vec3 albedo ) {
       // organic buttresses/undulations (noise relief, 512 m) + faceted crags (layer 0, 256 m, warped)
       // each projection axis gets its own orientation so the three planes never show the same grain
       float fa = float( a );
-      vec4 t = rvTexO( 5.0, uv * ( 1.0 / 512.0 ), gx * ( 1.0 / 512.0 ), gy * ( 1.0 / 512.0 ), 11.0 + fa, 1.0 );
-      vec4 t2 = rvTexO( 0.0, uv * ( 1.0 / 256.0 ) + ( mA.rb - 0.5 ) * 1.4, gx * ( 1.0 / 256.0 ), gy * ( 1.0 / 256.0 ), 23.0 + fa * 3.0, 1.0 );
+      float rotA = a == 1 ? 1.0 : 2.0;
+      vec4 t = rvTexO( 5.0, uv * ( 1.0 / 512.0 ), gx * ( 1.0 / 512.0 ), gy * ( 1.0 / 512.0 ), 11.0 + fa, rotA );
+      vec4 t2 = rvTexO( 0.0, uv * ( 1.0 / 256.0 ) + ( mA.rb - 0.5 ) * 1.4, gx * ( 1.0 / 256.0 ), gy * ( 1.0 / 256.0 ), 23.0 + fa * 3.0, rotA );
       t = vec4( 0.5 + ( t.rg - 0.5 ) * 1.0 + ( t2.rg - 0.5 ) * 0.6, t.b * 0.5 + t2.b * 0.5, t.a * 0.4 + t2.a * 0.6 );
       accM += wa * t; gM += wa * rvGw( a, t.rg * 2.0 - 1.0 );
       // 32 m blocks: the scale between the macro crags and the 8 m detail (walls 50-500 m away
       // otherwise read as smooth plaster with fine doodles)
       if ( dist < 1800.0 ) {
-        vec4 tB = rvTexO( 0.0, uv * ( 1.0 / 32.0 ) + ( mA.gr - 0.5 ) * 0.7, gx * ( 1.0 / 32.0 ), gy * ( 1.0 / 32.0 ), 41.0 + fa * 5.0, 1.0 );
+        vec4 tB = rvTexO( 0.0, uv * ( 1.0 / 32.0 ) + ( mA.gr - 0.5 ) * 0.7, gx * ( 1.0 / 32.0 ), gy * ( 1.0 / 32.0 ), 41.0 + fa * 5.0, rotA );
         accB += wa * tB; gB += wa * rvGw( a, tB.rg * 2.0 - 1.0 );
       }
       if ( fMid > 0.0 ) {
-        t = rvFetchS( 0.0, uv * 0.125, gx * 0.125, gy * 0.125, kS + fa * 0.37, 1.0 );
+        t = rvFetchS( 0.0, uv * 0.125, gx * 0.125, gy * 0.125, kS + fa * 0.37, rotA );
         accA += wa * t; gA += wa * rvGw( a, t.rg * 2.0 - 1.0 );
         if ( fNear > 0.0 ) {
-          t = rvTexO( 0.0, uv * 0.5, gx * 0.5, gy * 0.5, floor( kS * 11.0 ) + 5.0 + fa, 1.0 );
+          t = rvTexO( 0.0, uv * 0.5, gx * 0.5, gy * 0.5, floor( kS * 11.0 ) + 5.0 + fa, rotA );
           accN += wa * t; gN += wa * rvGw( a, t.rg * 2.0 - 1.0 );
         }
       }
@@ -273,7 +281,7 @@ void rvTerrain( inout vec3 albedo ) {
   float bandH = 16.0 + 14.0 * uRvS.x;
   // gentle undulation only (≤ ~1 band over 512 m): stronger / finer warps folded the bands into
   // contour loops on big faces ("topographic map" / agate look instead of sedimentary layers)
-  float band = alt / bandH + 0.9 * n2 + 0.35 * n1 + 0.1 * n4;
+  float band = alt / bandH + 0.45 * n2 + 0.15 * n1 + 0.04 * n4;
   float bi = floor( band ), bf = fract( band );
   // band tone, cross-faded over the top 30 % of each band (hard steps drew crisp jagged lines)
   float bh = mix( fract( sin( bi * 12.9898 + 4.1 ) * 43758.5453 ), fract( sin( ( bi + 1.0 ) * 12.9898 + 4.1 ) * 43758.5453 ), smoothstep( 0.7, 1.0, bf ) );
@@ -354,27 +362,34 @@ void rvTerrain( inout vec3 albedo ) {
   grassC = mix( grassC, uRvBlade * ( 0.9 + 0.2 * mA.b ), meadow * mix( 0.25, 0.6, smoothstep( 15.0, 90.0, dist ) ) );
   vec3 groundC = mix( grassC, uRvSoil, soilM * 0.55 );
   groundC *= 0.8 + 0.4 * mix( 0.5, dGround.a, fMid );
-  groundC = mix( groundC, uRvSoil * 0.95, wScree * 0.55 * mix( 0.6, dPeb.b, fMid ) );
+  vec3 screeC = mix( mix( uRvRock, vec3( rvLum( uRvRock ) ), 0.4 ) * 1.1, uRvSoil, 0.3 + 0.3 * wPebG ) * ( 0.72 + 0.56 * mix( 0.5, dPeb.a, fMid ) ) * ( 0.9 + 0.2 * mC.a );
+  groundC = mix( groundC, screeC, clamp( wScree * mix( 0.8, 0.3 + 0.7 * smoothstep( 0.15, 0.55, dPeb.b ), fMid ), 0.0, 1.0 ) );
 
   // rock tone: palette rock pulled toward neutral grey, strata bands only where the style asks for it
-  vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ) * vec3( 0.95, 0.99, 1.07 ), 0.32 );
+  vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ), 0.14 );
   float sk = uRvS.x * uRvS.x;
   // colour bands only on real faces: on gentle slopes altitude-locked bands become contour rings
   // (the "wood grain" look)
-  float kBand = smoothstep( 0.25, 0.6, slope );
+  float kBand = smoothstep( 0.25, 0.6, slope ) * smoothstep( 0.5, 0.8, uRvS.x );
   vec3 rockC = mix( rockBase, uRvRock2, smoothstep( 0.2, 0.9, bh ) * ( 0.05 + 0.7 * sk ) * kBand );
   rockC = mix( rockC, uRvSand * 0.8, smoothstep( 0.8, 0.97, bh ) * 0.35 * sk * kBand * smoothstep( 0.55, 0.8, uRvS.x ) );
   // large lighter / darker rock bodies (tens to hundreds of metres) — not uniform grey noise
-  rockC = mix( rockC, rockBase * 0.62, smoothstep( 0.35, 0.65, mC.g + 0.3 * n2 ) * 0.3 );
-  rockC = mix( rockC, rockBase * 1.18 + 0.02, smoothstep( 0.55, 0.8, mA.g + 0.25 * n3 ) * 0.35 );
-  rockC *= 0.68 + 0.64 * aRock;
+  // rock bodies (tens to hundreds of metres): warm iron/ochre vs cool dark vs pale granite —
+  // ±20 % value, ±8 % hue, so big faces are never one flat grey
+  float bodyA = smoothstep( 0.28, 0.72, mA.g + 0.35 * n3 ), bodyB = smoothstep( 0.32, 0.68, mC.g + 0.3 * n2 );
+  rockC *= mix( vec3( 0.74, 0.79, 0.86 ), vec3( 1.16, 1.06, 0.9 ), bodyA * 0.6 + bodyB * 0.4 );
+  rockC = mix( rockC, vec3( rvLum( rockC ) ) * 1.3 + 0.025, smoothstep( 0.6, 0.85, mC.a * 0.5 + mA.r * 0.5 + 0.25 * n4 ) * 0.38 );
+  // detail albedo: ±12 % from the macro/block layers (at kilometres the 64 m facets read as fish
+  // scales), up to ±30 % from the 8 m / 2 m layers up close, sharpened (cavities darker)
+  float aDet = aRock - aMacro;
+  rockC *= ( 0.88 + 0.24 * aMacro ) * ( 1.0 + 1.1 * aDet );
   rockC *= 0.86 + 0.28 * strA;
   // iron / oxide staining on faces: warm broad patches (tens to hundreds of metres) under ledges
   float iron = smoothstep( 0.55, 0.85, mC.r * 0.6 + mA.b * 0.4 + 0.25 * n3 ) * smoothstep( 0.25, 0.5, slope ) * ( 0.5 + 0.5 * clamp( curv * 2.0, 0.0, 1.0 ) );
   rockC = mix( rockC, rvLum( rockC ) * vec3( 1.35, 0.95, 0.68 ), iron * 0.6 );
   rockC *= 1.0 - 0.5 * clamp( streakM * 1.5, 0.0, 1.0 );
   // drainage streaks: dark varnish (slightly warm) and rarer pale mineral streaks
-  rockC = mix( rockC, rockC * vec3( 0.6, 0.56, 0.52 ), clamp( streakD * 0.75, 0.0, 0.6 ) );
+  rockC = mix( rockC, rockC * vec3( 0.6, 0.56, 0.52 ), clamp( streakD * ( 0.35 + 0.4 * sk ), 0.0, 0.6 ) );
   rockC = mix( rockC, rockC * 1.12 + vec3( 0.02 ), clamp( streakL * 0.3, 0.0, 0.25 ) );
   rockC *= 0.9 + 0.2 * mA.g;
   rockC *= mix( vec3( 1.07, 1.0, 0.9 ), vec3( 0.9, 0.97, 1.08 ), smoothstep( 0.25, 0.75, mA.b + 0.3 * n4 ) );
@@ -419,9 +434,9 @@ void rvTerrain( inout vec3 albedo ) {
   // (sky-ambient occlusion kept moderate: shadowed faces at low sun must still read their relief
   //  in sky light — atmosphere-track request; the floor keeps cavity + detail AO from going black)
   rvAO = clamp( ( 1.0 - 0.3 * cav ) * mix( mix( 0.74, 0.64, bRock ), 1.05, hD ), 0.55, 1.0 );
-  float occ = mix( 1.0, 0.74 + 0.46 * hD, bRock ) * ( 1.0 - 0.16 * cav * ( 1.0 - bSnow ) );
-  col *= max( occ, 0.66 );
-  col *= 1.0 + ( 0.1 + 0.1 * bRock ) * clamp( -curv, 0.0, 1.0 );
+  float occ = mix( 1.0, 0.7 + 0.5 * hD * hD + 0.15 * hD, bRock ) * ( 1.0 - 0.26 * cav * ( 1.0 - bSnow ) );
+  col *= max( occ, 0.6 );
+  col *= 1.0 + ( 0.1 + 0.16 * bRock ) * clamp( -curv, 0.0, 1.0 ) * ( 1.0 - 0.5 * bSnow );
 
   // ---- emissive extras
   rvEmis = vec3( 0.0 );
@@ -442,7 +457,7 @@ void rvTerrain( inout vec3 albedo ) {
   // green albedo, blue AO/roughness) as emissive
   if ( uRvDebug > 7.5 ) {
     int dm = int( uRvDebug + 0.5 );
-    rvEmis = dm == 8 ? vec3( aRock ) : dm == 9 ? wg : dm == 10 ? vec3( accMdbg, strA, hRock ) : dm == 11 ? abs( Tu ) : vec3( mA.a, mC.g, mC.b );
+    rvEmis = dm == 8 ? vec3( aRock ) : dm == 9 ? wg : dm == 10 ? vec3( accMdbg, strA, hRock ) : dm == 11 ? abs( Tu ) : dm == 13 ? Nl * 0.5 + 0.5 : dm == 14 ? vec3( dot( rvN, Tu ), dot( rvN, up ), dot( rvN, Tv ) ) * 0.5 + 0.5 : dm == 15 ? vec3( max( dot( Ng, uRvSun ), 0.0 ) ) : vec3( mA.a, mC.g, mC.b );
     return;
   }
   if ( uRvDebug > 2.5 && uRvDebug < 5.5 ) {

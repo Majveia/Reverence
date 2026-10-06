@@ -38,12 +38,13 @@ function aOfD(D) {
   for (let k = 0; k < 40; k++) { const m = 0.5 * (lo + hi); if (D1(Math.exp(m)) < D) lo = m; else hi = m; }
   return Math.exp(0.5 * (lo + hi));
 }
-/** Scale factor along the opening timeline. Growth is eased so the web emerges ~10 s in and matures by ~26 s. */
+/** Scale factor along the opening timeline. Growth is eased so shell crossing (D ≈ 0.3) lands ~12 s in, the web
+ * is crisp by ~16 s (z ≈ 1.5) and matures by ~24 s; then it keeps evolving slowly. */
 function aAt(tau) {
   if (tau <= 0) return A_START;
   if (tau < T_OPEN) {
     const u = tau / T_OPEN;
-    const w = 1 - Math.pow(1 - u, 1.6);
+    const w = 1 - Math.pow(1 - u, 2.4);
     return aOfD(Math.exp(LN_DS * (1 - w)));
   }
   return 1 + 0.55 * (1 - Math.exp(-(tau - T_OPEN) / 420));   // the future: slow Λ-dominated growth
@@ -62,8 +63,8 @@ export default class CosmicMode extends Mode {
     super(engine);
     this.inputScheme = 'orbit';
     this.look = {
-      exposure: 1.0, tonemap: 'agx',
-      bloom: { strength: 0.75, radius: 0.8, threshold: 0.9, knee: 0.7 },
+      exposure: 1.0, tonemap: 'agx-punchy', tonemapHue: 0.7,
+      bloom: { strength: 0.5, radius: 0.75, threshold: 0.95, knee: 0.6 },
       vignette: 0.32, grain: 0.012, chromatic: 0.0008, saturation: 1.12, contrast: 1.06, blackPoint: 0.0,
     };
     this.icStage = 0;
@@ -110,7 +111,8 @@ export default class CosmicMode extends Mode {
     // --- GPU sim + renderer
     this.sim = new CosmicSim(e.renderer, { N, M, sub: subGrowth });
     if (num('pm') === 0) this.sim.ok = false;
-    this.view = new CosmicRenderer(e, this.sim, { L: BOX, K, drawCount: this.cfg.drawCount, h0: this.cfg.h0, maxPx: this.cfg.maxPx, accumScale: this.cfg.accumScale, fog: 60, sph: num('sph'), kt: num('kt'), aniso: num('an') ?? (N === 64 ? 0 : 1), aspect: num('asp') });
+    this.view = new CosmicRenderer(e, this.sim, { L: BOX, K, drawCount: this.cfg.drawCount, h0: this.cfg.h0, maxPx: this.cfg.maxPx, accumScale: this.cfg.accumScale, fog: 60, sph: num('sph'), kt: num('kt'), aniso: num('an') ?? (N === 64 ? 0 : 1), aspect: num('asp'), em: num('em'), subGain: num('sub'), shellGain: num('shell'),
+      veilGain: num('veil'), veilLo: num('vlo'), veilHi: num('vhi'), veilSteps: num('vsteps') ?? (tier === 'low' ? 24 : tier === 'med' ? 32 : tier === 'ultra' ? 56 : 40) });
     this.scene.add(this.view.comp);
     // look tuning (URL overrides are for art-direction iteration)
     const cu0 = this.view.compMat.uniforms, au0 = this.view.accMat.uniforms;
@@ -121,7 +123,13 @@ export default class CosmicMode extends Mode {
     cu0.uHeatGain.value = num('heat') ?? cu0.uHeatGain.value;
     this.clarity = num('clar') ?? cu0.uClarity.value;
     this.relief = num('relief') ?? cu0.uRelief.value;
-    this.early = num('early') ?? 0.9;
+    this.gamma = cu0.uGamma.value = num('gamma') ?? cu0.uGamma.value;
+    cu0.uShoulder.value = num('shoulder') ?? cu0.uShoulder.value;
+    cu0.uAerial.value = num('aerial') ?? cu0.uAerial.value;
+    this.em = num('em') ?? this.view.accMat.uniforms.uEm.value;
+    this.early = num('early') ?? 0.4;
+    this.slab = num('slab') ?? 0.85;
+    this.veilLo = this.view.accMat.uniforms.uVeilLo.value; this.veilHi = this.view.accMat.uniforms.uVeilHi.value;
     this.fog = this.view.U.uFog.value = num('fog') ?? this.view.U.uFog.value;
     au0.uH0.value *= num('h0') ?? 1;
     const ru0 = this.view.resolveMat.uniforms;
@@ -152,7 +160,7 @@ export default class CosmicMode extends Mode {
     this._startWorker();
 
     e.ui?.setLocation?.({ scale: 'Universe', title: 'Cosmic Web', subtitle: `${BOX} Mpc/h · ΛCDM` });
-    if (!params.returning) e.ui?.showTitle?.('REVERENCE', 'a universe, alive', 5200);
+    if (!params.returning) { e.ui?.showTitle?.('REVERENCE', 'a universe, alive', 5200); this._titleT = 6.0; }
     e.ui?.hint?.('drag to orbit · scroll or pinch to zoom · WASD to drift · tap a cluster to descend', 9000);
     e.audio?.setScene?.('cosmic');
   }
@@ -228,6 +236,7 @@ export default class CosmicMode extends Mode {
     }
     const pts = this.view.setGalaxies(gal, morph);
     this.scene.add(pts);
+    this.view.setClusters(cl);
     // cluster membership counts + names
     const members = new Int32Array(cl.count);
     for (let i = 0; i < G; i++) if (gal.cluster[i] >= 0) members[gal.cluster[i]]++;
@@ -336,8 +345,8 @@ export default class CosmicMode extends Mode {
     const shot = !!e.params.shot;
     if (this.icStage === 2) this._advanceSim(shot || this.tauJumped ? 64 : 3);
     if (this.tauJumped && !this._needStep()) this.tauJumped = false;
-    // no PM (unsupported / pm=0): keep a 2LPT render density fresh
-    if (this.icStage === 2 && !this.sim.ok && this.sim.floatRT && a >= A_PM0 && Math.abs(a - (this._lptFieldA ?? 0)) > DA * 0.5) {
+    // no PM (unsupported / pm=0) or before it starts (z > 19): keep a 2LPT render density fresh (veil, colour)
+    if (this.icStage === 2 && (!this.sim.ok || a < A_PM0) && this.sim.floatRT && Math.abs(a - (this._lptFieldA ?? 0)) > (a < A_PM0 ? 0.004 : DA * 0.5)) {
       this._lptFieldA = a; this.sim.renderField(a);
     }
 
@@ -385,6 +394,13 @@ export default class CosmicMode extends Mode {
     const cu = this.view.compMat.uniforms;
     cu.uDawn.value = 0.6 * smooth(0.07, 0.025, a);
     U.uFog.value = this.fog * (0.45 + 0.55 * smooth(0.1, 0.5, U.uD1.value));
+    // young web: a depth slab around the focus (thinner projection = the first wrinkles keep their contrast)
+    U.uSlab.value = this.slab * (1 - smooth(0.35, 0.8, U.uD1.value));
+    // particle / veil partition: while the web is young its sheets (Zel'dovich pancakes, thinner than the
+    // 2 Mpc/h field) are carried by the particles and their Lagrangian sheet tracers; the veil keeps the
+    // underdense fog. As halos collapse the partition moves up to the filament threshold.
+    const pm = smooth(0.35, 0.8, U.uD1.value), au = this.view.accMat.uniforms;
+    au.uVeilLo.value = this.veilLo * (0.3 + 0.7 * pm); au.uVeilHi.value = this.veilHi * (0.3 + 0.7 * pm);
     // exposure follows structure growth: the young, nearly uniform fog is lifted out of the toe, the
     // mature web gets a deep black point so voids read as true OLED black
     const d1 = U.uD1.value;
@@ -392,13 +408,19 @@ export default class CosmicMode extends Mode {
     const young = Math.min(1, Math.max(0, 1 - d1));
     cu.uBright.value = this.bright * (0.7 + 0.3 * g) * (1 + 0.5 * young);
     cu.uSigma0.value = this.sigma0 * (0.8 + 0.2 * g);
+    this._bBase = cu.uBright.value;
+    this._lvArgs = [d1, g, young];
     this._updateLevels(d1, g, young, dt);
     U.uSeedD.value = 0.6 * (1 - g);
     U.uEarly.value = this.early * (1 - smooth(0.3, 0.75, d1));
-    // local contrast and relief sculpt mature structure; the young web stays soft
-    const mature = smooth(0.35, 0.8, d1);
+    // local contrast and relief sculpt structure as soon as it exists (the young web needs it most: projected
+    // through ~200 Mpc/h its contrast is physically low)
+    const mature = smooth(0.18, 0.6, d1);
+    // emission contrast: steeper (∝ ρ²) while the web is young, so the first wrinkles read as threads
+    this.view.accMat.uniforms.uEm.value = this.em + 0.5 * (1 - smooth(0.25, 0.75, d1));
     cu.uClarity.value = this.clarity * mature; cu.uRelief.value = this.relief * mature;
     cu.uNoiseSeed.value = shot ? 0 : (this._frame % 64) * 17.31;
+    this.view.veilMat.uniforms.uNoise.value = shot ? 0 : (this._frame % 64) * 13.7;
     U.uSeedMix.value = 1 - smooth(0.1, 0.35, U.uD1.value);
     this.view.galMat.uniforms.uGalGain.value = 1.0;
 
@@ -410,6 +432,7 @@ export default class CosmicMode extends Mode {
 
     // ---- telemetry
     this._teleT -= dt;
+    if (this._titleT > 0) this._titleT -= dt;
     if (this._teleT <= 0 && this.icStage >= 1) {
       this._teleT = 0.2;
       const z = zOfA(a);
@@ -423,7 +446,7 @@ export default class CosmicMode extends Mode {
    * density, so voids are true black at every epoch, zoom and quality tier: the primordial fog keeps only
    * its deepest troughs black (faint wrinkles on black), the mature web ~half the screen (voids).
    */
-  _updateLevels(d1, g, young, dt) {
+  _updateLevels(d1, g, young, dt, snap = false) {
     const cu = this.view.compMat.uniforms;
     let toe = this.toe * g * (1 - 0.45 * young), w = 1.9, knee = 99, expo = 1;   // fallback (no readback)
     const L = this.levelsSorted;
@@ -432,41 +455,37 @@ export default class CosmicMode extends Mode {
       const lq = (q) => Math.log2(1 + Math.max(0, L[Math.min(n - 1, Math.floor(q * (n - 1)))]) / s0) * gain;
       // z ≳ 10: the whole near-uniform fog glows dimly; z ≈ 3: the deepest ~quarter of the troughs are black;
       // today: ~40 % of the screen (the voids)
-      const qb = this.qBlack ?? (0.06 + 0.18 * smooth(0.04, 0.3, d1) + 0.2 * smooth(0.3, 0.85, d1) + (this.cfg.N === 64 ? 0.05 : 0));
+      const qb = this.qBlack ?? (0.05 + 0.1 * smooth(0.04, 0.3, d1) + 0.29 * smooth(0.3, 0.85, d1) + (this.cfg.N === 64 ? 0.05 : 0));
       toe = lq(qb) - 0.1 * (1 - smooth(0.04, 0.2, d1));
-      w = Math.min(1.9, Math.max(1.0 + 0.6 * (1 - smooth(0.05, 0.2, d1)), lq(0.999) - toe));   // soft fog edges
+      // toe width follows the measured spread: a young, low-contrast web is stretched over the whole ramp
+      w = Math.min(1.9, Math.max(0.4, lq(0.995) - toe));
+      // (while young the median must clear the slow start of the toe: mid-tones land ~1/3 up the ramp)
+      const wYoung = Math.min(w, Math.max(0.35, (lq(0.5) - toe) * 3.2));
+      w += (wYoung - w) * (1 - smooth(0.45, 0.8, d1));
       // highlights: a knee above the brightest ~3 % of the screen, and a highlight exposure that keeps the
       // brightest 0.5 % near 2 (HDR) — a cluster core filling the view keeps its gradient under the bloom
-      knee = Math.max(toe + w + 1.2, lq(0.97) + 0.5);
-      // (hot cluster gas is drawn ~1.5× the base ramp)
-      const l995 = lq(0.995), lk = Math.min(l995, knee) + Math.max(0, l995 - knee) * 0.35;
-      // close-ups: when bright structure (a cluster core) fills a large part of the frame, the highlights
-      // are exposed lower so the core keeps its internal gradient and its member galaxies read against it
-      // (bright = hot cluster gas, drawn ~1.5× the base ramp, exceeds ~0.6 before the highlight exposure)
-      const lThr = Math.max(toe + 0.5, (Math.log2(0.6 / Math.max(1e-4, cu.uBright.value)) - 0.6) / 0.92), sThr = s0 * (Math.pow(2, lThr / gain) - 1);
+      // highlights: a knee above the brightest ~3 % of the screen (slope 0.35 above it) and an exposure that
+      // puts the brightest 0.5 % at ~2.4 before the composite's hue-preserving shoulder
+      const G = cu.uGamma.value;
+      // close-ups: how much of the frame is bright structure (a cluster core filling the view)?
+      const lThr = Math.max(toe + 0.5, (Math.log2(0.6 / Math.max(1e-4, this._bBase)) - 0.35) / G), sThr = s0 * (Math.pow(2, lThr / gain) - 1);
       let lo = 0, hi = n;
       while (lo < hi) { const mid = (lo + hi) >> 1; if (L[mid] <= sThr) lo = mid + 1; else hi = mid; }
       const fBright = this._fBright = (n - lo) / n;
-      expo = Math.min(1, 2.0 / (cu.uBright.value * Math.pow(2, 0.92 * lk)));
-      // (eye adaptation: the peak of the core settles near 0.9 before bloom)
-      // the headroom gained lifts the highlight knee, so the core shows its density gradient instead of a
-      // compressed plateau
-      const wAd = smooth(0.035, 0.08, fBright);
-      if (wAd > 0) {
-        const eAt = (kn) => { const lkp = Math.min(l995, kn) + Math.max(0, l995 - kn) * 0.35; return Math.min(1, 0.9 / (cu.uBright.value * Math.pow(2, 0.92 * lkp + 0.6))); };
-        const e0 = eAt(knee);
-        const knee2 = knee + wAd * Math.max(0, -Math.log2(e0) / 0.92);
-        const eClose = eAt(knee2);
-        expo = Math.max(0.12, Math.min(expo, 1 + (eClose - 1) * wAd));
-        knee = knee2;
-      }
+      const wAd = smooth(0.035, 0.12, fBright);
+      knee = Math.max(toe + w + 1.0, lq(0.97));
+      // ... then the knee drops to the core's outskirts: its whole log-density range is compressed into a
+      // visible gradient (white-hot centre, amber body, magenta rim) instead of a plateau on the shoulder
+      knee += (Math.max(toe + w + 0.6, lq(0.8)) - knee) * wAd;
+      const l995 = lq(0.995), lk = Math.min(l995, knee) + Math.max(0, l995 - knee) * 0.35;
+      expo = Math.min(1.5, Math.max(0.02, (2.4 - 1.1 * wAd) / (this._bBase * Math.pow(2, G * lk + 0.35 * wAd))));
       // never let a bad readback (NaN/Inf) reach the shader: fall back to the schedule
       if (!(Number.isFinite(toe) && Number.isFinite(w) && Number.isFinite(knee) && Number.isFinite(expo))) {
         toe = this.toe * g * (1 - 0.45 * young); w = 1.9; knee = 99; expo = 1;
       }
     }
     const lv = this.lev;
-    if (!lv || (L && !this._levSnapped)) {
+    if (!lv || (L && !this._levSnapped) || snap) {
       this.lev = { toe, w, knee, expo };
       if (L) this._levSnapped = true;
     } else {
@@ -474,7 +493,7 @@ export default class CosmicMode extends Mode {
       lv.toe += (toe - lv.toe) * k; lv.w += (w - lv.w) * k; lv.knee += (knee - lv.knee) * k; lv.expo += (expo - lv.expo) * k;
     }
     cu.uToe.value = this.lev.toe; cu.uToeW.value = this.lev.w; cu.uKnee.value = this.lev.knee;
-    cu.uBright.value *= this.lev.expo;
+    cu.uBright.value = this._bBase * this.lev.expo;
   }
 
   _onGather(out) {
@@ -483,6 +502,7 @@ export default class CosmicMode extends Mode {
     this.clusterPos ||= new Float32Array(C * 3);
     this.clusterRho ||= new Float32Array(C);
     for (let k = 0; k < C; k++) { this.clusterPos[k * 3] = out[k * 4]; this.clusterPos[k * 3 + 1] = out[k * 4 + 1]; this.clusterPos[k * 3 + 2] = out[k * 4 + 2]; this.clusterRho[k] = out[k * 4 + 3]; }
+    this.view.updateClusters(this.clusterPos);
     const nG = this.galGather.length, o = this.galGatherStart;
     this.galPos ||= new Float32Array(nG * 3);
     for (let j = 0; j < nG; j++) { const t = (o + j) * 4; this.galPos[j * 3] = out[t]; this.galPos[j * 3 + 1] = out[t + 1]; this.galPos[j * 3 + 2] = out[t + 2]; }
@@ -601,7 +621,13 @@ export default class CosmicMode extends Mode {
         label = this.clNames[hv.i];
         sub = `${this.clMembers[hv.i]} galaxies · ${dMpc}`;
       }
-      e.ui?.setMarkers?.([{ id: 'cw-hover', x: hv.x, y: hv.y - hv.r * 1.15 - 10, visible: true, label, sub, kind: 'cosmic', distance: hv.d }]);
+      // label above the ring (below it near the top edge); while the title card is up, a label in the central
+      // column would crowd it: only the ring shows until the title has faded
+      const W = e.width, H = e.height;
+      let ly = hv.y - hv.r * 1.15 - 10;
+      if (ly < 64) ly = hv.y + hv.r * 1.15 + 30;
+      const crowdsTitle = this._titleT > 0 && Math.abs(hv.x - W / 2) < W * 0.3 + 60 && ly > H * 0.12 && ly < H * 0.72;
+      e.ui?.setMarkers?.(crowdsTitle ? [] : [{ id: 'cw-hover', x: hv.x, y: ly, visible: true, label, sub, kind: 'cosmic', distance: hv.d }]);
     } else {
       if (!this.pending) ring.uPos.value.set(0, 0, -1e3);
       this.view.galMat.uniforms.uHover.value = -1;
@@ -623,6 +649,9 @@ export default class CosmicMode extends Mode {
         this.view.renderAccum(this.camera);
         // (shot mode renders only on demand: measure every rendered frame so captures are deterministic)
         if (this._frame % 15 === 1 || !this.levelsSorted || this.engine.params.shot) this.view.measureLevels((sorted) => { if (!this.disposed) this.levelsSorted = sorted; }, !!this.engine.params.shot);
+        // shot mode renders only on demand (advance(N) runs many updates, then one frame): levels measured
+        // on an earlier frame are stale by up to N seconds of cosmic time — snap them to this frame's
+        if (this.engine.params.shot && this._lvArgs && this.levelsSorted) this._updateLevels(...this._lvArgs, 0, true);
       } catch (err) { if (!this._warned) { console.error('[cosmic] accum', err); this._warned = true; } }
     }
     this.view.comp.visible = this.icStage >= 1 && !skip;

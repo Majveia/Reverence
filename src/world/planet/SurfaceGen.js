@@ -168,6 +168,14 @@ function computeStyle(cfg) {
   st.duneDir = [r() - 0.5, r() - 0.5, r() - 0.5];
   const dl = Math.hypot(...st.duneDir) || 1; st.duneDir = st.duneDir.map((v) => v / dl);
   st.strataPhase = r() * 100;
+  // wall rock character: jointed blocks (granite, basalt) vs bedded ledges (sandstone, limestone)
+  const layered = T === 'desert' || T === 'savanna' || T === 'barren' || ['moebius', 'bebop', 'villeneuve', 'nms', 'starfield', 'kubrick'].includes(art);
+  st.wallBlocks = layered ? 0.75 : 1;
+  st.wallLedges = layered ? 1 : 0.4;
+  st.ledgeStep = layered ? 9 + r() * 7 : 16 + r() * 10;
+  // per-world wall relief wavelengths (constant: see _eval)
+  st.buttWl = Math.min(1400, Math.max(500, A * st.mtnHeight * 0.3));
+  st.wallLam = Math.min(320, Math.max(90, A * 0.055));
   return st;
 }
 
@@ -652,7 +660,7 @@ export class SurfaceGen {
     }
 
     // ---- mountain ranges
-    let mtn = 0, steep = 0, wallH = 0;
+    let mtn = 0, steep = 0, wallH = 0, wallS = 0;
     if (st.mountains > 0) {
       const mm = this._mtnMask(px, py, pz, c);
       const mp0 = Math.pow(mm, 1.35);
@@ -678,7 +686,7 @@ export class SurfaceGen {
         }
         // gully erosion filter where the mountain mass is significant (strength fades continuously)
         const gs = st.erosion * sstep(0.0, 0.5, mp) * Math.min(1, H / 700);
-        if (gs > 1e-4) {
+        if (gs > 1e-4 && !(this.cfg.dbg & 4)) {
           // (the gullies keep the ridge-noise slope only: steered by the mask slope, whose direction
           //  rotates around troughs on the apron, the stripes curled into concentric rings)
           hm += this._gullies(x, y, z, lod, gxm * sc, gym * sc, gzm * sc, gs);
@@ -693,7 +701,9 @@ export class SurfaceGen {
         h += hm;
         mtn = mp * sstep(0.08, 0.35, mv);
         // steep mountain faces (large-scale slope of the range, m/m): drives buttresses & couloirs
-        steep = sstep(0.5, 1.3, Math.hypot(g[3] * sc + mgx, g[4] * sc + mgy, g[5] * sc + mgz)) * sstep(0.2, 0.55, mp);
+        const sMag = Math.hypot(g[3] * sc + mgx, g[4] * sc + mgy, g[5] * sc + mgz);
+        steep = sstep(0.5, 1.3, sMag) * sstep(0.2, 0.55, mp);
+        wallS = sMag;
         // buttresses & couloirs: relief proportional to the wall (≈9 % of each wavelength, 1.4 km →
         // 170 m) — on a steep heightfield face, height bumps become plan-view ribs and chutes
         wallH = H;
@@ -1027,22 +1037,84 @@ export class SurfaceGen {
     // ---- buttresses & chutes on big walls (mountain faces, mesa / plateau / canyon cliffs): relief
     //      proportional to the wall (≈9 % of each wavelength, first wavelength ~0.9 × wall height)
     if (this.cfg.dbg & 1) steep = 0;
+    // (the wavelength is a per-world constant: a frequency that follows wallH — which tracks the
+    //  range mask — rescales absolute noise coordinates of ~10³ units by a spatially varying factor,
+    //  decorrelating the noise within metres: needle fins and combs where ranges ramp up)
     if (steep > 0.01 && wallH > 60) {
-      const wl0 = Math.min(1400, Math.max(160, wallH * 0.9));
-      h += steep * this._buttress(x, y, z, lod, wl0) * Math.min(1, wallH / 1500 + 0.25);
+      h += steep * this._buttress(x, y, z, lod, st.buttWl) * Math.min(1, wallH / 1500 + 0.25);
+    }
+
+    // ---- 3D wall relief (blocks, joints, ledges). A heightfield wall is the region between two
+    //      contour lines: any relief that depends only on the horizontal position is extruded into
+    //      vertical stripes over the whole wall (the "draped fabric / combed" cliffs). Here the noise
+    //      is evaluated at the 3D position of the wall surface (altitude included), and its height
+    //      offset is scaled by the wall slope s: a height offset Δh on a face of slope s moves the
+    //      face horizontally by Δh/s, so the result is an (approximately) isotropic 3D displacement
+    //      along the wall normal — joints, blocks and bulges that vary DOWN the wall as well as across.
+    //      Bounded so the profile never folds over (|dΔh/dh| ≲ 0.8).
+    // (weight: generator cliff/steep hints, or the measured slope of the mountain surface itself —
+    //  mountain walls reach slope 10 (84°) long before the range mask counts them as "steep")
+    let wr = steep > cliff * 0.85 ? steep : cliff * 0.85;
+    const wS = sstep(1.6, 3.2, wallS);
+    if (wS > wr) wr = wS;
+    if (this.cfg.dbg & 2) wr = 0;
+    const sTrue = wallS > 0 ? (wallS < 10 ? wallS : 10) : 2.2;
+    const sEff = sTrue < 1.1 ? 1.1 : sTrue > 2.8 ? 2.8 : sTrue;
+    if (wr > 0.02) {
+      const rr = R + h;
+      const nW = this.nW;
+      let lam = st.wallLam;   // per-world constant (see the buttress note above)
+      // vertical resolution of a mesh on a wall is ~ vertex spacing × slope: octaves finer than that
+      // would be sampled once per vertex column → vertical comb / stripe aliasing. Fade them early.
+      const lodV = lod * (sTrue > 1 ? sTrue : 1);
+      let sum = 0;
+      for (let o = 0; o < 4; o++) {
+        const lw = lodW(lam * 0.5, lodV);
+        if (lw <= 0) break;
+        const f = rr / lam;
+        const nv = nW.n3(x * f + 17.3 + o * 5.1, y * f + 3.1 - o * 2.9, z * f + 11.7 - o * 2.3);
+        // blocky: broad flat-ish faces separated by sharp creases (joints / cracks) in every direction
+        sum += lam * lw * (0.3 - Math.sqrt(nv * nv + 0.0016)) * (o === 0 ? 0.18 : 0.12);
+        lam *= 0.43;
+      }
+      h += wr * sEff * sum * st.wallBlocks;
+      // ledges (bedding planes / sheeting joints): terrace the wall in altitude. Terracing h is
+      // monotonic (never folds) and turns every band into a riser + a narrow shelf. Ledge strength
+      // and phase wander along the wall so they come and go like real strata.
+      if (st.wallLedges > 0 && lod < st.ledgeStep * 0.6) {
+        const lf = R / 260;
+        const ln = nW.n3(x * lf + 5.5, y * lf + 8.1, z * lf + 1.9);
+        const k = wr * st.wallLedges * sstep(-0.35, 0.35, ln) * lodW(st.ledgeStep * 0.6, lod);
+        if (k > 0.01) {
+          const step = st.ledgeStep * (0.8 + 0.4 * (0.5 + 0.5 * nW.n3(x * lf * 0.5 + 9, y * lf * 0.5, z * lf * 0.5 + 4)));
+          // (phase wanders slowly: strata are near-horizontal over hundreds of metres, not swirls)
+          const ph = 0.3 * nW.n3(x * lf * 0.6 + 3, y * lf * 0.6 + 1, z * lf * 0.6 + 7);
+          const t = (h / step + ph);
+          const tt = SurfaceGen.terrace(t, 1, 0.55);
+          h += (tt - t) * step * k * 0.85;
+        }
+      }
     }
 
     // ---- fractal detail: meso bumps → decimetre relief (rougher on rock)
-    {
+    if (!(this.cfg.dbg & 8)) {
       const rk = rock > mtn ? rock : mtn;
       const roughK = st.rough * (0.35 + 2.6 * rk) * (1 - 0.6 * dune) * (1 - 0.5 * lake);
       const rr = sstep(0.15, 0.5, rk);
       // starts at 720 m: the two big octaves only exist on rock (crags & buttresses on mountain faces)
-      let wl = 720, f = R / wl, qx = x * f, qy = y * f, qz = z * f, a = wl * 0.0072 * roughK, sum = 0;
+      // On walls the octaves below 200 m are sampled at the 3D surface point (radius R + h) and scaled
+      // by the slope, like the wall relief above: 2D detail on a heightfield wall is extruded into
+      // vertical stripes (the "combed" cliffs). The radius blends continuously (R + wr·h), so ground
+      // away from walls is unchanged. The big crag octaves stay 2D (plan-view ribs & couloirs ARE
+      // vertical structures). Octaves finer than the wall's vertical mesh resolution are faded.
+      const r3 = R + h, lodD = lod * (1 + wr * (sTrue > 1 ? sTrue - 1 : 0)), mW = 1 + wr * (sEff - 1) * 0.5;
+      let wl = 720, a = wl * 0.0072 * roughK, sum = 0, cx = 0, cy = 0, cz = 0;
       for (let o = 0; o < 14; o++) {
-        const lw = lodW(wl, lod);
+        const isBig = wl > 200;
+        const lw = lodW(wl, isBig ? lod : lodD);
         if (lw <= 0) break;
-        const v = nH.n3(qx, qy, qz);
+        const f = (isBig ? R : r3) / wl;
+        const v = nH.n3(x * f + cx, y * f + cy, z * f + cz);
         // crags & buttresses: the big octaves are much stronger on rock (cliff faces get real
         // plan-view relief — chutes, ribs, buttresses — instead of reading as smooth clay walls)
         // on steep mountain faces the big octaves grow further (buttresses, ribs and chutes that break
@@ -1051,9 +1123,9 @@ export class SurfaceGen {
         // rock gets sharper (ridged, zero-mean) micro relief, soil stays rounded
         // (big octaves use a softened |v|: a razor crease of a 700 m ridged octave reads as a seam)
         const av = wl > 120 ? Math.sqrt(v * v + 0.004) : (v < 0 ? -v : v);
-        sum += a * lw * big * (v + ((0.342 - av) * 1.6 - v) * rr);
+        sum += a * lw * big * (isBig ? 1 : mW) * (v + ((0.342 - av) * 1.6 - v) * rr);
         a *= 0.49; wl *= ILAC;
-        qx = qx * LAC + 1.9; qy = qy * LAC + 7.3; qz = qz * LAC + 3.7;
+        cx = cx * LAC + 1.9; cy = cy * LAC + 7.3; cz = cz * LAC + 3.7;
       }
       h += sum;
     }
@@ -1061,7 +1133,7 @@ export class SurfaceGen {
     if (info) {
       info.c = c; info.land = land; info.mtn = mtn; info.rock = rock; info.sand = sand;
       info.river = river; info.lake = lake; info.cliff = cliff; info.dune = dune; info.glacier = glacier;
-      info.steep = steep;
+      info.steep = steep; info.wallS = wallS;
     }
     return h;
   }
