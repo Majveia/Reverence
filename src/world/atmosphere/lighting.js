@@ -300,6 +300,7 @@ export class Lighting {
     this.moon = { dir: new THREE.Vector3(0, 1, 0), ill: 0, body: null, phase: 0 };
     this.skyIrr = [0, 0, 0]; this.groundRad = [0, 0, 0];
     this.nightFactor = 0;
+    this.envScale = 1;
     this._matTimer = 0;
     this._t = [1, 1, 1];
     this._candidates = this._moonCandidates();
@@ -359,7 +360,19 @@ export class Lighting {
     const T = this._t;
     if (model.present) model.sunTransmittance(camR, muS, ctx.sunAngR, T);
     else { const v = THREE.MathUtils.smoothstep(muS, -0.01, 0.01); T[0] = T[1] = T[2] = v; }
-    const cloudDim = weather ? weather.sunDim : 1;
+    // from high altitude / orbit the key light lights the whole visible disc: it is the unattenuated star
+    // (terminator from the materials' N·L, air colour from the atmosphere pass), never the camera-local
+    // shadow / moon (which lit the night side white and left the day side dark)
+    const altK = THREE.MathUtils.smoothstep(camR - model.Rb, model.height * 0.9, model.height * 2.0);
+    this.highView = altK;
+    // a single sky probe cannot light a whole planet disc (it lit the night side): from orbit the image is the
+    // direct star + the atmosphere pass, the sky ambient fades out (weather.js multiplies its flash into this)
+    this.envScale = 1 - 0.9 * altK;
+    if (altK > 0) for (let c = 0; c < 3; c++) T[c] += (1 - T[c]) * altK;
+    // the deck dims the sun only from below it (above the clouds / from orbit the sun is clear)
+    const clp = this.atmo.clouds?.present ? this.atmo.clouds : null;
+    const above = Math.max(altK, clp ? THREE.MathUtils.smoothstep(camR, clp.Rc0 + (clp.Rc1 - clp.Rc0) * 0.5, clp.Rc1 + 200) : 0);
+    const cloudDim = (weather ? weather.sunDim : 1) * (1 - above) + above;
     this.sunColor.setRGB(starCol.r * T[0] * E, starCol.g * T[1] * E, starCol.b * T[2] * E).multiplyScalar(cloudDim);
     const sunI = this.sunColor.r * 0.2126 + this.sunColor.g * 0.7152 + this.sunColor.b * 0.0722;
 
@@ -395,7 +408,7 @@ export class Lighting {
     // --- key light: whichever is brighter (sun, else moon, else starlight from above)
     const key = this.key;
     let keyDir, keyCol;
-    if (sunI > moonE * 0.6 || moonE <= 1e-5) {
+    if (altK > 0.5 || sunI > moonE * 0.6 || moonE <= 1e-5) {
       keyDir = sunDir; keyCol = this.sunColor; this.keyIsMoon = false;
       if (sunI < 1e-4 && moonE <= 1e-5) { keyDir = up; keyCol = _c.setRGB(0.02, 0.026, 0.04).multiplyScalar(E * 0.01); this.keyIsMoon = true; }
     } else { keyDir = moon.dir; keyCol = moonCol; this.keyIsMoon = true; }
@@ -410,7 +423,7 @@ export class Lighting {
     this.hemi.position.copy(up);
     this.hemi.color.setRGB(sky[0] + nightAmb.r, sky[1] + nightAmb.g, sky[2] + nightAmb.b);
     this.hemi.groundColor.setRGB(gr[0] * Math.PI + nightAmb.r * 0.3, gr[1] * Math.PI + nightAmb.g * 0.3, gr[2] * Math.PI + nightAmb.b * 0.3);
-    this.hemi.intensity = 1;
+    this.hemi.intensity = this.envScale;
     this.hemi.updateMatrixWorld();
 
     // --- shared G uniforms
@@ -425,7 +438,7 @@ export class Lighting {
     G.uNight.value = this.nightFactor;
     this.dayness = dayness;
     this.envU.uGroundIrr.value.set(sky[0] / E, sky[1] / E, sky[2] / E).multiplyScalar(1);
-    this.envU.uCamPlanet.value.copy(camLocal);
+    this.envU.uCamPlanet.value.copy(camLocal).multiplyScalar(Math.min(camR, model.Rb + model.height * 0.5) / Math.max(camR, 1));
     this.envU.uNightAmb.value.set(nightAmb.r, nightAmb.g, nightAmb.b).multiplyScalar(0.55 / Math.PI);
     // cloud deck seen from below (env map / reflections): shaded bases, silver toward the sun
     const cl = this.atmo.clouds;

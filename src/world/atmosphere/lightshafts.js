@@ -221,16 +221,25 @@ const BLUR_FRAG = /* glsl */`
 uniform sampler2D tSrc;
 uniform vec2 uCenter;      // light position in uv
 uniform float uLen;        // fraction of the vector to the light covered
+uniform float uAspect;     // width / height (isotropic screen distances)
+uniform float uDecay;      // per-tap decay (from the pixel toward the light)
 varying vec2 vUv;
+// Radial blur toward the light (GPU Gems 3 ch. 13): a weighted sum along the line to the light, the
+// weights decaying toward the light, normalized by the weight sum (energy preserving across passes).
+// The search is limited to ~0.55 screen heights: a pixel far from the light no longer averages the whole
+// bright core (that produced one hard-edged wedge across the frame instead of individual shafts).
 void main(){
-  vec2 dv = (uCenter - vUv) * uLen / 24.0;
+  vec2 toL = uCenter - vUv;
+  float dist = length(toL * vec2(uAspect, 1.0));
+  float reach = min(dist, 0.55);
+  vec2 dv = toL * (reach / max(dist, 1e-5)) * uLen / 32.0;
   float j = rv_ign(gl_FragCoord.xy);
   vec2 uv = vUv + dv * j;
   float acc = 0.0, w = 1.0, wsum = 0.0;
-  for (int i = 0; i < 24; i++){
+  for (int i = 0; i < 32; i++){
     acc += texture(tSrc, uv).r * w;
     wsum += w;
-    w *= 0.955;
+    w *= uDecay;
     uv += dv;
   }
   gl_FragColor = vec4(acc / wsum, 0.0, 0.0, 1.0);
@@ -285,10 +294,18 @@ void main(){
     if (uDebug > 4.5) c = vec3(rv_luma(v.rgb), sub, 1.0 - v.a) * 4.0;
   }
   if (uHasRays > 0.5){
-    // streaks fade with the angle from the light (no full-screen veil from the radial average)
+    // streaks: gaussian falloff with the angle from the light (no full-screen veil / wedge), and over
+    // geometry only as much as there is air in front of it (a ridge 300 m away carries no streak)
     vec3 dir = normalize(mat3(uCamWorld) * atmo_viewDir(vUv));
-    float fa = pow(max(dot(dir, uRayDir), 0.0), 3.0);
-    c += uColor * texture(tRays, vUv).r * fa;
+    float ang = acos(clamp(dot(dir, uRayDir), -1.0, 1.0));
+    float fa = exp(-ang * ang / (2.0 * 0.42 * 0.42));
+    float dg = linDist(vUv);
+    float air = dg > 1e8 ? 1.0 : 1.0 - exp(-dg / 9000.0);
+    // soft upsample of the quarter-res streak buffer (4 bilinear taps) → no blocky edges
+    vec2 px = 1.0 / uLowRes;
+    float r = 0.25 * (texture(tRays, vUv + px * vec2(-0.5, -0.5)).r + texture(tRays, vUv + px * vec2(0.5, -0.5)).r
+                    + texture(tRays, vUv + px * vec2(-0.5, 0.5)).r + texture(tRays, vUv + px * vec2(0.5, 0.5)).r);
+    c += uColor * r * fa * air;
   }
   gl_FragColor = vec4(c, 1.0);
 }`;
@@ -348,7 +365,7 @@ export class LightShafts {
     this.vu.uFrameJ = { value: 0 };
     this.volMat = fsMaterial(VOL_FRAG, this.vu, { defines, glslVersion: THREE.GLSL3 });
     this.maskMat = fsMaterial(MASK_FRAG, this.u);
-    this.blurMat = fsMaterial(BLUR_FRAG, { tSrc: { value: null }, uCenter: { value: new THREE.Vector2() }, uLen: { value: 1 } });
+    this.blurMat = fsMaterial(BLUR_FRAG, { tSrc: { value: null }, uCenter: { value: new THREE.Vector2() }, uLen: { value: 1 }, uAspect: { value: 16 / 9 }, uDecay: { value: 0.965 } });
     this.cu = {
       tColor: { value: null }, tDepth: this.u.tDepth, tRays: { value: null }, tVol: { value: null }, tVolSub: { value: null },
       uLowRes: { value: new THREE.Vector2(1, 1) }, uColor: { value: new THREE.Vector3() }, uRayDir: { value: new THREE.Vector3(0, 1, 0) },
@@ -485,12 +502,13 @@ export class LightShafts {
       this.quad.render(renderer, this.maskMat, this.a);
       const bm = this.blurMat.uniforms;
       bm.uCenter.value.set(sx, sy);
-      // three radial passes (24 taps each → ~13k effective samples): long streaks without banding
-      bm.tSrc.value = this.a.texture; bm.uLen.value = 1.0;
+      // three radial passes (32 taps each → ~32k effective samples): long streaks without banding
+      bm.uAspect.value = this.a.width / Math.max(1, this.a.height);
+      bm.tSrc.value = this.a.texture; bm.uLen.value = 1.0; bm.uDecay.value = 0.965;
       this.quad.render(renderer, this.blurMat, this.b);
-      bm.tSrc.value = this.b.texture; bm.uLen.value = 0.4;
+      bm.tSrc.value = this.b.texture; bm.uLen.value = 0.32; bm.uDecay.value = 0.98;
       this.quad.render(renderer, this.blurMat, this.a);
-      bm.tSrc.value = this.a.texture; bm.uLen.value = 0.14;
+      bm.tSrc.value = this.a.texture; bm.uLen.value = 0.1; bm.uDecay.value = 0.99;
       this.quad.render(renderer, this.blurMat, this.b);
     }
     if (!hasVol && !hasRays) { io.skip = true; return; }

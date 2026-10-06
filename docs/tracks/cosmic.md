@@ -173,17 +173,22 @@ under load; pass `--timeout 400`).
 
 | view | URL | steps |
 |---|---|---|
-| Hero: mature cosmic web | `/?mode=cosmic&ct=40` | `[{"advance":1}]` |
-| Massive node, filaments converging | `/?mode=cosmic&ct=40&dist=38&pitch=10` | `[{"advance":1}]` |
+| Hero: mature cosmic web | `/?mode=cosmic&ct=40` | `[{"advance":1},{"advance":0.5}]` |
+| Massive node, filaments converging | `/?mode=cosmic&ct=40&dist=38&pitch=10` | `[{"advance":1},{"advance":0.5}]` |
+| Approaching the massive node (temperature gradient, members, subhalos) | `/?mode=cosmic&ct=40&dist=24&pitch=10` | `[{"advance":1},{"advance":0.5}]` |
+| Close to the massive node | `/?mode=cosmic&ct=40&dist=14&pitch=10` | `[{"advance":1},{"advance":0.5}]` |
 | Inside a filament (galaxies strung along it) | `/?mode=cosmic&ct=40&gal=40&dist=40&pitch=5` | `[{"advance":1},{"advance":1}]` |
-| (closer, resolution-limited: soft gas tubes) | `/?mode=cosmic&ct=40&gal=40&dist=22&pitch=5` | `[{"advance":1},{"advance":1}]` |
-| Opening: seeds wrinkling (z ≈ 3) | `/?mode=cosmic` | `[{"advance":16}]` |
-| Opening: web crystallising (z ≈ 1) | `/?mode=cosmic` | `[{"advance":22}]` |
-| Hover ring + label (use `--ui`) | `/?mode=cosmic&ct=40` | `[{"advance":0.3},{"eval":"const v=__rv.mode.visibleCluster(); v && __rv.mode.hoverAt(v.x, v.y)"},{"advance":0.3}]` |
-| Inside the most massive node (close-up) | `/?mode=cosmic&ct=40&dist=8` | `[{"advance":1},{"advance":1}]` |
-| Approaching the massive node | `/?mode=cosmic&ct=40&dist=16` | `[{"advance":1},{"advance":1}]` |
-| Low tier (64³, phones) | `/?mode=cosmic&ct=40` + `--q low` | `[{"advance":1}]` |
-| Primordial fog (z ≈ 25) | `/?mode=cosmic` | `[{"advance":3}]` |
+| Opening: primordial fog, first ripples (z ≈ 20) | `/?mode=cosmic` | `[{"advance":3}]` |
+| Opening: proto-web (z ≈ 2.5) | `/?mode=cosmic` | `[{"advance":13}]` |
+| Opening: web emerging (z ≈ 1.2) | `/?mode=cosmic` | `[{"advance":17}]` |
+| Opening: web maturing (z ≈ 0.4) | `/?mode=cosmic` | `[{"advance":22}]` |
+| Hover ring + label (use `--ui`; the label is held back while the title card is up) | `/?mode=cosmic&ct=40` | `[{"advance":6},{"eval":"const v=__rv.mode.visibleCluster(); v && __rv.mode.hoverAt(v.x, v.y)"},{"advance":0.3}]` |
+| Low tier (64³, phones) | `/?mode=cosmic&ct=40` + `--q low` | `[{"advance":1},{"advance":0.5}]` |
+| Phone portrait | `/?mode=cosmic&ct=40` + `--mobile --ui` | `[{"advance":6.5}]` |
+
+(`dist=8` puts the camera inside the hot halo, below the 2 Mpc/h force resolution: a smooth glowing core
+with member galaxies — use 14–24 for close-ups.) Several framings can share one slow load by moving the rig
+with an eval step (see below); the shot frame measures its own levels, so one `advance` after a move is enough.
 
 Useful for tuning: add `{"eval":"JSON.stringify(__rv.mode.debugStats())"}` to print Σ percentiles, the live
 levels (toe/knee/expo/fBright) and a non-finite pixel count. Several framings can share one (slow) load:
@@ -193,29 +198,53 @@ move the rig with an eval step, e.g.
 
 ## Known issues
 
-- Render cost is dominated by the accumulation (6.3 M AA splats at `high`); fine on desktop GPUs,
-  heavy on SwiftShader (a frame takes ~3 s there, readiness at ct=40 ~2–5 min under shared load).
-- Close-ups (< ~15 Mpc/h) are limited by the 2 Mpc/h particle / PM force resolution: cluster gas is a
-  continuous smooth glow with embedded galaxies but has no sub-Mpc shock structure (would need a finer PM
-  mesh / P³M or a zoom-in resimulation); filaments at ~20 Mpc/h read as soft gas tubes.
-- z ≈ 3 frames are physically low-contrast at this resolution (the nonlinear scale is below 2 Mpc/h): the
-  levels keep troughs black and the young-web kernel keeps them smooth, but they read as soft clouds more
-  than threads (projection through ~200 Mpc/h of low-contrast web).
-- Clarity/relief are screen-space (log Σ treated as a height field) — a visualization choice like the
-  lighting in TNG50 volume renders, not a physical quantity; their estimator adds fine grain in smooth gas.
-- Anisotropic kernels only act where kernels are resolved but below the sprite limit (~15–60 Mpc/h from
-  matter at `high`); closer than that the gas is fill-rate limited and isotropic (soft tubes at 22 Mpc/h).
-- Editing files under `src/modes/cosmic/` while a capture runs can abort it (module reload).
-- Cluster ranking for hero framing uses the gathered core density; the initial frames of an opening
-  use the linear-peak rank and the camera eases to the final hero at a > 0.55.
-- 64³ (phone) tier is necessarily coarser (3 Mpc/h resolution, fewer thin filaments, dustier voids).
-- Without float readback (`EXT_color_buffer_float` missing) the levels fall back to the old fixed schedule.
+- Render cost: accumulation of 6.3 M AA splats at `high` (particles in the veil's density range are culled
+  in the vertex shader) + the veil ray-march (40 steps at half resolution: ~160 bilinear fetches per
+  half-res pixel, ~1–2 ms at 1080p on a desktop GPU; 24 steps at `low`). Heavy on SwiftShader (ready at
+  ct=40 in ~80–140 s on the shared box).
+- Close-ups (< ~14 Mpc/h of a cluster) are limited by the 2 Mpc/h particle / PM force resolution: the core is
+  a smooth glowing gradient with member galaxies and subhalo clumps, but no hydrodynamic shock / bubble
+  structure (would need a finer PM mesh or a zoom-in resimulation). The accretion-shock shells and subhalos
+  are analytic, physically motivated layers (positions and masses from the simulation), not resolved by it.
+- At z ≈ 2–4 the projected web is physically low-contrast at this resolution: it reads as a proto-web of
+  ~10 Mpc/h pancakes (cloudy) rather than threads; threads appear from ~15 s (z ≈ 1.5).
+- Subhalo clumps catch the composite's sculpted relief and can read as small glossy spheres in close-ups.
+- 64³ (phone / `low`) tier is necessarily coarser (3 Mpc/h resolution, blobbier filaments).
+- Without float readback (`EXT_color_buffer_float` missing) the levels fall back to a fixed schedule, and
+  without the PM field there is no veil (particles carry everything).
+- The redshift / cosmic-age telemetry labels can overlap at the bottom right (UI CSS, see Requests).
 
 ## Requests
 
+- **ui**: telemetry labels collide — "COSMIC AGE" is clipped by the redshift value at the bottom right
+  (1280×720, critic round 2): please add `white-space: nowrap` to `.rv-tv-k` and a larger gap between `.rv-tv`
+  items (≥ 16–24 px), or right-align the key over its own value only.
+- **ui**: marker labels of kind `'cosmic'` sit over bright filaments: a soft dark text-shadow / 40 % radial
+  backdrop on `.rv-mk.ext .rv-mk-name` / `.rv-mk-sub` would keep them legible.
 - **audio track**: cosmic mode calls `audio.setParam('cosmicGrowth', D1 ∈ [0, 1])` every 0.2 s and
   `audio.play('whoosh')` on fly-to — hook them if useful (both optional-chained).
 - (done, thanks) ui: marker kind `'cosmic'`; cosmic now passes `sub` explicitly.
+- (done) ui → cosmic: "sharper, earlier first frame": structure now forms earlier (shell crossing ~12 s) and
+  the first seconds show the real primordial ripples instead of a near-uniform fog.
+
+## Round 4 changes (critic round 2)
+
+1. Fat cotton filaments → emissivity weighting ∫ρ^(1+γ)dl per sample in 3D, steeper brightness curve,
+   hybrid rendering (smooth ray-marched veil for diffuse matter, particles for collapsed structure),
+   noise-free clarity/relief estimator: thin bright threads in soft veils, no sample speckle.
+2. Blown-out nodes → hue-preserving highlight shoulder, `agx-punchy`, lower bloom, close-up knee that drops
+   to the core's outskirts, log temperature ramp (white-hot only in the innermost core), subhalo clumps on
+   satellite galaxies and accretion-shock arcs around clusters.
+3. Monochrome purple → cyan-blue sheets → indigo → violet → magenta filament cores → orange → amber →
+   white-hot, plus aerial perspective (deep blue-violet behind the focus).
+4. Muddy young web → steeper growth timeline, smaller early kernels, ρ²-like contrast while young, depth
+   slab, young-web toe width, particles carry the pancakes while young; and a shot-mode levels bug fixed
+   (levels were stale by the whole `advance` interval, which washed out / blacked out opening captures).
+5. UI → hover label held back while the title card is up; flips below the ring near the top edge.
+6. Depth → aerial perspective channel, young-web depth slab (focus), fog unchanged.
+7. Galaxies → lognormal luminosity scatter, density-biased dwarfs, resolved discs for the top 5 %,
+   diffraction spikes for the top 1 %.
+8. Low tier and phone portrait captured and checked (low tier gives the particles more of the matter).
 
 ## Round 3 changes (critic round 1, second pass)
 

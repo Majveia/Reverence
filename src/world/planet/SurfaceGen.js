@@ -488,6 +488,35 @@ export class SurfaceGen {
     return h;
   }
 
+  /**
+   * 3D faceted field (q in cell units): every jittered cell carries a tilted plane; planes are blended
+   * by a steep Gaussian kernel → piecewise-planar facets with soft seams. Cell boundaries of a 3D
+   * Voronoi diagram are planes, so a wall cuts them along straight lines: polygonal joint blocks with
+   * differently oriented faces (granite / basalt), not the curved crescents of ridged noise. ~[-0.6,0.6].
+   */
+  _facets3(qx, qy, qz, sharp) {
+    const ix = Math.floor(qx), iy = Math.floor(qy), iz = Math.floor(qz);
+    const fx = qx - ix, fy = qy - iy, fz = qz - iz;
+    const P = this.nG.perm, J = this.nG.jit;
+    let sw = 0, sv = 0;
+    for (let k = -1; k <= 1; k++) {
+      const pk = P[(iz + k + 300) & 1023];
+      for (let j = -1; j <= 1; j++) {
+        const pj = P[(pk + iy + j + 300) & 1023];
+        for (let i = -1; i <= 1; i++) {
+          const hsh = P[(pj + ix + i + 300) & 1023], h = hsh << 2, h2 = P[(hsh + 77) & 1023] << 2;
+          const dx = fx - i - 0.1 - 0.8 * J[h], dy = fy - j - 0.1 - 0.8 * J[h + 1], dz = fz - k - 0.1 - 0.8 * J[h + 2];
+          const d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 > 2.6) continue;
+          const w = Math.exp(-sharp * d2);
+          sw += w;
+          sv += w * (J[h + 3] - 0.5 + 1.3 * ((J[h2] - 0.5) * dx + (J[h2 + 1] - 0.5) * dy + (J[h2 + 2] - 0.5) * dz));
+        }
+      }
+    }
+    return sw > 1e-12 ? sv / sw : 0;
+  }
+
   // ------------------------------------------------------------------ cellular features
   /**
    * Visits the jittered 3D cell points around q (= p*f on the sphere of radius f), projected onto
@@ -1068,16 +1097,22 @@ export class SurfaceGen {
       // would be sampled once per vertex column → vertical comb / stripe aliasing. Fade them early.
       const lodV = lod * (sTrue > 1 ? sTrue : 1);
       let sum = 0;
-      for (let o = 0; o < 4; o++) {
+      for (let o = 0; o < 3; o++) {
         const lw = lodW(lam * 0.5, lodV);
         if (lw <= 0) break;
         const f = rr / lam;
-        const nv = nW.n3(x * f + 17.3 + o * 5.1, y * f + 3.1 - o * 2.9, z * f + 11.7 - o * 2.3);
-        // blocky: broad flat-ish faces separated by sharp creases (joints / cracks) in every direction
-        sum += lam * lw * (0.3 - Math.sqrt(nv * nv + 0.0016)) * (o === 0 ? 0.18 : 0.12);
-        lam *= 0.43;
+        if (o < 2) {
+          // jointed blocks: planar facets (two scales), straight seams on the wall
+          sum += lam * lw * this._facets3(x * f + 17.3 + o * 5.1, y * f + 3.1 - o * 2.9, z * f + 11.7 - o * 2.3, 7) * (o === 0 ? 0.2 : 0.16);
+        } else {
+          // fine cracks
+          const nv = nW.n3(x * f + 17.3, y * f + 3.1, z * f + 11.7);
+          sum += lam * lw * (0.3 - Math.sqrt(nv * nv + 0.0016)) * 0.1;
+        }
+        lam *= 0.4;
       }
-      h += wr * sEff * sum * st.wallBlocks;
+      // (slope factor capped at 3.6: beyond that the displaced wall would fold over in the heightfield)
+      h += wr * (sTrue < 3.6 ? sEff > sTrue ? sEff : sTrue : 3.6) * sum * st.wallBlocks;
       // ledges (bedding planes / sheeting joints): terrace the wall in altitude. Terracing h is
       // monotonic (never folds) and turns every band into a riser + a narrow shelf. Ledge strength
       // and phase wander along the wall so they come and go like real strata.

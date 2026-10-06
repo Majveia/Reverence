@@ -27,12 +27,19 @@ uniform vec3 uFall;         // streak direction × length (m) (velocity × shutt
 uniform float uWidth;
 uniform float uKind;        // 0 rain, 1 snow, 2 dust
 uniform float uTime;
+uniform float uSheet;       // 1: far rain sheet (larger volume, fainter, thinner)
 varying vec2 vQ;
 varying float vViewZ;
 varying float vFade;
+varying float vVar;
 void main(){
   if (aSeed.w > uAmount){ gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
-  vec3 rel = mod(aSeed.xyz * uBox - uCam - uOffset, uBox) - 0.5 * uBox;
+  // per-particle variation (no regular diagonal grid): length, width, opacity, fall speed jitter
+  float r1 = fract(aSeed.x * 91.7 + aSeed.y * 47.3 + aSeed.z * 13.1);
+  float r2 = fract(aSeed.y * 63.1 + aSeed.z * 29.7 + aSeed.w * 7.3);
+  vVar = 0.3 + 0.7 * r2 * r2;
+  vec3 seedP = aSeed.xyz + vec3(0.0, r1 * 0.37, 0.0);
+  vec3 rel = mod(seedP * uBox - uCam - uOffset * (0.85 + 0.3 * r1), uBox) - 0.5 * uBox;
   // snow / dust wobble
   if (uKind > 0.5){
     float ph = aSeed.w * 71.0;
@@ -40,10 +47,10 @@ void main(){
   }
   vec3 wp = uCam + rel;
   vec3 camToP = normalize(rel);
-  vec3 a = uFall;
+  vec3 a = uFall * (uKind < 0.5 ? 0.55 + 1.1 * r1 : 1.0);
   vec3 side;
   if (uKind < 0.5){
-    side = normalize(cross(a, camToP) + 1e-5) * uWidth;
+    side = normalize(cross(a, camToP) + 1e-5) * uWidth * (0.7 + 0.7 * r2);
   } else {
     // camera-facing flake
     vec3 up = normalize(cross(camToP, vec3(0.0, 1.0, 0.0)) + 1e-5);
@@ -56,6 +63,8 @@ void main(){
   vQ = position.xy;
   float d = length(rel);
   vFade = smoothstep(uKind < 0.5 ? 1.2 : 0.3, uKind < 0.5 ? 4.0 : 1.5, d) * (1.0 - smoothstep(uBox * 0.3, uBox * 0.5, d));
+  // far sheet: only beyond the near volume, fading in (one continuous curtain of rain into the distance)
+  if (uSheet > 0.5) vFade = smoothstep(9.0, 16.0, d) * (1.0 - smoothstep(uBox * 0.3, uBox * 0.5, d));
   gl_Position = projectionMatrix * mv;
 }`;
 
@@ -71,6 +80,7 @@ uniform float uKind;
 varying vec2 vQ;
 varying float vViewZ;
 varying float vFade;
+varying float vVar;
 void main(){
   float dz = texture2D(tDepth, gl_FragCoord.xy / uRes).r;
   float sceneZ = rv_viewZFromDepth(dz, uNear, uFar);
@@ -85,7 +95,7 @@ void main(){
     a = max(0.0, 1.0 - dot(q, q));
     a *= a;
   }
-  a *= uAlpha * vFade * soft;
+  a *= uAlpha * vFade * soft * (uKind < 0.5 ? vVar : 1.0);
   if (a < 0.002) discard;
   gl_FragColor = vec4(uColor * a, a);
 }`;
@@ -143,7 +153,7 @@ export class Weather {
       uBox: { value: 36 }, uAmount: { value: 0 }, uFall: { value: new THREE.Vector3(0, -1, 0) },
       uWidth: { value: 0.012 }, uKind: { value: 0 }, uTime: G.uTime,
       tDepth: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uNear: { value: 0.05 }, uFar: { value: 2e10 },
-      uColor: { value: new THREE.Color(0.5, 0.55, 0.6) }, uAlpha: { value: 0.3 },
+      uColor: { value: new THREE.Color(0.5, 0.55, 0.6) }, uAlpha: { value: 0.3 }, uSheet: { value: 0 },
     };
     this.pmat = new THREE.ShaderMaterial({
       vertexShader: P_VERT, fragmentShader: P_FRAG, uniforms: this.pu,
@@ -155,6 +165,7 @@ export class Weather {
     this.pscene = new THREE.Scene();
     this.pscene.add(this.points);
     this._drift = new THREE.Vector3();
+    this._driftFar = new THREE.Vector3();
 
     // ---- lightning bolt ribbon (preallocated)
     // main channel (65 points, fractal midpoint displacement) + 3 branches (17 points each)
@@ -226,8 +237,8 @@ export class Weather {
       case 'rain': rain = 1; snow = 0; dust = 0; break;
       case 'storm': rain = 1; storm = 1; snow = 0; dust = 0; break;
       case 'snow': snow = 1; rain = 0; dust = 0; break;
-      case 'dust': dust = 1; rain = snow = 0; break;
-      case 'fog': fog = 1; break;
+      case 'dust': dust = 1; rain = snow = storm = 0; break;
+      case 'fog': fog = 1; rain = storm = dust = 0; break;
       case 'aurora': aurora = 1; rain = snow = dust = storm = 0; fog *= 0.3; break;
       default: break;
     }
@@ -251,8 +262,9 @@ export class Weather {
     const precip = Math.max(st.rain, st.snow);
     // clear / aurora overrides break the deck up (aurora nights need clear air)
     const clearing = this.override === 'clear' ? 0.3 : this.override === 'aurora' ? 0.4 : 0;
-    st.coverBoost = 0.5 * precip + 0.35 * st.storm + 0.15 * st.dust - clearing;
-    st.sunDim = Math.max(0.12, 1 - 0.7 * precip - 0.3 * st.storm - 0.45 * st.dust);
+    st.coverBoost = 0.55 * precip + 0.35 * st.storm + 0.15 * st.dust - clearing;
+    // rain falls from a closed deck: the direct sun is mostly blocked (soft, shadowless light under it)
+    st.sunDim = Math.max(0.05, 1 - 1.05 * precip - 0.35 * st.storm - 0.45 * st.dust);
     // surface state
     if (shot) { this.wet = Math.max(st.rain, this.base.rain * 0.3); this.snowCover = Math.max(this.snowCover, st.snow * 0.8, this.cold ? 0.5 : 0); }
     else {
@@ -287,7 +299,7 @@ export class Weather {
     // environment flash (all PBR materials): striking at night, subtle under a daylit storm
     const scene = this.world.scene;
     const dayness = this.atmo.lighting?.dayness ?? 0;
-    scene.environmentIntensity = 1 + st.flash * 2.5 * (1 - 0.75 * dayness);
+    scene.environmentIntensity = (this.atmo.lighting?.envScale ?? 1) * (1 + st.flash * 2.5 * (1 - 0.75 * dayness));
   }
 
   _strike(t, force, stormy = 1) {
@@ -394,11 +406,11 @@ export class Weather {
     let speed, box, width, alpha;
     const amb = G.uAmbientSky.value, sun = G.uSunColor.value;
     if (kind === 0) {
-      speed = 9; box = 26; width = 0.005; alpha = 0.3;
+      speed = 9; box = 26; width = 0.011; alpha = 0.6;
       _v2.copy(up).multiplyScalar(-speed).addScaledVector(wind, ws * 6 + 1);
       u.uFall.value.copy(_v2).multiplyScalar(0.045); // shutter → streak length
       // drops are small lenses: they show the (dim, grey) sky, not a white line
-      u.uColor.value.setRGB(amb.r * 0.2 + sun.r * 0.015 + 0.012, amb.g * 0.2 + sun.g * 0.015 + 0.014, amb.b * 0.2 + sun.b * 0.015 + 0.018);
+      u.uColor.value.setRGB(amb.r * 0.32 + sun.r * 0.03 + 0.02, amb.g * 0.32 + sun.g * 0.03 + 0.023, amb.b * 0.32 + sun.b * 0.03 + 0.028);
     } else if (kind === 1) {
       speed = 1.1; box = 22; width = 0.028; alpha = 1.0;
       _v2.copy(up).multiplyScalar(-speed).addScaledVector(wind, ws * 3 + 0.3);
@@ -412,8 +424,11 @@ export class Weather {
       u.uColor.value.setRGB((amb.r * 0.4 + sun.r * 0.15) * (0.6 + d.r * 0.5), (amb.g * 0.4 + sun.g * 0.15) * (0.55 + d.g * 0.4), (amb.b * 0.4 + sun.b * 0.15) * (0.45 + d.b * 0.3));
     }
     this._drift.addScaledVector(_v2, dt);
+    this._driftFar.addScaledVector(_v2, dt);
     // keep the drift wrapped (precision)
     this._drift.set(this._drift.x % box, this._drift.y % box, this._drift.z % box);
+    const fb = box * 3;
+    this._driftFar.set(this._driftFar.x % fb, this._driftFar.y % fb, this._driftFar.z % fb);
     u.uOffset.value.copy(this._drift).negate();
     u.uBox.value = box; u.uWidth.value = width; u.uAlpha.value = alpha * (0.5 + 0.5 * amount);
     u.uColor.value.multiplyScalar(1 + st.flash * 4);
@@ -423,7 +438,18 @@ export class Weather {
     this.points.visible = amount >= 0.02;
     const bu = this.boltMat.uniforms;
     bu.tDepth.value = io.depth; bu.uRes.value.copy(u.uRes.value); bu.uNear.value = cam.near; bu.uFar.value = cam.far;
+    u.uSheet.value = 0;
     renderer.render(this.pscene, cam);
+    if (kind === 0 && amount >= 0.02) {
+      // far sheet: the same instances in a 3× larger volume, thinner and fainter (dense rain into the distance)
+      const b0 = u.uBox.value, w0 = u.uWidth.value, a0 = u.uAlpha.value;
+      this.bolt.visible = false;
+      u.uSheet.value = 1; u.uBox.value = b0 * 3; u.uWidth.value = w0 * 3.2; u.uAlpha.value = a0 * 0.5;
+      u.uOffset.value.copy(this._driftFar).negate();
+      renderer.render(this.pscene, cam);
+      u.uSheet.value = 0; u.uBox.value = b0; u.uWidth.value = w0; u.uAlpha.value = a0;
+      this.bolt.visible = hasBolt;
+    }
     renderer.autoClear = prev;
   }
 

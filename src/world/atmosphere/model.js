@@ -50,7 +50,7 @@ export class AtmosphereModel {
     // relief up to 7 km), so the air is "taller" relative to the shell than Earth's (8 km / 100 km):
     // mountains stay inside the air and the density fades smoothly to zero at the top (see medium()).
     this.HR = H * 0.36;
-    this.HM = this.HR * 0.4;
+    this.HM = this.HR * 0.28;   // aerosols hug the ground (Earth ≈ 0.15): pale horizon band, deep zenith
     this.ozoneCenter = H * 0.55;
     this.ozoneHalfWidth = H * 0.3;
     this.topFade0 = H * 0.62;
@@ -81,7 +81,7 @@ export class AtmosphereModel {
     // aerial perspective distance scale (UE-style art control): the per-meter air of these small worlds is
     // denser than Earth's for the same sky color; near the ground geometry sees a lighter veil, blending to
     // fully physical from altitude/space. Foggy/dusty presets get more veil.
-    this.apScale = clamp(0.32 + fog * 0.35 + dust * 0.3, 0.25, 0.85);
+    this.apScale = clamp(0.4 + fog * 0.35 + dust * 0.3, 0.25, 0.85);
     this.mieG = clamp((A.mieG ?? 0.8) + 0.04, 0.75, 0.9);
     // dust absorbs blue: tint the aerosol albedo toward the (warm) sky color when dusty
     const warm = clamp((tint.r - tint.b) / Math.max(tint.r, 1e-3), 0, 1);

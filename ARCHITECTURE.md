@@ -392,3 +392,7 @@ visualizations). What separates AAA from "tech demo":
   `lighting.cubeRT.texture` a plain planet-local samplerCube.
 * **fauna** (from water) — fish schools near the camera when `world.get('water').under` is true would complete the
   underwater composition (the reef is now there).
+* **ui** (from cosmic) — telemetry labels collide ("COSMIC AGE" is clipped by the redshift value at 1280×720): add
+  `white-space: nowrap` to `.rv-tv-k` and a 16–24 px gap between `.rv-tv` items. Give cosmic marker labels
+  (`.rv-mk.ext .rv-mk-name` / `.rv-mk-sub`) a soft dark text-shadow or a 40 % radial backdrop so they stay legible
+  over bright filaments.

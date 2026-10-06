@@ -134,6 +134,63 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
   (ray-marched heightLod views scored for sky/water/layering/relief) were used to find the causes and
   the new vistas.
 
+### Round 4 changes (critic round 2: combed/streaked cliffs, monochrome slopes, faceting, on-foot ground)
+* **Root cause of the "draped fabric / combed" walls**: a heightfield wall is the band between two
+  contour lines, so every relief term that depends only on the horizontal position (fractal detail,
+  buttresses) is extruded down the whole wall as vertical stripes, and the walls themselves reach slope
+  10 (84°), where one vertex row spans 30–65 m of height.
+  * **3D wall relief** (`SurfaceGen`, after the buttresses): on walls the relief is evaluated at the 3D
+    surface point (radius R + h) and its height offset is scaled by the wall slope s. A height offset Δh
+    on a face of slope s moves the face horizontally by Δh/s, so this is an approximately isotropic 3D
+    displacement along the wall normal. It uses **3D Voronoi facets** (`_facets3`: tilted plane per
+    jittered cell, Gaussian-blended seams). Voronoi boundaries are planes, so walls get polygonal joint
+    blocks with differently oriented faces instead of the crescents/fish scales that ridged noise gave.
+    It also adds fine cracks and, on all worlds, **ledges**: altitude terracing (monotonic, never folds)
+    with slowly wandering phase, strong on layered-rock worlds (`st.wallLedges`, `st.ledgeStep` 9–16 m)
+    and mild on granite. Weight = max(generator steep/cliff hints, measured slope 58°→73°). Slope factor
+    capped at 3.6 so the profile cannot fold.
+  * **Fractal detail** octaves < 200 m are sampled at the 3D surface point (radius R + h, everywhere, so
+    there is no varying-frequency seam) and boosted by the slope on walls. The big crag octaves stay 2D:
+    plan-view ribs and couloirs ARE vertical structures.
+  * **Octaves are faded by the wall's vertical mesh resolution** (lod × slope), so sub-resolution relief
+    never aliases into per-vertex-column combs.
+  * **Bug fix: spatially varying noise frequency.** The buttress wavelength followed `wallH` (which tracks
+    the range mask), which rescaled noise coordinates of ~10³ units by a varying factor and decorrelated
+    the noise within metres. This was the source of the old "thin fins on crests" and of part of the
+    combing. Wavelengths are now per-world constants (`st.buttWl`, `st.wallLam`). Measured: height
+    second-difference RMS at 0.6 m along a W1 wall dropped from 85 m to 1.5 m.
+  * **Relief-aware CDLOD** (`index.js`): a chunk whose relief/side ratio is high refines up to 60 % earlier
+    (`reliefK`: high 0.6, med 0.35, low 0). It is set once when the chunk is built and bounded so
+    D(child) ≤ 0.66·D(parent) (rf(child) ≤ 1.3·rf(parent)), which keeps CDLOD geomorphing seamless.
+    It adds about 10–30 % chunks in mountain views.
+* **Shader**:
+  * Vertical triplanar planes use mirror-only orientations. A 90° swap turned horizontal ledges and
+    fractures into vertical scratches.
+  * The strata layer no longer has vertical joint lines; it has partings and horizontal lenses instead.
+    Drainage streaks are wider so they never go sub-pixel.
+  * Far rock albedo is calm: ±12 % from the macro layers, which had read as fish scales. Near detail
+    gives up to ±30 % with sharpened cavities. Strata colour bands appear only on layered-rock worlds.
+  * Rock bodies: warm iron/ochre vs cool dark vs pale granite at 512 m and 64 m, with ±20 % value and
+    ±8 % hue. The palette rock is no longer pulled toward a bluish grey (that was the "purple-grey
+    monochrome" the critic saw).
+  * **Layered-rock close range**: ~5 m beds (< 900 m) and ~1.2 m laminae (< 90 m) from the strata
+    layer, with the faceted layer-0 detail faded on bedded faces (it had read as crumpled paper). The band
+    warp comes from a purely horizontal field; the triplanar macro noise had stepped the bands into "Z"
+    shapes at projection seams.
+  * **Talus / scree aprons**: 30–40° concave slopes below rock, grey rubble from the pebble layer.
+    **Gravel patches** on gentle dry ground, suppressed in meadows. The sand/grass edge is
+    noise-distorted at two scales.
+  * Curvature: sunlit crests are lighter (+12–28 %) and hollows darker (cavity −26 %).
+  * **Near detail (2 m rock, 1 m ground) is now on in software-GL captures too.** It was disabled in
+    "lite" mode, so every on-foot capture lacked sub-2 m detail.
+  * Snow-free **wave-washed fringe** at the waterline (dark wet band where snow meets the sea).
+* **API** (flora request): `terrain.lodAt(x, y, z)` returns the lod (m) of the drawn mesh at a unit
+  direction; `terrain.renderedHeight(x, y, z)` = `surface.heightLod(x, y, z, terrain.lodAt(...))` is the
+  height of the rendered mesh at its vertices (get the instance with `world.get('terrain')`).
+* Cost: `height()` ≈ 11–13 µs full detail (was 8–10). Detail bake unchanged (~1.4 s in the worker).
+* The player request (W3 `lat=22.571&lon=56.286` "needle spikes") is checked: the CPU heightfield is
+  smooth there at all LODs and the capture shows dunes with ripples, no spikes.
+
 ## Capture URLs (verified this round, 1280×720)
 Use `view=fly` for terrain-only framing (no player body). Side light reads relief best: pick `tod` so the
 sun is ~60–120° off the view direction (sun ≈ east at tod 0.3, ≈ west at 0.68 on these worlds).
@@ -148,6 +205,10 @@ Aerial heroes add `tk=1.7` (finer capture LOD; ~+50 % chunks — do NOT use it o
   `/?mode=system&galaxy=0&star=9&planet=2&view=surface&lat=-43.2326&lon=-28.5306&yaw=90&pitch=8&tod=0.62`, steps `[{"advance":1}]`
 * **W1 on foot, meadow under a rock wall with boulders**:
   `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=-13.8425&lon=155.4463&yaw=210&pitch=8&tod=0.3`, steps `[{"advance":1}]`
+* **W3 sandstone wall close-up (bedding / laminae, new)**:
+  `/?mode=system&galaxy=0&star=9&planet=2&view=fly&alt=25&lat=-43.2326&lon=-28.478&yaw=90&pitch=8&tod=0.62&disable=fauna,vehicles`
+* **W1 spire wall close-up (3D wall relief test)**:
+  `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=1300&lat=-11.6&lon=101.969&yaw=180&pitch=8&tod=0.3&tk=1.7`
 * W3 badlands / mesa strata from 60 m (the old "fur" test):
   `/?mode=system&galaxy=0&star=9&planet=2&view=fly&alt=60&lat=38.65&lon=51.31&yaw=67.5&pitch=-4&tod=0.68`
 * W1 lake cliffs (streak test): `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=30&lat=3.96&lon=-29.58&yaw=315&pitch=-3&tod=0.3`
@@ -164,11 +225,13 @@ Debug URL params: `tdebug=1` (blend weights: red rock, green ground, blue sand, 
 `tdebug=2` (generator hints: rock/cliff, sand, wetness), `tdebug=3` (unlit albedo), `tdebug=4` (NaN finder),
 `tdebug=5` albedo without wall streaks, `6` lit without streaks, `7` + no detail normals, `8` rock detail albedo,
 `9` triplanar weights, `10` (rock mid albedo, strata, rock height), `11` |face tangent|, `12` macro noise;
-`tgen=1` disables the new steep-face buttresses (A/B), `tk=<K>` (LOD range override),
+`13` local-frame normal, `14` shading normal, `15` N·L (geometry only);
+`tgen=<bits>`: 1 no buttresses, 2 no 3D wall relief / ledges, 4 no gully erosion, 8 no fractal detail (A/B),
+`tk=<K>` (LOD range override), `trelief=<0..1.5>` (relief-aware split boost; 0 = off),
 `tlite=0|1` (force PBR / Lambert terrain lighting).
 
 `__rv.state().terrain` → `{chunks, casters, desired, inflight, uploads, maxLevel, K, workers, tex,
-inView, levels, ms, msMax}`.
+inView, levels, ms, msMax, readyMs, builds}` (`readyMs` = time until the terrain first became complete).
 
 ## Performance
 * high @1080p: K≈1.9 (8.5 px/quad target; was 2.3); @720p clamps to 1.3 (1.05 in `shot=1`).
@@ -193,14 +256,21 @@ inView, levels, ms, msMax}`.
 * Shot mode (`shot=1`) uses K = 1.05 (below the CDLOD nesting limit: neighbouring chunks can differ by
   two levels; skirts fill the cracks invisibly). Far terrain then reads slightly faceted from the air —
   aerial hero URLs add `tk=1.7`. Ground-level views should not (≈3.8 M triangles near big walls).
-* Near-vertical heightfield walls (fjord spires, W12 cliffs) still shade with fine vertical streaks at
-  1–5 km (one vertex column per streak); no overhangs / arches (heightfield).
-* A few thin fins can appear on the crest of very steep ranges where the buttress relief meets the
-  ridge (W1 `lat=7.691&lon=-131.848`, right of frame); `tgen=1` A/B disables the term.
+* Heightfield limit: on 80°+ walls (W1 spires, lake cliffs) the 3D facets are only a few metres of
+  horizontal relief, because more would fold the heightfield. From 2–5 km those faces still read fairly
+  smooth when they are in diffuse light. There are no overhangs or arches.
+* W1 mountain flanks are busier than before (blocks and ledges on every slope above ~58°). If a critic
+  calls them noisy, lower `wallBlocks` or raise the `wS` slope ramp in `SurfaceGen`.
+* The talus and gravel tint is warm-brown on W1 (Bierstadt palette rock) and reads as dirt patches on the
+  meadow slope; flora grass still grows on top of them.
 * Landforms changed at the < 2 km scale this round (isotropic detail, mountain warp): other tracks'
   hard-coded lat/lon spawn notes may land a few metres higher/lower or on a different slope; macro
   layout (continents, coasts, ranges, mesas, rivers, lakes) is unchanged.
-* Software GL frames are still ~8–20 s at 720p under load; captures take 2–6 min on the shared box.
+* Software GL frames are still ~8–20 s at 720p under load; captures take 2–7 min on the shared box.
+  Chunk generation is ~25 % more expensive this round (wall relief), and relief-aware LOD adds ~10–30 %
+  chunks in mountain views. The W1 hero needed 466 builds, with `readyMs` ≈ 209 s at load ≈ 9 on 4 cores.
+  On the idle box the whole capture took ≈ 95 s before this round; it has not been re-measured idle. When several agents capture at once, give `shoot.mjs` `--timeout 450` and
+  run captures one at a time: two-at-a-time batches lost the shared render slots and timed out.
 * No occlusion culling yet (terrain behind ridges is drawn; early-Z rejects its pixels).
 * Flatten stamps reach flora/water workers only through `surfaceConfig(body)` at their init (see
   Requests: flora should forward `surface.onFlattenChange`).
@@ -226,3 +296,11 @@ inView, levels, ms, msMax}`.
   URL that is the top of a 1.5 km cliff, which looks like an aerial shot; the W3 on-foot URL above is a
   true ground-level framing.
 * **galaxy/other** (carried over): a ShaderMaterial uses `rv_hash13` without including `rv_common`.
+* **flora** (new API): to root grass on the drawn mesh use `world.get('terrain')?.renderedHeight(x, y, z)`
+  (or `surface.heightLod(x, y, z, terrain.lodAt(x, y, z))`); fall back to `surface.height` when null.
+  Please also skip grass/understorey where `sample().slope > 0.45`: the new talus/scree aprons look best
+  without grass on them.
+* **all tracks**: small-scale relief changed again. The fractal detail below 200 m is now sampled at the
+  3D surface point everywhere (same statistics, different values): gentle ground moved by up to about
+  ±1 m, rock by a few metres, and walls (> ~55°) got new blocks and ledges. Macro layout is unchanged.
+  Re-check hard-coded spawn/park positions (runtime `surface.sample` placement is unaffected).

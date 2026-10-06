@@ -112,7 +112,7 @@ export default class CosmicMode extends Mode {
     this.sim = new CosmicSim(e.renderer, { N, M, sub: subGrowth });
     if (num('pm') === 0) this.sim.ok = false;
     this.view = new CosmicRenderer(e, this.sim, { L: BOX, K, drawCount: this.cfg.drawCount, h0: this.cfg.h0, maxPx: this.cfg.maxPx, accumScale: this.cfg.accumScale, fog: 60, sph: num('sph'), kt: num('kt'), aniso: num('an') ?? (N === 64 ? 0 : 1), aspect: num('asp'), em: num('em'), subGain: num('sub'), shellGain: num('shell'),
-      veilGain: num('veil'), veilLo: num('vlo'), veilHi: num('vhi'), veilSteps: num('vsteps') ?? (tier === 'low' ? 24 : tier === 'med' ? 32 : tier === 'ultra' ? 56 : 40) });
+      veilGain: num('veil'), veilLo: num('vlo') ?? (N === 64 ? 1.2 : undefined), veilHi: num('vhi') ?? (N === 64 ? 4 : undefined), veilSteps: num('vsteps') ?? (tier === 'low' ? 24 : tier === 'med' ? 32 : tier === 'ultra' ? 56 : 40) });
     this.scene.add(this.view.comp);
     // look tuning (URL overrides are for art-direction iteration)
     const cu0 = this.view.compMat.uniforms, au0 = this.view.accMat.uniforms;
@@ -409,7 +409,7 @@ export default class CosmicMode extends Mode {
     cu.uBright.value = this.bright * (0.7 + 0.3 * g) * (1 + 0.5 * young);
     cu.uSigma0.value = this.sigma0 * (0.8 + 0.2 * g);
     this._bBase = cu.uBright.value;
-    this._lvArgs = [d1, g, young];
+    const la = this._lvArgs ||= [0, 0, 0]; la[0] = d1; la[1] = g; la[2] = young;
     this._updateLevels(d1, g, young, dt);
     U.uSeedD.value = 0.6 * (1 - g);
     U.uEarly.value = this.early * (1 - smooth(0.3, 0.75, d1));
@@ -651,7 +651,7 @@ export default class CosmicMode extends Mode {
         if (this._frame % 15 === 1 || !this.levelsSorted || this.engine.params.shot) this.view.measureLevels((sorted) => { if (!this.disposed) this.levelsSorted = sorted; }, !!this.engine.params.shot);
         // shot mode renders only on demand (advance(N) runs many updates, then one frame): levels measured
         // on an earlier frame are stale by up to N seconds of cosmic time — snap them to this frame's
-        if (this.engine.params.shot && this._lvArgs && this.levelsSorted) this._updateLevels(...this._lvArgs, 0, true);
+        if (this.engine.params.shot && this._lvArgs && this.levelsSorted) { const la = this._lvArgs; this._updateLevels(la[0], la[1], la[2], 0, true); }
       } catch (err) { if (!this._warned) { console.error('[cosmic] accum', err); this._warned = true; } }
     }
     this.view.comp.visible = this.icStage >= 1 && !skip;

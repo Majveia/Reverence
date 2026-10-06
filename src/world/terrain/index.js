@@ -11,7 +11,7 @@
 //  • one shared index buffer, one shared material (see material.js), near chunks cast shadows
 import * as THREE from 'three';
 import { surfaceConfig } from '../planet/SurfaceGen.js';
-import { buildChunk, buildIndices, cubeDir } from './chunkBuild.js';
+import { buildChunk, buildIndices, cubeDir, FACES } from './chunkBuild.js';
 import { bakeDetail, DETAIL_SIZE, DETAIL_LAYERS } from './detailTex.js';
 import { createTerrainMaterial, createTerrainDepthMaterial, updateOriginMod } from './material.js';
 
@@ -74,6 +74,7 @@ class Terrain {
     try { const tk = parseFloat(new URLSearchParams(globalThis.location?.search || '').get('tk')); if (tk > 0.9 && tk < 4) this.K = tk; } catch (_) { /* no url */ }
     // relief-aware split boost (0 = off): up to +60 % range on chunks spanning tall walls
     this.reliefK = q.tier === 'low' ? 0 : q.tier === 'med' ? 0.35 : 0.6;
+    try { const tr = new URLSearchParams(globalThis.location?.search || '').get('trelief'); if (tr !== null && tr !== '') this.reliefK = Math.max(0, Math.min(1.5, +tr || 0)); } catch (_) { /* no url */ }
     const leaf = q.tier === 'low' ? 0.8 : q.tier === 'med' ? 0.5 : 0.35;   // metres between vertices at max depth
     this.maxLevel = Math.max(4, Math.ceil(Math.log2((this.R * Math.PI / 2) / (RES * leaf))));
     this.hMin0 = this.surface.minHeight ?? -this.surface.amp;
@@ -102,6 +103,7 @@ class Terrain {
     // flatten stamps (civ plazas / pads): resync workers and rebuild the chunks they touch
     this._offFlat = this.surface.onFlattenChange?.((f, all) => this._onFlatten(f, all));
     this.ms = 0; this.msMax = 0;
+    this._t0 = performance.now(); this.readyMs = 0; this.builds = 0; this.buildMs = 0;
   }
 
   // ------------------------------------------------------------------ workers
@@ -159,6 +161,7 @@ class Terrain {
       if (!node) return;
       if (m.type === 'error') { console.warn('[terrain] build failed', m.message); node.state = 0; node.fail = (node.fail || 0) + 1; return; }
       if (node.dead) return;
+      this.builds++;
       this.uploads.push([node, m]);
     }
   }
@@ -453,13 +456,43 @@ class Terrain {
     if (!this.texReady || this.desired.length === 0) return false;
     if (this.uploads.length || this.changed || this.inflight) return false;
     for (const n of this.desired) if ((!n.mesh || n.stale) && (n.fail || 0) <= 3) return false;
+    if (!this.readyMs) this.readyMs = Math.round(performance.now() - this._t0);
     return true;
   }
+
+  /**
+   * Flora request: the `lod` (m) of the terrain mesh drawn under unit direction (x, y, z) — 1.5 × the
+   * vertex spacing of the finest visible chunk there. `surface.heightLod(x, y, z, terrain.lodAt(x, y, z))`
+   * is then the height of the rendered mesh at its vertices (between vertices the mesh interpolates
+   * linearly; geomorphing blends toward 2× this lod near the chunk's range limit). Cheap (tree walk).
+   */
+  lodAt(x, y, z) {
+    try {
+      let f = 0, best = -2;
+      for (let i = 0; i < 6; i++) { const F = FACES[i].n; const d = x * F[0] + y * F[1] + z * F[2]; if (d > best) { best = d; f = i; } }
+      const F = FACES[f];
+      const u = Math.atan((x * F.u[0] + y * F.u[1] + z * F.u[2]) / best) / (Math.PI / 4);
+      const v = Math.atan((x * F.v[0] + y * F.v[1] + z * F.v[2]) / best) / (Math.PI / 4);
+      let n = this.roots[f], found = n.mesh ? n : null;
+      while (n && n.children) {
+        const h = n.size / 2;
+        const c = n.children[(u >= n.u0 + h ? 1 : 0) + (v >= n.v0 + h ? 2 : 0)];
+        if (!c) break;
+        if (c.mesh && c.mesh.visible) found = c;
+        n = c;
+      }
+      if (!found) return 64;
+      return (found.side / this.RES) * 1.5;
+    } catch (_) { return 1; }
+  }
+
+  /** Height (m rel. radius) of the rendered terrain mesh at unit direction (see lodAt). */
+  renderedHeight(x, y, z) { return this.surface.heightLod(x, y, z, this.lodAt(x, y, z)); }
 
   getState() {
     const hist = {}; let iv = 0;
     for (const n of this.desired) { hist[n.level] = (hist[n.level] || 0) + 1; if (n.inView) iv++; }
-    return { chunks: this.meshCount, casters: this.casters, desired: this.desired.length, inflight: this.inflight, uploads: this.uploads.length, maxLevel: this.maxLevel, K: +this.K.toFixed(2), workers: this.workers.length, tex: this.texReady, inView: iv, levels: hist, ms: +this.ms.toFixed(2), msMax: +this.msMax.toFixed(1) };
+    return { chunks: this.meshCount, casters: this.casters, desired: this.desired.length, inflight: this.inflight, uploads: this.uploads.length, maxLevel: this.maxLevel, K: +this.K.toFixed(2), workers: this.workers.length, tex: this.texReady, inView: iv, levels: hist, ms: +this.ms.toFixed(2), msMax: +this.msMax.toFixed(1), readyMs: this.readyMs, builds: this.builds };
   }
 
   onOriginShift() { /* chunk transforms are planet-local under world.root: nothing to do */ }

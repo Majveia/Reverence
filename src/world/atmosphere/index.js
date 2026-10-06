@@ -113,6 +113,7 @@ class Atmosphere {
     S.uSunIll.value.set(this.starColor.r * E, this.starColor.g * E, this.starColor.b * E);
     S.uTime.value = t;
     const muS = up.dot(sunDir);
+    this._sunMu = muS;
 
     // night ambient (starlight + airglow), art-directed to keep nights readable
     const night = 1 - THREE.MathUtils.smoothstep(muS, -0.3, -0.02);
@@ -176,18 +177,27 @@ class Atmosphere {
     const W = this.weather, u = this.effect.u, m = this.model;
     if (!m.present) { u.uFog.value.set(0, 1, 0, 0); return; }
     const fog = W.fog || 0, dust = W.dust || 0, rain = Math.max(W.rain || 0, W.snow || 0);
-    let rho = fog * fog * 2.0e-4 + rain * 5e-5 + dust * 1.2e-3;
+    // golden-hour haze: low sun → humid, forward-scattering low haze that glows toward the sun
+    // (Pacific Drive / Bierstadt light); none at night, a whisper by day
+    const se = this._sunMu ?? 0.5;
+    const gold = THREE.MathUtils.smoothstep(se, -0.05, 0.03) * (1 - THREE.MathUtils.smoothstep(se, 0.1, 0.42));
+    this.goldHaze = gold;
+    // heavy rain: visibility of a few km (grey rain haze swallows the forest at a few hundred metres)
+    let rho = fog * fog * 2.0e-4 + (W.rain || 0) * 2.1e-4 + (W.snow || 0) * 1.5e-4 + dust * 1.2e-3 + gold * 2.6e-5 * (1 - 0.5 * (m.moody || 0));
     if (m.lava) rho *= 0.45;
-    const Hf = THREE.MathUtils.lerp(320, 1600, THREE.MathUtils.clamp((rain + dust * 1.5) / Math.max(fog + rain + dust, 1e-3), 0, 1));
+    const wF = fog + rain + dust + gold * 0.12;
+    const Hf = THREE.MathUtils.lerp(320, 1600, THREE.MathUtils.clamp((rain + dust * 1.5) / Math.max(wF, 1e-3), 0, 1)) * (1 + gold * 0.6 * (1 - THREE.MathUtils.clamp(fog + rain + dust, 0, 1)));
     const sea = this.world.surface?.seaLevel ?? 0;
-    u.uFog.value.set(rho, Hf, sea + 30, 0.35 + 0.65 * fog);
+    u.uFog.value.set(rho, Hf, sea + 30, 0.35 + 0.65 * fog - 0.2 * gold * (1 - fog));
     // fog color: dust tint / cool rain grey / white mist
     const tint = m.tint;
     const c = u.uFogAlbedo.value;
     c.set(0.95, 0.96, 1.0);
     if (dust > 0) c.lerp(_v.set(0.95 * Math.min(1, tint.r * 1.6 + 0.3), 0.75 * Math.min(1, tint.g * 1.4 + 0.25), 0.55 * Math.min(1, tint.b * 1.2 + 0.2)), Math.min(1, dust * 1.5));
     const sky = this.lighting.skyIrr, na = this.nightAmbient, nk = 0.03; // dark nights: no glowing fog
-    u.uFogAmb.value.set((sky[0] + na.r * nk) / Math.PI, (sky[1] + na.g * nk) / Math.PI, (sky[2] + na.b * nk) / Math.PI);
+    // under a closed deck the haze is lit by the dark cloud bases, not by a bright sky dome
+    const ock = (1 - 0.55 * (W.overcast || 0)) / Math.PI;
+    u.uFogAmb.value.set((sky[0] + na.r * nk) * ock, (sky[1] + na.g * nk) * ock, (sky[2] + na.b * nk) * ock);
     const sc = this.lighting.sunColor, sd = Math.max(0, W.sunDim ?? 1);
     u.uFogSun.value.set(sc.r, sc.g, sc.b).multiplyScalar(sd * sd);
     u.uFogWind.value.set(G.uWindDir.value.x, G.uWindDir.value.z).multiplyScalar(t * 6);
@@ -208,7 +218,10 @@ class Atmosphere {
       renderer.autoClear = true;
       const camLocal = _v.setFromMatrixPosition(camera.matrixWorld).add(this.world.origin);
       const camR = camLocal.length();
-      this.lighting.envU.uCamPlanet.value.copy(camLocal);
+      // env map position: from high altitude / orbit a single probe at the camera would see the lit limb of the
+      // planet as "ground" and light night-side facets with it → probe the air above the sub-camera point
+      const envR = Math.min(camR, this.model.Rb + this.model.height * 0.5);
+      this.lighting.envU.uCamPlanet.value.copy(camLocal).multiplyScalar(envR / Math.max(camR, 1));
       if (this.luts) {
         if (!this.luts.staticDone) this.luts.buildStatic(renderer);
         if (camR < this.model.Rt * 1.001) {
@@ -257,6 +270,7 @@ class Atmosphere {
       clouds: this.clouds?.present ? this.clouds.type : 'none',
       weather: Object.fromEntries(['rain', 'snow', 'dust', 'fog', 'storm', 'wind', 'flash'].map((k) => [k, +(this.weather[k] || 0).toFixed(2)])),
       wet: +G.uWetness.value.toFixed(2), snowCover: +G.uSnow.value.toFixed(2),
+      cities: this.effect.u.uCityN.value, gold: +(this.goldHaze || 0).toFixed(2),
     };
   }
 

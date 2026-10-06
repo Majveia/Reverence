@@ -51,7 +51,69 @@ uniform vec2 uFogWind;
 uniform vec4 uLavaGlow;       // lava-lit haze: emitted radiance (rgb), 1 / glow height (m) above the fog base
 uniform float uPixAng;        // angular size of a pixel (rad)
 uniform float uGeoGain;       // in-scatter gain over geometry (the sky gain relaxes from altitude/space)
+uniform vec4 uCities[12];     // settlements: unit direction (planet-local), angular radius (rad)
+uniform float uCityW[12];     // light output weight (metropolis 1 … village 0.2)
+uniform float uCityN;
+uniform vec3 uCityCol;        // emitted radiance of a lit city core
+uniform float uCityGround;    // ground emission seen from altitude / orbit (near the ground civ draws its own lights)
+uniform float uCitySky;       // light-pollution sky glow seen from the ground at night
+uniform vec2 uRural;          // sparse rural / road lights over land (civ level), sea-level radius (m)
 varying vec2 vUv;
+
+// Night lights of settlements seen from altitude / orbit: cores + sprawl along noise "roads", only where
+// the sun is down at that point (terminator-aware).
+vec3 cityGround(vec3 n, float rHit){
+  if (uCityGround <= 0.0) return vec3(0.0);
+  float night = smoothstep(0.04, -0.12, dot(n, uSunDir));
+  if (night <= 0.0) return vec3(0.0);
+  // rural lights: farms, roads and hamlets sprinkled over land (Earth-at-night speckle), in regional clusters
+  float rural = 0.0;
+  if (uRural.x > 0.0 && rHit > uRural.y + 3.0){
+    vec3 qr = n * (uAtmoRb / 1400.0);
+    float region = smoothstep(0.45, 0.8, rv_fbm(n * (uAtmoRb / 22000.0) + 3.7, 2) * 0.5 + 0.5);
+    float sp = max(rv_snoise(qr), 0.0);
+    rural = pow(sp, 6.0) * 6.0 * region * uRural.x;
+  }
+  float core = 0.0, halo = 0.0;
+  for (int k = 0; k < 12; k++){
+    if (float(k) >= uCityN) break;
+    float a2 = max(0.0, 2.0 - 2.0 * dot(n, uCities[k].xyz));
+    float r = uCities[k].w;
+    core += uCityW[k] * exp(-a2 / (r * r));
+    halo += uCityW[k] * exp(-a2 / (r * r * 16.0));
+  }
+  if (core + halo + rural < 1e-4) return vec3(0.0);
+  // sprawl: clustered blocks + filaments (roads) between them
+  vec3 q = n * (uAtmoRb / 700.0);
+  float blocks = smoothstep(0.1, 0.7, rv_fbm(q, 3) * 0.5 + 0.5);
+  float roads = pow(1.0 - abs(rv_snoise(q * 0.35 + 7.0)), 10.0);
+  float f = core * (0.35 + 0.9 * blocks) + halo * (0.12 * blocks + 0.6 * roads) + rural;
+  return uCityCol * f * night * uCityGround;
+}
+
+// Light pollution: the city glow scattered by the air above it, seen from the ground (warm dome on the horizon).
+vec3 citySky(vec3 dir, vec3 up, float camR){
+  if (uCityN < 0.5 || uCitySky <= 0.0) return vec3(0.0);
+  float el = max(dot(dir, up), 0.0);
+  vec3 vH = normalize(dir - up * dot(dir, up) + 1e-5);
+  float acc = 0.0;
+  for (int k = 0; k < 12; k++){
+    if (float(k) >= uCityN) break;
+    vec3 c = uCities[k].xyz;
+    float cosD = dot(c, up);
+    float d = acos(clamp(cosD, -1.0, 1.0)) * uAtmoRb;          // ground distance (m)
+    float rr = uCities[k].w * uAtmoRb;                          // city radius (m)
+    vec3 cH = c - up * cosD;
+    float lh = length(cH);
+    float az = lh > 1e-6 ? dot(vH, cH / lh) : 1.0;
+    // inside the city: a dome overhead; far away: a glow on the horizon in its direction
+    float spread = mix(1.0, 0.0, smoothstep(rr, rr * 3.0, d));
+    float dirW = mix(exp((az - 1.0) * (2.5 + 2000.0 / (rr + 1.0))), 1.0, spread);
+    float elW = exp(-el * mix(9.0, 2.5, spread));
+    acc += uCityW[k] * dirW * elW / (1.0 + pow(d / (rr * 4.0 + 1500.0), 2.0));
+  }
+  return uCityCol * acc * uCitySky;
+}
 
 // Fallback night sky (only when the space track is absent): hashed stars + faint galactic band.
 vec3 fallbackStars(vec3 d){
@@ -190,6 +252,7 @@ void main(){
     float airT = 1.0 - dot(a.T, vec3(0.3333));
     L += (uNightSky * 0.5 + uMoonSky * atmo_phaseRayleigh(dot(dir, uMoonDir)) * 2.0) * airT;
     outc = col * a.T + L;
+    if (uCityGround > 0.0){ vec3 ph = ro + dir * tHit; outc += cityGround(normalize(ph), length(ph)) * a.T; }
     outc = applyFog(outc, ro, dir, tHit, up, nu);
   } else {
     // ---------------- sky / background
@@ -236,7 +299,10 @@ void main(){
         vec3 ns = uNightSky * (0.45 + 0.18 * airmass);
         float mnu = dot(dir, uMoonDir);
         vec3 ms = uMoonSky * (atmo_phaseRayleigh(mnu) * (0.6 + 0.15 * airmass) + 0.35 * atmo_phaseHG(mnu, 0.8));
+        // aerosol aureole: a soft white halo hugging the moon disc (seats it in the sky)
+        ms += vec3(dot(uMoonSky, vec3(0.3333))) * 0.25 * min(atmo_phaseHG(mnu, 0.9), 20.0) * (0.6 + 0.4 * uAPScale / 0.5);
         L += (ns + ms) * inside;
+        if (uCitySky > 0.0) L += citySky(dir, up, camR) * inside;
       }
       // airglow emission layer (limb brightening; visible at night and from space)
       float ch = shellChord(ro, dir, uAirglowR - uAirglowW, uAirglowR + uAirglowW, hitGround ? bot.x : 1e30);
@@ -314,6 +380,13 @@ export class AtmosphereEffect {
       uLavaGlow: { value: new THREE.Vector4(0, 0, 0, 0) },
       uPixAng: { value: 0.001 },
       uGeoGain: { value: 1 },
+      uCities: { value: Array.from({ length: 12 }, () => new THREE.Vector4(0, 1, 0, 0.01)) },
+      uCityW: { value: new Array(12).fill(0) },
+      uCityN: { value: 0 },
+      uCityCol: { value: new THREE.Vector3(1.0, 0.62, 0.32) },
+      uCityGround: { value: 0 },
+      uCitySky: { value: 0 },
+      uRural: { value: new THREE.Vector2(0, 0) },
       ...atmo.atmoUniforms,
     };
     this.mat = fsMaterial(FRAG, this.u);
@@ -334,12 +407,45 @@ export class AtmosphereEffect {
     u.uAPScale.value = THREE.MathUtils.lerp(m.apScale ?? 1, 1, THREE.MathUtils.smoothstep(h, 0.3, 1.0));
     // from high altitude / orbit the veil over land & oceans is physical (no art sky gain): deep blue oceans
     u.uGeoGain.value = THREE.MathUtils.lerp(1, 1.15 / Math.max(m.skyGain, 1), THREE.MathUtils.smoothstep(h, 0.4, 1.4));
+    // city lights: ground emission fades in from altitude (civ draws real lights near the ground)
+    const alt = u.uCamPlanet.value.length() - m.Rb;
+    const E = m.sunIlluminance;
+    u.uCityGround.value = (u.uCityN.value > 0 || u.uRural.value.x > 0) ? 0.11 * E * THREE.MathUtils.smoothstep(alt, 2500, 12000) : 0;
+    u.uCitySky.value = u.uCityN.value > 0 && m.present ? 0.0035 * E * (this.atmo.lighting?.nightFactor ?? 0) * (1 + 1.5 * (m.moody || 0)) * (1 - THREE.MathUtils.smoothstep(alt, 6000, 20000)) : 0;
+  }
+
+  /** Settlement list for night lights (civ track: world.civ.sites). Polled until civ exists. */
+  updateCities() {
+    const w = this.atmo.world;
+    const sites = w.civ?.sites;
+    if (!sites || sites === this._sites) return;
+    this._sites = sites;
+    const K = { metropolis: 1.0, city: 0.75, town: 0.42, village: 0.2, camp: 0.07, harbor: 0.3 };
+    const R = this.atmo.model.Rb;
+    const list = [];
+    for (const s of sites) {
+      const wgt = (K[s.kind] ?? 0) * (s.hamlet ? 0.45 : 1) * (s.capital ? 1.3 : 1);
+      if (!(wgt > 0) || !s.up) continue;
+      // the lit footprint reaches past the planned town (suburbs, roads, farms): ×3 its radius
+      list.push({ d: s.up, r: Math.max(700, (s.radius || 300) * 3.0) / R, w: wgt });
+    }
+    list.sort((a, b) => b.w - a.w);
+    const u = this.u, n = Math.min(12, list.length);
+    for (let i = 0; i < n; i++) { u.uCities.value[i].set(list[i].d.x, list[i].d.y, list[i].d.z, list[i].r); u.uCityW.value[i] = list[i].w; }
+    u.uCityN.value = n;
+    const lvl = w.body.civ?.level ?? 0;
+    u.uRural.value.set(lvl > 0 ? 0.12 + 0.18 * lvl / 5 : 0, R + Math.max(0, w.surface?.seaLevel ?? 0));
+    // neon-noir worlds: magenta / cyan glow; everyone else: sodium & warm windows
+    const art = w.body.art || {};
+    const neon = art.key === 'bladerunner' || w.body.civ?.style === 'neon';
+    if (neon) u.uCityCol.value.set(0.95, 0.5, 0.95); else u.uCityCol.value.set(1.0, 0.62, 0.32);
   }
 
   render(renderer, io) {
     const u = this.u;
     if (!this.atmo.model.present && !this.atmo.needsSkyPass) { io.skip = true; return; }
     this.atmo.beforeComposite?.(renderer);
+    if ((this._cityPoll = (this._cityPoll || 0) + 1) % 30 === 1) { try { this.updateCities(); } catch (_) { /* optional neighbour */ } }
     u.tColor.value = io.input.texture;
     u.tDepth.value = io.depth;
     const sky = this.atmo.luts?.skyTextures;

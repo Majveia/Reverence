@@ -29,12 +29,12 @@ const AMBK = 1.1;
 // scale: base noise tile (m) · detail: detail tile (m) · erode: detail erosion · topMin: tallness range
 // soft: base softness · anvil · stretch (cirrus streaks) · cover: coverage multiplier / add
 export const CLOUD_TYPES = {
-  cumulus: { alt: 1.0, thick: 1500, dens: 0.065, scale: 5200, detail: 900, erode: 0.42, topMin: 0.45, soft: 0.08, topSoft: 0.55, anvil: 0.0, stretch: 0.0, coverMul: 1.0, coverAdd: 0.0, weatherFreq: 9, ambient: 1.0, lump: 0.10, grad: 0.62, baseMax: 2600, sunGain: 5.2, tupK: 0.07 },
-  storm: { alt: 0.8, thick: 3800, dens: 0.07, scale: 6400, detail: 1000, erode: 0.4, topMin: 0.35, soft: 0.05, topSoft: 0.6, anvil: 0.9, stretch: 0.0, coverMul: 1.1, coverAdd: 0.1, weatherFreq: 6, ambient: 0.8, lump: 0.22, grad: 0.75, baseMax: 1500, sunGain: 4.2, tupK: 0.05 },
+  cumulus: { alt: 1.0, thick: 1500, dens: 0.065, scale: 4200, detail: 1700, erode: 0.5, dome: 0.6, edge: 0.22, topMin: 0.45, soft: 0.08, topSoft: 0.55, anvil: 0.0, stretch: 0.0, coverMul: 1.0, coverAdd: 0.0, weatherFreq: 9, ambient: 1.0, lump: 0.10, grad: 0.62, baseMax: 2600, sunGain: 5.8, tupK: 0.07 },
+  storm: { alt: 0.8, thick: 3800, dens: 0.07, dome: 0.2, edge: 0.18, scale: 6400, detail: 1000, erode: 0.4, topMin: 0.35, soft: 0.05, topSoft: 0.6, anvil: 0.9, stretch: 0.0, coverMul: 1.1, coverAdd: 0.1, weatherFreq: 6, ambient: 0.8, lump: 0.22, grad: 0.75, baseMax: 1500, sunGain: 4.2, tupK: 0.05 },
   stratus: { alt: 0.75, thick: 800, dens: 0.035, scale: 7000, detail: 1100, erode: 0.4, topMin: 0.7, soft: 0.18, topSoft: 0.72, anvil: 0.0, stretch: 0.4, coverMul: 1.05, coverAdd: 0.18, weatherFreq: 4, ambient: 1.1, lump: 0.42, grad: 0.7, baseMax: 2400, sunGain: 4.2, tupK: 0.05 },
   wisp: { alt: 2.3, thick: 450, dens: 0.012, scale: 7000, detail: 1200, erode: 0.5, topMin: 0.8, soft: 0.3, topSoft: 0.3, anvil: 0.0, stretch: 0.85, coverMul: 0.9, coverAdd: 0.05, weatherFreq: 7, ambient: 1.2, lump: 0.1, grad: 1.0, baseMax: 1e9, sunGain: 3.4, tupK: 0.04 },
   haze: { alt: 1.6, thick: 1100, dens: 0.008, scale: 11000, detail: 2000, erode: 0.2, topMin: 0.8, soft: 0.4, topSoft: 0.4, anvil: 0.0, stretch: 0.6, coverMul: 0.8, coverAdd: 0.25, weatherFreq: 3, ambient: 1.3, lump: 0.05, grad: 1.0, baseMax: 1e9, sunGain: 3.0, tupK: 0.03 },
-  fogsea: { alt: 0.0, thick: 520, dens: 0.035, scale: 6000, detail: 900, erode: 0.22, topMin: 0.75, soft: 0.02, topSoft: 0.5, anvil: 0.0, stretch: 0.3, coverMul: 1.2, coverAdd: 0.35, weatherFreq: 5, ambient: 1.1, lump: 0.3, grad: 0.8, baseMax: 1e9, sunGain: 4.6, tupK: 0.05 },
+  fogsea: { alt: 0.0, thick: 760, dens: 0.04, scale: 2800, detail: 520, erode: 0.34, topMin: 0.6, soft: 0.02, topSoft: 0.86, dome: 0.25, anvil: 0.0, stretch: 0.15, coverMul: 1.2, coverAdd: 0.35, weatherFreq: 5, ambient: 1.0, lump: 0.62, grad: 0.75, baseMax: 1e9, sunGain: 5.0, tupK: 0.05, edge: 0.18 },
 };
 
 // ------------------------------------------------------------------ GLSL
@@ -137,9 +137,14 @@ void main(){
   // orbit detail: convective cells (Worley puffs) + streaks, used where the 3D noise tile is too small
   vec3 dq = d * uFreq * 2.6 + uSeed * 1.3;
   dq.y *= mix(1.0, 1.8, uStretch);
-  dq += 0.35 * vec3(rv_snoise(dq * 0.4), rv_snoise(dq * 0.4 + 5.0), rv_snoise(dq * 0.4 + 9.0));
+  dq += 0.6 * vec3(rv_snoise(dq * 0.4), rv_snoise(dq * 0.4 + 5.0), rv_snoise(dq * 0.4 + 9.0));
   vec2 wo = rv_worley(dq), wo2 = rv_worley(dq * 2.7 + 3.0);
-  float det = clamp((1.0 - wo.x) * 0.55 + (1.0 - wo2.x) * 0.3 + (rv_fbm(dq * 1.7, 3) * 0.5 + 0.5) * 0.3 - 0.08, 0.0, 1.0);
+  // round convective cells (inverted F1, squared → discs, no Voronoi polygons) over warped fbm
+  float c1 = 1.0 - wo.x, c2 = 1.0 - wo2.x;
+  // cell strength varies regionally (popcorn fields here, smooth stratiform sheets there): no regular scales
+  float cellAmt = smoothstep(0.35, 0.75, rv_fbm(dq * 0.23 + 17.0, 2) * 0.5 + 0.5);
+  float fb = rv_fbm(dq * 1.7, 4) * 0.5 + 0.5;
+  float det = clamp(mix(fb * 0.85 + 0.05, c1 * c1 * 0.45 + c2 * c2 * 0.25 + fb * 0.4, cellAmt), 0.0, 1.0);
   gl_FragColor = vec4(cov, tall, storm, det);
 }`;
 
@@ -160,10 +165,13 @@ uniform vec3 uWindDirC;    // wind direction (for cirrus streaks)
 uniform float uCoverBoost; // weather state (rain/storm) coverage boost
 
 uniform vec4 uShape4;      // lumpiness (base/top height noise), bottom density factor, orbit LOD start, LOD end (m)
-uniform vec4 uShape5;      // key-light gain, column-shadow strength, far-field noise scale (1/m), -
+uniform vec4 uShape5;      // key-light gain, column-shadow strength, far-field noise scale (1/m), dome (rounded tops)
+uniform vec4 uShape6;      // far-field extinction factor, detail fade start (m), end (m), edge sharpness
 
 // distance LOD: far away (orbit) the tileable noise averages out and the weather map carries the shape
 float cl_lod = 0.0;
+// detail LOD: the erosion noise is band-limited with distance (no salt-and-pepper aliasing far away)
+float cl_dlod = 0.0;
 
 float cl_remap(float x, float a, float b, float c, float d){ return c + (x - a) * (d - c) / max(b - a, 1e-4); }
 
@@ -178,27 +186,42 @@ float cl_base(vec3 p, float h, vec4 wx, out float prof){
   if (cover < 0.01 || h < -hl || h > top + hl){ prof = 0.0; return 0.0; }
   vec3 q = p * uShape.x;
   if (uShape3.z > 0.0) q -= uWindDirC * dot(q, uWindDirC) * uShape3.z;
+  // domain warp (curl-like): billows roll into each other instead of sitting on a lattice of blobs
+  vec4 wq = texture(uNoise, q * 0.37 + uWindA * 0.5 + 0.21);
+  q += (wq.gba - 0.5) * 0.16;
   vec4 n = texture(uNoise, q + uWindA);
   float fbm = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
   // lumpy bases and tops: the layer boundaries follow the low-frequency Worley field
   float hp = h + (fbm - 0.5) * uShape4.x * (1.0 - cl_lod);
   // far away (orbit) the profile is rounder: no vertical cloud walls at grazing angles near the limb
   prof = smoothstep(0.0, uShape2.y + 0.25 * cl_lod, hp) * (1.0 - smoothstep(top * mix(uShape2.z, 0.15, cl_lod), top, hp));
+  // dome: density tapers toward the cloud's own top → rounded domes over flat bases (cumulus)
+  prof *= 1.0 - uShape5.w * smoothstep(0.25, 1.0, hp / max(top, 0.05)) * (1.0 - cl_lod);
   // anvil: storms spread out near the top
   cover = pow(cover, cl_remap(clamp(h, 0.65, 0.9), 0.65, 0.9, 1.0, mix(1.0, 0.35, uShape2.w * wx.b)));
   if (prof * cover < 0.01) return 0.0;
   float base = cl_remap(n.r, -(1.0 - fbm), 1.0, 0.0, 1.0);
   if (cl_lod > 0.0){
     // far field (altitude / orbit): the weather map's cells + the 3D noise at two incommensurate, rotated
-    // planet scales (no visible tiling) → fractal cloud fields, popcorn cumulus, fibrous frontal edges
+    // planet scales (no visible tiling), curl-warped → fractal cloud fields, popcorn cumulus, fibrous
+    // frontal edges and swirls
     vec3 pf = p * uShape5.z;
+    vec3 wf = texture(uNoise, pf * 0.29 + 0.53).gba - 0.5;
+    pf += wf * 0.55;
     float f1 = texture(uNoise, pf + uWindA * 0.25).r;
     float f2 = texture(uNoise, mat3(0.8, -0.36, 0.48, 0.6, 0.48, -0.64, 0.0, 0.8, 0.6) * pf * 3.71 + 0.37).g;
-    float far = clamp(wx.a * 0.62 + (f1 - 0.5) * 0.55 + (f2 - 0.45) * 0.5 + 0.1, 0.0, 1.0);
+    float far = clamp(wx.a * 0.55 + (f1 - 0.5) * 0.6 + (f2 - 0.45) * 0.3 + 0.16, 0.0, 1.0);
+    // dense cores tower, thin fields stay low: relief that self-shadows under a grazing sun (terminator)
+    float topF = top * mix(0.6, 1.0, smoothstep(0.25, 0.75, far));
+    float profF = smoothstep(0.0, uShape2.y + 0.25, hp) * (1.0 - smoothstep(topF * 0.2, topF, hp));
     base = mix(base, far, cl_lod);
+    prof = mix(prof, profF, cl_lod);
   }
-  // far away the coverage edge widens: thin, translucent fringes around cloud fields (no cut-out chips)
-  base = cl_remap(base * prof, 1.0 - cover - 0.16 * cl_lod, 1.0, 0.0, 1.0) * cover;
+  // soft coverage remap (no binary threshold): far away the edge widens further → translucent fringes
+  float thr = 1.0 - cover, xb = base * prof;
+  float lin = max(cl_remap(xb, thr, 1.0, 0.0, 1.0), 0.0);
+  float soft = cl_lod > 0.0 ? smoothstep(thr - 0.25, thr + 0.2, xb) * max(cl_remap(xb, thr - 0.25, 1.0, 0.0, 1.0), 0.0) : 0.0;
+  base = mix(lin, soft, cl_lod) * cover;
   // denser toward the top (wispy, translucent bases; bright, solid tops)
   base *= mix(uShape4.y, 1.0, smoothstep(0.0, 0.65, h));
   return max(base, 0.0);
@@ -208,20 +231,30 @@ float cl_densityW(vec3 p, float h, bool detail, out vec4 wx){
   float prof;
   float b = cl_base(p, h, wx, prof);
   if (b <= 0.0) return 0.0;
-  if (detail && cl_lod < 0.99){
+  float b0 = b;
+  if (detail && cl_lod < 0.99 && cl_dlod < 0.99){
     vec3 q = p * uShape.y;
     if (uShape3.z > 0.0) q -= uWindDirC * dot(q, uWindDirC) * uShape3.z;
     vec4 d = texture(uNoise, q + uWindB);
+    // octaves fade out with distance before they alias (pixel footprint > noise feature): the finest go first
+    float k2 = clamp(1.0 - cl_dlod * 2.5, 0.0, 1.0), k1 = clamp(1.0 - cl_dlod * 1.4, 0.0, 1.0);
     // second, finer octave (curl-like offset by the first) → cauliflower edges instead of smooth blobs
 #ifdef CL_HQ
-    vec4 d2 = texture(uNoise, q * 2.73 + uWindB * 1.7 + (d.gba - 0.5) * 0.11);
-    float dn = d.g * 0.5 + d.b * 0.25 + d.a * 0.1 + d2.g * 0.15;
+    // billow octaves (Worley 8/16/24 per tile) + a finer, curl-offset octave at reduced weight (crisp
+    // cauliflower rims, not fur)
+    float dn = d.g * 0.7 + mix(0.5, d.b, k1) * 0.22 + mix(0.5, d.a, k2) * 0.08;
 #else
-    float dn = d.g * 0.625 + d.b * 0.25 + d.a * 0.125;
+    float dn = d.g * 0.625 + mix(0.5, d.b, k1) * 0.25 + mix(0.5, d.a, k2) * 0.125;
 #endif
+    dn = mix(dn, 0.5, cl_dlod);
     float m = mix(dn, 1.0 - dn, clamp(h * 4.0, 0.0, 1.0));   // wispy bases, billowy tops
     b = cl_remap(b, m * uShape.z * (1.0 - cl_lod), 1.0, 0.0, 1.0);
   }
+  // sharper density-to-edge transition: a cloud surface instead of a gaussian puff (thin fringe kept)
+  b = max(b, 0.0);
+  b *= mix(1.0, smoothstep(0.0, uShape6.w, b), 1.0 - cl_lod);
+  // no detached specks: where the base shape is nearly empty the erosion may not leave isolated bits
+  b *= mix(1.0, smoothstep(0.015, 0.07, b0), 1.0 - cl_lod);
   // storms are denser & darker
   return max(b, 0.0) * (1.0 + wx.b * 1.5);
 }
@@ -253,7 +286,41 @@ uniform float uLightSteps;
 uniform float uFrameJitter;
 uniform float uInside;       // camera inside the atmosphere (sky LUT valid)
 uniform vec2 uLowRes;
+uniform vec3 uAmbNight;      // moon / starlight fill on the night side (seen from altitude / orbit)
+uniform vec4 uCirrus;        // high ice layer: radius (m), opacity, 1/tile (1/m), stretch along the wind
 varying vec2 vUv;
+
+// High cirrus / cirrostratus sheet (thin ice, 2D): fibrous streaks stretched along the wind, forward-
+// scattering halo around the sun. Returns radiance (rgb) and opacity (a).
+vec4 cirrusLayer(vec3 ro, vec3 dir, float tHit, float camR){
+  if (uCirrus.y <= 0.0) return vec4(0.0);
+  vec2 sc = atmo_raySphere(ro, dir, uCirrus.x);
+  float t = camR < uCirrus.x ? sc.y : sc.x;
+  if (t <= 0.0 || t > tHit) return vec4(0.0);
+  if (camR < uCirrus.x){ vec2 g = atmo_raySphere(ro, dir, uAtmoRb); if (g.x > 0.0) return vec4(0.0); }
+  vec3 p = ro + dir * t;
+  vec3 n = normalize(p);
+  vec3 q = p * uCirrus.z;
+  q -= uWindDirC * dot(q, uWindDirC) * uCirrus.w;            // streaks along the wind
+  vec4 a = texture(uNoise, q * 0.31 + uWindA * 0.3);
+  q += (a.gba - 0.5) * 0.2;                                  // gentle swirls
+  vec4 b = texture(uNoise, q + uWindB * 0.4);
+  // patches: the planet weather field at a decorrelated (swizzled) direction → ~25 % of the sky, broad rafts
+  float big = smoothstep(0.5, 0.78, texture(uWeather, uWeatherRot * n.zxy).r * 0.6 + a.r * 0.4);
+  // altocumulus cells (inverted Worley ~400 m) bound into rafts by the perlin-worley base
+  float cells = 1.0 - b.a;
+  float d = big * smoothstep(0.42, 0.72, cells * 0.55 + b.r * 0.45 + (big - 0.5) * 0.2);
+  // grazing views from far away: thinner (aerial perspective takes them), and no layer edge artifacts
+  d *= exp(-t / (uLayer.w * 2.2));
+  float alpha = d * uCirrus.y * (1.0 - 0.85 * smoothstep(uAtmoRt - uAtmoRb, (uAtmoRt - uAtmoRb) * 3.0, camR - uAtmoRb));
+  if (alpha < 0.002) return vec4(0.0);
+  float muS = dot(n, uLightDir);
+  vec3 sunT = atmo_sunTransmittance(length(p), muS) * uLightIll;
+  float nu = dot(dir, uLightDir);
+  float ph = min(cl_hg(nu, 0.6), 0.6) * 0.3 + cl_hg(nu, -0.2) * 0.25 + 0.06;
+  vec3 Lc = sunT * ph * 1.4 + uAmbTop * mix(1.0, 0.0, 1.0 - uAmbLocal) + uAmbRef * smoothstep(-0.1, 0.3, muS) * (1.0 - uAmbLocal) + uAmbNight;
+  return vec4(Lc * alpha, alpha);
+}
 
 void main(){
   float depth = texture(tDepth, vUv).r;
@@ -267,18 +334,26 @@ void main(){
   vec2 outer = atmo_raySphere(ro, dir, Rc1);
   vec2 gnd = atmo_raySphere(ro, dir, uAtmoRb);
   float t0, t1;
-  if (outer.y <= 0.0){ gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
-  if (camR < Rc0){
-    if (gnd.x > 0.0){ gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  bool skip = false;
+  if (outer.y <= 0.0) skip = true;
+  else if (camR < Rc0){
+    if (gnd.x > 0.0) skip = true;
     t0 = inner.y; t1 = outer.y;
   } else if (camR < Rc1){
     t0 = 0.0; t1 = inner.x > 0.0 ? inner.x : outer.y;
   } else {
     t0 = outer.x; t1 = inner.x > 0.0 ? inner.x : outer.y;
   }
-  t1 = min(t1, tHit);
-  t1 = min(t1, t0 + uLayer.w);
-  if (t1 <= t0){ gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  if (!skip){
+    t1 = min(t1, tHit);
+    t1 = min(t1, t0 + uLayer.w);
+    if (t1 <= t0) skip = true;
+  }
+  if (skip){
+    vec4 ci = cirrusLayer(ro, dir, tHit, camR);
+    gl_FragColor = vec4(ci.rgb, 1.0 - ci.a);
+    return;
+  }
 
   float len = t1 - t0;
   float thick = Rc1 - Rc0;
@@ -293,6 +368,7 @@ void main(){
   float T = 1.0;
   float tSum = 0.0, wSum = 0.0;
   float lightStep = thick * 0.06;
+  float sharpEnd = t0 + uLayer.w;
   // view-dependent powder (Schneider): dark sun-facing edges seen from the anti-sun side, none toward the sun
   float powderAmt = 0.75 * clamp(0.6 - 0.6 * nu, 0.0, 1.0);
   for (int i = 0; i < 128; i++){
@@ -304,14 +380,21 @@ void main(){
     if (h < 0.0 || h > 1.0) continue;
     // distance LOD (orbit): noise tile averages out, the weather map carries the shapes
     cl_lod = smoothstep(uShape4.z, uShape4.w, t);
+    cl_dlod = smoothstep(uShape6.y, uShape6.z, t);
     vec4 wxs;
     float dens = cl_densityW(p, h, true, wxs);
     if (dens <= 0.001) continue;
+    // soft contact with terrain (no cut-out where a cloud meets a ridge) and with the march range end
+    if (tHit < 1e29) dens *= clamp((tHit - t) / min(260.0, 0.2 * tHit + 1.0), 0.0, 1.0);
+    dens *= 1.0 - smoothstep(sharpEnd - uLayer.w * 0.25, sharpEnd, t);
     vec3 n = p / r;
-    float s = dens * sigma;
+    // far field: lower extinction → thin cloud fields are translucent (soft fringes from orbit, no
+    // cut-out patches), dense cores stay opaque
+    float sg = sigma * mix(1.0, uShape6.x, cl_lod);
+    float s = dens * sg;
     // --- light march toward the key light (cone of growing steps; the last one reaches far towers)
     float od = 0.0;
-    float ls = lightStep;
+    float ls = lightStep * (1.0 + 1.5 * cl_lod);
     vec3 lp = p;
     for (int j = 0; j < 6; j++){
       if (float(j) >= uLightSteps) break;
@@ -322,7 +405,7 @@ void main(){
       od += cl_density(lp, lh, j < 2) * ls;
       ls *= 1.9;
     }
-    od *= sigma;
+    od *= sg;
     // --- optical depth of the column above (ambient occlusion from the sky, diffuse transmission)
     float odUp = 0.0;
     if (h < 0.9){
@@ -354,7 +437,7 @@ void main(){
     // diffuse transmission through the column above (thick decks: mottled, darker where thicker)
     float Tup = 1.0 / (1.0 + uShape5.y * odUp);
     float day = smoothstep(-0.12, 0.3, muS) * (0.35 + 0.65 * clamp(muS, 0.0, 1.0)) / 0.805;
-    vec3 aTop = mix(uAmbRef * day, uAmbTop, uAmbLocal);
+    vec3 aTop = mix(uAmbRef * day + uAmbNight, uAmbTop, uAmbLocal);
     vec3 aBot = mix(uAmbRef * day * 0.5, uAmbBot, uAmbLocal);
     float hk = clamp(h * 1.25, 0.0, 1.0);
     vec3 amb = (aTop * hk * mix(0.12, 1.0, Tup) + aBot * (1.0 - hk) * mix(0.2, 1.0, Tup)) * uShape3.w;
@@ -370,6 +453,7 @@ void main(){
     tSum += t * T * (1.0 - Ts); wSum += T * (1.0 - Ts);
     T *= Ts;
   }
+  // (cirrus is composited after the aerial perspective of the cumulus layer, see below)
   float alpha = 1.0 - T;
   if (alpha > 0.002){
     // aerial perspective: fade toward the sky radiance of this direction with distance
@@ -383,6 +467,12 @@ void main(){
     vec3 skyL = vec3(0.0);
     if (uInside > 0.5) skyL = atmo_skyLUT(dir, ro / camR, camR, uSunDir, dot(dir, uSunDir)) * uSunIllSky;
     L = L * Tair + skyL * (1.0 - Tair) * alpha;
+  }
+  // high cirrus: above the cumulus deck (behind it from below, in front of it from above)
+  vec4 ci = cirrusLayer(ro, dir, tHit, camR);
+  if (ci.a > 0.0){
+    if (camR < uCirrus.x){ L += T * ci.rgb; T *= 1.0 - ci.a; }
+    else { L = ci.rgb + (1.0 - ci.a) * L; T *= 1.0 - ci.a; }
   }
   gl_FragColor = vec4(L, T);
 }`;
@@ -553,6 +643,11 @@ export class Clouds {
     this.Rc0 = m.Rb + baseAlt;
     this.Rc1 = this.Rc0 + Math.max(thick, 150);
     this.coverage = clamp(C.coverage ?? 0.4, 0, 1);
+    // high cirrus sheet (2D, fibrous): the layered BotW / NMS sky above the cumulus or the sea of fog
+    const cirrusAmt = { cumulus: 0.42, storm: 0.3, stratus: 0.25, wisp: 0.0, haze: 0.0, fogsea: 0.45 }[type] ?? 0;
+    const ciR = Math.min(this.Rc1 + Math.max(2600 * sizeK, m.height * 0.12), m.Rb + m.height * 0.5);
+    this.cirrus = { R: ciR, amount: (Params.num?.('cirrus') ?? cirrusAmt) * (ciR > this.Rc1 + 300 ? 1 : 0) };
+    this.cirrusStretch = type === 'storm' ? 0.6 : 0.35;
 
     const tierSteps = { low: 16, med: 36, high: 56, ultra: 80 }[this.tier] ?? 56;
     this.baseSteps = tierSteps;
@@ -572,7 +667,11 @@ export class Clouds {
       uShape2: { value: new THREE.Vector4(P.topMin, P.soft, P.topSoft, P.anvil) },
       uShape3: { value: new THREE.Vector4(P.coverMul, P.coverAdd, P.stretch, P.ambient) },
       uShape4: { value: new THREE.Vector4(P.lump, P.grad, 22000 * sizeK, 70000 * sizeK) },
-      uShape5: { value: new THREE.Vector4(P.sunGain ?? 4.5, P.tupK ?? 0.06, 1 / (14000 * sizeK), 0) },
+      uShape5: { value: new THREE.Vector4(P.sunGain ?? 4.5, P.tupK ?? 0.06, 1 / (14000 * sizeK), P.dome ?? 0) },
+      // far extinction factor · detail band-limit start/end (m) · edge sharpness (density ramp width)
+      uShape6: { value: new THREE.Vector4(P.farSig ?? 0.24, 5000 * sizeK, 24000 * sizeK, P.edge ?? 0.12) },
+      uAmbNight: { value: new THREE.Vector3() },
+      uCirrus: { value: new THREE.Vector4(0, 0, 1 / (10000 * sizeK), 0.4) },
       uWindA: { value: this.windA.clone() }, uWindB: { value: this.windB.clone() },
       uWindDirC: { value: new THREE.Vector3(1, 0, 0) },
       uCoverBoost: { value: 0 },
@@ -599,6 +698,9 @@ export class Clouds {
       uSkyR: { value: null }, uSkyM: { value: null }, uSkyMS: { value: null },
       ...atmo.atmoUniforms,
     };
+    this.u.uCirrus.value.x = this.cirrus.R;
+    this.u.uCirrus.value.y = this.mode2D ? 0 : this.cirrus.amount;
+    this.u.uCirrus.value.w = this.cirrusStretch;
     this.quad = new FSQuad();
     this.lowRT = hdrTarget(4, 4);
     const hq = this.tier === 'high' || this.tier === 'ultra';
@@ -704,7 +806,11 @@ export class Clouds {
     const sunElev = ctx.sunMu;
     const E = this.atmo.model.sunIlluminance;
     const sc = this.atmo.starColor;
-    if (sunElev > -0.2 || !(L.moon.ill > 0)) {
+    const high = ctx.camR - this.atmo.model.Rb > this.atmo.model.height * 0.8;
+    // moon / starlight fill on the night side (orbit & altitude views: the key light stays the star)
+    const mI = (L.moon?.ill || 0) * E;
+    u.uAmbNight.value.set(0.05 * mI + 0.0035 * E, 0.06 * mI + 0.0042 * E, 0.085 * mI + 0.0062 * E).multiplyScalar(high ? 1 : 0);
+    if (high || sunElev > -0.2 || !(L.moon.ill > 0)) {
       u.uLightDir.value.copy(ctx.sunDir);
       u.uLightIll.value.set(sc.r * E, sc.g * E, sc.b * E);
     } else {

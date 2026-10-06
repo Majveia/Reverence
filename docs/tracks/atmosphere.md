@@ -18,6 +18,39 @@ Subsystem `atmosphere` (order 20) auto-loaded by `World`. Every pass is fault-is
 | `lighting.js` | `SunLight` key light with custom N-cascade shadows (`RVSunShadow`: 2–4 cascades in one atlas, texel snapping, per-cascade normal bias), moon as key light at night (phase-aware), PMREM environment of the sky + cloud deck (cover / colours follow the weather and time of day) on `scene.environment`, **overcast-aware ambient** (the deck greys and dims the sky dome; blocked direct sun returns as diffuse light), hemisphere fallback, material auto-setup (cloud shadows on the key light) |
 | `index.js` | subsystem glue, per-frame CPU state, pre-render GPU work (LUTs, env map, cloud shadow map) |
 
+### Round 3 (critic fixes)
+* **Orbit clouds no longer cut-out patches**: far-field extinction drops to `farSig` (0.38) so thin cloud fields are
+  translucent and only dense cores stay opaque; the coverage threshold is a soft remap that widens with the distance
+  LOD (no binary edge); the far-field shape is curl-warped (domain warp of the 3D noise), the weather map's orbit
+  detail uses round convective cells (squared inverted F1, no Voronoi polygons) whose strength varies regionally
+  (popcorn fields vs smooth sheets: no regular "fish scales"); dense cores tower (`topF`) so a grazing sun at the
+  terminator gives relief and self-shadow.
+* **Orbit lighting bug fixed**: from altitude/orbit the key light is always the unattenuated star (it used to switch
+  to the moon / planet-shadowed sun of the camera position, lighting the night side white and the day side dark);
+  clouds use the star too, with a faint moon/starlight fill (`uAmbNight`) on the night side.
+* **Night-side city lights + light pollution** (`effect.js`, from `world.civ.sites`): from altitude the night side
+  of the ground glows where settlements are (cores + noise sprawl + road filaments, terminator-aware, warm sodium or
+  neon magenta on Blade-Runner worlds); from the ground at night the air above towns glows on the horizon / overhead.
+* **Ground clouds**: the detail erosion is band-limited with distance (octaves fade before they alias: no
+  salt-and-pepper specks), sharper density-to-edge ramp (`edge`), rounded domes over flat bases (`dome`), billow
+  octaves without the fur-like finest octave, curl-warped base shape; soft contact with terrain (density fades within
+  ~260 m of the depth buffer — no cut-outs against fjord walls) and at the end of the march range (no hard line).
+* **High cloud layer** (`uCirrus`): a 2D altocumulus / cirrocumulus sheet above the cumulus (soft mottled rafts
+  drifting with the wind, forward-scattering), behind the cumulus from below, in front from above, fading from orbit.
+  `&cirrus=0..1` overrides its opacity.
+* **Sea of clouds**: billow-scale noise (2.8 km / 520 m), a crisp lumpy deck top (`topSoft` 0.86, `lump` 0.62) that
+  a low sun rakes, thicker deck (760 m).
+* **God rays**: the screen-space streaks no longer form one hard wedge — radial blur reach limited to ~0.55 screen
+  heights, 3 × 32 taps with per-pass decay, gaussian angular falloff (σ ≈ 24°), applied over geometry only in
+  proportion to the air in front of it, 4-tap soft upsample.
+* **Golden hour**: a low-sun humid haze (forward scattering, warm, through the height-fog path) makes backlit
+  ridges glow instead of sitting as flat silhouettes; aerial perspective stronger by default (`apScale` 0.4) and
+  aerosols concentrated lower (`HM` = 0.28 `HR`): paler horizon band, deeper zenith, far ridges fade.
+* **Rain mood**: rain implies a closed deck: `sunDim` = 1 − 1.05·rain − 0.35·storm (shadowless soft light), rain fog
+  ×2.2; rain streaks have per-drop length / width / opacity / speed variation (no diagonal grid) plus a far rain
+  sheet (3× volume, fainter) for density into the distance; `&weather=fog|dust` also clear the storm.
+* **Moon**: aerosol aureole around the moon disc (soft white halo).
+
 ### Round 2 (critic fixes)
 * **Clouds read as volumes, not painted blobs**: lighting rebalanced to real cloud albedo — key-light gain per
   type (`sunGain` 3–5.2) vs sky ambient `AMBK` 1.1 (was 1.6, which flattened sunlit vs shadowed sides to ~1:1;
