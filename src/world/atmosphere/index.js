@@ -183,7 +183,8 @@ class Atmosphere {
     const gold = THREE.MathUtils.smoothstep(se, -0.05, 0.03) * (1 - THREE.MathUtils.smoothstep(se, 0.1, 0.42));
     this.goldHaze = gold;
     // heavy rain: visibility of a few km (grey rain haze swallows the forest at a few hundred metres)
-    let rho = fog * fog * 2.0e-4 + (W.rain || 0) * 2.1e-4 + (W.snow || 0) * 1.5e-4 + dust * 1.2e-3 + gold * 2.6e-5 * (1 - 0.5 * (m.moody || 0));
+    const rn = W.rain || 0;
+    let rho = fog * fog * 2.0e-4 + rn * 2.1e-4 + rn * rn * 1.3e-3 + (W.snow || 0) * 1.5e-4 + dust * 1.2e-3 + gold * 2.6e-5 * (1 - 0.5 * (m.moody || 0));
     if (m.lava) rho *= 0.45;
     const wF = fog + rain + dust + gold * 0.12;
     const Hf = THREE.MathUtils.lerp(320, 1600, THREE.MathUtils.clamp((rain + dust * 1.5) / Math.max(wF, 1e-3), 0, 1)) * (1 + gold * 0.6 * (1 - THREE.MathUtils.clamp(fog + rain + dust, 0, 1)));

@@ -215,7 +215,8 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 dir, float d, vec3 up, float nu){
   float n = rv_snoise(vec3(pe.xz * 0.00035 + uFogWind * 0.0004, pe.y * 0.0003)) * 0.5 + 0.5;
   od *= mix(1.0, 0.25 + 1.5 * n, uFog.w);
   float T = exp(-max(od, 0.0));
-  vec3 L = uFogAmb * 1.6 + uFogSun * (atmo_phaseHG(nu, 0.55) * 0.9 + 0.05);
+  // two-lobe aerosol phase: a compact bright aureole around the sun + a broad lobe (no flat milky veil)
+  vec3 L = uFogAmb * 1.6 + uFogSun * ((atmo_phaseHG(nu, 0.82) * 0.45 + atmo_phaseHG(nu, 0.35) * 0.5) * 0.9 + 0.05);
   L *= uFogAlbedo;
   // lava worlds: the low haze glows with the light of the lava below it
   if (uLavaGlow.w > 0.0) L += uLavaGlow.rgb * exp(-max(0.5 * (hc + he), 0.0) * uLavaGlow.w);

@@ -29,12 +29,12 @@ const AMBK = 1.1;
 // scale: base noise tile (m) · detail: detail tile (m) · erode: detail erosion · topMin: tallness range
 // soft: base softness · anvil · stretch (cirrus streaks) · cover: coverage multiplier / add
 export const CLOUD_TYPES = {
-  cumulus: { alt: 1.0, thick: 1500, dens: 0.065, scale: 4200, detail: 1700, erode: 0.5, dome: 0.6, edge: 0.22, topMin: 0.45, soft: 0.08, topSoft: 0.55, anvil: 0.0, stretch: 0.0, coverMul: 1.0, coverAdd: 0.0, weatherFreq: 9, ambient: 1.0, lump: 0.10, grad: 0.62, baseMax: 2600, sunGain: 5.8, tupK: 0.07 },
-  storm: { alt: 0.8, thick: 3800, dens: 0.07, dome: 0.2, edge: 0.18, scale: 6400, detail: 1000, erode: 0.4, topMin: 0.35, soft: 0.05, topSoft: 0.6, anvil: 0.9, stretch: 0.0, coverMul: 1.1, coverAdd: 0.1, weatherFreq: 6, ambient: 0.8, lump: 0.22, grad: 0.75, baseMax: 1500, sunGain: 4.2, tupK: 0.05 },
-  stratus: { alt: 0.75, thick: 800, dens: 0.035, scale: 7000, detail: 1100, erode: 0.4, topMin: 0.7, soft: 0.18, topSoft: 0.72, anvil: 0.0, stretch: 0.4, coverMul: 1.05, coverAdd: 0.18, weatherFreq: 4, ambient: 1.1, lump: 0.42, grad: 0.7, baseMax: 2400, sunGain: 4.2, tupK: 0.05 },
+  cumulus: { alt: 1.0, thick: 1500, dens: 0.065, scale: 3600, detail: 1700, erode: 0.5, billow: 0.6, dome: 0.6, edge: 0.22, topMin: 0.45, soft: 0.08, topSoft: 0.55, anvil: 0.0, stretch: 0.0, coverMul: 1.0, coverAdd: 0.0, weatherFreq: 9, ambient: 1.0, lump: 0.10, grad: 0.62, baseMax: 2600, sunGain: 5.8, tupK: 0.07 },
+  storm: { billow: 0.35, alt: 0.8, thick: 3800, dens: 0.07, dome: 0.2, edge: 0.18, scale: 6400, detail: 1000, erode: 0.4, topMin: 0.35, soft: 0.05, topSoft: 0.6, anvil: 0.9, stretch: 0.0, coverMul: 1.1, coverAdd: 0.1, weatherFreq: 6, ambient: 0.8, lump: 0.22, grad: 0.75, baseMax: 1500, sunGain: 4.2, tupK: 0.05 },
+  stratus: { billow: 0.12, alt: 0.75, thick: 800, dens: 0.035, scale: 7000, detail: 1100, erode: 0.4, topMin: 0.7, soft: 0.18, topSoft: 0.72, anvil: 0.0, stretch: 0.4, coverMul: 1.05, coverAdd: 0.18, weatherFreq: 4, ambient: 1.1, lump: 0.42, grad: 0.7, baseMax: 2400, sunGain: 4.2, tupK: 0.05 },
   wisp: { alt: 2.3, thick: 450, dens: 0.012, scale: 7000, detail: 1200, erode: 0.5, topMin: 0.8, soft: 0.3, topSoft: 0.3, anvil: 0.0, stretch: 0.85, coverMul: 0.9, coverAdd: 0.05, weatherFreq: 7, ambient: 1.2, lump: 0.1, grad: 1.0, baseMax: 1e9, sunGain: 3.4, tupK: 0.04 },
   haze: { alt: 1.6, thick: 1100, dens: 0.008, scale: 11000, detail: 2000, erode: 0.2, topMin: 0.8, soft: 0.4, topSoft: 0.4, anvil: 0.0, stretch: 0.6, coverMul: 0.8, coverAdd: 0.25, weatherFreq: 3, ambient: 1.3, lump: 0.05, grad: 1.0, baseMax: 1e9, sunGain: 3.0, tupK: 0.03 },
-  fogsea: { alt: 0.0, thick: 760, dens: 0.04, scale: 2800, detail: 520, erode: 0.34, topMin: 0.6, soft: 0.02, topSoft: 0.86, dome: 0.25, anvil: 0.0, stretch: 0.15, coverMul: 1.2, coverAdd: 0.35, weatherFreq: 5, ambient: 1.0, lump: 0.62, grad: 0.75, baseMax: 1e9, sunGain: 5.0, tupK: 0.05, edge: 0.18 },
+  fogsea: { billow: 0.3, alt: 0.0, thick: 760, dens: 0.04, scale: 2800, detail: 520, erode: 0.34, topMin: 0.6, soft: 0.02, topSoft: 0.86, dome: 0.25, anvil: 0.0, stretch: 0.15, coverMul: 1.2, coverAdd: 0.35, weatherFreq: 5, ambient: 1.0, lump: 0.62, grad: 0.75, baseMax: 1e9, sunGain: 5.0, tupK: 0.05, edge: 0.18 },
 };
 
 // ------------------------------------------------------------------ GLSL
@@ -167,6 +167,7 @@ uniform float uCoverBoost; // weather state (rain/storm) coverage boost
 uniform vec4 uShape4;      // lumpiness (base/top height noise), bottom density factor, orbit LOD start, LOD end (m)
 uniform vec4 uShape5;      // key-light gain, column-shadow strength, far-field noise scale (1/m), dome (rounded tops)
 uniform vec4 uShape6;      // far-field extinction factor, detail fade start (m), end (m), edge sharpness
+uniform vec4 uShape7;      // billow (cauliflower lumps: coverage threshold follows the Worley cells), -, -, -
 
 // distance LOD: far away (orbit) the tileable noise averages out and the weather map carries the shape
 float cl_lod = 0.0;
@@ -218,7 +219,10 @@ float cl_base(vec3 p, float h, vec4 wx, out float prof){
     prof = mix(prof, profF, cl_lod);
   }
   // soft coverage remap (no binary threshold): far away the edge widens further → translucent fringes
-  float thr = 1.0 - cover, xb = base * prof;
+  // cauliflower lumps (~1/5 of a cloud): the coverage threshold rises toward the borders of the base
+  // Worley cells and drops in their cores → clusters of rounded towers instead of one smooth blob that
+  // follows the weather-map contour
+  float thr = 1.0 - cover + uShape7.x * (1.0 - cl_lod) * (0.62 - n.g), xb = base * prof;
   float lin = max(cl_remap(xb, thr, 1.0, 0.0, 1.0), 0.0);
   float soft = cl_lod > 0.0 ? smoothstep(thr - 0.25, thr + 0.2, xb) * max(cl_remap(xb, thr - 0.25, 1.0, 0.0, 1.0), 0.0) : 0.0;
   base = mix(lin, soft, cl_lod) * cover;
@@ -254,7 +258,7 @@ float cl_densityW(vec3 p, float h, bool detail, out vec4 wx){
   b = max(b, 0.0);
   b *= mix(1.0, smoothstep(0.0, uShape6.w, b), 1.0 - cl_lod);
   // no detached specks: where the base shape is nearly empty the erosion may not leave isolated bits
-  b *= mix(1.0, smoothstep(0.015, 0.07, b0), 1.0 - cl_lod);
+  b *= mix(1.0, smoothstep(0.03, 0.12, b0), 1.0 - cl_lod);
   // storms are denser & darker
   return max(b, 0.0) * (1.0 + wx.b * 1.5);
 }
@@ -644,7 +648,7 @@ export class Clouds {
     this.Rc1 = this.Rc0 + Math.max(thick, 150);
     this.coverage = clamp(C.coverage ?? 0.4, 0, 1);
     // high cirrus sheet (2D, fibrous): the layered BotW / NMS sky above the cumulus or the sea of fog
-    const cirrusAmt = { cumulus: 0.42, storm: 0.3, stratus: 0.25, wisp: 0.0, haze: 0.0, fogsea: 0.45 }[type] ?? 0;
+    const cirrusAmt = { cumulus: 0.42, storm: 0.3, stratus: 0.25, wisp: 0.0, haze: 0.0, fogsea: 0.3 }[type] ?? 0;
     const ciR = Math.min(this.Rc1 + Math.max(2600 * sizeK, m.height * 0.12), m.Rb + m.height * 0.5);
     this.cirrus = { R: ciR, amount: (Params.num?.('cirrus') ?? cirrusAmt) * (ciR > this.Rc1 + 300 ? 1 : 0) };
     this.cirrusStretch = type === 'storm' ? 0.6 : 0.35;
@@ -670,6 +674,7 @@ export class Clouds {
       uShape5: { value: new THREE.Vector4(P.sunGain ?? 4.5, P.tupK ?? 0.06, 1 / (14000 * sizeK), P.dome ?? 0) },
       // far extinction factor · detail band-limit start/end (m) · edge sharpness (density ramp width)
       uShape6: { value: new THREE.Vector4(P.farSig ?? 0.24, 5000 * sizeK, 24000 * sizeK, P.edge ?? 0.12) },
+      uShape7: { value: new THREE.Vector4(P.billow ?? 0, 0, 0, 0) },
       uAmbNight: { value: new THREE.Vector3() },
       uCirrus: { value: new THREE.Vector4(0, 0, 1 / (10000 * sizeK), 0.4) },
       uWindA: { value: this.windA.clone() }, uWindB: { value: this.windB.clone() },

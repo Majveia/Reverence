@@ -9,6 +9,7 @@
 //   aMorphN   i8x4    surface normal of the parent level
 //   aMat      u8x4    rock/cliff · sand · temperature · moisture
 //   aMat2     u8x4    wet (river/lake) · glacier · curvature (0.5 flat, >0.5 concave) · mountain
+//   aMat3     u8x4    talus / rubble apron · (reserved)
 //   aUV       f32x3   local texture frame: cube-face u, v in metres (minus a per-chunk multiple of
 //                     DETAIL_PERIOD, float64 on the CPU → mm precision) and altitude (m)
 import { sstep } from '../planet/noise.js';
@@ -93,7 +94,7 @@ export function buildChunk(gen, job) {
   const Hh = new Float64Array(G * G);         // heights
   const info = {};
   const nInt = N * N;
-  const infoArr = new Float32Array(nInt * 7);
+  const infoArr = new Float32Array(nInt * 8);
   for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
     const k = j * G + i;
     cubeDir(face, u0 + (i - 1) * step, v0 + (j - 1) * step, D, k * 3);
@@ -102,7 +103,7 @@ export function buildChunk(gen, job) {
     if (interior) {
       const h = gen.evaluate(x, y, z, lod, info);
       Hh[k] = h;
-      const vi = (j - 1) * N + (i - 1), o = vi * 7;
+      const vi = (j - 1) * N + (i - 1), o = vi * 8;
       infoArr[o] = info.rock > info.cliff ? info.rock : info.cliff;
       infoArr[o + 1] = info.sand;
       infoArr[o + 2] = info.c;
@@ -110,6 +111,7 @@ export function buildChunk(gen, job) {
       infoArr[o + 4] = info.glacier || 0;
       infoArr[o + 5] = info.mtn;
       infoArr[o + 6] = info.dune || 0;
+      infoArr[o + 7] = info.talus || 0;
     } else {
       Hh[k] = gen.evaluate(x, y, z, lod, null);
     }
@@ -140,6 +142,7 @@ export function buildChunk(gen, job) {
   const nrmP = new Int8Array(VN * 4);
   const mat = new Uint8Array(VN * 4);
   const mat2 = new Uint8Array(VN * 4);
+  const mat3 = new Uint8Array(VN * 4);
   const uvw = new Float32Array(VN * 3);
   // cube-face coordinates in metres (arc length along the face's central great circles)
   const UM = R * Math.PI / 4;
@@ -204,10 +207,19 @@ export function buildChunk(gen, job) {
     const mm = mdx * mdx + mdy * mdy + mdz * mdz; if (mm > mmax) mmax = mm;
     nrmP[v * 4] = q8(mx); nrmP[v * 4 + 1] = q8(my); nrmP[v * 4 + 2] = q8(mz);
     // material hints
-    const o = v * 7;
+    const o = v * 8;
     gen.climate(dx, dy, dz, h, infoArr[o + 2], clim);
-    const lap = (Hh[kl] + Hh[kr] + Hh[kd] + Hh[ku] - 4 * h) / Math.max(0.3, spacing);
-    const curv = Math.tanh(lap * 1.2);
+    // curvature = offset of the vertex from its neighbourhood mean measured ALONG THE NORMAL
+    // ((hMean - h) · cos θ), relative to the vertex spacing; 3×3 kernel (edges 1, corners 0.5).
+    // The old raw height Laplacian exploded on walls: a horizontal wobble Δx of an 84° face is a
+    // height change of 10·Δx, so curvature saturated to ±1 and alternated from one vertex column
+    // to the next → cavity / crest / AO / talus / streak masks drew fine vertical "comb" lines on
+    // every cliff (and contour stripes on terraced slopes).
+    const sp = Math.max(0.3, spacing);
+    const hm = (Hh[kl] + Hh[kr] + Hh[kd] + Hh[ku] + 0.5 * (Hh[kd - 1] + Hh[kd + 1] + Hh[ku - 1] + Hh[ku + 1])) / 6;
+    const gx = (Hh[kr] - Hh[kl]) / (2 * sp), gy = (Hh[ku] - Hh[kd]) / (2 * sp);
+    const cosT = 1 / Math.sqrt(1 + gx * gx + gy * gy);
+    const curv = Math.tanh(((hm - h) * cosT / sp) * 3.6);
     mat[v * 4] = u8(infoArr[o]);
     mat[v * 4 + 1] = u8(Math.max(infoArr[o + 1], infoArr[o + 6]));
     mat[v * 4 + 2] = u8((clim.temperature + 0.5) / 1.8);
@@ -216,6 +228,7 @@ export function buildChunk(gen, job) {
     mat2[v * 4 + 1] = u8(infoArr[o + 4]);
     mat2[v * 4 + 2] = u8(0.5 + 0.5 * curv);
     mat2[v * 4 + 3] = u8(sstep(0, 1, infoArr[o + 5]));
+    mat3[v * 4] = u8(infoArr[o + 7]);
   }
   // ---- skirt ring: copies of the edge vertices. They keep the EDGE position (so shading, shadow
   //      lookups, altitude tints are exactly those of the edge — a crack filled by a skirt is then
@@ -233,15 +246,15 @@ export function buildChunk(gen, job) {
     for (let c = 0; c < 4; c++) {
       morph[v * 4 + c] = morph[src * 4 + c];
       nrm[v * 4 + c] = nrm[src * 4 + c]; nrmP[v * 4 + c] = nrmP[src * 4 + c];
-      mat[v * 4 + c] = mat[src * 4 + c]; mat2[v * 4 + c] = mat2[src * 4 + c];
+      mat[v * 4 + c] = mat[src * 4 + c]; mat2[v * 4 + c] = mat2[src * 4 + c]; mat3[v * 4 + c] = mat3[src * 4 + c];
     }
     nrmP[v * 4 + 3] = skirtCode;
     uvw[v * 3] = uvw[src * 3]; uvw[v * 3 + 1] = uvw[src * 3 + 1]; uvw[v * 3 + 2] = uvw[src * 3 + 2];
   }
   const radius = Math.sqrt(r2max) + Math.sqrt(mmax) + skirt;
-  return { center: [cx, cy, cz], radius, hMin, hMax, spacing, pos, morph, nrm, nrmP, mat, mat2, uvw };
+  return { center: [cx, cy, cz], radius, hMin, hMax, spacing, pos, morph, nrm, nrmP, mat, mat2, mat3, uvw };
 }
 
 export function transferList(r) {
-  return [r.pos.buffer, r.morph.buffer, r.nrm.buffer, r.nrmP.buffer, r.mat.buffer, r.mat2.buffer, r.uvw.buffer];
+  return [r.pos.buffer, r.morph.buffer, r.nrm.buffer, r.nrmP.buffer, r.mat.buffer, r.mat2.buffer, r.mat3.buffer, r.uvw.buffer];
 }

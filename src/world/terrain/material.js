@@ -30,12 +30,14 @@ attribute vec4 aMorphN;  // xyz parent normal, w > 0: skirt vertex (log2-encoded
 uniform vec3 uRvPlanetC;
 attribute vec4 aMat;
 attribute vec4 aMat2;
+attribute vec4 aMat3;    // talus / rubble apron · reserved
 attribute vec3 aUV;      // local texture frame: face u, v (m, per-chunk multiple of P removed) + altitude
 varying vec3 vRvUV;
 varying vec3 vRvW;
 varying vec3 vRvN;
 varying vec4 vRvMat;
 varying vec4 vRvMat2;
+varying float vRvTalus;
 `;
 
 const VERT_NORMAL = /* glsl */`
@@ -45,6 +47,7 @@ vec3 objectNormal = normalize( mix( normal, aMorphN.xyz, rvK ) );
 vRvN = objectNormal;
 vRvMat = aMat;
 vRvMat2 = aMat2;
+vRvTalus = aMat3.x;
 vRvUV = vec3( aUV.xy, aUV.z + dot( aMorph.xyz, normalize( rvW0.xyz - uRvPlanetC ) ) * rvK );
 `;
 
@@ -82,6 +85,7 @@ varying vec3 vRvW;
 varying vec3 vRvN;
 varying vec4 vRvMat;
 varying vec4 vRvMat2;
+varying float vRvTalus;
 varying vec3 vRvUV;
 
 vec3 rvN; float rvRough; float rvAO; vec3 rvEmis; bool rvStoch;
@@ -186,7 +190,12 @@ void rvTerrain( inout vec3 albedo ) {
   float wRock = clamp( max( rockS, rockA * 0.95 ), 0.0, 1.0 );
   float dryness = smoothstep( 0.3, 0.08, moist + 0.12 * n1 ) * ( 1.0 - 0.6 * uRvS2.x );
   // (sand edge distorted by two noise scales: no contour-following hard line between sand and grass)
-  float wSand = clamp( ( max( sandA, dryness * 0.9 ) + 0.28 * n4 + 0.18 * ( mC.r - 0.5 ) ) * ( 1.0 - rockS ), 0.0, 1.0 );
+  // rubble aprons at the foot of mesa / plateau / canyon walls (generator hint), noise-broken edge
+  float talusW = smoothstep( 0.25, 0.65, vRvTalus + 0.35 * ( mC.b - 0.5 ) + 0.25 * n4 ) * ( 1.0 - rockS );
+  // steep shores get dark shingle / boulders instead of a bright sand line drawn along the contour
+  // (beaches only where the shore is gentle; the beach band also widens/narrows with noise)
+  float shingle = sea > -1e8 ? smoothstep( 0.03, 0.09, slope + 0.03 * n4 ) * ( 1.0 - smoothstep( 2.5 + 3.0 * ( mC.r - 0.3 ), 9.0, hs ) ) * smoothstep( -6.0, -1.0, hs ) : 0.0;
+  float wSand = clamp( ( max( sandA, dryness * 0.9 ) + 0.28 * n4 + 0.18 * ( mC.r - 0.5 ) ) * ( 1.0 - rockS ) * ( 1.0 - 0.8 * talusW ) * ( 1.0 - 0.85 * shingle ), 0.0, 1.0 );
   float coldness = smoothstep( 0.12, -0.08, temp + 0.10 * n2 + 0.05 * n4 );
   float snowPot = clamp( coldness + glac * 0.7 + uRvS.y + uRvS2.w, 0.0, 1.0 );
   // talus / scree aprons: 30-40° concave slopes below rock (cliff feet, mountain flanks)
@@ -195,7 +204,7 @@ void rvTerrain( inout vec3 albedo ) {
   float wTalus = smoothstep( 0.07, 0.15, slope ) * ( 1.0 - rockS ) * nearRock * smoothstep( 0.05, 0.5, curv + 0.3 * n4 + 0.25 * ( mC.b - 0.5 ) ) * ( 1.0 - 0.8 * meadow0 );
   // gravel / pebble patches on gentle ground (dry soil, around outcrops, worn paths)
   float wPebG = smoothstep( 0.74, 0.9, mC.b * 0.5 + mA.r * 0.25 + 0.3 * n3 + 0.3 * rockA + 0.15 * n4 ) * ( 1.0 - rockS ) * ( 1.0 - 0.9 * meadow0 );
-  float wScree = clamp( max( wTalus, wPebG * 0.75 ) + wetA * 0.5, 0.0, 1.0 );
+  float wScree = clamp( max( max( wTalus, talusW ), max( wPebG * 0.75, shingle * 0.9 ) ) + wetA * 0.5, 0.0, 1.0 );
   float wGround = ( 1.0 - wRock ) * ( 1.0 - wSand );
 
   vec3 gradT = vec3( 0.0 );
@@ -258,8 +267,9 @@ void rvTerrain( inout vec3 albedo ) {
   }
   // ---- ground layers: projected along the planet's up (one axis loop for all of them)
   if ( wRock < 0.9 && fMid > 0.0 ) {
-    vec4 aG = vec4( 0.0 ), aGn = vec4( 0.0 ), aS = vec4( 0.0 ), aW = vec4( 0.0 ), aP = vec4( 0.0 );
-    vec3 gG = vec3( 0.0 ), gGn = vec3( 0.0 ), gS = vec3( 0.0 ), gW = vec3( 0.0 ), gP = vec3( 0.0 ); float ws = 0.0;
+    vec4 aG = vec4( 0.0 ), aGn = vec4( 0.0 ), aS = vec4( 0.0 ), aW = vec4( 0.0 ), aP = vec4( 0.0 ), aSn = vec4( 0.0 ), aGr = vec4( 0.0 );
+    vec3 gG = vec3( 0.0 ), gGn = vec3( 0.0 ), gS = vec3( 0.0 ), gW = vec3( 0.0 ), gP = vec3( 0.0 ), gSn = vec3( 0.0 ), gGr = vec3( 0.0 ); float ws = 0.0;
+    bool doU = dist < 14.0 && wRock < 0.7;   // underfoot micro layer (grit, fine ripples): boots / wheels
     bool doS = wSand > 0.02, doW = snowPot > 0.02, doP = wScree > 0.05, doN = fNear > 0.0;
     for ( int a = 0; a < 3; a++ ) {
       float wa = rvWa( a, wu );
@@ -268,15 +278,43 @@ void rvTerrain( inout vec3 albedo ) {
       ws += wa;
       vec4 t = rvFetchS( 1.0, uv * 0.25, gx * 0.25, gy * 0.25, kS, 1.0 ); aG += wa * t; gG += wa * rvGw( a, t.rg * 2.0 - 1.0 );
       if ( doN ) { t = textureGrad( uRvDetail, vec3( uv, 1.0 ), gx, gy ); aGn += wa * t; gGn += wa * rvGw( a, t.rg * 2.0 - 1.0 ); }
+      if ( doU ) {
+        // grit / small stones (pebble layer at 0.6 m: 3-4 cm stones) on soil and sand, and fine
+        // 1 m sand ripples with grains — the ground under boots and rover wheels
+        t = rvTexO( 4.0, uv * 1.7, gx * 1.7, gy * 1.7, floor( kS * 13.0 ) + 7.0, 1.0 ); aGr += wa * t; gGr += wa * rvGw( a, t.rg * 2.0 - 1.0 );
+        if ( doS ) { t = textureGrad( uRvDetail, vec3( uv * 1.0 + 0.37, 2.0 ), gx, gy ); aSn += wa * t; gSn += wa * rvGw( a, t.rg * 2.0 - 1.0 ); }
+      }
       if ( doS ) { t = rvFetchS( 2.0, uv * 0.25, gx * 0.25, gy * 0.25, kS, 0.0 ); aS += wa * t; gS += wa * rvGw( a, t.rg * 2.0 - 1.0 ); }
       if ( doW ) { t = textureGrad( uRvDetail, vec3( uv * 0.125, 3.0 ), gx * 0.125, gy * 0.125 ); aW += wa * t; gW += wa * rvGw( a, t.rg * 2.0 - 1.0 ); }
-      if ( doP ) { t = textureGrad( uRvDetail, vec3( uv * 0.5, 4.0 ), gx * 0.5, gy * 0.5 ); aP += wa * t; gP += wa * rvGw( a, t.rg * 2.0 - 1.0 ); }
+      if ( doP ) {
+        t = textureGrad( uRvDetail, vec3( uv * 0.5, 4.0 ), gx * 0.5, gy * 0.5 );
+        // coarse rubble (0.3-1 m blocks) on talus aprons, on top of the gravel
+        if ( talusW > 0.05 ) {
+          vec4 tc = rvTexO( 4.0, uv * 0.14, gx * 0.14, gy * 0.14, floor( kS * 9.0 ) + 3.0, 1.0 );
+          float kc = talusW * smoothstep( 0.2, 0.5, tc.b );
+          t = mix( t, vec4( tc.rg, max( t.b, tc.b ), tc.a ), kc );
+        }
+        aP += wa * t; gP += wa * rvGw( a, t.rg * 2.0 - 1.0 );
+      }
     }
     float iw = 1.0 / ws;
     dGround = aG * iw; gradT += gG * iw * wGround * 0.5 * fMid;
     if ( doN ) { dGround = mix( dGround, dGround * 0.5 + aGn * iw * 0.5, fNear ); gradT += gGn * iw * wGround * 0.35 * fNear; }
     hGround = mix( 0.5, dGround.b, fMid );
     if ( doS ) { dSand = aS * iw; gradT += gS * iw * wSand * ( 1.0 - wRock ) * 0.5 * fMid * ( 0.25 + 0.75 * ( 1.0 - smoothstep( 40.0, 300.0, dist ) ) ); hSand = mix( 0.5, dSand.b, fMid ); }
+    if ( doU ) {
+      float fU = 1.0 - smoothstep( 6.0, 14.0, dist );
+      // grit: sparse (masked by its own height) so it reads as scattered stones, not a gravel carpet
+      float grit = smoothstep( 0.35, 0.7, aGr.b * iw ) * smoothstep( 0.35, 0.75, mC.a + 0.3 * ( dGround.b - 0.5 ) + 0.2 * wScree );
+      gradT += gGr * iw * grit * ( 1.0 - wRock ) * 0.9 * fU;
+      dGround.a = mix( dGround.a, aGr.a * iw, grit * fU * 0.8 );
+      dPeb = mix( dPeb, aGr * iw, fU * 0.5 );
+      if ( doS ) {
+        gradT += gSn * iw * wSand * ( 1.0 - wRock ) * 0.35 * fU;
+        dSand.a = mix( dSand.a, dSand.a * 0.6 + aSn.a * iw * 0.4, fU );
+        dSand.a = mix( dSand.a, aGr.a * iw * 0.9, grit * fU * 0.5 );
+      }
+    }
     if ( doW ) { dSnow = aW * iw; gradT += gW * iw * snowPot * ( 1.0 - wRock ) * 0.45 * fMid; hSnow = mix( 0.5, dSnow.b, fMid ); }
     if ( doP ) { dPeb = aP * iw; gradT += gP * iw * wScree * ( 1.0 - wRock ) * 0.6 * fMid; }
   }
@@ -298,7 +336,7 @@ void rvTerrain( inout vec3 albedo ) {
   float bi = floor( band ), bf = fract( band );
   // band tone, cross-faded over the top 30 % of each band (hard steps drew crisp jagged lines)
   float bh = mix( fract( sin( bi * 12.9898 + 4.1 ) * 43758.5453 ), fract( sin( ( bi + 1.0 ) * 12.9898 + 4.1 ) * 43758.5453 ), smoothstep( 0.7, 1.0, bf ) );
-  float streakD = 0.0, streakL = 0.0, strA = 0.5, streakM = 0.0, kLay = 0.0;
+  float streakD = 0.0, streakL = 0.0, strA = 0.5, streakM = 0.0, kLay = 0.0, wallTone = 0.0;
   float sideW = wg.x + wg.z;
   // macro drainage stains on big walls (layer 7 at 2 km: 6-50 m wide, 300-1700 m long dark water /
   // varnish streaks that read from kilometres away, like the black streaks on granite big walls)
@@ -308,8 +346,14 @@ void rvTerrain( inout vec3 albedo ) {
     vec4 mx = vec4( 0.0 ), mz = vec4( 0.0 );
     if ( wx > 0.02 ) mx = textureGrad( uRvDetail, vec3( ( L.z + warpM ) / 2048.0 + 0.61, alt / 2048.0, 7.0 ), vec2( dLx.z, dLx.y ) / 2048.0, vec2( dLy.z, dLy.y ) / 2048.0 );
     if ( wz > 0.02 ) mz = textureGrad( uRvDetail, vec3( ( L.x + warpM ) / 2048.0 + 0.13, alt / 2048.0 + 0.47, 7.0 ), vec2( dLx.x, dLx.y ) / 2048.0, vec2( dLy.x, dLy.y ) / 2048.0 );
-    streakM = ( mx.b * wx + mz.b * wz ) * smoothstep( 0.3, 0.6, slope ) * smoothstep( 0.2, 0.55, mA.a + 0.3 * n2 )
+    streakM = ( mx.b * wx + mz.b * wz ) * smoothstep( 0.3, 0.6, slope ) * smoothstep( 0.15, 0.5, mA.a + 0.3 * n2 )
             * ( 1.0 - smoothstep( 20000.0, 40000.0, dist ) );
+    // wall-scale staining: vertically elongated light / dark tone bodies (runoff, lichen, exfoliation
+    // scars; ~150-600 m wide, 3x taller) — big faces are never one flat tone
+    vec4 ox = vec4( 0.5 ), oz = vec4( 0.5 );
+    if ( wx > 0.02 ) ox = textureGrad( uRvDetail, vec3( L.z / 900.0 + 0.27, alt / 2700.0, 5.0 ), vec2( dLx.z / 900.0, dLx.y / 2700.0 ), vec2( dLy.z / 900.0, dLy.y / 2700.0 ) );
+    if ( wz > 0.02 ) oz = textureGrad( uRvDetail, vec3( L.x / 900.0 + 0.71, alt / 2700.0 + 0.33, 5.0 ), vec2( dLx.x / 900.0, dLx.y / 2700.0 ), vec2( dLy.x / 900.0, dLy.y / 2700.0 ) );
+    wallTone = ( ( ox.a * wx + oz.a * wz ) - 0.5 ) * smoothstep( 0.3, 0.6, slope );
   }
   if ( rockS > 0.05 && fFar > 0.0 && sideW > 0.05 ) {
     float wx = wg.x / sideW, wz = wg.z / sideW;
@@ -424,7 +468,9 @@ void rvTerrain( inout vec3 albedo ) {
   // iron / oxide staining on faces: warm broad patches (tens to hundreds of metres) under ledges
   float iron = smoothstep( 0.55, 0.85, mC.r * 0.6 + mA.b * 0.4 + 0.25 * n3 ) * smoothstep( 0.25, 0.5, slope ) * ( 0.5 + 0.5 * clamp( curv * 2.0, 0.0, 1.0 ) );
   rockC = mix( rockC, rvLum( rockC ) * vec3( 1.35, 0.95, 0.68 ), iron * 0.6 );
-  rockC *= 1.0 - 0.5 * clamp( streakM * 1.5, 0.0, 1.0 );
+  // wall tone bodies: pale (fresh exfoliation scars) vs dark cool (seeps, lichen) — ±30 % value
+  rockC *= mix( vec3( 1.0 ), wallTone > 0.0 ? vec3( 1.32, 1.26, 1.18 ) : vec3( 0.62, 0.66, 0.72 ), clamp( abs( wallTone ) * 4.2, 0.0, 1.0 ) );
+  rockC *= 1.0 - 0.62 * clamp( streakM * 1.8, 0.0, 1.0 );
   // drainage streaks: dark varnish (slightly warm) and rarer pale mineral streaks
   rockC = mix( rockC, rockC * vec3( 0.6, 0.56, 0.52 ), clamp( streakD * ( 0.35 + 0.4 * sk ), 0.0, 0.6 ) );
   rockC = mix( rockC, rockC * 1.12 + vec3( 0.02 ), clamp( streakL * 0.3, 0.0, 0.25 ) );

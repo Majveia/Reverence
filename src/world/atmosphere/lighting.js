@@ -170,6 +170,7 @@ uniform float uCloudCover;
 uniform vec3 uCloudLight;
 uniform vec3 uCloudShade;
 uniform vec3 uNightAmb;     // art-directed "readable night" ambient radiance (upper hemisphere)
+uniform vec3 uShine;        // airless bodies: planetshine / earthshine from the brightest body in the sky (uMoonDir) + starlight floor
 varying vec3 vDir;
 void main(){
   vec3 dir = normalize(vDir);
@@ -207,6 +208,8 @@ void main(){
     L += (uNightSky * (0.45 + 0.18 * airmass) + uMoonSky * (atmo_phaseRayleigh(mnu) * (0.6 + 0.15 * airmass) + 0.35 * atmo_phaseHG(mnu, 0.8))) * inside;
     // cloud deck (smooth approximation of the volumetric layer for reflections / ambient)
     L += uNightAmb * (0.6 + 0.4 * cz) * inside;
+    // planetshine on airless bodies (no sky: shadowed regolith would be pure black otherwise)
+    L += uShine * (0.25 + 0.75 * max(mnu, 0.0) * max(mnu, 0.0)) * (1.0 - uHasAtmo);
     float cov = uCloudCover * smoothstep(-0.02, 0.25, dot(dir, up)) * inside;
     vec3 cl = mix(uCloudShade, uCloudLight, 0.5 + 0.5 * nu);
     L = mix(L, cl, cov);
@@ -280,6 +283,7 @@ export class Lighting {
       uCloudLight: { value: new THREE.Vector3(1, 1, 1) },
       uCloudShade: { value: new THREE.Vector3(0.5, 0.5, 0.5) },
       uNightAmb: { value: new THREE.Vector3() },
+      uShine: { value: new THREE.Vector3() },
       ...atmo.atmoUniforms,
     };
     this.envMat = new THREE.ShaderMaterial({ vertexShader: ENV_VERT, fragmentShader: ENV_FRAG, uniforms: this.envU, side: THREE.BackSide, depthWrite: false, depthTest: false });
@@ -440,6 +444,12 @@ export class Lighting {
     this.envU.uGroundIrr.value.set(sky[0] / E, sky[1] / E, sky[2] / E).multiplyScalar(1);
     this.envU.uCamPlanet.value.copy(camLocal).multiplyScalar(Math.min(camR, model.Rb + model.height * 0.5) / Math.max(camR, 1));
     this.envU.uNightAmb.value.set(nightAmb.r, nightAmb.g, nightAmb.b).multiplyScalar(0.55 / Math.PI);
+    // airless bodies: earthshine / planetshine (the lit parent planet or a bright moon) + a starlight floor,
+    // so shadowed regolith reads instead of crushing to black (terrain request)
+    if (!model.present) {
+      const sh = moon.ill * E * 0.35 / Math.PI + E * 0.0012;
+      this.envU.uShine.value.set(sh * 0.92, sh * 0.96, sh);
+    } else this.envU.uShine.value.set(0, 0, 0);
     // cloud deck seen from below (env map / reflections): shaded bases, silver toward the sun
     const cl = this.atmo.clouds;
     const cover = cl?.present ? THREE.MathUtils.clamp(cl.meanCover * 0.55 + (weather?.coverBoost || 0) * 0.9, 0, 0.95) : 0;

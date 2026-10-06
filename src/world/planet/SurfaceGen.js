@@ -638,7 +638,7 @@ export class SurfaceGen {
     }
     if (info && k > 0) {
       const kk = 1 - k;
-      info.rock *= kk; info.cliff *= kk; info.river *= kk; info.lake *= kk; info.dune *= kk; info.sand *= kk;
+      info.rock *= kk; info.cliff *= kk; info.river *= kk; info.lake *= kk; info.dune *= kk; info.sand *= kk; if (info.talus) info.talus *= kk;
     }
     return out;
   }
@@ -649,7 +649,7 @@ export class SurfaceGen {
     const px = g[0], py = g[1], pz = g[2];
     let c = this._continent(px, py, pz, lod) - this.oceanBias;
     const nF = this.nF, nH = this.nH;
-    let rock = 0, sand = 0, river = 0, lake = 0, cliff = 0, dune = 0, glacier = 0;
+    let rock = 0, sand = 0, river = 0, lake = 0, cliff = 0, dune = 0, glacier = 0, talus = 0;
 
     // ---- coastal cliffs along a perturbed coastline (before the base profile)
     let cliffMask = 0;
@@ -739,6 +739,7 @@ export class SurfaceGen {
       }
     }
 
+    const steepM = steep;   // mountain-face part of the steep hint (see the 3D wall relief)
     // ---- plateaus (large tablelands) and mesas (isolated buttes), with strata terraces
     if ((st.plateaus > 0 || st.mesas > 0) && c > -0.02) {
       const inland = sstep(0.02, 0.12, c);
@@ -752,6 +753,9 @@ export class SurfaceGen {
         const add = st.plateauH * (p1 + 0.8 * p2) * reg * inland;
         h += add;
         const cl = Math.min(1, SurfaceGen.band(v1, -1.0, -0.8, -0.02, 0.06) + SurfaceGen.band(v2, -1.0, -0.8, -0.02, 0.06)) * reg * inland;
+        // rubble apron at the cliff foot (the concave part of the mesa profile)
+        const ta = Math.min(1, SurfaceGen.band(v1, -2.2, -1.75, -0.95, -0.7) + SurfaceGen.band(v2, -2.2, -1.75, -0.95, -0.7)) * reg * inland;
+        if (ta > talus) talus = ta;
         if (cl * 0.9 > steep) { steep = cl * 0.9; wallH = Math.max(wallH, st.plateauH); }
         if (cl > cliff) cliff = cl;
         if (cl > rock) rock = cl;
@@ -766,6 +770,8 @@ export class SurfaceGen {
         const mh = st.plateauH * (1.2 + 0.8 * sstep(-1, 1, nF.n3(px * f * 0.3, py * f * 0.3 + 3, pz * f * 0.3)));
         h += mh * p * reg * inland;
         const cl = SurfaceGen.band(v, -1.0, -0.8, 0.02, 0.12) * reg * inland;
+        const ta = SurfaceGen.band(v, -2.2, -1.75, -0.95, -0.7) * reg * inland;
+        if (ta > talus) talus = ta;
         if (cl * 0.9 > steep) { steep = cl * 0.9; wallH = Math.max(wallH, mh); }
         if (cl > cliff) cliff = cl;
         if (cl > rock) rock = cl;
@@ -789,9 +795,15 @@ export class SurfaceGen {
           const tv = (v - 0.18) / 0.82;
           prof = 1 - (SurfaceGen.terrace(tv, 5, 0.42) * (1 - mtn) + sstep(0, 1, tv) * mtn);
         }
-        const carve = st.canyonDepth * reg * prof;
+        // debris apron at the foot of the walls: a concave rubble ramp instead of a crisp floor/wall
+        // corner (tapers out up the wall so the rim is unchanged)
+        const ap = sstep(0.08, 0.3, v);
+        const apron = st.canyonDepth * reg * 0.075 * ap * ap * (1 - sstep(0.3, 0.9, v)) * (1 - mtn);
+        const carve = st.canyonDepth * reg * prof - apron;
         const floor = this.hasOcean ? Math.min(h, 4) : -1e9;
         h = Math.max(h - carve, floor);
+        const ta = SurfaceGen.band(v, 0.07, 0.16, 0.27, 0.36) * reg * (1 - 0.6 * mtn);
+        if (ta > talus) talus = ta;
         const wall = SurfaceGen.band(v, 0.1, 0.2, 0.85, 1.0) * reg;
         if (wall * 0.8 > steep) { steep = wall * 0.8; wallH = Math.max(wallH, st.canyonDepth); }
         if (wall > rock) rock = wall;
@@ -922,7 +934,9 @@ export class SurfaceGen {
         const k = sstep(-0.0005, 0.0012, c + jag);
         const ch = (25 + 60 * sstep(-0.3, 0.7, nF.n3(px * 30, py * 30, pz * 30))) * cliffMask;
         h = Math.max(h, h * (1 - k) + (Math.max(h, 0) + ch) * k);
-        const cb = SurfaceGen.band(c, -0.0015, -0.0008, 0.003, 0.005) * cliffMask;
+        // (rock hint = the riser itself: same jagged coordinate as k, ending just past its top — the old band
+        //  ignored the ±0.0025 jag and ran far inland: wide "rock" strips painted on gentle meadows)
+        const cb = SurfaceGen.band(c + jag, -0.0015, -0.0008, 0.0011, 0.0019) * cliffMask;
         if (cb > rock) rock = cb;
         if (cb > cliff) cliff = cb;
       }
@@ -1083,7 +1097,13 @@ export class SurfaceGen {
     //      Bounded so the profile never folds over (|dΔh/dh| ≲ 0.8).
     // (weight: generator cliff/steep hints, or the measured slope of the mountain surface itself —
     //  mountain walls reach slope 10 (84°) long before the range mask counts them as "steep")
-    let wr = steep > cliff * 0.85 ? steep : cliff * 0.85;
+    // (mountain "steep" is the LARGE-SCALE slope of the range, which starts at ~27°: on its own it
+    //  terraced 30-45° meadow flanks at the foot of ranges into rice-paddy steps. Mountain walls only
+    //  count from ~48° (full at ~63°) of that slope; mesa / plateau / canyon walls keep their hints.)
+    const steepO = steep > steepM ? steep : 0;
+    const wM = steepM * sstep(1.1, 2.0, wallS);
+    let wr = wM > steepO ? wM : steepO;
+    if (cliff * 0.85 > wr) wr = cliff * 0.85;
     const wS = sstep(1.6, 3.2, wallS);
     if (wS > wr) wr = wS;
     if (this.cfg.dbg & 2) wr = 0;
@@ -1168,7 +1188,7 @@ export class SurfaceGen {
     if (info) {
       info.c = c; info.land = land; info.mtn = mtn; info.rock = rock; info.sand = sand;
       info.river = river; info.lake = lake; info.cliff = cliff; info.dune = dune; info.glacier = glacier;
-      info.steep = steep; info.wallS = wallS;
+      info.steep = steep; info.wallS = wallS; info.talus = talus;
     }
     return h;
   }
@@ -1219,7 +1239,8 @@ export class SurfaceGen {
   /**
    * Point query used by flora / civ / fauna placement.
    * out: { height, biome, moisture, temperature, slope (0 flat..1 vertical; only if withSlope),
-   *        rock, sand, snow, cliff, river, lake, mountain, continental }
+   *        rock, sand, snow, cliff, river, lake, mountain, continental, dune,
+   *        talus (0..1: rubble / scree apron at the foot of mesa, plateau and canyon walls) }
    */
   sample(x, y, z, out = {}, withSlope = true) {
     const info = this._info;
@@ -1227,7 +1248,7 @@ export class SurfaceGen {
     this.climate(x, y, z, h, info.c, out);
     out.height = h;
     out.rock = info.rock; out.sand = info.sand; out.cliff = info.cliff; out.river = info.river; out.lake = info.lake;
-    out.mountain = info.mtn; out.continental = info.c; out.dune = info.dune;
+    out.mountain = info.mtn; out.continental = info.c; out.dune = info.dune; out.talus = info.talus || 0;
     if (withSlope) {
       // finite differences over ~1.5 m on a tangent frame
       const e = 1.5 / this.R;

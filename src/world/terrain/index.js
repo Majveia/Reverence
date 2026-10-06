@@ -360,6 +360,7 @@ class Terrain {
     g.setAttribute('aMorphN', new THREE.BufferAttribute(m.nrmP, 4, true));
     g.setAttribute('aMat', new THREE.BufferAttribute(m.mat, 4, true));
     g.setAttribute('aMat2', new THREE.BufferAttribute(m.mat2, 4, true));
+    if (m.mat3) g.setAttribute('aMat3', new THREE.BufferAttribute(m.mat3, 4, true));
     g.setAttribute('aUV', new THREE.BufferAttribute(m.uvw, 3));
     g.setIndex(this.index);
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), m.radius);

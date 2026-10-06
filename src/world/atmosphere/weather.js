@@ -62,7 +62,7 @@ void main(){
   vViewZ = -mv.z;
   vQ = position.xy;
   float d = length(rel);
-  vFade = smoothstep(uKind < 0.5 ? 1.2 : 0.3, uKind < 0.5 ? 4.0 : 1.5, d) * (1.0 - smoothstep(uBox * 0.3, uBox * 0.5, d));
+  vFade = smoothstep(uKind < 0.5 ? 1.8 : 0.3, uKind < 0.5 ? 6.0 : 1.5, d) * (1.0 - smoothstep(uBox * 0.3, uBox * 0.5, d));
   // far sheet: only beyond the near volume, fading in (one continuous curtain of rain into the distance)
   if (uSheet > 0.5) vFade = smoothstep(9.0, 16.0, d) * (1.0 - smoothstep(uBox * 0.3, uBox * 0.5, d));
   gl_Position = projectionMatrix * mv;
@@ -137,7 +137,7 @@ export class Weather {
 
     // ---- particles
     const q = w.quality;
-    const n = { low: 1400, med: 3000, high: 6000, ultra: 10000 }[q.tier] ?? 6000;
+    const n = { low: 2400, med: 6000, high: 12000, ultra: 16000 }[q.tier] ?? 12000;
     this.count = Math.round(n * (q.particleScale ?? 1));
     const geo = new THREE.InstancedBufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute([-1, 0, 0, 1, 0, 0, 1, 1, 0, -1, 1, 0], 3));
@@ -264,7 +264,7 @@ export class Weather {
     const clearing = this.override === 'clear' ? 0.3 : this.override === 'aurora' ? 0.4 : 0;
     st.coverBoost = 0.55 * precip + 0.35 * st.storm + 0.15 * st.dust - clearing;
     // rain falls from a closed deck: the direct sun is mostly blocked (soft, shadowless light under it)
-    st.sunDim = Math.max(0.05, 1 - 1.05 * precip - 0.35 * st.storm - 0.45 * st.dust);
+    st.sunDim = Math.max(0.04, 1 - 1.55 * precip - 0.4 * st.storm - 0.45 * st.dust);
     // surface state
     if (shot) { this.wet = Math.max(st.rain, this.base.rain * 0.3); this.snowCover = Math.max(this.snowCover, st.snow * 0.8, this.cold ? 0.5 : 0); }
     else {
@@ -399,16 +399,16 @@ export class Weather {
     u.uRes.value.set(io.output.width, io.output.height);
     u.uNear.value = cam.near; u.uFar.value = cam.far;
     u.uKind.value = kind;
-    u.uAmount.value = amount < 0.02 ? 0 : clamp(0.15 + amount * 0.85, 0, 1);
+    u.uAmount.value = amount < 0.02 ? 0 : clamp(0.15 + amount * 0.85, 0, 1) * (kind === 0 ? 1 : 0.55); // snow / dust: same density as before the denser rain pool
     const up = _v1.setFromMatrixPosition(cam.matrixWorld).add(this.world.origin).normalize();
     const wind = G.uWindDir.value, ws = G.uWindStrength.value;
     const dt = Math.min(this.world.engine.time.dt || 1 / 60, 0.1);
     let speed, box, width, alpha;
     const amb = G.uAmbientSky.value, sun = G.uSunColor.value;
     if (kind === 0) {
-      speed = 9; box = 26; width = 0.0085; alpha = 0.6;
+      speed = 9; box = 26; width = 0.0065; alpha = 0.5;
       _v2.copy(up).multiplyScalar(-speed).addScaledVector(wind, ws * 6 + 1);
-      u.uFall.value.copy(_v2).multiplyScalar(0.045); // shutter → streak length
+      u.uFall.value.copy(_v2).multiplyScalar(0.032); // shutter → streak length
       // drops are small lenses: they show the (dim, grey) sky, not a white line
       u.uColor.value.setRGB(amb.r * 0.32 + sun.r * 0.03 + 0.02, amb.g * 0.32 + sun.g * 0.03 + 0.023, amb.b * 0.32 + sun.b * 0.03 + 0.028);
     } else if (kind === 1) {
