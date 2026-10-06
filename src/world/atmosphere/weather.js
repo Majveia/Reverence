@@ -406,7 +406,7 @@ export class Weather {
     let speed, box, width, alpha;
     const amb = G.uAmbientSky.value, sun = G.uSunColor.value;
     if (kind === 0) {
-      speed = 9; box = 26; width = 0.011; alpha = 0.6;
+      speed = 9; box = 26; width = 0.0085; alpha = 0.6;
       _v2.copy(up).multiplyScalar(-speed).addScaledVector(wind, ws * 6 + 1);
       u.uFall.value.copy(_v2).multiplyScalar(0.045); // shutter → streak length
       // drops are small lenses: they show the (dim, grey) sky, not a white line

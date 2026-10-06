@@ -46,8 +46,8 @@ Subsystem `atmosphere` (order 20) auto-loaded by `World`. Every pass is fault-is
 * **Golden hour**: a low-sun humid haze (forward scattering, warm, through the height-fog path) makes backlit
   ridges glow instead of sitting as flat silhouettes; aerial perspective stronger by default (`apScale` 0.4) and
   aerosols concentrated lower (`HM` = 0.28 `HR`): paler horizon band, deeper zenith, far ridges fade.
-* **Rain mood**: rain implies a closed deck: `sunDim` = 1 − 1.05·rain − 0.35·storm (shadowless soft light), rain fog
-  ×2.2; rain streaks have per-drop length / width / opacity / speed variation (no diagonal grid) plus a far rain
+* **Rain mood**: rain implies a closed deck: `sunDim` = 1 − 1.05·rain − 0.35·storm (shadowless soft light), rain haze
+  ×4 but lit by the dark cloud bases (`uFogAmb` × (1 − 0.55·overcast)); rain streaks have per-drop length / width / opacity / speed variation (no diagonal grid) plus a far rain
   sheet (3× volume, fainter) for density into the distance; `&weather=fog|dust` also clear the storm.
 * **Moon**: aerosol aureole around the moon disc (soft white halo).
 
@@ -88,7 +88,7 @@ Subsystem `atmosphere` (order 20) auto-loaded by `World`. Every pass is fault-is
   light on terrain and clouds goes gold → orange → red like on Earth, without extra haze.
 * **Sky gain** (`skyGain = 2.0`): in-scattered light is brightened (sky, aerial perspective, env map,
   CPU ambient all consistent) — game skies are brighter than sunlit ground.
-* **Aerial-perspective scale** (UE-style `apScale` 0.32–0.9 by fog/dust/mood): near the ground geometry
+* **Aerial-perspective scale** (UE-style `apScale` 0.4–0.9 by fog/dust/mood; aerosol scale height `HM` = 0.28 `HR`): near the ground geometry
   and clouds see a lighter veil; it relaxes to fully physical from altitude/space.
 
 ### Cloud types (`body.clouds.type`)
@@ -142,10 +142,11 @@ Finals of this round (1280×720) are listed first; all are plain URLs (steps onl
 | **Golden hour**, warm streaks fanning from behind the ridge (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.74&pitch=6&yaw=270` |
 | **Morning sun through broken cumulus** (W2, god rays / shadow beams) | `star=11&planet=0&view=fly&alt=800&tod=0.28&pitch=8&yaw=100&cover=0.7` |
 | **Storm over the neon city**: dark scud cells, rain, branched lightning (W4) | `star=2&planet=0&view=fly&alt=300&tod=0.45&pitch=6&lightning=1` |
-| **Sea of clouds**, side-lit, peaks piercing the deck (W7 Solaris — Friedrich) | `star=3&planet=2&view=fly&alt=3000&tod=0.28&yaw=180&pitch=-4` |
+| **Sea of clouds**, billowed deck raked by the low sun, gaps to the sea, high rafts above (W7) | `star=3&planet=2&view=fly&alt=3000&tod=0.28&yaw=135&pitch=-4` |
 | **Moonrise night**: moon disc, moonlit wisps, deep-blue starry sky (W3 Arzach) | `star=9&planet=2&view=fly&alt=600&tod=0.02&pitch=8&yaw=283` |
-| **Planet from orbit**: cyclone, fractal cloud fields, sunset-lit terminator clouds (W2) | `star=11&planet=0&view=orbit&tod=0.4` |
-| **Terminator from orbit**: orange band, airglow ring (W1) | `star=6&planet=1&view=orbit&tod=0.22` |
+| **Planet from orbit**: cyclone, soft translucent cloud fields, sunset-lit terminator clouds (W2) | `star=11&planet=0&view=orbit&tod=0.4` |
+| **Terminator from orbit**: orange cloud band, dark night side with city / rural lights, airglow ring (W1) | `star=6&planet=1&view=orbit&tod=0.22` |
+| **Rain in the forest** (W4 surface, overcast, varied streaks, far rain sheet) | `star=2&planet=0&view=surface&tod=0.45&lightning=1&props=0` steps `[{"look":[0,22]},{"advance":0.5}]` |
 | Overcast stratus deck, sun a dim disc through it (W2) | `star=11&planet=0&view=fly&alt=500&tod=0.3&pitch=12&yaw=108&cover=0.75&clouds=stratus` |
 | Rain storm in the forest (W4, surface; framing depends on the player spawn) | `star=2&planet=0&view=surface&tod=0.45&lightning=1` steps `[{"look":[0,22]},{"advance":0.5}]` |
 | Night over the archipelago (W2, moonless) | `star=11&planet=0&view=fly&alt=800&tod=0.02&pitch=12` |
@@ -159,7 +160,7 @@ Framing tips: `__rv.state().atmosphere` reports `sunAz` / `sunElev` and `moon {a
 `yaw` / `pitch` to face the sun or the moon.
 
 **Art / capture overrides:** `&weather=clear|rain|storm|snow|dust|fog|aurora`, `&lightning=1` (forced bolt on
-the captured frame), `&clouds=cumulus|storm|stratus|wisp|haze|fogsea|none`, `&cover=0..1` (cloud coverage).
+the captured frame), `&clouds=cumulus|storm|stratus|wisp|haze|fogsea|none`, `&cover=0..1` (cloud coverage), `&cirrus=0..1` (high cloud layer opacity).
 Debug: `&atmoDebug=5` shows the volumetric-light terms (R: added light, G: shadowed/removed light, B: 1 − T);
 `&shafts=0` disables the volumetric-light pass (A/B); `&clscale=0.25..1` overrides the cloud march resolution.
 `__rv.state().atmosphere` now also reports `moon {name, ill, elev, az}`, `sunAz` (compass, = `yaw` to face
@@ -179,7 +180,17 @@ it) and `overcast`.
   1 column sample and no second detail octave (`CL_HQ` off), 22 volumetric steps; ultra = 4 cascades, 80 steps, 96³ noise, 48 volumetric steps. Zero per-frame
   allocations in hot paths.
 
+* Round 3 costs: high cloud layer = 3 noise fetches + 1 weather fetch per cloud pixel (0 on low); domain warp +1
+  fetch per density evaluation; city glow loops 12 sites only on ground pixels seen from > 2.5 km and on night-sky
+  pixels near towns; the far rain sheet is one extra instanced draw while it rains.
+
 ## Known issues
+* Round 3: the high cloud layer is 2D (no parallax inside it, no self-shadowing); from orbit it fades out.
+* Night-side city glow uses the civ settlement list (12 brightest sites) + procedural rural speckle over land; it
+  does not follow real road networks. Near the ground (< 2.5 km) only civ's own lights show.
+* From orbit the sky ambient (environment map) fades to 10 %: a single probe cannot light a whole disc; shadowed
+  day-side terrain from orbit is therefore lit by the star + the atmosphere pass only.
+* The domain warp adds one 3D-noise fetch per cloud density evaluation (≈ +25 % cloud march cost).
 * Real time: clouds are half res, jittered per frame and converged by the post TAA (no dedicated cloud history
   buffer yet); very fast camera motion can show a little grain on thin edges for a few frames.
 * Volumetric light is quarter res: very thin occluders (a single trunk) give soft shafts; the cloud shadow
@@ -192,6 +203,11 @@ it) and `overcast`.
 * Lightning bolts are camera-facing ribbons (no volumetric glow halo; the cloud flash provides that).
 
 ## Requests
+* **civ** (round 3): in `star=6&planet=1&view=orbit&tod=0.22` two large brown out-of-focus discs float in space left
+  and right of the planet only when civ is loaded (orbit light network points?); please check their far fade.
+* **terrain / flora** (round 3): golden-hour rim light — a wrap / sun-facing Fresnel term on grass and foliage
+  (`G.uSunDir`, `G.uSunColor`) would make backlit meadows glow like Pacific Drive; the atmosphere now supplies the
+  warm forward-scattering haze.
 * **post**: the atmosphere writes physically based HDR (sun ≈ 6, sky ≈ 0.3–1.2, moonless night sky
   ≈ 0.005–0.02): keep auto-exposure's night drop moderate so the deep-blue night gradient stays visible;
   lens rain droplets during storms look good — consider keying them to `G.uWetness` *and* camera altitude
@@ -215,6 +231,15 @@ it) and `overcast`.
   On airless bodies the atmosphere pass is a strict pass-through (`uHasAtmo = 0`), no LUTs/clouds/shafts
   are created, and the key light is valid (white sun, env map present — checked in-page). Please look at
   the terrain material path for barren bodies (or the camera spawn inside terrain).
+
+### Done (inbox, round 3)
+* vehicles: rain streaks have per-drop spacing / length / width / opacity / speed variation and fade with distance,
+  plus a far rain sheet; `&weather=fog` and `&weather=dust` zero the storm (and rain).
+* vehicles: W4 deck from low orbit has soft translucent fields, cells and gaps; city glow shows through the gaps at night.
+* terrain / water: clouds fade softly within ~260 m of terrain (no cut-outs against fjord walls) and toward the end
+  of the march range (no hard edge / rectangle near the horizon).
+* civ (2): storm/rain haze is darker and thinner (lit by the cloud bases): no white-out of valleys; (1) night ambient
+  differences between W1/W7 and W4 come from their moons (W4 has none up): kept by design.
 
 ### Done (inbox, round 2)
 * audio: `weather.boltDist` / `boltTime` + `weather:lightning` event.
