@@ -176,7 +176,10 @@ export class Menu {
     if (tier === this.engine.quality?.tier || this.engine.shot) return;
     const st = this.ui.shareState();
     st.q = tier;
-    location.href = location.pathname + buildQuery(st);
+    // reload at the same place via the hash: embedded hosts (artifact previews, file shares) may drop ?query
+    const q = buildQuery(st).slice(1);
+    try { history.replaceState(null, '', location.pathname + '#' + q); location.reload(); }
+    catch (_) { location.href = location.pathname + '?' + q; }
   }
 
   // keyboard / gamepad navigation inside the menu

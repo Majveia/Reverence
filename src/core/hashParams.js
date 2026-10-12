@@ -5,7 +5,7 @@ try {
   const h = location.hash.slice(1);
   if (h.includes('=')) {
     const q = new URLSearchParams(location.search);
-    for (const [k, v] of new URLSearchParams(h)) if (!q.has(k)) q.set(k, v);
+    for (const [k, v] of new URLSearchParams(h)) q.set(k, v); // the hash wins: it is the newer request (e.g. menu quality change)
     const next = location.pathname + '?' + q.toString();
     try { history.replaceState(history.state, '', next); } catch (_) { location.replace(next); }
   }
