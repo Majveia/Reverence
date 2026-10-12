@@ -91,14 +91,36 @@ const skyMat = new THREE.ShaderMaterial({
   uniforms: { uSun: { value: sunDir }, uWarm: { value: warm } },
   vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }',
   fragmentShader: `varying vec3 vD; uniform vec3 uSun; uniform float uWarm;
+    float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+    float fbm(vec2 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++) { s += a * vn(p); p = p * 2.03 + 7.1; a *= 0.5; } return s; }
     void main(){
-      float h = vD.y;
+      vec3 d = normalize(vD);
+      float h = d.y;
       vec3 zen = vec3(0.13, 0.3, 0.62), hor = mix(vec3(0.62, 0.74, 0.88), vec3(0.95, 0.72, 0.5), uWarm * 0.8);
-      vec3 grd = vec3(0.18, 0.16, 0.13);
       vec3 c = mix(hor, zen, pow(clamp(h, 0., 1.), 0.55));
-      c = mix(grd, c, smoothstep(-0.04, 0.02, h));
-      float s = max(dot(vD, uSun), 0.);
+      float s = max(dot(d, uSun), 0.);
+      // cumulus deck (planar projection), lit toward the sun, grey bases
+      if (h > 0.0) {
+        vec2 uv = d.xz / (h + 0.08) * 1.4;
+        float n = fbm(uv * 1.3 + 3.0);
+        float cl = smoothstep(0.52, 0.78, n) * smoothstep(0.0, 0.12, h);
+        float lit = 0.65 + 0.35 * smoothstep(0.4, 0.9, fbm(uv * 1.3 + 3.0 + uSun.xz * 0.15));
+        vec3 cc = mix(vec3(0.55, 0.58, 0.66), mix(vec3(1.0), vec3(1.0, 0.85, 0.7), uWarm), lit) * (0.9 + 0.5 * pow(s, 6.0));
+        c = mix(c, cc, cl * 0.9);
+      }
       c += vec3(1.0, 0.8, 0.55) * (pow(s, 8.) * 0.35 + pow(s, 64.) * 0.6) * (0.6 + uWarm);
+      // distant mountain range (hazy layers) on the horizon
+      float az = atan(d.z, d.x);
+      float m1 = 0.012 + 0.05 * pow(vn(vec2(az * 2.2, 1.0)), 1.6) + 0.018 * vn(vec2(az * 9.0, 4.0));
+      float m2 = 0.006 + 0.028 * vn(vec2(az * 4.1 + 5.0, 2.0)) + 0.01 * vn(vec2(az * 17.0, 9.0));
+      vec3 haze = hor * 0.92;
+      c = mix(c, mix(vec3(0.36, 0.42, 0.5), haze, 0.55), smoothstep(m1 + 0.002, m1 - 0.002, h) * step(-0.02, h));
+      c = mix(c, mix(vec3(0.3, 0.36, 0.38), haze, 0.4), smoothstep(m2 + 0.002, m2 - 0.002, h) * step(-0.02, h));
+      // sea toward the nadir (the lab world is an island)
+      vec3 sea = mix(vec3(0.06, 0.16, 0.24), hor * 0.7, exp(-max(-h, 0.0) * 18.0));
+      c = mix(sea, c, smoothstep(-0.004, 0.002, h));
       c += vec3(40.) * smoothstep(0.9994, 0.9997, s);
       gl_FragColor = vec4(c, 1.);
     }`,
@@ -150,7 +172,7 @@ scene.add(sun, sun.target);
   const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92 }));
   m.receiveShadow = true; m.castShadow = true;
   scene.add(m);
-  const sea = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x1d4a66, roughness: 0.08, metalness: 0, transparent: true, opacity: 0.82 }));
+  const sea = new THREE.Mesh(new THREE.CircleGeometry(6000, 64), new THREE.MeshStandardMaterial({ color: 0x1d4a66, roughness: 0.08, metalness: 0, transparent: true, opacity: 0.82 }));
   sea.rotation.x = -Math.PI / 2; sea.position.y = SEA - 0.02;
   sea.receiveShadow = true;
   scene.add(sea);

@@ -308,6 +308,7 @@ export class Lighting {
     this.skyIrr = [0, 0, 0]; this.groundRad = [0, 0, 0];
     this.nightFactor = 0;
     this.envScale = 1;
+    this.deckDim = 1;
     this._matTimer = 0;
     this._t = [1, 1, 1];
     this._candidates = this._moonCandidates();

@@ -136,18 +136,35 @@ export function heroPalette(body) {
 }
 
 // ------------------------------------------------------------------ materials
-function patchLighting(mat, { rim = 0.0, wear = 1, key = 'x' } = {}) {
+/** Shared per-frame lighting context of the suit (fed by the Player): planet up and ground bounce. */
+export const SUIT_LIGHT = {
+  uUpW: { value: new THREE.Vector3(0, 1, 0) },
+  uBounce: { value: new THREE.Color(0.06, 0.055, 0.045) },   // irradiance bounced off the ground below
+  // waterline: world-space plane of the sea surface near the hero; the submerged part of the suit is absorbed
+  // toward the water colour (reads as partially submerged even through a clear water surface), wet sheen line
+  uWaterN: { value: new THREE.Vector3(0, 1, 0) },
+  uWaterP: { value: new THREE.Vector3(0, -1e4, 0) },
+  uWaterOn: { value: 0 },
+  uWaterCol: { value: new THREE.Color(0.02, 0.07, 0.08) },
+};
+
+function patchLighting(mat, { rim = 0.0, sky = 0.2, wear = 1, key = 'x' } = {}) {
   // • stylised rim/back light so silhouettes read against bright skies (BotW / Journey look)
+  // • sky fresnel: grazing angles pick up the sky colour (ties the hero into the world's light)
+  // • ground bounce: the underside of the body is lit by the colour of the terrain below
   // • per-vertex wear from the surface bake (bake.js): dirt roughens and kills the clearcoat,
   //   chipped edges turn glossier / metallic
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uRimStrength = { value: rim };
+    sh.uniforms.uSkyRim = { value: sky };
     sh.uniforms.uWearK = { value: wear };
+    sh.uniforms.uUpW = SUIT_LIGHT.uUpW; sh.uniforms.uBounce = SUIT_LIGHT.uBounce; sh.uniforms.uSkyAmb = G.uAmbientSky;
+    sh.uniforms.uWaterN = SUIT_LIGHT.uWaterN; sh.uniforms.uWaterP = SUIT_LIGHT.uWaterP; sh.uniforms.uWaterOn = SUIT_LIGHT.uWaterOn; sh.uniforms.uWaterCol = SUIT_LIGHT.uWaterCol;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec2 aWear;\nvarying vec2 vWear;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWear = aWear;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uRimStrength; uniform float uWearK;\nvarying vec2 vWear;')
+      .replace('#include <common>', '#include <common>\nuniform float uRimStrength; uniform float uSkyRim; uniform float uWearK; uniform vec3 uUpW; uniform vec3 uBounce; uniform vec3 uSkyAmb;\nuniform vec3 uWaterN; uniform vec3 uWaterP; uniform float uWaterOn; uniform vec3 uWaterCol;\nvarying vec2 vWear;')
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = clamp(roughnessFactor + vWear.x * 0.32 * uWearK - vWear.y * 0.22 * uWearK, 0.04, 1.0);`)
       .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
@@ -160,12 +177,29 @@ function patchLighting(mat, { rim = 0.0, wear = 1, key = 'x' } = {}) {
         {
           vec3 V = normalize(vViewPosition);
           float ndv = clamp(dot(normal, -V), 0.0, 1.0);
-          float rimT = pow(1.0 - ndv, 3.0) * uRimStrength;
+          float fr = pow(1.0 - ndv, 3.0);
+          float rimT = fr * uRimStrength;
           outgoingLight += rimT * (totalDiffuse * 0.6 + diffuseColor.rgb * 0.08);
+          vec3 upV = normalize((viewMatrix * vec4(uUpW, 0.0)).xyz);
+          float nu = dot(normal, upV);
+          // sky fresnel on upward / sideways facing grazing surfaces
+          outgoingLight += fr * uSkyRim * uSkyAmb * (0.35 + 0.65 * clamp(nu * 0.5 + 0.6, 0.0, 1.0)) * (0.2 + 0.8 * diffuseColor.rgb);
+          // warm/cool bounce from the ground under the hero (BotW / Journey colour bleeding)
+          float down = clamp(-nu * 0.6 + 0.4, 0.0, 1.0);
+          outgoingLight += diffuseColor.rgb * uBounce * down * down;
+          if (uWaterOn > 0.5) {
+            vec3 wn = normalize((viewMatrix * vec4(uWaterN, 0.0)).xyz);
+            vec3 wp = (viewMatrix * vec4(uWaterP, 1.0)).xyz;
+            float depth = dot(wn, wp + vViewPosition); // > 0 below the surface
+            float ab = 1.0 - exp(-max(depth, 0.0) * 3.2);
+            outgoingLight = mix(outgoingLight, uWaterCol, clamp(ab * 0.9 + step(0.0, depth) * 0.25, 0.0, 0.95));
+            // wet meniscus line at the waterline
+            outgoingLight += (uSkyAmb * 0.5 + 0.03) * smoothstep(0.035, 0.0, abs(depth)) * 0.8;
+          }
         }
         #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'rv-suit-' + key + '-' + rim;
+  mat.customProgramCacheKey = () => 'rv-suit2-' + key + '-' + rim + '-' + sky;
   return mat;
 }
 
@@ -191,22 +225,25 @@ function patchVisor(mat, P) {
           float ndv = clamp(dot(normal, Vv), 0.0, 1.0);
           float h = dot(Rw, uVUp);
           float fres = 0.22 + 0.78 * pow(1.0 - ndv, 3.0);
-          // crisp "astronaut visor" reflection: bright hazy horizon, deep zenith, dark ground below a
-          // sharp horizon line (the PBR env map alone reads as blotches on a small curved dome)
+          // crisp "astronaut visor" reflection: bright hazy horizon, deep zenith, and a MID-tone ground (never a
+          // black cavity — a dark lower half read as an open mouth), soft horizon, sun glint. The PBR env map
+          // is only a faint layer (its terrain silhouettes read as teeth on a small dome).
           vec3 skyZ = uVSky * 1.5 + 0.02;
-          vec3 skyH = uVSky * 3.4 + uVSun * 0.05 + 0.05;
+          vec3 skyH = uVSky * 3.2 + uVSun * 0.05 + 0.05;
           vec3 sky = mix(skyH, skyZ, smoothstep(0.0, 0.75, h));
-          vec3 grd = mix(uVGround, vec3(dot(uVGround, vec3(0.33))), 0.6) * 0.3 + 0.003;
-          grd *= mix(1.5, 0.3, smoothstep(0.0, -0.5, h));
-          vec3 env = mix(grd, sky, smoothstep(-0.04, 0.04, h));
-          env += (uVSky * 1.2 + uVSun * 0.1) * exp(-abs(h) * 30.0); // horizon glow line
+          float Lh = dot(skyH, vec3(0.3333));
+          vec3 gHue = uVGround / max(dot(uVGround, vec3(0.3333)), 1e-3);
+          gHue = mix(vec3(1.0), clamp(gHue, 0.0, 2.0), 0.55);
+          vec3 grd = gHue * Lh * mix(0.46, 0.2, smoothstep(0.0, -0.75, h));
+          vec3 env = mix(grd, sky, smoothstep(-0.09, 0.05, h));
+          env += (uVSky * 0.8 + uVSun * 0.06) * exp(-abs(h + 0.01) * 16.0); // hazy horizon glow
           float sd = max(dot(Rw, normalize(uVSunDir)), 0.0);
           vec3 spec = uVSun * (pow(sd, 1600.0) * 60.0 + pow(sd, 90.0) * 0.8 + pow(sd, 8.0) * 0.05);
-          outgoingLight = outgoingLight * 0.35 + env * fres * uVTint * 0.8 + spec * mix(uVTint, vec3(1.0), 0.5);
+          outgoingLight = outgoingLight * 0.14 + env * fres * uVTint * 0.95 + spec * mix(uVTint, vec3(1.0), 0.5);
           // soft studio-window glint (reads as a curved glass dome at any distance)
           vec3 Rvn = normalize(Rv);
           float win = smoothstep(0.45, 0.8, Rvn.y) * smoothstep(0.5, 0.12, abs(Rvn.x + 0.3));
-          outgoingLight += uVTint * (uVSky * 1.4 + uVSun * 0.04) * win * 0.5;
+          outgoingLight += uVTint * (uVSky * 1.6 + uVSun * 0.05) * win * 0.85;
           // warm gold interference band near the rim of the dome
           float rimG = pow(1.0 - ndv, 5.0);
           outgoingLight += vec3(1.0, 0.6, 0.18) * rimG * (uVSky * 1.2 + uVSun * 0.1);
@@ -237,9 +274,9 @@ export function makeMaterials(renderer, P, quality) {
     })
     : new THREE.MeshStandardMaterial({ color: new THREE.Color(0.42, 0.26, 0.08), roughness: 0.08, metalness: 1.0, envMapIntensity: 0.45 });
   patchVisor(visor, P);
-  patchLighting(fabric, { rim: 0.6, key: 'fabric' });
-  patchLighting(hard, { rim: 0.8, key: 'hard' });
-  patchLighting(metal, { rim: 0.3, key: 'metal', wear: 0.6 });
+  patchLighting(fabric, { rim: 0.6, sky: 0.16, key: 'fabric' });
+  patchLighting(hard, { rim: 0.8, sky: 0.3, key: 'hard' });
+  patchLighting(metal, { rim: 0.3, sky: 0.12, key: 'metal', wear: 0.6 });
   const mats = { fabric, hard, metal, glow, visor };
   for (const m of Object.values(mats)) { m.name = 'rv-explorer-' + (m.type || ''); }
   return mats;
@@ -362,12 +399,12 @@ export function buildExplorer(renderer, body, quality) {
     }
     // glove: palm, fingers, thumb, knuckle guard
     const hx = x, hz = z + 0.005;
-    { const g = box(0.048, 0.085, 0.086, 0.018); xf(g, hx, 0.8, hz); A.add('fabric', g, P.glove, rigid(ax('hand'))); }
-    { const g = box(0.042, 0.078, 0.08, 0.017); xf(g, hx - side * 0.004, 0.728, hz + 0.004, 0, 0, side * 0.06); A.add('fabric', g, P.glove, rigid(ax('fingers'))); }
+    { const g = box(0.044, 0.078, 0.078, 0.017); xf(g, hx, 0.802, hz); A.add('fabric', g, P.glove, rigid(ax('hand'))); }
+    { const g = box(0.038, 0.07, 0.072, 0.015); xf(g, hx - side * 0.004, 0.733, hz + 0.004, 0, 0, side * 0.06); A.add('fabric', g, P.glove, rigid(ax('fingers'))); }
     { const g = ellipsoid(0.017, 0.035, 0.017, R(10), R(8)); xf(g, hx - side * 0.012, 0.78, hz + 0.05, 0.5, 0, -side * 0.25); A.add('fabric', g, P.glove, rigid(ax('hand'))); }
     { const g = box(0.012, 0.05, 0.07, 0.005); xf(g, hx + side * 0.027, 0.805, hz); A.add('hard', g, P.shell2, rigid(ax('hand'))); }
     // cuff
-    { const g = cylinder(0.046, 0.043, 0.035, R(16)); xf(g, hx, 0.852, hz); A.add('fabric', g, P.glove, rigid(ax('hand'))); }
+    { const g = cylinder(0.043, 0.04, 0.032, R(16)); xf(g, hx, 0.852, hz); A.add('fabric', g, P.glove, rigid(ax('hand'))); }
   };
   buildArm(1); buildArm(-1);
 

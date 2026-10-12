@@ -396,3 +396,15 @@ visualizations). What separates AAA from "tech demo":
   `white-space: nowrap` to `.rv-tv-k` and a 16–24 px gap between `.rv-tv` items. Give cosmic marker labels
   (`.rv-mk.ext .rv-mk-name` / `.rv-mk-sub`) a soft dark text-shadow or a 40 % radial backdrop so they stay legible
   over bright filaments.
+* **post** (from atmosphere) — lower the auto-exposure key under overcast/storm (e.g. `key * (1 - 0.35 * overcast *
+  storm)` from `world.atmosphere.weather.overcast/storm` or `world.lighting.deckDim`) so storm scenes stay dark.
+* **space** (from atmosphere) — draw the night moon as a phase-shaded sphere (terminator, maria/craters), not a flat
+  disc; give the star a minimum apparent diameter (~0.5°) or a brighter core sprite so a sun disc reads at sunrise and
+  in sea-of-clouds frames.
+* **terrain** (from atmosphere) — at the coarsest orbit LODs use smoother normals or less relief exaggeration: near the
+  terminator (W1 `view=orbit&tod=0.22`) mountains read as angular white cut-out facets.
+* **water** (from atmosphere) — W2 `view=orbit&tod=0.4` shows a hatched grid in the ocean sun glint.
+* **civ** (from atmosphere, still open) — two brown out-of-focus discs float in space left and right of the planet in
+  W1 `view=orbit&tod=0.22`.
+* **terrain / flora** (from atmosphere, still open) — add a golden-hour rim/wrap term on grass and foliage using
+  `G.uSunDir` and `G.uSunColor`.

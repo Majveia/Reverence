@@ -240,21 +240,30 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
   under shared load, 761 builds). Out-of-view nodes in shot mode also stop refining below 50 m chunks.
   An offline CDLOD selection simulator (scratch tool) reproduces the chunk counts per URL without a
   browser.
-* **Jointed rock on big faces (critic items 1, 3)**. The terrain shader adds analytic **orthogonal
-  joint sets** on the two vertical planes of the local frame, at 128 m, 32 m and 8 m. Vertical joints
-  form columns that wander slightly with altitude. Sheeting joints form rows whose height (1.2–3.4 ×
-  the column width) and phase change per column. Each block has its own plane tilt, which gives crisp
-  light/dark facets from kilometres away; a heightfield wall cannot hold that relief. Each block also
-  has its own tone (±12 %) and a warm-oxidised or cool-fresh hue. Open joints are sparse (about 40 %
-  of vertical joints and 28 % of sheeting joints) with bevelled, light-catching edges. On
-  massive-rock (non-layered) worlds, some block tops become narrow lit ledges under shadowed
-  overhangs, and these collect snow or moss through the normal. Every term is footprint-faded (no
-  sub-pixel joints) and distance-gated: the 128 m set fades in beyond 0.7–1.6 km, the 32 m set beyond
-  200–550 m and the 8 m set beyond 70–220 m. Up close the baked 8 m / 2 m / 0.5 m rock layers take
-  over; a first Voronoi version read as crackle glaze and crumpled paper there. All periods divide
-  4096 m, so the pattern stays stable across origin shifts.
-* **Less "draped fabric"**: wall tone bodies are now ~1.6:1 instead of 3:1 vertical, and the macro
-  drainage-stain darkening is lowered from −62 % to −45 %.
+* **Rock structure on big faces (critic items 1 and 3)**. The terrain shader adds three analytic
+  layers on the two vertical planes of the local frame. All of them are footprint-faded (nothing
+  sub-pixel, so nothing shimmers), and all periods divide 4096 m so the pattern stays stable across
+  origin shifts.
+  1. **Big polygonal facets**: Voronoi cells 128 m wide and 280 m tall. Each is a rock plane with
+     its own tilt (1.5× stronger beyond 1.2–4 km, where aerial perspective flattens walls), its own
+     tone (±6 %) and its own warm-oxidised or cool-fresh hue. Seams are eased over 12 % of a cell.
+     They fade in from 350–900 m, so on-foot views never see them.
+  2. **Aretes and dihedrals**: creased, piecewise-linear 1D noise across the face at 64 m and 16 m,
+     with short angular kinks along the altitude. They come and go along the wall, which gives crisp
+     vertical light and dark edges instead of soft fabric folds. The crease is antialiased.
+  3. **Sparse open joints** at 32 m and 8 m. These are continuous orthogonal sets: long vertical
+     cracks (~40 % open, in 3-row runs) and rarer sheeting joints (~15 %), with light-catching bevels.
+     On massive-rock worlds some sheeting joints are narrow lit ledges under a shadowed overhang, and
+     these collect snow or moss through the normal.
+
+  Iterations that were rejected after offline previews or captures: a per-block Voronoi with joint
+  lines everywhere (it read as crackle glaze or tortoise shell), rows offset per column (brickwork),
+  sinusoidal wander (wavy curtains) and per-cell tone at 32 m (graph-paper checker). An offline
+  numpy preview of the wall pattern (scratch tool) was used to judge those, without the browser.
+* **Less "draped fabric"**: wall tone bodies are now ~1.6:1 instead of 3:1 vertical. The macro
+  drainage stains are sharpened (a smoothstep on the stain density) and lighter (darkening −62 % →
+  −35 %). Mip-filtered at kilometres, they had spread into the broad, soft, dark vertical bands that
+  read as fabric folds.
 * **Crest needles removed (critic item 3, "isolated cones stuck on the ridge")**. A needle counter
   (local maxima more than 12 m above an 8 m ring, 800 m patch, 2 m grid) found 276 needles on the W1
   face crest. They came from the buttress ribs and the steep-boosted crag octaves: their positive
@@ -263,6 +272,19 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
   two finest buttress octaves are weaker. The count dropped to 24 while the range height stayed the
   same (3523 m), so crests are notched (gendarmes and couloirs) instead of spiked. New debug bits:
   `tgen=16` (no buttresses) and `tgen=32` (no steep crag boost).
+* **No more "hair" in gullies / contour stripes on 30–45° slopes**: `tdebug=15` (geometry N·L)
+  showed that the thin dark wavy strokes on W3 badlands were geometric. The generator profile showed
+  why: the plateau / mesa "cliff" hint (full strength over the whole cliff band of the profile) was
+  driving the 3D wall relief and the **ledge terracing** on bands that are only 30–45° where the
+  noise gradient is small. That turned them into 3–8 m terraces whose risers shade as wavy contour
+  strokes. The wall-relief weight now follows the **real slope of the band**
+  (plateauH · |mesa′| · |∇noise|, one analytic-derivative noise call). It is unchanged on real walls
+  (slope 8–10 at the W3 mesa) and off on gentle bands; rock colour hints are unchanged. Ridged rock
+  octaves within ~6 vertex spacings of the chunk lod also use a softened |v|, so sub-resolution
+  razor creases no longer alias.
+* The `tdebug=15` A/B on the W1 hero also confirmed that the soft vertical "fabric" bands on the spires
+  are geometry: smooth heightfield columns between buttress chutes. The shader facets and aretes now
+  break them into angular planes. Real overhangs would need non-heightfield geometry.
 * **Broader cavity**: per-vertex curvature now mixes a ±2-vertex term (chunks carry a 2-vertex
   border). A one-vertex V notch on its own drew thin dark "ink" lines along every badlands gully.
   The cavity darkening was also lowered (−26 % → −20 %).
@@ -294,7 +316,10 @@ Aerial heroes add `tk=1.7` (finer capture LOD; ~+50 % chunks — do NOT use it o
   `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=1500&lat=7.691&lon=-131.848&yaw=0&pitch=-10&tod=0.3&tk=1.7`
 * **W3 Moebius mesa country + lake, aerial**:
   `/?mode=system&galaxy=0&star=9&planet=2&view=fly&alt=1500&lat=35.662&lon=112.465&yaw=180&pitch=-10&tod=0.3&tk=1.7`
-* **W3 on foot under a strata wall (ground level, third person)**:
+* **W3 on foot, savanna under a strata cliff (new this round: trees, creatures, banded wall)**:
+  `/?mode=system&galaxy=0&star=9&planet=2&view=surface&lat=25.042&lon=112.372&yaw=90&pitch=12&tod=0.45`, steps `[{"advance":1}]`
+* W3 on foot at the strata-wall foot. Since the round-5 debris fans, the player spawns on the
+  inclined apron, so this view is a slope close-up and no longer a wall vista:
   `/?mode=system&galaxy=0&star=9&planet=2&view=surface&lat=-43.2326&lon=-28.5306&yaw=90&pitch=8&tod=0.62`, steps `[{"advance":1}]`
 * **W1 on foot, meadow under a rock wall with boulders**:
   `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=-13.8425&lon=155.4463&yaw=210&pitch=8&tod=0.3`, steps `[{"advance":1}]`
@@ -304,7 +329,7 @@ Aerial heroes add `tk=1.7` (finer capture LOD; ~+50 % chunks — do NOT use it o
   `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=1300&lat=-11.6&lon=101.969&yaw=180&pitch=8&tod=0.3&tk=1.7`
 * W3 badlands / mesa strata from 60 m (the old "fur" test):
   `/?mode=system&galaxy=0&star=9&planet=2&view=fly&alt=60&lat=38.65&lon=51.31&yaw=67.5&pitch=-4&tod=0.68`
-* W1 lake cliffs (streak test): `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=30&lat=3.96&lon=-29.58&yaw=315&pitch=-3&tod=0.3`
+* **W1 lake cliffs (streak test; it timed out before this round and now captures in ~150–260 s)**: `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=30&lat=3.96&lon=-29.58&yaw=315&pitch=-3&tod=0.3`
   (front-lit at this tod; night: `tod=0.02`)
 * W12 arctic fjord cliffs (snow, moody): `/?mode=system&galaxy=0&star=9&planet=5&view=fly&alt=300&lat=-34.389&lon=-165.406&yaw=225&pitch=0&tod=0.3`
 * W2 archipelago: `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=60&lat=18.18&lon=-50.80&yaw=22&pitch=-8&tod=0.3`
@@ -359,11 +384,15 @@ inView, levels, ms, msMax, readyMs, builds}` (`readyMs` = time until the terrain
 * Landforms changed at the < 2 km scale this round (isotropic detail, mountain warp): other tracks'
   hard-coded lat/lon spawn notes may land a few metres higher/lower or on a different slope; macro
   layout (continents, coasts, ranges, mesas, rivers, lakes) is unchanged.
-* Software GL frames are still ~8–20 s at 720p under load; captures take 2–7 min on the shared box.
-  Chunk generation is ~25 % more expensive this round (wall relief), and relief-aware LOD adds ~10–30 %
-  chunks in mountain views. The W1 hero needed 466 builds, with `readyMs` ≈ 209 s at load ≈ 9 on 4 cores.
-  On the idle box the whole capture took ≈ 95 s before this round; it has not been re-measured idle. When several agents capture at once, give `shoot.mjs` `--timeout 450` and
-  run captures one at a time: two-at-a-time batches lost the shared render slots and timed out.
+* Software-GL frames are still ~8–20 s at 720p under load. With the shot-mode dispatch fix, terrain
+  readiness is about 110–160 s for 450–760 builds at load ≈ 8 on 4 cores (it was 190 s, and the lake
+  view never finished). Total capture time is now dominated by waiting for one of the two shared
+  render slots. Run captures one at a time with `--timeout 470`.
+* Rock structure (facets, aretes, joints) is shader-only. Silhouettes and crests come from the
+  heightfield. On 80°+ walls the planar facets shade like real planes but cannot cast shadows.
+  Facet seams can read slightly "low-poly" on walls 0.5–1.5 km away in flat light.
+* Crests are now notched rather than spiked. Where carving dominates, a few crest lines read as a
+  regular crenellation (W1 hero, left massif).
 * No occlusion culling yet (terrain behind ridges is drawn; early-Z rejects its pixels).
 * Flatten stamps reach flora/water workers only through `surfaceConfig(body)` at their init (see
   Requests: flora should forward `surface.onFlattenChange`).
@@ -389,6 +418,9 @@ inView, levels, ms, msMax, readyMs, builds}` (`readyMs` = time until the terrain
   URL that is the top of a 1.5 km cliff, which looks like an aerial shot; the W3 on-foot URL above is a
   true ground-level framing.
 * **galaxy/other** (carried over): a ShaderMaterial uses `rv_hash13` without including `rv_common`.
+* **flora** (new this round): `surface.sample().bare` (0..1) marks worn soil / gravel patches that the
+  terrain paints (about 12 % of land on W1/W2). Thin or skip grass where `bare > 0.5` (scale density by
+  `1 - bare`) so the patches read like BotW dirt patches instead of being covered by blades.
 * **flora** (new API): to root grass on the drawn mesh use `world.get('terrain')?.renderedHeight(x, y, z)`
   (or `surface.heightLod(x, y, z, terrain.lodAt(x, y, z))`); fall back to `surface.height` when null.
   Please also skip grass/understorey where `sample().slope > 0.45`: the new talus/scree aprons look best

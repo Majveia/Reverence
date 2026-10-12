@@ -410,7 +410,9 @@ void rvTerrain( inout vec3 albedo ) {
     vec4 mx = vec4( 0.0 ), mz = vec4( 0.0 );
     if ( wx > 0.02 ) mx = textureGrad( uRvDetail, vec3( ( L.z + warpM ) / 2048.0 + 0.61, alt / 2048.0, 7.0 ), vec2( dLx.z, dLx.y ) / 2048.0, vec2( dLy.z, dLy.y ) / 2048.0 );
     if ( wz > 0.02 ) mz = textureGrad( uRvDetail, vec3( ( L.x + warpM ) / 2048.0 + 0.13, alt / 2048.0 + 0.47, 7.0 ), vec2( dLx.x, dLx.y ) / 2048.0, vec2( dLy.x, dLy.y ) / 2048.0 );
-    streakM = ( mx.b * wx + mz.b * wz ) * smoothstep( 0.3, 0.6, slope ) * smoothstep( 0.15, 0.5, mA.a + 0.3 * n2 )
+    // (sharpened: mip-filtered at kilometres the raw stain density spread into broad soft dark bands —
+    //  the "draped fabric folds" on the W1 spires; real varnish streaks are narrow and crisp)
+    streakM = smoothstep( 0.3, 0.7, mx.b * wx + mz.b * wz ) * 0.75 * smoothstep( 0.3, 0.6, slope ) * smoothstep( 0.15, 0.5, mA.a + 0.3 * n2 )
             * ( 1.0 - smoothstep( 20000.0, 40000.0, dist ) );
     // wall-scale staining: light / dark tone bodies (runoff, lichen, exfoliation scars; ~120-450 m
     // wide, ~1.6x taller — 3x elongation read as draped fabric folds from kilometres) — big faces are never one flat tone
@@ -480,7 +482,7 @@ void rvTerrain( inout vec3 albedo ) {
   //      spacing and phase change per block: horizontal structure that breaks the vertical
   //      "draped fabric" read of big walls. Footprint-faded (no sub-pixel joints → no shimmer).
   float blkTone = 0.0, blkHue = 0.0, blkCrack = 0.0, ledgeLit = 0.0, ledgeSh = 0.0;
-  if ( rockS > 0.08 && sideW > 0.05 && slope > 0.22 && dist < 12000.0 && uRvDebug < 15.5 ) {
+  if ( rockS > 0.08 && sideW > 0.05 && slope > 0.22 && dist < 12000.0 && q > 0.7 && uRvDebug < 15.5 ) {   // (off on the low tier: ~50 hashes per wall fragment)
     float kW = smoothstep( 0.22, 0.45, slope ) * smoothstep( 0.08, 0.5, rockS ) * ( 1.0 - smoothstep( 8000.0, 12000.0, dist ) );
     float kMass = 1.0 - smoothstep( 0.55, 0.9, uRvS.x );   // granite-like (no sedimentary strata)
     vec3 gF = vec3( 0.0 );
@@ -494,8 +496,12 @@ void rvTerrain( inout vec3 albedo ) {
         float fade = ( 1.0 - smoothstep( 0.06, 0.18, fwM / 128.0 ) ) * smoothstep( 350.0, 900.0, dist ) * wa;
         if ( fade > 0.0 ) {
           vec4 f = rvFacet( vec2( hc / 128.0 + float( a ) * 0.37, alt / 282.0 ), 32.0 );
-          gF += rvGw( a, vec2( f.x * 0.28, f.y * 0.16 ) ) * fade;
-          blkTone += ( f.w - 0.5 ) * 0.1 * fade;
+          // (stronger with distance: aerial perspective flattens far walls)
+          float kd = mix( 1.0, 1.5, smoothstep( 1200.0, 4000.0, dist ) );
+          // (seams eased over ~12 % of a cell: crisp-but-not-razor facet edges, no low-poly look)
+          float soft = 0.35 + 0.65 * smoothstep( 0.0, 0.12, f.z );
+          gF += rvGw( a, vec2( f.x * 0.24, f.y * 0.14 ) ) * fade * kd * soft;
+          blkTone += ( f.w - 0.5 ) * 0.12 * fade * kd;
           blkHue += ( fract( f.w * 13.7 ) - 0.5 ) * fade;
         }
       }
@@ -543,7 +549,7 @@ void rvTerrain( inout vec3 albedo ) {
         }
       }
     }
-    gradT += gF * kW * fFar;
+    gradT += gF * kW;
     blkTone *= kW; blkHue *= kW; blkCrack *= kW; ledgeLit *= kW; ledgeSh *= kW;
   }
   // wind-drift relief on snowfields (64 m noise-relief slopes): shading on otherwise flat white
@@ -613,7 +619,7 @@ void rvTerrain( inout vec3 albedo ) {
   rockC = mix( rockC, rvLum( rockC ) * vec3( 1.35, 0.95, 0.68 ), iron * 0.6 );
   // wall tone bodies: pale (fresh exfoliation scars) vs dark cool (seeps, lichen) — ±30 % value
   rockC *= mix( vec3( 1.0 ), wallTone > 0.0 ? vec3( 1.32, 1.26, 1.18 ) : vec3( 0.62, 0.66, 0.72 ), clamp( abs( wallTone ) * 6.0 - 0.1, 0.0, 1.0 ) );
-  rockC *= 1.0 - 0.45 * clamp( streakM * 1.8, 0.0, 1.0 );
+  rockC *= 1.0 - 0.35 * clamp( streakM * 1.6, 0.0, 1.0 );
   // jointed blocks: per-block value / hue (warm oxidised vs cool fresh), dark joints, sheeting ledges
   rockC *= 1.0 + blkTone;
   rockC *= mix( vec3( 1.0 ), blkHue > 0.0 ? vec3( 1.1, 1.0, 0.86 ) : vec3( 0.9, 0.97, 1.06 ), min( abs( blkHue ) * 0.9, 1.0 ) );
@@ -793,7 +799,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v27' + (opts.lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-v28' + (opts.lite ? 'L' : '');
   return mat;
 }
 

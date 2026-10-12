@@ -100,7 +100,7 @@ export class Scarf {
   constructor(world, palette, quality) {
     this.world = world;
     const q = quality?.tier === 'low' ? 0.7 : 1;
-    this.strips = [new Strip(3, Math.round(13 * q), 0.16, 1.05, 0.3), new Strip(3, Math.round(9 * q), 0.12, 0.7, 0.3)];
+    this.strips = [new Strip(3, Math.round(18 * q), 0.165, 1.05, 0.45), new Strip(3, Math.round(12 * q), 0.12, 0.7, 0.45)]; // tapered to ~55 % at the tip
     // anchors in chest space (back of the neck wrap)
     this.anchorsC = [
       [new THREE.Vector3(-0.02, 0.215, -0.1), new THREE.Vector3(0.05, 0.22, -0.095), new THREE.Vector3(0.12, 0.215, -0.07)],

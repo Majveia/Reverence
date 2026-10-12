@@ -111,12 +111,12 @@ export class CameraRig {
       const target = clamp(-0.13 + Math.atan2(vyC, sp) * 0.75 - (st === 'slide' ? 0.16 : 0), -0.95, 0.25);
       this.pitch = damp(this.pitch, target, 1.6 * smoothstep(2.5, 9, sp), dt);
     } else if (this.idleLook > 2.2) {
-      const target = st === 'glide' ? -0.2 : st === 'swim' ? -0.1 : st === 'slide' ? -0.2 : sp > 7 ? -0.16 : -0.12;
+      const target = st === 'glide' ? -0.1 : st === 'swim' ? -0.24 : st === 'slide' ? -0.2 : sp > 7 ? -0.16 : -0.12;
       this.pitch = damp(this.pitch, target, 0.5, dt);
     }
     // ---- arm length by state
     const glideK = st === 'glide' ? 1 : 0;
-    let arm = 3.7 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (1.3 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? -0.4 : 0) + (st === 'climb' ? 0.5 + 1.2 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
+    let arm = 3.7 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (0.75 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? -0.4 : 0) + (st === 'climb' ? 0.5 + 1.2 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
     // looking up from low: shorten the arm so the camera does not dig into the ground (BotW)
     arm *= 1 - 0.35 * smoothstep(0.05, 0.9, this.pitch);
     arm *= this.zoom;
@@ -127,7 +127,7 @@ export class CameraRig {
     // framed, while small hops (|vy| < 4 m/s) keep their vertical smoothing
     const vy = ctx.vel.dot(up);
     const ff = 2 / this.pivot.omega;
-    const tgt = _a.copy(ctx.pos).addScaledVector(up, pivotH).addScaledVector(vt, 0.1 + ff * 0.85)
+    const tgt = _a.copy(ctx.pos).addScaledVector(up, pivotH).addScaledVector(vt, (st === 'slide' ? 0.02 : 0.1) + ff * 0.85)
       .addScaledVector(up, vy * ff * smoothstep(4, 12, Math.abs(vy)));
     if (st === 'climb' && ctx.climbN) { // chest height along the wall, pulled off the rock
       tgt.copy(ctx.pos).addScaledVector(ctx.climbUp, 1.2).addScaledVector(ctx.climbN, 0.55);
@@ -140,7 +140,7 @@ export class CameraRig {
     // ---- desired camera position
     const camF = this.frame(up);
     const right = this.camRight;
-    const sh = this.shoulder * clamp(arm / 4.5, 0.5, 1.2) * (st === 'glide' ? 0.35 : 1);
+    const sh = this.shoulder * clamp(arm / 4.5, 0.5, 1.2) * (st === 'glide' ? 1.5 : 1); // gliding: wider side offset → wing silhouette against the sky
     const want = _c.copy(pivot).addScaledVector(camF, -arm).addScaledVector(right, sh);
     // ---- collision: first try to rise over terrain along the arm (BotW), then pull in as a fallback
     const H = ctx.heights;
@@ -202,7 +202,7 @@ export class CameraRig {
     this.roll = damp(this.roll, rollT, 3, dt);
     const rollJ = tr > 1e-4 ? fbm1(this.t * 19, 3) * 0.018 * tr : 0;
     // tilt down to keep the hero framed when the lens rose over terrain
-    const look = this.lift > 0.02 ? _d.copy(camF).addScaledVector(up, -this.lift * 0.75 / Math.max(arm, 1)).normalize() : camF;
+    const look = this.lift > 0.02 ? _d.copy(camF).addScaledVector(up, -this.lift * 0.95 / Math.max(this.dist, 1)).normalize() : camF;
     quatLookDir(look, up, this.cam.quaternion);
     if (this.roll || rollJ) { _q.setFromAxisAngle(_u.set(0, 0, 1), this.roll + rollJ); this.cam.quaternion.multiply(_q); }
     // ---- FOV kick

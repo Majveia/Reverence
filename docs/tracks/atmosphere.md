@@ -236,6 +236,12 @@ it) and `overcast`.
   pixels near towns; the far rain sheet is one extra instanced draw while it rains.
 
 ## Known issues
+* Round 4: from inside the cumulus layer at altitude (W2 `fly&alt=3000`) a faint pale band sits a few degrees above
+  the sea horizon where view rays stop leaving the layer through its base (the deck's own horizon, averaged
+  distant cloud); physically plausible but slightly too regular.
+* Round 4: orbit cloud streaks are high-contrast white over the ocean; thin, grey translucent veils between
+  fields are still rarer than on Earth photos. The view-only orbit compression of the shell happens between
+  1.2 and 3.2 atmosphere heights (the limb visibly thins while climbing out).
 * Round 3b: cumulus seen straight from below still shows a fairly uniform grey base (physically right; BotW
   paints them brighter); a few small cloudlets remain around the big clouds (now puffs, not 1–2 px specks).
 * Orbit cloud shadows are a 3-sample march (soft, slightly blobby under thin fields); they skip the night side.

@@ -125,10 +125,14 @@ export class FX {
         uniform vec3 uSunColor; uniform vec3 uAmbientSky; varying vec2 vP; varying vec2 vM;
         void main(){
           float d = length(vP);
-          float ring = smoothstep(0.8, 0.93, d) * smoothstep(1.0, 0.95, d) + 0.2 * smoothstep(0.58, 0.66, d) * smoothstep(0.74, 0.67, d);
-          float a = ring * vM.y;
-          if (a < 0.004) discard;
-          gl_FragColor = vec4(uSunColor * 0.2 + uAmbientSky * 1.1 + 0.05, a * 0.08);
+          // two thin concentric crests with a darker trough inside each (reads as a wave, not a disc)
+          float c1 = exp(-pow((d - 0.94) / 0.025, 2.0)), c2 = exp(-pow((d - 0.72) / 0.02, 2.0)) * 0.55;
+          float tr = exp(-pow((d - 0.88) / 0.035, 2.0)) * 0.5;
+          float a = (c1 + c2) * vM.y * vM.y;
+          float ad = tr * vM.y * vM.y;
+          if (a + ad < 0.004) discard;
+          vec3 hi = uSunColor * 0.25 + uAmbientSky * 1.1 + 0.05;
+          gl_FragColor = vec4(hi * a / max(a + ad, 1e-4), (a * 0.1 + ad * 0.05));
         }`,
     });
     this.ripples = new THREE.Mesh(rg, this.rMat);
@@ -239,6 +243,85 @@ export class FX {
       this.group.add(m);
       this.trails.push({ mesh: m, pts: new Float64Array(this.TN * 3), n: 0, acc: 0, alpha: 0 });
     }
+    // ---------------- swim wake: foam collar at the waterline around the body + Kelvin V-wake arms +
+    // transverse chevrons + kick-foam trail, one plane in the swimmer's frame (x lateral, y behind)
+    {
+      const wg = new THREE.PlaneGeometry(1, 1);
+      this.wakeMat = new THREE.ShaderMaterial({
+        transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+        uniforms: { uTime: G.uTime, uSunColor: G.uSunColor, uAmbientSky: G.uAmbientSky, uSpeed: { value: 0 }, uAlpha: { value: 0 } },
+        vertexShader: /* glsl */`varying vec2 vP;
+          void main(){ vP = vec2(position.x * 7.0, (0.5 - position.y) * 9.0 - 1.6); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: /* glsl */`
+          uniform float uTime; uniform vec3 uSunColor; uniform vec3 uAmbientSky; uniform float uSpeed; uniform float uAlpha;
+          varying vec2 vP;
+          float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+            return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
+          void main(){
+            vec2 p = vP;                       // metres: x lateral, y behind the chest (+)
+            float t = uTime;
+            float mv = clamp(uSpeed / 3.0, 0.0, 1.0);
+            // foam collar hugging the body outline at the waterline (body lies along +y when crawling)
+            vec2 bc = p - vec2(0.0, mix(0.0, 0.5, mv));
+            float e = length(bc / vec2(mix(0.42, 0.36, mv), mix(0.42, 1.05, mv)));
+            float n1 = vn(p * 7.0 + vec2(0.0, t * 1.5 * (0.3 + mv))) * 0.6 + vn(p * 17.0 - vec2(t * 0.7, 0.0)) * 0.4;
+            float collar = smoothstep(1.45, 1.0, e) * smoothstep(0.82, 1.0, e) * (0.45 + 0.75 * n1);
+            // Kelvin arms (19.5 deg) from the head
+            float yb = p.y + 0.15;
+            float arm = abs(abs(p.x) - max(yb, 0.0) * 0.36);
+            float aw = 0.03 + max(yb, 0.0) * 0.03;
+            float armA = smoothstep(aw, 0.0, arm) * smoothstep(0.0, 0.5, yb) * exp(-max(yb, 0.0) * 0.32) * (0.5 + 0.6 * n1);
+            // transverse chevrons between the arms
+            float inside = smoothstep(0.08, -0.08, abs(p.x) - max(yb, 0.0) * 0.36) * step(0.0, yb);
+            float tr = pow(0.5 + 0.5 * sin((yb + abs(p.x) * 0.4) * 10.0 - t * 7.0), 3.0) * inside * exp(-max(yb, 0.0) * 0.55);
+            // churned kick foam behind the feet
+            float kick = smoothstep(0.4, 0.0, abs(p.x) + (n1 - 0.5) * 0.25) * smoothstep(1.0, 1.7, yb) * exp(-max(yb - 1.7, 0.0) * 0.6) * n1;
+            float a = collar * 0.42 + (armA * 0.26 + tr * 0.08 + kick * 0.28) * mv;
+            a *= uAlpha * smoothstep(3.4, 2.6, abs(p.x)) * smoothstep(7.2, 5.5, p.y) * smoothstep(-1.6, -1.2, p.y);
+            if (a < 0.004) discard;
+            gl_FragColor = vec4(uSunColor * 0.12 + uAmbientSky * 0.8 + 0.03, min(a, 0.7));
+          }`,
+      });
+      this.wake = new THREE.Mesh(wg, this.wakeMat);
+      this.wake.frustumCulled = false; this.wake.visible = false; this.wake.renderOrder = 6;
+      this.group.add(this.wake);
+      this._wakeA = 0;
+    }
+    // ---------------- slide groove: a carved furrow ribbon conformed to the ground, fades over ~3 s
+    {
+      this.GN = 48;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.GN * 2 * 3), 3).setUsage(THREE.DynamicDrawUsage));
+      g.setAttribute('aA', new THREE.BufferAttribute(new Float32Array(this.GN * 2), 1).setUsage(THREE.DynamicDrawUsage));
+      const uv = new Float32Array(this.GN * 4);
+      for (let i = 0; i < this.GN; i++) { uv[i * 4] = i; uv[i * 4 + 1] = 0; uv[i * 4 + 2] = i; uv[i * 4 + 3] = 1; }
+      g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      const idx = [];
+      for (let i = 0; i < this.GN - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      g.setIndex(idx);
+      this.grooveMat = new THREE.ShaderMaterial({
+        transparent: true, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+        uniforms: { uCol: { value: new THREE.Color(1, 0.9, 0.75) }, uSunColor: G.uSunColor, uAmbientSky: G.uAmbientSky },
+        vertexShader: /* glsl */`attribute float aA; varying float vA; varying vec2 vUv; void main(){ vA = aA; vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: /* glsl */`uniform vec3 uCol; uniform vec3 uSunColor; uniform vec3 uAmbientSky; varying float vA; varying vec2 vUv;
+          float h(float x){ return fract(sin(x * 91.7) * 4375.85); }
+          void main(){
+            float x = vUv.y * 2.0 - 1.0;
+            float groove = smoothstep(0.75, 0.0, abs(x));                 // shaded trough
+            float lip = smoothstep(0.55, 0.8, abs(x)) * smoothstep(1.0, 0.85, abs(x)); // thrown-up lips catch light
+            float streak = 0.75 + 0.25 * h(floor(x * 9.0) + 3.0);
+            vec3 lit = uCol * (uSunColor * 0.35 + uAmbientSky * 0.6);
+            vec3 c = mix(vec3(0.0), lit, lip / max(lip + groove * 0.7, 1e-3));
+            float a = (groove * 0.32 * streak + lip * 0.4) * vA;
+            if (a < 0.004) discard;
+            gl_FragColor = vec4(c, a);
+          }`,
+      });
+      this.groove = { mesh: new THREE.Mesh(g, this.grooveMat), pts: new Float64Array(this.GN * 3), lat: new Float32Array(this.GN * 3), age: new Float32Array(this.GN), n: 0, acc: 0 };
+      this.groove.mesh.frustumCulled = false; this.groove.mesh.visible = false; this.groove.mesh.renderOrder = 4;
+      this.group.add(this.groove.mesh);
+    }
     this._v = new THREE.Vector3(); this._w = new THREE.Vector3(); this._n = new THREE.Vector3(); this._q = new THREE.Quaternion();
     this._m = new THREE.Matrix4(); this._s = new THREE.Vector3(1, 1, 1);
   }
@@ -254,6 +337,7 @@ export class FX {
     const F = this.F;
     for (let i = 0; i < this.FMAX; i++) { F.pos[i * 3] -= d.x; F.pos[i * 3 + 1] -= d.y; F.pos[i * 3 + 2] -= d.z; }
     for (const t of this.trails) { for (let i = 0; i < this.TN; i++) { t.pts[i * 3] -= d.x; t.pts[i * 3 + 1] -= d.y; t.pts[i * 3 + 2] -= d.z; } }
+    { const gp = this.groove.pts; for (let i = 0; i < this.GN; i++) { gp[i * 3] -= d.x; gp[i * 3 + 1] -= d.y; gp[i * 3 + 2] -= d.z; } }
     this.origin.copy(p);
   }
 
@@ -459,6 +543,52 @@ export class FX {
       T.mesh.geometry.attributes.position.needsUpdate = true; T.mesh.geometry.attributes.aA.needsUpdate = true;
       T.mesh.visible = T.n > 1;
     }
+    // swim wake
+    const wk = ctx.wake;
+    this._wakeA += ((wk && wk.on ? wk.alpha : 0) - this._wakeA) * Math.min(1, dt * 3);
+    if (this._wakeA > 0.01 && wk) {
+      const m = this.wake;
+      m.visible = true;
+      this.wakeMat.uniforms.uAlpha.value = this._wakeA;
+      this.wakeMat.uniforms.uSpeed.value = wk.speed;
+      // plane local: +x lateral (7 m), +y ahead (9 m); centre 2.9 m behind the chest
+      const f = this._n.copy(wk.fwd); f.addScaledVector(wk.up, -f.dot(wk.up)).normalize();
+      const x = this._w.crossVectors(f, wk.up).normalize();
+      this._m.makeBasis(x, f, wk.up);
+      m.quaternion.setFromRotationMatrix(this._m);
+      m.scale.set(7, 9, 1);
+      m.position.copy(wk.pos).addScaledVector(f, -2.9).addScaledVector(wk.up, 0.025).sub(this.origin);
+    } else this.wake.visible = false;
+    // slide groove
+    const gv = this.groove, gc = ctx.groove;
+    if (gc && gc.on) {
+      gv.acc += dt;
+      if (gv.acc > 0.06 || gv.n === 0) {
+        gv.acc = 0;
+        gv.pts.copyWithin(3, 0, (this.GN - 1) * 3); gv.lat.copyWithin(3, 0, (this.GN - 1) * 3); gv.age.copyWithin(1, 0, this.GN - 1);
+        gv.n = Math.min(this.GN, gv.n + 1);
+      }
+      gv.pts[0] = gc.pos.x - this.origin.x; gv.pts[1] = gc.pos.y - this.origin.y; gv.pts[2] = gc.pos.z - this.origin.z;
+      gv.lat[0] = gc.lat.x; gv.lat[1] = gc.lat.y; gv.lat[2] = gc.lat.z; gv.age[0] = 0;
+      this.grooveMat.uniforms.uCol.value.copy(gc.color);
+    }
+    if (gv.n > 1) {
+      for (let i = 0; i < gv.n; i++) gv.age[i] += dt;
+      const pos = gv.mesh.geometry.attributes.position.array, aa = gv.mesh.geometry.attributes.aA.array;
+      let any = false;
+      for (let i = 0; i < this.GN; i++) {
+        const ii = Math.min(i, gv.n - 1), o = ii * 3;
+        const wv = 0.2 + 0.06 * Math.min(1, gv.age[ii]);
+        pos[i * 6] = gv.pts[o] + gv.lat[o] * wv; pos[i * 6 + 1] = gv.pts[o + 1] + gv.lat[o + 1] * wv; pos[i * 6 + 2] = gv.pts[o + 2] + gv.lat[o + 2] * wv;
+        pos[i * 6 + 3] = gv.pts[o] - gv.lat[o] * wv; pos[i * 6 + 4] = gv.pts[o + 1] - gv.lat[o + 1] * wv; pos[i * 6 + 5] = gv.pts[o + 2] - gv.lat[o + 2] * wv;
+        const a = i < gv.n ? clamp(1 - gv.age[ii] / 3, 0, 1) * Math.min(1, i * 0.5) : 0;
+        if (a > 0) any = true;
+        aa[i * 2] = a; aa[i * 2 + 1] = a;
+      }
+      gv.mesh.geometry.attributes.position.needsUpdate = true; gv.mesh.geometry.attributes.aA.needsUpdate = true;
+      gv.mesh.visible = any;
+      if (!any && !(gc && gc.on)) gv.n = 0;
+    } else gv.mesh.visible = false;
     this.group.position.copy(this.origin);
   }
 
@@ -477,5 +607,7 @@ export class FX {
     this.jetGeo.dispose(); this.jetMat.dispose();
     for (const t of this.trails) t.mesh.geometry.dispose();
     this.trailMat.dispose();
+    this.wake.geometry.dispose(); this.wakeMat.dispose();
+    this.groove.mesh.geometry.dispose(); this.grooveMat.dispose();
   }
 }

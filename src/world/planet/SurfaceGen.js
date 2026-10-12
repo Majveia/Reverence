@@ -754,7 +754,9 @@ export class SurfaceGen {
       if (st.plateaus > 0) {
         const f = R / st.plateauWl;
         const wv = nF.n3(px * f * 0.5 + 3, py * f * 0.5 + 7, pz * f * 0.5 + 1) * 0.35;
-        const pn = nF.n3(px * f + wv, py * f + 11.1 - wv, pz * f + 4.4) * 0.75 + nF.n3(px * f * 2.7, py * f * 2.7 + 5, pz * f * 2.7 + 9) * 0.25;
+        const dq = this._d;
+        const pn = nF.n3d(px * f + wv, py * f + 11.1 - wv, pz * f + 4.4, dq) * 0.75 + nF.n3(px * f * 2.7, py * f * 2.7 + 5, pz * f * 2.7 + 9) * 0.25;
+        const dpn = 0.75 * 0.8 * Math.hypot(dq[0], dq[1], dq[2]) / st.plateauWl;   // ≈ |∇pn| per metre
         const reg = sstep(-0.2, 0.3, nF.n3(px * 2.1 + 40, py * 2.1, pz * 2.1)) * st.plateaus;
         const v1 = (pn - 0.12) / 0.07, v2 = (pn - 0.42) / 0.06;
         const p1 = SurfaceGen.mesa(v1), p2 = SurfaceGen.mesa(v2);
@@ -766,18 +768,24 @@ export class SurfaceGen {
         // rubble apron at the cliff foot (the concave part of the mesa profile)
         const ta = Math.min(1, SurfaceGen.band(v1, -3.1, -2.6, -0.95, -0.7) + SurfaceGen.band(v2, -3.1, -2.6, -0.95, -0.7)) * reg * inland;
         if (ta > talus) talus = ta;
-        if (cl * 0.9 > steep) { steep = cl * 0.9; wallH = Math.max(wallH, st.plateauH); }
-        if (cl > cliff) cliff = cl;
+        // wall-relief / ledge weight follows the REAL slope of the cliff band (plateauH · |mesa'| · dv/dm):
+        // where the noise gradient is small the "cliff" band is a broad 30-45° slope, and terracing it
+        // drew contour stripes (dark wavy strokes on W3 badlands)
+        const clW = cl * sstep(0.9, 1.7, st.plateauH * reg * inland * 0.65 * dpn / 0.065);
+        if (clW * 0.9 > steep) { steep = clW * 0.9; wallH = Math.max(wallH, st.plateauH); }
+        if (clW > cliff) cliff = clW;
         if (cl > rock) rock = cl;
         // caprock rim: the hard bed that holds the table up shows as a bare rock band along the edge
         // of the top (the flat tops otherwise read as one pale sand sheet, like snow from the air)
-        const cap = Math.min(1, SurfaceGen.band(v1, -0.05, 0.02, 0.3, 0.8) + SurfaceGen.band(v2, -0.05, 0.02, 0.3, 0.8)) * 0.8 * sstep(0.3, 0.75, reg * inland);
+        const cap = Math.min(1, SurfaceGen.band(v1, -0.05, 0.02, 0.12, 0.35) + SurfaceGen.band(v2, -0.05, 0.02, 0.12, 0.35)) * 0.65 * sstep(0.3, 0.75, reg * inland);
         if (cap > rock) rock = cap;
       }
       if (st.mesas > 0) {
         const f = R / st.mesaWl;
         const wv = nF.n3(px * f * 0.7 + 9, py * f * 0.7 + 2, pz * f * 0.7 + 5) * 0.4;
-        const mn = nF.n3(px * f + 13 + wv, py * f + 2.5, pz * f + 6.5 - wv);
+        const dq = this._d;
+        const mn = nF.n3d(px * f + 13 + wv, py * f + 2.5, pz * f + 6.5 - wv, dq);
+        const dmn = 0.8 * Math.hypot(dq[0], dq[1], dq[2]) / st.mesaWl;
         const reg = sstep(-0.15, 0.35, nF.n3(px * 1.7 + 70, py * 1.7, pz * 1.7 + 3)) * st.mesas;
         const v = (mn - 0.48) / 0.05;
         const p = SurfaceGen.mesa(v);
@@ -786,10 +794,11 @@ export class SurfaceGen {
         const cl = SurfaceGen.band(v, -1.0, -0.8, 0.02, 0.12) * sstep(0.3, 0.75, reg * inland);
         const ta = SurfaceGen.band(v, -3.1, -2.6, -0.95, -0.7) * reg * inland;
         if (ta > talus) talus = ta;
-        if (cl * 0.9 > steep) { steep = cl * 0.9; wallH = Math.max(wallH, mh); }
-        if (cl > cliff) cliff = cl;
+        const clW = cl * sstep(0.9, 1.7, mh * reg * inland * 0.65 * dmn / 0.05);
+        if (clW * 0.9 > steep) { steep = clW * 0.9; wallH = Math.max(wallH, mh); }
+        if (clW > cliff) cliff = clW;
         if (cl > rock) rock = cl;
-        const cap = SurfaceGen.band(v, -0.05, 0.02, 0.35, 0.9) * 0.8 * sstep(0.3, 0.75, reg * inland);
+        const cap = SurfaceGen.band(v, -0.05, 0.02, 0.15, 0.4) * 0.65 * sstep(0.3, 0.75, reg * inland);
         if (cap > rock) rock = cap;
       }
     }
@@ -1218,7 +1227,11 @@ export class SurfaceGen {
         const big = wl > 200 ? rr * (o === 0 ? 2.4 : 2.0) * (1 + 1.5 * stB) : wl > 120 ? (1 + 0.6 * rr) * (1 + 0.8 * stB) : wl > 60 ? (1 + 0.25 * rr) * (1 + 0.35 * stB) : 1;
         // rock gets sharper (ridged, zero-mean) micro relief, soil stays rounded
         // (big octaves use a softened |v|: a razor crease of a 700 m ridged octave reads as a seam)
-        const av = wl > 120 ? Math.sqrt(v * v + 0.004) : (v < 0 ? -v : v);
+        // (razor creases only where the mesh resolves them: an octave within ~6 vertex spacings of the
+        //  mesh lod gets a softened |v| — sub-resolution creases shaded as thin dark "hair" strokes
+        //  along every badlands gully)
+        const ce = wl > 120 ? 0.004 : 0.0003 + 0.005 * Math.min(1, lod * 6 / wl);
+        const av = Math.sqrt(v * v + ce);
         // (boosted crag octaves on steep faces mostly CARVE: their positive ridge crests crossing a
         //  mountain crest stacked into isolated needles along the ridge line)
         let rg = (0.342 - av) * 1.6;

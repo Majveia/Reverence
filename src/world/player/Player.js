@@ -14,7 +14,8 @@
 // vehicle hand-off via world.setController (onControlLost / onControlGained).
 import * as THREE from 'three';
 import { latLonToDir } from '../../core/math.js';
-import { buildExplorer, B } from './Explorer.js';
+import { buildExplorer, B, SUIT_LIGHT } from './Explorer.js';
+import { G } from '../../core/Uniforms.js';
 import { Animator } from './Animator.js';
 import { Scarf } from './Cloth.js';
 import { Glider } from './Glider.js';
@@ -48,7 +49,7 @@ const CLIMB_PROBES = [0.08, 0.2, 0.3, 0.12, 0.5, 0.16, 0.92, 0.14, 1.1, 0.15, 1.
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3();
 const _e = new THREE.Vector3(), _n = new THREE.Vector3(), _t = new THREE.Vector3(), _w = new THREE.Vector3();
 const _v = new THREE.Vector3(), _x = new THREE.Vector3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
-const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _col = new THREE.Color();
+const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _col = new THREE.Color(), _col2 = new THREE.Color();
 const WHITE = new THREE.Color(1, 1, 1);
 
 export class Player {
@@ -1137,11 +1138,37 @@ export class Player {
     this.animator.headHidden = this.view === 'fp';
     safe(() => this.animator.update(dt, S, this.gpos, this.gquat));
     this.rig.materials.visor?.userData?.uUp?.value.copy(up);
+    {
+      // suit lighting context: planet up + ground bounce (terrain albedo × sun / sky irradiance below)
+      SUIT_LIGHT.uUpW.value.copy(up);
+      const sd = G.uSunDir.value, sc = G.uSunColor.value, sk = G.uAmbientSky.value;
+      const sunUp = Math.max(0, sd.x * up.x + sd.y * up.y + sd.z * up.z);
+      const gAlb = this.state === 'swim' ? _col.setRGB(0.1, 0.22, 0.26) : this.groundColor;
+      const hAbove = this.state === 'glide' || this.state === 'air' ? clamp(1 - (this.pos.length() - this.heights.groundR(this.pos)) / 25, 0, 1) : 1;
+      const k = 0.16 * hAbove;
+      _col2.setRGB((sc.r * sunUp + sk.r * 0.6) * gAlb.r * k, (sc.g * sunUp + sk.g * 0.6) * gAlb.g * k, (sc.b * sunUp + sk.b * 0.6) * gAlb.b * k);
+      SUIT_LIGHT.uBounce.value.lerp(_col2, dt > 0 ? Math.min(1, dt * 3) : 1);
+      // waterline plane (world space) when the body is near / in the sea
+      const seaR = this.water > -1e8 && !this.heights.solidSea ? this.R + this.water : -Infinity;
+      const near = Number.isFinite(seaR) && Math.abs(this.pos.length() - seaR) < 2.6;
+      SUIT_LIGHT.uWaterOn.value = near && this._visible ? 1 : 0;
+      if (near) {
+        SUIT_LIGHT.uWaterN.value.copy(up);
+        const P = SUIT_LIGHT.uWaterP.value.copy(this.pos).setLength(seaR);
+        if (this.group.parent) P.applyMatrix4(this.group.parent.matrixWorld);
+        const sk = G.uAmbientSky.value;
+        SUIT_LIGHT.uWaterCol.value.setRGB(sk.r * 0.05 + 0.004, sk.g * 0.12 + 0.012, sk.b * 0.14 + 0.016);
+      }
+    }
     this.group.updateMatrixWorld(true);
     // ---- glider
     if (this.glider) {
       const open = this.state === 'glide';
-      safe(() => this.glider.update(dt, open, this.glide.s));
+      safe(() => {
+        const rr = this.engine?.renderer;
+        if (rr?.domElement) this.glider.setViewport(rr.domElement.height || 720, (rr.domElement.width || 1280) / (rr.domElement.height || 720));
+        this.glider.update(dt, open, this.glide.s, this.glide.bank);
+      });
       const gg = this.glider.group;
       gg.rotation.set(this.glide.pitch * 0.25 - 0.05, 0, -this.glide.bank * 0.9, 'YXZ');
       gg.visible = gg.visible && vis;
@@ -1222,7 +1249,7 @@ export class Player {
         // lateral kick toward the outside of the carve
         _c.crossVectors(up, this.forward).multiplyScalar(-this.slideS.carve * 0.6);
         _a.add(_c).normalize();
-        this._slideAcc = (this._slideAcc || 0) + dt * (soft ? 52 : 22) * (0.35 + k);
+        this._slideAcc = (this._slideAcc || 0) + dt * (soft ? 64 : 26) * (0.35 + k);
         this._grainAcc = (this._grainAcc || 0) + dt * (soft ? 90 : 30) * k;
         const src = an ? an.footWorld.R : this.pos;
         _col.copy(this.groundColor).lerp(WHITE, this.surfaceKind === 'snow' ? 0.75 : 0.3);
@@ -1236,7 +1263,7 @@ export class Player {
           _b.copy(this.vel).multiplyScalar(0.45 + rnd.next() * 0.25).addScaledVector(side, s * (1.4 + this.speed * 0.14))
             .addScaledVector(up, 0.8 + rnd.next() * (0.9 + this.speed * 0.08));
           _e.copy(src).addScaledVector(side, s * 0.15);
-          fx.emit(_e, _b, { kind: 0, size: (soft ? 0.34 : 0.2) * (0.6 + rnd.next() * 0.8), size1: soft ? 1.15 : 0.7, life: 0.65 + rnd.next() * 0.75, color: _col, alpha: soft ? 0.42 : 0.3, drag: 1.4, grav: 0.18, spin: (rnd.next() - 0.5) * 2 });
+          fx.emit(_e, _b, { kind: 0, size: (soft ? 0.38 : 0.22) * (0.6 + rnd.next() * 0.8), size1: soft ? 1.5 : 0.8, life: 0.7 + rnd.next() * 0.9, color: _col, alpha: soft ? 0.55 : 0.36, drag: 1.3, grav: 0.16, spin: (rnd.next() - 0.5) * 2 });
         }
         while (this._grainAcc >= 1) {
           this._grainAcc -= 1;
@@ -1244,20 +1271,51 @@ export class Player {
           _b.copy(this.vel).multiplyScalar(0.7).addScaledVector(side, s * (1.5 + this.speed * 0.15)).addScaledVector(up, 1.8 + rnd.next() * 2.5);
           fx.emit(src, _b, { kind: 1, size: 0.02, size1: 0.016, life: 0.45 + rnd.next() * 0.4, color: _col, alpha: 0.9, drag: 0.4, grav: 1 });
         }
+        // carved groove (ribbon conformed to the ground, fades over ~3 s) on soft ground
         if (soft && an) {
-          this._furrowD = (this._furrowD || 0) + this.speed * dt;
-          if (this._furrowD > 0.45) { this._furrowD = 0; fx.footprint(an.footWorld.L, up, this.forward); fx.footprint(an.footWorld.R, up, this.forward); }
+          const gctx = this._grooveCtx || (this._grooveCtx = { on: false, pos: new THREE.Vector3(), lat: new THREE.Vector3(), color: new THREE.Color() });
+          gctx.on = this.grounded !== false;
+          _e.copy(an.footWorld.L).add(an.footWorld.R).multiplyScalar(0.5);
+          gctx.pos.copy(_e).setLength(this.heights.groundR(_e) + 0.025);
+          _b.copy(this.vel); projectOnPlane(_b, up);
+          if (_b.lengthSq() > 1e-4) gctx.lat.crossVectors(up, _b.normalize());
+          gctx.color.copy(this.groundColor).lerp(WHITE, this.surfaceKind === 'snow' ? 0.6 : 0.25);
         }
       }
-      // ---- swim ripples + wake
+      // ---- swim wake (foam collar + V-wake) and hand-entry splashes
+      {
+        const wk = this._wakeCtx || (this._wakeCtx = { on: false, pos: new THREE.Vector3(), fwd: new THREE.Vector3(), up: new THREE.Vector3(), speed: 0, alpha: 0 });
+        wk.on = this.state === 'swim' && this.dive < 0.4 && this._visible;
+        if (wk.on) {
+          const seaR = this.R + (this.water > -1e8 ? this.water : 0);
+          const an = this.animator;
+          if (an) _e.copy(an.gp[B.chest]).applyQuaternion(this.gquat).add(this.gpos); else _e.copy(this.pos);
+          wk.pos.copy(_e).setLength(seaR);
+          wk.fwd.copy(this.forward); wk.up.copy(up); wk.speed = this.speed; wk.alpha = 1;
+          if (an) {
+            const hs = this._handAbove || (this._handAbove = { L: 0, R: 0 });
+            for (const [side, bi] of [['L', B.handL], ['R', B.handR]]) {
+              _a.copy(an.gp[bi]).applyQuaternion(this.gquat).add(this.gpos);
+              const h = _a.length() - seaR;
+              if (hs[side] > 0.02 && h <= 0.02 && this.speed > 0.5) {
+                _a.setLength(seaR);
+                fx.spray(_a, this.forward, up, _col.setRGB(0.82, 0.9, 0.94), 5, 1.1, 1, 0.045, 0.8);
+                fx.dust(_a, up, _col, 2, 0.4, 0.22, 0.3);
+                fx.ripple(_a, up, 0.06, 0.55, 0.9);
+              }
+              hs[side] = h;
+            }
+          }
+        }
+      }
+      // ---- swim ripples
       if (this.state === 'swim' && this.dive < 0.5) {
         this._ripT = (this._ripT || 0) + dt;
         const moving = this.speed > 0.6;
-        if (this._ripT > (moving ? 0.42 : 0.8)) {
+        if (this._ripT > (moving ? 1.0 : 0.85)) {
           this._ripT = 0;
           _a.copy(this.pos).setLength(this.R + this.water);
-          fx.ripple(_a, up, 0.25, moving ? 1.6 : 1.1, moving ? 1.4 : 1.8);
-          if (moving) fx.spray(_a.addScaledVector(this.forward, 0.5), this.forward, up, _col.setRGB(0.8, 0.88, 0.92), 3, 1.2, 1, 0.05);
+          fx.ripple(_a, up, 0.35, moving ? 1.5 : 1.2, moving ? 1.2 : 1.8);
         }
       }
       // ---- jet sparks
@@ -1302,12 +1360,15 @@ export class Player {
       tr.on = this.state === 'glide' && this.glide.s > 11.5 && this._visible && this.glider;
       tr.alpha = clamp((this.glide.s - 11) / 8, 0, 0.55);
       if (tr.on) {
-        const gg = this.glider.group, c = this.glider.canopy;
+        const gg = this.glider.group;
         _m.multiplyMatrices(this.group.matrix, gg.matrix);
         for (const [s, out] of [[1, tr.a], [-1, tr.b]]) {
-          out.set(s * 1.62 * c.scale.x, c.position.y - 0.6, -0.2).applyMatrix4(_m);
+          this.glider.tip(s, out).applyMatrix4(_m);
         }
       }
+      ctx.wake = this._wakeCtx || null;
+      if (this._grooveCtx && !(this.state === 'slide' && this.speed > 1.5)) this._grooveCtx.on = false;
+      ctx.groove = this._grooveCtx || null;
       fx.rebase(this.pos);
       safe(() => fx.update(dt, ctx));
     }
@@ -1325,6 +1386,15 @@ export class Player {
       const dz = this.state === 'air' ? smoothstep(9, 22, -vy) * smoothstep(0.4, 1.2, this.airTime) : 0;
       this._danger = damp(this._danger || 0, dz, dz > (this._danger || 0) ? 4 : 1.5, dt);
       au.setParam('danger', this._danger);
+      // discovery: a brief swell the first time a vista opens up (gliding high above the land, or topping out
+      // on a climb high over the valley); cooldown so it stays special (audio request)
+      this._discCool = Math.max(0, (this._discCool ?? 0) - dt);
+      const agl = this.pos.length() - this.heights.groundR(this.pos);
+      if (this._discCool <= 0 && ((this.state === 'glide' && agl > 35) || (this.state === 'climb' && (this._camCtx?.climbAgl || 0) > 18))) {
+        this._disc = 1; this._discCool = 90;
+      }
+      this._disc = Math.max(0, (this._disc || 0) - dt * 0.25);
+      au.setParam('discovery', this._disc);
     }
     // ---- contextual prompts (minimal)
     let pr = null;
