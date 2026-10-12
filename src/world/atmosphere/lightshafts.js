@@ -102,8 +102,8 @@ void main(){
   float jit = rv_ign(gl_FragCoord.xy + 5.588238 * uFrameJ);
   float nu = dot(dir, uKeyDir);
   float phR = atmo_phaseRayleigh(nu), phM = atmo_phaseMie(nu, uMieG);
-  float phH = mix(atmo_phaseHG(nu, uHaze.w), 1.0 / (4.0 * RV_PI), 0.25);
-  float phF = atmo_phaseHG(nu, 0.55) * 0.9 + 0.05;
+  float phH = mix(atmo_phaseHG(nu, 0.85) * 0.35 + atmo_phaseHG(nu, uHaze.w) * 0.55, 1.0 / (4.0 * RV_PI), 0.25);
+  float phF = (atmo_phaseHG(nu, 0.82) * 0.45 + atmo_phaseHG(nu, 0.35) * 0.5) * 0.9 + 0.05;   // = the atmosphere pass fog phase
   // sky pixels: the sky LUT used the full-density air; geometry: the art-thinned veil
   float apS = far ? 1.0 : uAPScale;
   float viewK = 1.0 / length(vd);          // view depth per unit ray distance
@@ -213,7 +213,9 @@ void main(){
   vec3 dir = normalize(mat3(uCamWorld) * atmo_viewDir(vUv));
   float c = max(dot(dir, uLightDir), 0.0);
   float glow = pow(c, 64.0) + pow(c, 16.0) * 0.25;
-  gl_FragColor = vec4(src * glow, 0.0, 0.0, 1.0);
+  // G: the same glow without any occluder (reference): the composite keeps the contrast (shafts, gaps)
+  // and drops most of the uniform glow an open sky would give (the bloom / Mie aureole already have it)
+  gl_FragColor = vec4(src * glow, glow, 0.0, 1.0);
 }`;
 
 const BLUR_FRAG = /* glsl */`
@@ -235,14 +237,15 @@ void main(){
   vec2 dv = toL * (reach / max(dist, 1e-5)) * uLen / 32.0;
   float j = rv_ign(gl_FragCoord.xy);
   vec2 uv = vUv + dv * j;
-  float acc = 0.0, w = 1.0, wsum = 0.0;
+  vec2 acc = vec2(0.0);
+  float w = 1.0, wsum = 0.0;
   for (int i = 0; i < 32; i++){
-    acc += texture(tSrc, uv).r * w;
+    acc += texture(tSrc, uv).rg * w;
     wsum += w;
     w *= uDecay;
     uv += dv;
   }
-  gl_FragColor = vec4(acc / wsum, 0.0, 0.0, 1.0);
+  gl_FragColor = vec4(acc / wsum, 0.0, 1.0);
 }`;
 
 const COMP_FRAG = /* glsl */`
@@ -303,8 +306,12 @@ void main(){
     float air = dg > 1e8 ? 1.0 : 1.0 - exp(-dg / 9000.0);
     // soft upsample of the quarter-res streak buffer (4 bilinear taps) → no blocky edges
     vec2 px = 1.0 / uLowRes;
-    float r = 0.25 * (texture(tRays, vUv + px * vec2(-0.5, -0.5)).r + texture(tRays, vUv + px * vec2(0.5, -0.5)).r
-                    + texture(tRays, vUv + px * vec2(-0.5, 0.5)).r + texture(tRays, vUv + px * vec2(0.5, 0.5)).r);
+    vec2 rg = 0.25 * (texture(tRays, vUv + px * vec2(-0.5, -0.5)).rg + texture(tRays, vUv + px * vec2(0.5, -0.5)).rg
+                    + texture(tRays, vUv + px * vec2(-0.5, 0.5)).rg + texture(tRays, vUv + px * vec2(0.5, 0.5)).rg);
+    // open fraction along the line to the light: 1 = clear sky all the way (pure glow → mostly dropped:
+    // no milky veil around a sun in a clear sky), ~0.5 = in a gap between occluders (a shaft), 0 = shadowed
+    float open = clamp(rg.x / max(rg.y, 1e-5), 0.0, 1.0);
+    float r = rg.x * (1.0 - 0.75 * open * open * open);
     c += uColor * r * fa * air;
   }
   gl_FragColor = vec4(c, 1.0);

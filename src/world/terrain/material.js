@@ -214,8 +214,9 @@ void rvTerrain( inout vec3 albedo ) {
 
   // ---- rock: triplanar on the geometric normal — 64 m macro facets (far), 8 m stochastic, 2 m micro
   if ( wRock > 0.02 && fFar > 0.0 ) {
-    vec4 accM = vec4( 0.0 ), accA = vec4( 0.0 ), accN = vec4( 0.0 ), accB = vec4( 0.0 );
-    vec3 gM = vec3( 0.0 ), gA = vec3( 0.0 ), gN = vec3( 0.0 ), gB = vec3( 0.0 ); float ws = 0.0;
+    vec4 accM = vec4( 0.0 ), accA = vec4( 0.0 ), accN = vec4( 0.0 ), accB = vec4( 0.0 ), accU = vec4( 0.0 );
+    vec3 gM = vec3( 0.0 ), gA = vec3( 0.0 ), gN = vec3( 0.0 ), gB = vec3( 0.0 ), gU = vec3( 0.0 ); float ws = 0.0;
+    bool doRU = dist < 16.0;   // 0.5 m grain / chips when the player is at the rock
     for ( int a = 0; a < 3; a++ ) {
       float wa = rvWa( a, wg );
       if ( wa <= 0.0 ) continue;
@@ -243,11 +244,16 @@ void rvTerrain( inout vec3 albedo ) {
         if ( fNear > 0.0 ) {
           t = rvTexO( 0.0, uv * 0.5, gx * 0.5, gy * 0.5, floor( kS * 11.0 ) + 5.0 + fa, rotA );
           accN += wa * t; gN += wa * rvGw( a, t.rg * 2.0 - 1.0 );
+          if ( doRU ) {
+            t = rvTexO( 0.0, uv * 2.0 + 0.31, gx * 2.0, gy * 2.0, floor( kS * 17.0 ) + 2.0 + fa, rotA );
+            accU += wa * t; gU += wa * rvGw( a, t.rg * 2.0 - 1.0 );
+          }
         }
       }
     }
     float iw = 1.0 / ws;
-    accM *= iw; accA *= iw; accN *= iw; accB *= iw;
+    accM *= iw; accA *= iw; accN *= iw; accB *= iw; accU *= iw;
+    float fRU = doRU ? ( 1.0 - smoothstep( 7.0, 16.0, dist ) ) * fNear : 0.0;
     float fB = 1.0 - smoothstep( 900.0, 1800.0, dist );
     // relief strength: full on real faces, gentler where "rock" is only a generator hint on a mild
     // slope (under low sun, strong mid-scale bumps on near-flat ground read as brush strokes / fur)
@@ -255,7 +261,7 @@ void rvTerrain( inout vec3 albedo ) {
     // (on bedded faces of layered-rock worlds the strata layers below take over the fine relief:
     //  the faceted/fractured layer-0 detail there read as crumpled paper)
     float kL0 = 1.0 - 0.6 * smoothstep( 0.4, 0.9, uRvS.x ) * rockS * smoothstep( 0.3, 0.6, slope );
-    gradT += ( gM * iw * fFar * 0.75 + gB * iw * fB * 0.55 + ( gA * iw * fMid * 0.6 + gN * iw * fNear * 0.6 ) * kL0 ) * wRock * kRel;
+    gradT += ( gM * iw * fFar * 0.75 + gB * iw * fB * 0.55 + ( gA * iw * fMid * 0.6 + gN * iw * fNear * 0.6 + gU * iw * fRU * 0.5 ) * kL0 ) * wRock * kRel;
     hRock = mix( 0.5, accM.b, fFar );
     hRock = mix( hRock, hRock * 0.6 + accB.b * 0.4, fB );
     hRock = mix( hRock, hRock * 0.4 + accA.b * 0.6, fMid );
@@ -264,6 +270,8 @@ void rvTerrain( inout vec3 albedo ) {
     aRock = mix( aMacro, aMacro * 0.6 + accB.a * 0.4, fB );
     aRock = mix( aRock, aRock * 0.5 + accA.a * 0.5, fMid );
     aRock = mix( aRock, aRock * 0.7 + accN.a * 0.3, fNear );
+    aRock = mix( aRock, aRock * 0.75 + accU.a * 0.25, fRU );
+    hRock = mix( hRock, hRock * 0.8 + accU.b * 0.2, fRU );
   }
   // ---- ground layers: projected along the planet's up (one axis loop for all of them)
   if ( wRock < 0.9 && fMid > 0.0 ) {
@@ -440,7 +448,12 @@ void rvTerrain( inout vec3 albedo ) {
   // blade colour and loses soil patches, so meadows read dense where individual blades fade out
   float meadow = ( 1.0 - wRock ) * ( 1.0 - wSand ) * smoothstep( 0.3, 0.55, moist + 0.1 * n3 ) * smoothstep( 0.1, 0.3, temp ) * uRvS2.x;
   float soilM = smoothstep( 0.68, 0.95, mC.b * 0.6 + mA.b * 0.4 + 0.15 * n1 + 0.25 * wScree ) * ( 1.0 - 0.6 * meadow );
-  grassC = mix( grassC, uRvBlade * ( 0.9 + 0.2 * mA.b ), meadow * mix( 0.25, 0.6, smoothstep( 15.0, 90.0, dist ) ) );
+  // (blade tint with BotW-like colour drifts: sun-dried yellow patches and lush dark-green hollows at
+  //  20-200 m, so meadows are not one flat green from mid distance)
+  vec3 bladeC = uRvBlade * ( 0.84 + 0.2 * mA.b + 0.22 * ( mC.g - 0.5 ) );
+  bladeC = mix( bladeC, bladeC * vec3( 1.18, 1.06, 0.62 ), smoothstep( 0.52, 0.78, mC.r + 0.25 * n3 ) * 0.7 );
+  bladeC = mix( bladeC, bladeC * vec3( 0.72, 0.86, 0.78 ), smoothstep( 0.55, 0.8, mC.b * 0.6 + max( curv, 0.0 ) * 0.6 + 0.2 * n1 ) * 0.6 );
+  grassC = mix( grassC, bladeC, meadow * mix( 0.25, 0.6, smoothstep( 15.0, 90.0, dist ) ) );
   vec3 groundC = mix( grassC, uRvSoil, soilM * 0.55 );
   groundC *= 0.8 + 0.4 * mix( 0.5, dGround.a, fMid );
   vec3 screeC = mix( mix( uRvRock, vec3( rvLum( uRvRock ) ), 0.6 ) * 1.12, uRvSoil, 0.3 + 0.3 * wPebG ) * ( 0.72 + 0.56 * mix( 0.5, dPeb.a, fMid ) ) * ( 0.9 + 0.2 * mC.a );
@@ -469,7 +482,7 @@ void rvTerrain( inout vec3 albedo ) {
   float iron = smoothstep( 0.55, 0.85, mC.r * 0.6 + mA.b * 0.4 + 0.25 * n3 ) * smoothstep( 0.25, 0.5, slope ) * ( 0.5 + 0.5 * clamp( curv * 2.0, 0.0, 1.0 ) );
   rockC = mix( rockC, rvLum( rockC ) * vec3( 1.35, 0.95, 0.68 ), iron * 0.6 );
   // wall tone bodies: pale (fresh exfoliation scars) vs dark cool (seeps, lichen) — ±30 % value
-  rockC *= mix( vec3( 1.0 ), wallTone > 0.0 ? vec3( 1.32, 1.26, 1.18 ) : vec3( 0.62, 0.66, 0.72 ), clamp( abs( wallTone ) * 4.2, 0.0, 1.0 ) );
+  rockC *= mix( vec3( 1.0 ), wallTone > 0.0 ? vec3( 1.32, 1.26, 1.18 ) : vec3( 0.62, 0.66, 0.72 ), clamp( abs( wallTone ) * 6.0 - 0.1, 0.0, 1.0 ) );
   rockC *= 1.0 - 0.62 * clamp( streakM * 1.8, 0.0, 1.0 );
   // drainage streaks: dark varnish (slightly warm) and rarer pale mineral streaks
   rockC = mix( rockC, rockC * vec3( 0.6, 0.56, 0.52 ), clamp( streakD * ( 0.35 + 0.4 * sk ), 0.0, 0.6 ) );

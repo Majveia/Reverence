@@ -191,6 +191,46 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
 * The player request (W3 `lat=22.571&lon=56.286` "needle spikes") is checked: the CPU heightfield is
   smooth there at all LODs and the capture shows dunes with ripples, no spikes.
 
+### Round 5 changes (critic round 2 follow-up: combed walls, monochrome faces, ground contact detail)
+* **Root cause of the fine vertical "comb" lines on every cliff found: the per-vertex curvature hint.**
+  `chunkBuild` computed curvature as the raw height Laplacian / spacing. On a wall of slope s, a
+  horizontal wobble Δx of the face is a height change of s·Δx, so the Laplacian saturated to ±1 and
+  flipped sign from one vertex column to the next. Cavity darkening, crest lightening, AO, talus,
+  drainage-streak and iron masks all read that hint → one light/dark line per vertex column. A/B with
+  `tdebug=6/7/15` proved it was neither the streak layer, the detail normals nor the geometry.
+  Curvature is now the offset from the 3×3 neighbourhood mean measured **along the normal**
+  ((hMean − h)·cosθ / spacing) — the same value on flat ground, ~10× smaller (and smooth) on 84° walls.
+* **Rock detail layer (0) rebaked**: the stepped ledges were the contours of a terraced fbm (curly dark
+  riser lines = "wrinkled skin / worms" on walls at 50–300 m). Ledges are now near-parallel bedding /
+  sheeting planes (sawtooth tread + riser, periodic) and the cracks are a sparse subset of straight
+  polygon seams of a second block field (angular joints, 2–5 px wide in the bake).
+* **Wall tone bodies**: big faces get vertically elongated pale (exfoliation scars) / dark-cool (seeps,
+  lichen) tone bodies ~150–600 m wide (±30 % value) from two vertical-plane fetches; macro drainage
+  stains are darker (−62 %) and cover more of the face.
+* **0.5 m rock grain** (third rock detail scale) within 16 m of the camera — on-foot walls and boulders.
+* **Underfoot micro layer** (vehicles request): within 14 m, scattered grit / 3–4 cm stones (pebble
+  layer at 0.6 m, masked sparse) on soil and sand, and 1 m fine sand ripples — boots and rover wheels.
+* **Talus / rubble aprons** (new generator hint): `SurfaceGen` reports `talus` (0..1) at the foot of
+  mesa, plateau and canyon walls; it is exported by `surface.sample().talus` and streamed to the GPU
+  as a new vertex attribute `aMat3.x`. The shader paints coarse 0.3–1 m rubble (pebble layer at 7 m
+  scale) there and keeps sand off it. Geometry: mesas/plateaus got a low **debris fan** (+6 % of the
+  wall height over the outer Δv = 1, ≈ 18–25°, fading up the cliff — the profile stays monotonic) and
+  canyon walls a concave **debris apron** (7.5 % of the depth) instead of a crisp floor/wall corner.
+* **Steep shores → dark shingle**: near sea level (−6…+9 m) on slopes > ~15° the bright sand band
+  (the "thin bright stroke along the contour" the critic saw in the fjord) becomes wet shingle /
+  boulders; beaches remain on gentle shores, with a noise-varied width.
+* **Meadow colour drifts**: where the ground takes the flora blade colour, it now varies in 20–200 m
+  patches (sun-dried yellow, lush dark-green hollows) instead of one flat green.
+* **Landform hint fixes** (they painted broad rock / soil stripes across meadows, which flora then
+  avoided → stripy grass): (1) canyon wall hints are scaled by the real mean wall slope (depth /
+  (0.05·wavelength)) — W1's half-strength canyons have gentle flanks; (2) plateau/mesa wall hints are
+  scaled by `sstep(0.3, 0.75, reg·inland)`; (3) the coastal-cliff rock band now uses the same jagged
+  coordinate as the cliff riser (it ignored a ±0.0025 jag and ran far inland); (4) mountain 3D wall
+  relief + ledges only count mountain faces from ~48° of large-scale slope (full at ~63°) — the
+  range's "steep" hint starts at 27° and had terraced meadow flanks into rice-paddy steps.
+* All changes keep `PlanetSurface` deterministic and worker-safe; `height()` cost unchanged
+  (~7–11 µs full detail).
+
 ## Capture URLs (verified this round, 1280×720)
 Use `view=fly` for terrain-only framing (no player body). Side light reads relief best: pick `tod` so the
 sun is ~60–120° off the view direction (sun ≈ east at tod 0.3, ≈ west at 0.68 on these worlds).

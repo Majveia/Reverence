@@ -269,3 +269,10 @@ move the rig with an eval step, e.g.
    (+ tracer jitter), per-pixel-rotated sparse-region kernel, accumulation at 0.75× (was 0.6×).
 3. z ≈ 3 wash fixed: measured black point (levels) — troughs are true black, only overdensities glow.
 4. Crisper filaments at hero range: no 5-tap blur, sparse-region blur only below the toe.
+
+## Restored to the round-2 render (lead, 12 Oct)
+The 6 Oct fix pass (thin threads in blue-violet veils, anisotropic streaks) scored 4.8/10 with the round-3 critic,
+down from 6.3 (round 2, blind 3/4) and 7 (round 1). A side-by-side of the round-2 and round-3 captures agreed: the
+round-3 web is sparser and smeared, further from Millennium/TNG. `src/modes/cosmic/` is restored to the round-2
+version (the tree before commit d3eaacd). The round-3 critic's notes above (finer filament hierarchy, a crisper
+early web, log-density colour ramp) remain the right direction for the next pass, applied on top of this version.

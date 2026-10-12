@@ -600,9 +600,12 @@ export class SurfaceGen {
   static mesa(v) {
     // v >= 0 caprock top, [-0.75,0) steep cliff (~70-80°: steep but still a well-conditioned
     // heightfield — true verticals shade as vertical stripes), [-2,-0.75) concave talus apron
+    // + a low debris fan [-3,-2) (+6 % of the height, ~18-25°) so walls stand on rubble instead of
+    //   meeting the plain in a crisp corner; it fades out up the cliff (keeps the profile monotonic)
     if (v >= 0) return 1 - 0.03 * Math.exp(-v * 18);
-    if (v > -0.75) { const t = -v / 0.75; return 0.97 - 0.55 * (t * 0.85 + 0.15 * t * t); }
-    if (v > -2) { const t = (v + 2) / 1.25; return 0.42 * t * t; }
+    if (v > -0.75) { const t = -v / 0.75; return 0.97 - 0.55 * (t * 0.85 + 0.15 * t * t) + 0.06 * t; }
+    if (v > -2) { const t = (v + 2) / 1.25; return 0.42 * t * t + 0.06; }
+    if (v > -3) { const t = v + 3; return 0.06 * t * t; }
     return 0;
   }
 
@@ -752,9 +755,11 @@ export class SurfaceGen {
         const p1 = SurfaceGen.mesa(v1), p2 = SurfaceGen.mesa(v2);
         const add = st.plateauH * (p1 + 0.8 * p2) * reg * inland;
         h += add;
-        const cl = Math.min(1, SurfaceGen.band(v1, -1.0, -0.8, -0.02, 0.06) + SurfaceGen.band(v2, -1.0, -0.8, -0.02, 0.06)) * reg * inland;
+        // (hint scaled by how real the wall is: where the plateau region fades out its "cliffs" are a
+        //  gentle few-metre step, and a reg-proportional rock hint painted broad rock strips on meadows)
+        const cl = Math.min(1, SurfaceGen.band(v1, -1.0, -0.8, -0.02, 0.06) + SurfaceGen.band(v2, -1.0, -0.8, -0.02, 0.06)) * sstep(0.3, 0.75, reg * inland);
         // rubble apron at the cliff foot (the concave part of the mesa profile)
-        const ta = Math.min(1, SurfaceGen.band(v1, -2.2, -1.75, -0.95, -0.7) + SurfaceGen.band(v2, -2.2, -1.75, -0.95, -0.7)) * reg * inland;
+        const ta = Math.min(1, SurfaceGen.band(v1, -3.1, -2.6, -0.95, -0.7) + SurfaceGen.band(v2, -3.1, -2.6, -0.95, -0.7)) * reg * inland;
         if (ta > talus) talus = ta;
         if (cl * 0.9 > steep) { steep = cl * 0.9; wallH = Math.max(wallH, st.plateauH); }
         if (cl > cliff) cliff = cl;
@@ -769,8 +774,8 @@ export class SurfaceGen {
         const p = SurfaceGen.mesa(v);
         const mh = st.plateauH * (1.2 + 0.8 * sstep(-1, 1, nF.n3(px * f * 0.3, py * f * 0.3 + 3, pz * f * 0.3)));
         h += mh * p * reg * inland;
-        const cl = SurfaceGen.band(v, -1.0, -0.8, 0.02, 0.12) * reg * inland;
-        const ta = SurfaceGen.band(v, -2.2, -1.75, -0.95, -0.7) * reg * inland;
+        const cl = SurfaceGen.band(v, -1.0, -0.8, 0.02, 0.12) * sstep(0.3, 0.75, reg * inland);
+        const ta = SurfaceGen.band(v, -3.1, -2.6, -0.95, -0.7) * reg * inland;
         if (ta > talus) talus = ta;
         if (cl * 0.9 > steep) { steep = cl * 0.9; wallH = Math.max(wallH, mh); }
         if (cl > cliff) cliff = cl;
@@ -804,7 +809,10 @@ export class SurfaceGen {
         h = Math.max(h - carve, floor);
         const ta = SurfaceGen.band(v, 0.07, 0.16, 0.27, 0.36) * reg * (1 - 0.6 * mtn);
         if (ta > talus) talus = ta;
-        const wall = SurfaceGen.band(v, 0.1, 0.2, 0.85, 1.0) * reg;
+        // wall hints scaled by the real mean wall slope (depth / width ≈ depth / (0.05·wavelength)):
+        // shallow canyons (faded regions, half-strength styles) have gentle terraced flanks that the
+        // old reg-proportional hint painted as broad rock strips across meadows
+        const wall = SurfaceGen.band(v, 0.1, 0.2, 0.85, 1.0) * sstep(0.45, 0.9, st.canyonDepth * reg / (0.05 * st.canyonWl));
         if (wall * 0.8 > steep) { steep = wall * 0.8; wallH = Math.max(wallH, st.canyonDepth); }
         if (wall > rock) rock = wall;
         if (wall * 0.8 > cliff) cliff = wall * 0.8;

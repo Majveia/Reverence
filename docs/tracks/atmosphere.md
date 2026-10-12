@@ -18,6 +18,31 @@ Subsystem `atmosphere` (order 20) auto-loaded by `World`. Every pass is fault-is
 | `lighting.js` | `SunLight` key light with custom N-cascade shadows (`RVSunShadow`: 2–4 cascades in one atlas, texel snapping, per-cascade normal bias), moon as key light at night (phase-aware), PMREM environment of the sky + cloud deck (cover / colours follow the weather and time of day) on `scene.environment`, **overcast-aware ambient** (the deck greys and dims the sky dome; blocked direct sun returns as diffuse light), hemisphere fallback, material auto-setup (cloud shadows on the key light) |
 | `index.js` | subsystem glue, per-frame CPU state, pre-render GPU work (LUTs, env map, cloud shadow map) |
 
+### Round 3b (critic fixes, continued after the restart)
+* **Cumulus read as cumulus, not one smooth blob per weather-map contour**: new per-type `billow` (`uShape7.x`):
+  the coverage threshold rises toward the borders of the base Worley cells (~1/5 of a cloud) and drops in
+  their cores → clusters of rounded towers with lumpy cauliflower outlines; smaller base tile (3.6 km), softer
+  dome taper (0.45) so tops stay dense and crisp; stricter anti-speck gate on the base shape (`smoothstep(0.05,
+  0.18, b0)`): fewer detached dots around the cloud tops.
+* **Orbit**: a third, finer far-field octave (~1 km, rotated) frays the edges of the cloud fields (no smooth
+  cut-out outlines); **cloud shadows on the ground from altitude / orbit** (3-sample march from the ground
+  point toward the key light through the layer, complements the cloud shadow map that fades out at 12–30 km):
+  every cloud field casts its shadow, long shadows near the terminator.
+* **Rain mood**: rain means a closed deck: `sunDim = 1 − 1.55·precip − 0.4·storm` (moderate rain already kills
+  the hard sun shadows: soft, shadowless storm light); rain haze grows with rain² (`rn²·7e-4 /m`: ~30 % at 1 km
+  in moderate rain); denser but finer rain (12k streaks on high, width 6.5 mm, shorter 32 ms shutter, faded
+  within 1.8–6 m of the lens: no white scratches across the frame).
+* **Sun aureole instead of a milky veil**: the weather / golden-hour haze uses a two-lobe aerosol phase
+  (HG 0.82 + HG 0.35): a compact bright glow around the sun, less flat brightening of the whole sky;
+  lighter high cloud over the fog sea (0.3).
+* **God rays without a milky veil**: the screen-space streak source also writes the unoccluded glow (G); the
+  composite keeps the contrast (shafts through gaps, behind ridges and cloud edges) and drops ~75 % of the
+  uniform glow of an open sky (`open³` of blurred / reference) — a clear sky around a low sun no longer turns
+  into a flat white haze over half the frame (that glow belongs to the Mie aureole and the bloom). The
+  volumetric haze uses the same two-lobe phase.
+* **Airless bodies**: planetshine / earthshine (the lit parent planet or the brightest moon, `moon.ill`) +
+  a starlight floor in the environment map → shadowed regolith reads instead of crushing to black.
+
 ### Round 3 (critic fixes)
 * **Orbit clouds no longer cut-out patches**: far-field extinction drops to `farSig` (0.38) so thin cloud fields are
   translucent and only dense cores stay opaque; the coverage threshold is a soft remap that widens with the distance
@@ -138,13 +163,13 @@ Finals of this round (1280×720) are listed first; all are plain URLs (steps onl
 
 | view | URL / steps |
 |---|---|
-| **BotW cumulus sky** (W2 noon-ish) | `star=11&planet=0&view=fly&alt=800&tod=0.4&pitch=8` |
+| **BotW cumulus sky** (W2 noon-ish): lumpy cumulus clusters + high cloud | `star=11&planet=0&view=fly&alt=800&tod=0.4&pitch=8` |
 | **Golden hour**, warm streaks fanning from behind the ridge (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.74&pitch=6&yaw=270` |
 | **Morning sun through broken cumulus** (W2, god rays / shadow beams) | `star=11&planet=0&view=fly&alt=800&tod=0.28&pitch=8&yaw=100&cover=0.7` |
 | **Storm over the neon city**: dark scud cells, rain, branched lightning (W4) | `star=2&planet=0&view=fly&alt=300&tod=0.45&pitch=6&lightning=1` |
-| **Sea of clouds**, billowed deck raked by the low sun, gaps to the sea, high rafts above (W7) | `star=3&planet=2&view=fly&alt=3000&tod=0.28&yaw=135&pitch=-4` |
+| **Sea of clouds** toward the low sun: billowed deck, gaps to the sea, layered high cloud lit around the sun (W7) | `star=3&planet=2&view=fly&alt=3000&tod=0.28&yaw=118&pitch=-2` |
 | **Moonrise night**: moon disc, moonlit wisps, deep-blue starry sky (W3 Arzach) | `star=9&planet=2&view=fly&alt=600&tod=0.02&pitch=8&yaw=283` |
-| **Planet from orbit**: cyclone, soft translucent cloud fields, sunset-lit terminator clouds (W2) | `star=11&planet=0&view=orbit&tod=0.4` |
+| **Planet from orbit**: cyclone, frayed cloud fields casting shadows on the ocean, sunset-lit terminator clouds (W2) | `star=11&planet=0&view=orbit&tod=0.4` |
 | **Terminator from orbit**: orange cloud band, dark night side with city / rural lights, airglow ring (W1) | `star=6&planet=1&view=orbit&tod=0.22` |
 | **Rain in the forest** (W4 surface, overcast, varied streaks, far rain sheet) | `star=2&planet=0&view=surface&tod=0.45&lightning=1&props=0` steps `[{"look":[0,22]},{"advance":0.5}]` |
 | Overcast stratus deck, sun a dim disc through it (W2) | `star=11&planet=0&view=fly&alt=500&tod=0.3&pitch=12&yaw=108&cover=0.75&clouds=stratus` |
@@ -185,6 +210,9 @@ it) and `overcast`.
   pixels near towns; the far rain sheet is one extra instanced draw while it rains.
 
 ## Known issues
+* Round 3b: cumulus seen straight from below still shows a fairly uniform grey base (physically right; BotW
+  paints them brighter); a few small cloudlets remain around the big clouds (now puffs, not 1–2 px specks).
+* Orbit cloud shadows are a 3-sample march (soft, slightly blobby under thin fields); they skip the night side.
 * Round 3: the high cloud layer is 2D (no parallax inside it, no self-shadowing); from orbit it fades out.
 * Night-side city glow uses the civ settlement list (12 brightest sites) + procedural rural speckle over land; it
   does not follow real road networks. Near the ground (< 2.5 km) only civ's own lights show.
@@ -203,6 +231,11 @@ it) and `overcast`.
 * Lightning bolts are camera-facing ribbons (no volumetric glow halo; the cloud flash provides that).
 
 ## Requests
+* **space** (round 3b): the star disc is tiny from the ground (`state.space.sunAng` 0.2–0.46°, i.e. 2–5 px at
+  960×540), so no sun disc reads in sunrise / sea-of-clouds frames; a minimum apparent diameter of ~0.5° (or a
+  brighter, slightly larger core sprite when the true disc is < 0.4°) would give the critic the "visible sun
+  disc" the references have. The atmosphere already attenuates and reddens whatever the space track draws.
+* **civ** (round 3b, still open): the two brown out-of-focus discs left/right of W1 in `view=orbit&tod=0.22`.
 * **civ** (round 3): in `star=6&planet=1&view=orbit&tod=0.22` two large brown out-of-focus discs float in space left
   and right of the planet only when civ is loaded (orbit light network points?); please check their far fade.
 * **terrain / flora** (round 3): golden-hour rim light — a wrap / sun-facing Fresnel term on grass and foliage
@@ -231,6 +264,13 @@ it) and `overcast`.
   On airless bodies the atmosphere pass is a strict pass-through (`uHasAtmo = 0`), no LUTs/clouds/shafts
   are created, and the key light is valid (white sun, env map present — checked in-page). Please look at
   the terrain material path for barren bodies (or the camera spawn inside terrain).
+
+### Done (inbox, round 3b)
+* terrain: bounce / earthshine ambient on airless moons (`uShine` in the environment map: the lit parent planet
+  or brightest moon + a starlight floor).
+* civ (3): the round-1 hard-edged moon/sun rectangle at dusk — the moon now gets a soft aerosol aureole (radial
+  falloff) from the atmosphere; the disc itself is drawn by the space track (no rectangle seen in W1 / W3 night
+  captures of this round).
 
 ### Done (inbox, round 3)
 * vehicles: rain streaks have per-drop spacing / length / width / opacity / speed variation and fade with distance,

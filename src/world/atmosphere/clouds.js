@@ -29,7 +29,7 @@ const AMBK = 1.1;
 // scale: base noise tile (m) · detail: detail tile (m) · erode: detail erosion · topMin: tallness range
 // soft: base softness · anvil · stretch (cirrus streaks) · cover: coverage multiplier / add
 export const CLOUD_TYPES = {
-  cumulus: { alt: 1.0, thick: 1500, dens: 0.065, scale: 3600, detail: 1700, erode: 0.5, billow: 0.6, dome: 0.6, edge: 0.22, topMin: 0.45, soft: 0.08, topSoft: 0.55, anvil: 0.0, stretch: 0.0, coverMul: 1.0, coverAdd: 0.0, weatherFreq: 9, ambient: 1.0, lump: 0.10, grad: 0.62, baseMax: 2600, sunGain: 5.8, tupK: 0.07 },
+  cumulus: { alt: 1.0, thick: 1500, dens: 0.065, scale: 3600, detail: 1700, erode: 0.5, billow: 1.0, dome: 0.45, edge: 0.22, topMin: 0.45, soft: 0.08, topSoft: 0.55, anvil: 0.0, stretch: 0.0, coverMul: 1.0, coverAdd: 0.0, weatherFreq: 9, ambient: 1.0, lump: 0.10, grad: 0.62, baseMax: 2600, sunGain: 5.8, tupK: 0.07 },
   storm: { billow: 0.35, alt: 0.8, thick: 3800, dens: 0.07, dome: 0.2, edge: 0.18, scale: 6400, detail: 1000, erode: 0.4, topMin: 0.35, soft: 0.05, topSoft: 0.6, anvil: 0.9, stretch: 0.0, coverMul: 1.1, coverAdd: 0.1, weatherFreq: 6, ambient: 0.8, lump: 0.22, grad: 0.75, baseMax: 1500, sunGain: 4.2, tupK: 0.05 },
   stratus: { billow: 0.12, alt: 0.75, thick: 800, dens: 0.035, scale: 7000, detail: 1100, erode: 0.4, topMin: 0.7, soft: 0.18, topSoft: 0.72, anvil: 0.0, stretch: 0.4, coverMul: 1.05, coverAdd: 0.18, weatherFreq: 4, ambient: 1.1, lump: 0.42, grad: 0.7, baseMax: 2400, sunGain: 4.2, tupK: 0.05 },
   wisp: { alt: 2.3, thick: 450, dens: 0.012, scale: 7000, detail: 1200, erode: 0.5, topMin: 0.8, soft: 0.3, topSoft: 0.3, anvil: 0.0, stretch: 0.85, coverMul: 0.9, coverAdd: 0.05, weatherFreq: 7, ambient: 1.2, lump: 0.1, grad: 1.0, baseMax: 1e9, sunGain: 3.4, tupK: 0.04 },
@@ -211,7 +211,9 @@ float cl_base(vec3 p, float h, vec4 wx, out float prof){
     pf += wf * 0.55;
     float f1 = texture(uNoise, pf + uWindA * 0.25).r;
     float f2 = texture(uNoise, mat3(0.8, -0.36, 0.48, 0.6, 0.48, -0.64, 0.0, 0.8, 0.6) * pf * 3.71 + 0.37).g;
-    float far = clamp(wx.a * 0.55 + (f1 - 0.5) * 0.6 + (f2 - 0.45) * 0.3 + 0.16, 0.0, 1.0);
+    // third, finer octave (~1 km, another rotation): fractal, frayed field edges instead of smooth cut-outs
+    float f3 = texture(uNoise, mat3(0.36, 0.48, -0.8, -0.8, 0.6, 0.0, 0.48, 0.64, 0.6) * pf * 13.3 + 0.71).b;
+    float far = clamp(wx.a * 0.55 + (f1 - 0.5) * 0.6 + (f2 - 0.45) * 0.3 + (f3 - 0.5) * 0.22 + 0.16, 0.0, 1.0);
     // dense cores tower, thin fields stay low: relief that self-shadows under a grazing sun (terminator)
     float topF = top * mix(0.6, 1.0, smoothstep(0.25, 0.75, far));
     float profF = smoothstep(0.0, uShape2.y + 0.25, hp) * (1.0 - smoothstep(topF * 0.2, topF, hp));
@@ -258,7 +260,7 @@ float cl_densityW(vec3 p, float h, bool detail, out vec4 wx){
   b = max(b, 0.0);
   b *= mix(1.0, smoothstep(0.0, uShape6.w, b), 1.0 - cl_lod);
   // no detached specks: where the base shape is nearly empty the erosion may not leave isolated bits
-  b *= mix(1.0, smoothstep(0.03, 0.12, b0), 1.0 - cl_lod);
+  b *= mix(1.0, smoothstep(0.05, 0.18, b0), 1.0 - cl_lod);
   // storms are denser & darker
   return max(b, 0.0) * (1.0 + wx.b * 1.5);
 }
@@ -471,6 +473,27 @@ void main(){
     vec3 skyL = vec3(0.0);
     if (uInside > 0.5) skyL = atmo_skyLUT(dir, ro / camR, camR, uSunDir, dot(dir, uSunDir)) * uSunIllSky;
     L = L * Tair + skyL * (1.0 - Tair) * alpha;
+  }
+  // cloud shadows on the ground seen from altitude / orbit (the cloud shadow map that the terrain samples
+  // fades out between 12 and 30 km): 3-sample march from the ground point toward the key light through the
+  // layer; darkens what is behind the (thin or absent) cloud in front → shadows next to every cloud field,
+  // long shadows at the terminator
+  float shW = smoothstep(12000.0, 30000.0, camR - uAtmoRb);
+  if (shW > 0.0 && tHit < 1e29 && T > 0.02){
+    vec3 pg = ro + dir * tHit;
+    float rg = length(pg);
+    if (rg < Rc0 && dot(pg / rg, uLightDir) > -0.08){
+      float a0 = atmo_raySphere(pg, uLightDir, Rc0).y, a1 = atmo_raySphere(pg, uLightDir, Rc1).y;
+      if (a1 > a0 && a0 > 0.0){
+        cl_lod = 1.0; cl_dlod = 1.0;
+        float sod = 0.0, sdt = (a1 - a0) / 3.0;
+        for (int k = 0; k < 3; k++){
+          vec3 sp = pg + uLightDir * (a0 + (float(k) + 0.5) * sdt);
+          sod += cl_density(sp, (length(sp) - Rc0) / thick, false) * sdt;
+        }
+        T *= mix(1.0, exp(-sod * sigma * uShape6.x), 0.6 * shW);
+      }
+    }
   }
   // high cirrus: above the cumulus deck (behind it from below, in front of it from above)
   vec4 ci = cirrusLayer(ro, dir, tHit, camR);

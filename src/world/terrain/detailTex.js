@@ -121,25 +121,31 @@ export function bakeDetail(size = DETAIL_SIZE) {
       // big angular blocks (planes, soft seams)
       facets(wu, wv, 4, h1, 11);
       const big = res[0], bid = res[2];
-      // stepped ledges: terraced warped fbm → flat-ish planes with sharp risers (chipped / layered)
-      const base = pfbm(h3, wu + 0.2, wv + 0.7, 3, 4, 0.5) * 3.2 + big * 1.5;
-      const bi = Math.floor(base), bf = base - bi;
-      const step = bi + 0.75 * sst(0.55, 0.95, bf) + 0.25 * bf;   // continuous across steps
-      // a few long, gently curving fractures (zero-crossings of low-frequency noise, masked into
-      // segments; no high-frequency term → no worm-like loops)
-      const fn = pnoise(h4, u * 1 + 0.2 * pnoise(h1, u, v, 2), v, 4) + 0.15 * pnoise(h4, wu + 0.3, wv + 0.8, 8);
-      const crack = (1 - sst(0.0, 0.022, Math.abs(fn))) * sst(0.05, 0.4, pnoise(h2, u + 0.9, v + 0.2, 3));
+      // stepped ledges: near-parallel bedding / sheeting planes (a planar coordinate with a gentle
+      // fbm dip), so the risers are long straight-ish lines. (Terracing an fbm drew its CONTOURS:
+      // curly dark riser lines that read as wrinkled skin / worms on cliffs.)
+      const dip = v * 5 + 0.45 * pfbm(h3, wu + 0.2, wv + 0.7, 2, 3, 0.5) + 0.35 * big;
+      const bi = Math.floor(dip), bf = dip - bi;
+      // sawtooth ledge (tread tilting back, sharp riser): the deviation of the terrace from the planar
+      // ramp — periodic (the ramp itself is not) and continuous across steps
+      const step = 0.75 * (sst(0.6, 0.95, bf) - bf);
+      const bk = ((bi % 5) + 5) % 5;
+      // joints: a sparse subset of the facet seams of a second, finer block field (straight polygon
+      // edges by construction), with varying width — angular cracks, never worm-like loops
+      facets(wu + 0.37, wv + 0.11, 7, h4, 9);
+      const seam = res[1], pr = h1(Math.floor(res[2] * 997) + Math.floor(res[3] * 997), 5);
+      const crack = pr < 0.38 ? (1 - sst(0.0, 0.06 + 0.1 * pr, seam)) : 0;
       const weath = pfbm(h2, u + 0.17, v + 0.61, 8, 4, 0.5);
       let rid = 0, amp = 0.5, pp = 32;
       for (let o = 0; o < 3; o++) { rid += amp * (1 - Math.abs(pnoise(h1, u + o * 0.17, v + o * 0.31, pp))); amp *= 0.5; pp *= 2; }
       const pits = sst(0.52, 0.8, pfbm(h1, u + 0.21, v + 0.63, 20, 3)) * 0.06;
-      const hgt = 0.16 * step + 0.45 * big + 0.09 * weath + 0.03 * rid - 0.08 * crack - pits;
+      const hgt = 0.2 * step + 0.42 * big + 0.08 * weath + 0.03 * rid - 0.07 * crack - pits;
       H[y * S + x] = hgt;
       const lich = sst(0.35, 0.6, pfbm(h3, u, v, 6, 4)) * sst(0.45, 0.75, pnoise(h1, u, v, 28) * 0.5 + 0.5);
       const speck = pnoise(h4, u, v, 96) * 0.5 + pnoise(h4, u + 0.3, v + 0.8, 160) * 0.5;
-      const riser = sst(0.55, 0.75, bf) * (1 - sst(0.85, 0.98, bf));
-      A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.18 * (bid - 0.5) + 0.1 * ((bi * 0.618) % 1 - 0.5) + 0.12 * weath + 0.05 * speck
-        - 0.08 * riser - 0.18 * crack - 0.8 * pits + 0.1 * lich));
+      const riser = sst(0.6, 0.78, bf) * (1 - sst(0.88, 0.99, bf));
+      A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.2 * (bid - 0.5) + 0.08 * ((bk * 0.618) % 1 - 0.5) + 0.12 * weath + 0.06 * speck
+        - 0.07 * riser - 0.14 * crack - 0.8 * pits + 0.1 * lich));
     }
     norm(); put(0, 0.10);
   }
