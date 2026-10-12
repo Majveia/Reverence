@@ -5,7 +5,8 @@
 //   surface.heightLod(x, y, z, lod)  cheaper height without octaves finer than `lod` meters
 //   surface.sample(x, y, z, out)     { height, biome, moisture, temperature, slope, rock, sand,
 //                                      snow, cliff, river, lake, mountain, continental, dune,
-//                                      talus (rubble apron at wall feet: keep grass off it) }
+//                                      talus (rubble apron at wall feet: keep grass off it),
+//                                      bare (worn soil / gravel patches the terrain paints: thin grass) }
 //   surface.normal(dir, out, eps)    geometric normal (finite differences), unit
 //   surface.seaLevel                 meters (0 if ocean present, -Infinity otherwise)
 //   surface.maxHeight / minHeight    approx relief bounds (m)
