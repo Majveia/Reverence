@@ -128,7 +128,8 @@ export class Scarf {
     for (const s of this.strips) {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(s.n * 3), 3));
-      g.setAttribute('normal', new THREE.BufferAttribute(s.nrm, 3));
+      s.rnrm = new Float32Array(s.n * 3); // render normals (cupped cross-section), physics keeps s.nrm
+      g.setAttribute('normal', new THREE.BufferAttribute(s.rnrm, 3));
       const uv = new Float32Array(s.n * 2);
       for (let j = 0; j < s.rows; j++) for (let i = 0; i < s.cols; i++) { uv[(j * s.cols + i) * 2] = i / (s.cols - 1); uv[(j * s.cols + i) * 2 + 1] = j / (s.rows - 1); }
       g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
@@ -265,12 +266,31 @@ export class Scarf {
         const l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
         N[o] = nx / l; N[o + 1] = ny / l; N[o + 2] = nz / l;
       }
-      // upload (relative to center)
+      // upload (relative to center). Render-only cupped cross-section: the middle column rides out along the
+      // normal and the edge normals tilt outward, so the band reads as soft wool with a lengthwise fold,
+      // not a flat ribbon (the cup relaxes toward the free end and flips with the flutter).
       const pos = this.meshes[k].geometry.attributes.position;
-      const arr = pos.array;
+      const arr = pos.array, RN = s.rnrm;
       for (let pi = 0; pi < s.n; pi++) {
         const o = pi * 3;
         arr[o] = X[o] - center.x; arr[o + 1] = X[o + 1] - center.y; arr[o + 2] = X[o + 2] - center.z;
+        RN[o] = N[o]; RN[o + 1] = N[o + 1]; RN[o + 2] = N[o + 2];
+      }
+      if (cols === 3) {
+        for (let j = 1; j < s.rows; j++) {
+          const r0 = j * 3 * 3, r1 = r0 + 3, r2 = r0 + 6;
+          let lx = X[r2] - X[r0], ly = X[r2 + 1] - X[r0 + 1], lz = X[r2 + 2] - X[r0 + 2];
+          const ll = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1; lx /= ll; ly /= ll; lz /= ll;
+          const u = j / (s.rows - 1);
+          const cup = ll * (0.2 - 0.1 * u) * Math.sin(this.t * 2.1 + j * 0.7 + k * 1.7) * 0.5 + ll * 0.12 * (1 - u);
+          arr[r1] += N[r1] * cup; arr[r1 + 1] += N[r1 + 1] * cup; arr[r1 + 2] += N[r1 + 2] * cup;
+          const tilt = Math.max(-0.9, Math.min(0.9, cup / (ll * 0.5) * 1.6));
+          for (const [o, sg] of [[r0, -1], [r2, 1]]) {
+            let nx = N[o] + sg * lx * tilt, ny = N[o + 1] + sg * ly * tilt, nz = N[o + 2] + sg * lz * tilt;
+            const nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+            RN[o] = nx / nl; RN[o + 1] = ny / nl; RN[o + 2] = nz / nl;
+          }
+        }
       }
       pos.needsUpdate = true;
       this.meshes[k].geometry.attributes.normal.needsUpdate = true;
