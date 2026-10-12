@@ -176,6 +176,8 @@ function computeStyle(cfg) {
   // per-world wall relief wavelengths (constant: see _eval)
   st.buttWl = Math.min(1400, Math.max(500, A * st.mtnHeight * 0.3));
   st.wallLam = Math.min(320, Math.max(90, A * 0.055));
+  // wave-cut platforms at the foot of sea cliffs (no rng draw: keeps every other style value stable)
+  st.shelf = T === 'ocean' || T === 'archipelago' ? 1 : 0.8;
   return st;
 }
 
@@ -376,8 +378,11 @@ export class SurfaceGen {
       if (lw <= 0) break;
       const f = this.R / wl;
       const v = n.n3(x * f + 13.1 + o * 3.7, y * f + 5.3, z * f + 9.9 - o * 1.3);
-      // softened ridge: sharp-ish ribs, rounded chutes (no razor creases)
-      sum += 0.09 * wl * lw * ((0.35 - Math.sqrt(v * v + 0.006)) * 1.7);
+      // softened ridge: sharp-ish ribs, rounded chutes (no razor creases). Mostly CARVING: the
+      // positive rib part is damped — where ribs of several octaves crossed a mountain crest they
+      // stacked into isolated needles / cones on the ridge line (critic: "fins stuck on the crest").
+      const rb = (0.35 - Math.sqrt(v * v + 0.006)) * 1.7;
+      sum += (o < 2 ? 0.09 : 0.05) * wl * lw * (rb > 0 ? rb * 0.3 : rb);
       wl *= 0.5;
     }
     return sum;
@@ -764,6 +769,10 @@ export class SurfaceGen {
         if (cl * 0.9 > steep) { steep = cl * 0.9; wallH = Math.max(wallH, st.plateauH); }
         if (cl > cliff) cliff = cl;
         if (cl > rock) rock = cl;
+        // caprock rim: the hard bed that holds the table up shows as a bare rock band along the edge
+        // of the top (the flat tops otherwise read as one pale sand sheet, like snow from the air)
+        const cap = Math.min(1, SurfaceGen.band(v1, -0.05, 0.02, 0.3, 0.8) + SurfaceGen.band(v2, -0.05, 0.02, 0.3, 0.8)) * 0.8 * sstep(0.3, 0.75, reg * inland);
+        if (cap > rock) rock = cap;
       }
       if (st.mesas > 0) {
         const f = R / st.mesaWl;
@@ -780,6 +789,8 @@ export class SurfaceGen {
         if (cl * 0.9 > steep) { steep = cl * 0.9; wallH = Math.max(wallH, mh); }
         if (cl > cliff) cliff = cl;
         if (cl > rock) rock = cl;
+        const cap = SurfaceGen.band(v, -0.05, 0.02, 0.35, 0.9) * 0.8 * sstep(0.3, 0.75, reg * inland);
+        if (cap > rock) rock = cap;
       }
     }
 
@@ -1091,7 +1102,7 @@ export class SurfaceGen {
     // (the wavelength is a per-world constant: a frequency that follows wallH — which tracks the
     //  range mask — rescales absolute noise coordinates of ~10³ units by a spatially varying factor,
     //  decorrelating the noise within metres: needle fins and combs where ranges ramp up)
-    if (steep > 0.01 && wallH > 60) {
+    if (steep > 0.01 && wallH > 60 && !(this.cfg.dbg & 16)) {
       h += steep * this._buttress(x, y, z, lod, st.buttWl) * Math.min(1, wallH / 1500 + 0.25);
     }
 
@@ -1159,6 +1170,27 @@ export class SurfaceGen {
       }
     }
 
+    // ---- wave-cut platforms: where steep rock plunges into the sea, waves erode a near-flat rock shelf
+    //      just below the waterline. Heights in [-40, +2] m are pulled toward ≈ -0.6 m with a
+    //      monotonic remap (f = h + (P - h)·k, P > h where k rises, P < h where it falls → never folds),
+    //      so a wall of slope s gets a ~22/s m wide shelf (7-15 m on 55-70° faces) that the fractal
+    //      detail below breaks into rocks; the water track draws surf on it. Patchy along the coast.
+    if (this.hasOcean && h > -40 && h < 2.5 && st.shelf > 0) {
+      const ks = Math.max(cliff, sstep(1.2, 2.6, wallS), steep * 0.8);
+      if (ks > 0.02) {
+        const f = R / 1800;
+        const wk = ks * st.shelf * sstep(-0.25, 0.25, nF.n3(x * f + 2.7, y * f + 8.3, z * f + 4.1));
+        if (wk > 0.01) {
+          const k = sstep(-40, -22, h) * (1 - sstep(0.5, 2.5, h));
+          const P = -0.7 + 0.25 * (h + 40) / 42;
+          h += (P - h) * k * wk;
+          const rk = k * wk;
+          if (rk > rock) rock = rk;
+          sand *= 1 - rk;
+        }
+      }
+    }
+
     // ---- fractal detail: meso bumps → decimetre relief (rougher on rock)
     if (!(this.cfg.dbg & 8)) {
       const rk = rock > mtn ? rock : mtn;
@@ -1182,11 +1214,16 @@ export class SurfaceGen {
         // plan-view relief — chutes, ribs, buttresses — instead of reading as smooth clay walls)
         // on steep mountain faces the big octaves grow further (buttresses, ribs and chutes that break
         // kilometre-tall walls into readable structure instead of smooth clay slabs)
-        const big = wl > 200 ? rr * (o === 0 ? 2.4 : 2.0) * (1 + 1.5 * steep) : wl > 120 ? (1 + 0.6 * rr) * (1 + 0.8 * steep) : wl > 60 ? (1 + 0.25 * rr) * (1 + 0.35 * steep) : 1;
+        const stB = this.cfg.dbg & 32 ? 0 : steep;
+        const big = wl > 200 ? rr * (o === 0 ? 2.4 : 2.0) * (1 + 1.5 * stB) : wl > 120 ? (1 + 0.6 * rr) * (1 + 0.8 * stB) : wl > 60 ? (1 + 0.25 * rr) * (1 + 0.35 * stB) : 1;
         // rock gets sharper (ridged, zero-mean) micro relief, soil stays rounded
         // (big octaves use a softened |v|: a razor crease of a 700 m ridged octave reads as a seam)
         const av = wl > 120 ? Math.sqrt(v * v + 0.004) : (v < 0 ? -v : v);
-        sum += a * lw * big * (isBig ? 1 : mW) * (v + ((0.342 - av) * 1.6 - v) * rr);
+        // (boosted crag octaves on steep faces mostly CARVE: their positive ridge crests crossing a
+        //  mountain crest stacked into isolated needles along the ridge line)
+        let rg = (0.342 - av) * 1.6;
+        if (rg > 0 && wl > 120) rg *= 1 - 0.65 * stB;
+        sum += a * lw * big * (isBig ? 1 : mW) * (v + (rg - v) * rr);
         a *= 0.49; wl *= ILAC;
         cx = cx * LAC + 1.9; cy = cy * LAC + 7.3; cz = cz * LAC + 3.7;
       }
@@ -1194,6 +1231,20 @@ export class SurfaceGen {
     }
 
     if (info) {
+      // bare ground (worn soil / gravel patches, 10-60 m) — the same mask paints the terrain's soil
+      // patches (per-vertex) and tells flora where grass thins (sample().bare). Only on land, more
+      // around rock and talus, none on beaches / dunes. LOD-faded so far chunks don't speckle.
+      let bare = 0;
+      if (!this.hasOcean || h > 1.5) {
+        const w1 = lodW(70, lod), w2 = lodW(20, lod);
+        if (w1 > 0) {
+          const f1 = R / 48, f2 = R / 13;
+          const b1 = nH.n3(x * f1 + 31.7, y * f1 + 7.9, z * f1 + 19.3);
+          const b2 = w2 > 0 ? nH.n3(x * f2 + 3.3, y * f2 + 41.1, z * f2 + 5.5) * w2 : 0;
+          bare = w1 * sstep(0.3, 0.6, b1 * 0.8 + b2 * 0.3 + 0.3 * rock + 0.45 * talus) * (1 - sand) * (1 - dune) * (1 - lake);
+        }
+      }
+      info.bare = bare;
       info.c = c; info.land = land; info.mtn = mtn; info.rock = rock; info.sand = sand;
       info.river = river; info.lake = lake; info.cliff = cliff; info.dune = dune; info.glacier = glacier;
       info.steep = steep; info.wallS = wallS; info.talus = talus;
@@ -1248,7 +1299,8 @@ export class SurfaceGen {
    * Point query used by flora / civ / fauna placement.
    * out: { height, biome, moisture, temperature, slope (0 flat..1 vertical; only if withSlope),
    *        rock, sand, snow, cliff, river, lake, mountain, continental, dune,
-   *        talus (0..1: rubble / scree apron at the foot of mesa, plateau and canyon walls) }
+   *        talus (0..1: rubble / scree apron at the foot of mesa, plateau and canyon walls),
+   *        bare (0..1: worn soil / gravel patches the terrain paints — thin grass there) }
    */
   sample(x, y, z, out = {}, withSlope = true) {
     const info = this._info;
@@ -1257,6 +1309,7 @@ export class SurfaceGen {
     out.height = h;
     out.rock = info.rock; out.sand = info.sand; out.cliff = info.cliff; out.river = info.river; out.lake = info.lake;
     out.mountain = info.mtn; out.continental = info.c; out.dune = info.dune; out.talus = info.talus || 0;
+    out.bare = info.bare || 0;
     if (withSlope) {
       // finite differences over ~1.5 m on a tangent frame
       const e = 1.5 / this.R;

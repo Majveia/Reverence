@@ -9,7 +9,7 @@
 //   aMorphN   i8x4    surface normal of the parent level
 //   aMat      u8x4    rock/cliff · sand · temperature · moisture
 //   aMat2     u8x4    wet (river/lake) · glacier · curvature (0.5 flat, >0.5 concave) · mountain
-//   aMat3     u8x4    talus / rubble apron · (reserved)
+//   aMat3     u8x4    talus / rubble apron · bare ground (soil / gravel patches, no grass) · reserved
 //   aUV       f32x3   local texture frame: cube-face u, v in metres (minus a per-chunk multiple of
 //                     DETAIL_PERIOD, float64 on the CPU → mm precision) and altitude (m)
 import { sstep } from '../planet/noise.js';
@@ -88,22 +88,22 @@ export function buildChunk(gen, job) {
   const spacing = R * Math.acos(Math.min(1, cd[0] * cd2[0] + cd[1] * cd2[1] + cd[2] * cd2[2]));
   const lod = spacing * 1.5, lodP = lod * 2;
 
-  // ---- child grid with a 1-vertex border
-  const G = N + 2;
+  // ---- child grid with a 2-vertex border (normals use ±1, the broad curvature term ±2)
+  const B = 2, G = N + 2 * B;
   const D = new Float64Array(G * G * 3);      // directions
   const Hh = new Float64Array(G * G);         // heights
   const info = {};
   const nInt = N * N;
-  const infoArr = new Float32Array(nInt * 8);
+  const infoArr = new Float32Array(nInt * 9);
   for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
     const k = j * G + i;
-    cubeDir(face, u0 + (i - 1) * step, v0 + (j - 1) * step, D, k * 3);
+    cubeDir(face, u0 + (i - B) * step, v0 + (j - B) * step, D, k * 3);
     const x = D[k * 3], y = D[k * 3 + 1], z = D[k * 3 + 2];
-    const interior = i >= 1 && i <= N && j >= 1 && j <= N;
+    const interior = i >= B && i < N + B && j >= B && j < N + B;
     if (interior) {
       const h = gen.evaluate(x, y, z, lod, info);
       Hh[k] = h;
-      const vi = (j - 1) * N + (i - 1), o = vi * 8;
+      const vi = (j - B) * N + (i - B), o = vi * 9;
       infoArr[o] = info.rock > info.cliff ? info.rock : info.cliff;
       infoArr[o + 1] = info.sand;
       infoArr[o + 2] = info.c;
@@ -112,6 +112,7 @@ export function buildChunk(gen, job) {
       infoArr[o + 5] = info.mtn;
       infoArr[o + 6] = info.dune || 0;
       infoArr[o + 7] = info.talus || 0;
+      infoArr[o + 8] = info.bare || 0;
     } else {
       Hh[k] = gen.evaluate(x, y, z, lod, null);
     }
@@ -131,7 +132,7 @@ export function buildChunk(gen, job) {
   }
 
   // chunk centre
-  const ci = (RES >> 1) + 1, ck = ci * G + ci;
+  const ci = (RES >> 1) + B, ck = ci * G + ci;
   const hc = Hh[ck];
   const cx = D[ck * 3] * (R + hc), cy = D[ck * 3 + 1] * (R + hc), cz = D[ck * 3 + 2] * (R + hc);
 
@@ -172,7 +173,7 @@ export function buildChunk(gen, job) {
   const Dp = hasParent ? job.Dp : 1e30;
   const clim = {};
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-    const v = j * N + i, k = (j + 1) * G + (i + 1);
+    const v = j * N + i, k = (j + B) * G + (i + B);
     const px = PX(k), py = PY(k), pz = PZ(k);
     const h = Hh[k];
     if (h < hMin) hMin = h; if (h > hMax) hMax = h;
@@ -207,7 +208,7 @@ export function buildChunk(gen, job) {
     const mm = mdx * mdx + mdy * mdy + mdz * mdz; if (mm > mmax) mmax = mm;
     nrmP[v * 4] = q8(mx); nrmP[v * 4 + 1] = q8(my); nrmP[v * 4 + 2] = q8(mz);
     // material hints
-    const o = v * 8;
+    const o = v * 9;
     gen.climate(dx, dy, dz, h, infoArr[o + 2], clim);
     // curvature = offset of the vertex from its neighbourhood mean measured ALONG THE NORMAL
     // ((hMean - h) · cos θ), relative to the vertex spacing; 3×3 kernel (edges 1, corners 0.5).
@@ -219,7 +220,10 @@ export function buildChunk(gen, job) {
     const hm = (Hh[kl] + Hh[kr] + Hh[kd] + Hh[ku] + 0.5 * (Hh[kd - 1] + Hh[kd + 1] + Hh[ku - 1] + Hh[ku + 1])) / 6;
     const gx = (Hh[kr] - Hh[kl]) / (2 * sp), gy = (Hh[ku] - Hh[kd]) / (2 * sp);
     const cosT = 1 / Math.sqrt(1 + gx * gx + gy * gy);
-    const curv = Math.tanh(((hm - h) * cosT / sp) * 3.6);
+    // + a broader (±2 vertices) term: a one-vertex-wide V notch alone drew thin dark "ink" lines along
+    //   every small gully (badlands); broad hollows / crests now dominate the cavity & crest tints
+    const hm2 = (Hh[k - 2] + Hh[k + 2] + Hh[k - 2 * G] + Hh[k + 2 * G] + 0.5 * (Hh[k - 2 * G - 2] + Hh[k - 2 * G + 2] + Hh[k + 2 * G - 2] + Hh[k + 2 * G + 2])) / 6;
+    const curv = Math.tanh(((0.4 * (hm - h) + 0.22 * (hm2 - h)) * cosT / sp) * 3.6);
     mat[v * 4] = u8(infoArr[o]);
     mat[v * 4 + 1] = u8(Math.max(infoArr[o + 1], infoArr[o + 6]));
     mat[v * 4 + 2] = u8((clim.temperature + 0.5) / 1.8);
@@ -229,6 +233,7 @@ export function buildChunk(gen, job) {
     mat2[v * 4 + 2] = u8(0.5 + 0.5 * curv);
     mat2[v * 4 + 3] = u8(sstep(0, 1, infoArr[o + 5]));
     mat3[v * 4] = u8(infoArr[o + 7]);
+    mat3[v * 4 + 1] = u8(infoArr[o + 8]);
   }
   // ---- skirt ring: copies of the edge vertices. They keep the EDGE position (so shading, shadow
   //      lookups, altitude tints are exactly those of the edge — a crack filled by a skirt is then

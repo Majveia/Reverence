@@ -150,6 +150,7 @@ void main(){
 export class AtmosphereLUTs {
   constructor(uniforms, quality) {
     this.u = uniforms;
+    this.sunsetK0 = uniforms.uSunsetK?.value;
     this.quad = new FSQuad();
     this.transRT = hdrTarget(TRANS_W, TRANS_H);
     this.msRT = hdrTarget(MS_SIZE, MS_SIZE);
@@ -170,7 +171,19 @@ export class AtmosphereLUTs {
 
   get skyTextures() { return this.skyRT.textures; }
 
-  buildStatic(renderer) {
+  // the LUTs always describe the physical shell (the orbit-view compression / reddening relax are view-only)
+  _phys(fn) {
+    const u = this.u, ok = u.uOrbitK, sd = u.uSunKDrop, sk = u.uSunsetK;
+    const a = ok?.value ?? 0, b = sd?.value ?? 0, c = sk?.value;
+    if (ok) ok.value = 0;
+    if (sd) sd.value = 0;
+    if (sk && this.sunsetK0 !== undefined) sk.value = this.sunsetK0;
+    try { fn(); } finally { if (ok) ok.value = a; if (sd) sd.value = b; if (sk && c !== undefined) sk.value = c; }
+  }
+
+  buildStatic(renderer) { this._phys(() => this._buildStatic(renderer)); }
+
+  _buildStatic(renderer) {
     // transmittance first (MS depends on it)
     this.u.uTransLUT.value = null;
     this.quad.render(renderer, this.transMat, this.transRT);
@@ -186,7 +199,7 @@ export class AtmosphereLUTs {
     s.uViewR.value = viewR;
     s.uSunCosZ.value = sunCosZ;
     if (groundIrr) s.uGroundIrr.value.copy(groundIrr);
-    this.quad.render(renderer, this.skyMat, this.skyRT);
+    this._phys(() => this.quad.render(renderer, this.skyMat, this.skyRT));
   }
 
   dispose() {

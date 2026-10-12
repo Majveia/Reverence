@@ -42,7 +42,9 @@ uniform float uSkyGain;         // art gain on in-scattered light (sky brighter 
 uniform float uSkyViewGain;     // extra gain for the sky dome seen from inside the atmosphere (sky-view LUT)
 uniform float uMieGain;         // art gain on the Mie term (≤ uSkyGain: keeps the sun aureole from blowing out)
 uniform vec2  uTopFade;
-uniform float uSunsetK;         // sun-path reddening power for low suns (see atmo_sunTransmittance)         // density fades to 0 between x and y (altitude, m)
+uniform float uSunsetK;         // sun-path reddening power for low suns (see atmo_sunTransmittance)
+uniform float uSunKDrop;        // orbit: lowers the reddening power everywhere (default 0 = unchanged)
+uniform float uOrbitK;          // orbit: compresses the scale heights (thin, graded limb); 0 = physical shell
 uniform vec3  uGroundAlbedo;
 uniform float uSunAngR;         // angular radius of the star (rad)
 uniform sampler2D uTransLUT;
@@ -64,10 +66,15 @@ vec2 atmo_raySphere(vec3 ro, vec3 rd, float r){
 // ---------------------------------------------------------------- medium
 void atmo_medium(float h, out vec3 scatR, out vec3 scatM, out vec3 ext){
   h = max(h, 0.0);
-  float f = 1.0 - smoothstep(uTopFade.x, uTopFade.y, h);
-  float dR = exp(-h * uRayInvH) * f;
-  float dM = exp(-h * uMieInvH) * f;
-  float dO = max(0.0, 1.0 - abs(h - uOzoneCenter) * uOzoneInvHalfW);
+  // seen from far away the shell is compressed (same vertical column): miniature planets have a very tall
+  // atmosphere relative to their radius, which reads as a thick uniform ring from orbit; compressed, the
+  // limb is a thin glow that is bright at the surface and fades exponentially into space
+  float ck = 1.0 + 0.85 * uOrbitK;
+  float hk = h * ck;
+  float f = 1.0 - smoothstep(uTopFade.x, uTopFade.y, hk);
+  float dR = exp(-hk * uRayInvH) * f * ck;
+  float dM = exp(-hk * uMieInvH) * f * ck;
+  float dO = max(0.0, 1.0 - abs(hk - uOzoneCenter) * uOzoneInvHalfW) * ck;
   scatR = uRayScat * dR;
   scatM = uMieScat * dM;
   ext = scatR + uMieExt * dM + uOzoneAbs * dO;
@@ -140,7 +147,7 @@ vec3 atmo_sunTransmittance(float r, float muS){
   float vis = smoothstep(-a, a, (muS - cosH) / max(sinH, 1e-3));
   if (vis <= 0.0) return vec3(0.0);
   // art-directed sunset reddening: low suns get a deeper (Earth-like) air-mass color
-  float k = mix(uSunsetK, 1.0, smoothstep(0.0, 0.2, muS));
+  float k = mix(uSunsetK, 1.0 - uSunKDrop, smoothstep(0.0, 0.2, muS));
   return pow(atmo_transmittance(r, muS), vec3(k)) * vis;
 }
 

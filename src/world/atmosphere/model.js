@@ -81,7 +81,7 @@ export class AtmosphereModel {
     // aerial perspective distance scale (UE-style art control): the per-meter air of these small worlds is
     // denser than Earth's for the same sky color; near the ground geometry sees a lighter veil, blending to
     // fully physical from altitude/space. Foggy/dusty presets get more veil.
-    this.apScale = clamp(0.4 + fog * 0.35 + dust * 0.3, 0.25, 0.85);
+    this.apScale = clamp(0.5 + fog * 0.35 + dust * 0.3, 0.25, 0.9);
     this.mieG = clamp((A.mieG ?? 0.8) + 0.04, 0.75, 0.9);
     // dust absorbs blue: tint the aerosol albedo toward the (warm) sky color when dusty
     const warm = clamp((tint.r - tint.b) / Math.max(tint.r, 1e-3), 0, 1);
@@ -375,6 +375,8 @@ export class AtmosphereModel {
       uOzoneInvHalfW: { value: 1 / this.ozoneHalfWidth },
       uTopFade: { value: new THREE.Vector2(this.topFade0, this.H) },
       uSunsetK: { value: this.sunsetK },
+      uSunKDrop: { value: 0 },
+      uOrbitK: { value: 0 },
       uSkyGain: { value: this.skyGain },
       // the art sky gain only partly applies to the Mie (haze / sun aureole) term: brighter blue sky without
       // a blown-out glare disc around the sun and a milky veil over backlit terrain

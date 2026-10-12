@@ -18,6 +18,31 @@ Subsystem `atmosphere` (order 20) auto-loaded by `World`. Every pass is fault-is
 | `lighting.js` | `SunLight` key light with custom N-cascade shadows (`RVSunShadow`: 2–4 cascades in one atlas, texel snapping, per-cascade normal bias), moon as key light at night (phase-aware), PMREM environment of the sky + cloud deck (cover / colours follow the weather and time of day) on `scene.environment`, **overcast-aware ambient** (the deck greys and dims the sky dome; blocked direct sun returns as diffuse light), hemisphere fallback, material auto-setup (cloud shadows on the key light) |
 | `index.js` | subsystem glue, per-frame CPU state, pre-render GPU work (LUTs, env map, cloud shadow map) |
 
+### Round 4 (critic fixes: orbit fidelity, storm mood, cloud cleanliness)
+* **Orbit cloud fields read as weather, not cut-out islands**: the weather cube is sheared by **jet streams**
+  (latitude-dependent zonal rotation about the planet axis + a large meander) and mildly stretched east-west, so
+  fields become slanted frontal bands, cloud streets and spiral arms around the cyclones; the far-field texture
+  puts less weight on the 14 km octave (it made ~10 km blobs) and more on east-west-stretched fine octaves
+  (fibrous, mottled interiors); wider soft coverage edge.
+* **Thin, graded limb**: view-only orbit compression of the shell (`uOrbitK`, same vertical column, scale
+  heights × 1/1.85 from 1.2–3.2 atmosphere heights up): the limb is a thin glow bright at the surface that fades
+  into space instead of a thick uniform ring. The LUTs always stay physical (`AtmosphereLUTs._phys`).
+* **Narrow terminator band**: from orbit the art sunset reddening relaxes (`uSunsetK` → 1.15, `uSunKDrop` 0.18)
+  so only a narrow band near the terminator turns orange (was a broad orange quarter of the disc).
+* **Ground from orbit is lit by the sunlight that reaches it**: the key light from orbit is the unattenuated
+  star; the atmosphere pass now multiplies lit ground by the sun-path transmittance relative to the overhead
+  sun (`uOrbitLit`): golden → red → dark twilight band at the terminator; night-side emission untouched.
+* **No confetti of tiny cumulus**: thin weather-map coverage no longer produces noise-peak puffs near the camera
+  (density fades below ~0.3 coverage): clear sky between real cloud clusters.
+* **No freckled sponge on shadowed cloud sides**: the light march uses the detail erosion only on its first
+  step (deeper detail samples turned the low-sun shadow sides of thick cumulus into a dotted texture).
+* **Storm / rain mood**: rain and storm decks pass far less diffuse light (`deckDim` = 1 − 0.42·precip −
+  0.25·storm on the sky / ground ambient, blocked sun returns as 16 % diffuse instead of 30 %), the environment
+  map's deck reaches the horizon under a closed deck and its ground no longer reflects direct sun the deck blocks
+  (`uSunVis`), daytime lightning barely lifts the ambient (night flashes unchanged), rain haze slate-grey under
+  storms and denser (`rn²·1.1e-3 /m`).
+* **Stronger aerial perspective** by default (`apScale` 0.4 → 0.5): far ridges fade into blue haze.
+
 ### Round 3b (critic fixes, continued after the restart)
 * **Cumulus read as cumulus, not one smooth blob per weather-map contour**: new per-type `billow` (`uShape7.x`):
   the coverage threshold rises toward the borders of the base Worley cells (~1/5 of a cloud) and drops in
@@ -145,7 +170,8 @@ world.atmosphere = {
   weather,           // live state { rain, snow, dust, fog, storm, wind, coverBoost, sunDim, flash, aurora }
   clouds,            // Clouds (type, Rc0, Rc1, present) — null if no clouds
   shared,            // uniforms { uSunDir, uSunIll, uNightSky, uMoonDir, uMoonSky, uAirglow, uAurora, uTime }
-  atmoUniforms,      // uniforms for the rv_atmo chunk (spread them into your ShaderMaterial to use it)
+  atmoUniforms,      // uniforms for the rv_atmo chunk (spread them into your ShaderMaterial to use it;
+                     // uOrbitK / uSunKDrop default to 0 = physical if a material declares its own)
 }
 ```
 * **Cloud shadows in custom shaders** (grass, water, trees): `#include <rv_cloudshadow>` and add
@@ -231,6 +257,16 @@ it) and `overcast`.
 * Lightning bolts are camera-facing ribbons (no volumetric glow halo; the cloud flash provides that).
 
 ## Requests
+* **post** (round 4): under rain / storm decks the atmosphere now drops the ambient (`world.lighting.deckDim`,
+  `G.uSunIntensity`, `world.atmosphere.weather.overcast`); auto-exposure (strength 0.7) gives most of it back.
+  A lower exposure key under overcast / storm (e.g. `key × (1 − 0.35·overcast·storm)`) would keep the storm mood.
+* **space** (round 4, from the critic): the night moon reads as a flat disc — a phase-shaded sphere (terminator,
+  a few maria / craters) would sit better in the moonlit sky the atmosphere draws around it (aureole + moonlit
+  Rayleigh sky are already there).
+* **terrain** (round 4): from orbit, at a grazing sun, the coarse orbit-LOD mountains near the terminator show
+  as angular white facets (W1 `view=orbit&tod=0.22`); smoother normals / lower relief exaggeration at the
+  coarsest LODs would remove the "cut-out" look the critic attributes to clouds.
+* **water** (round 4): W2 `view=orbit&tod=0.4` shows a hatched / grid pattern in the ocean sun glint.
 * **space** (round 3b): the star disc is tiny from the ground (`state.space.sunAng` 0.2–0.46°, i.e. 2–5 px at
   960×540), so no sun disc reads in sunrise / sea-of-clouds frames; a minimum apparent diameter of ~0.5° (or a
   brighter, slightly larger core sprite when the true disc is < 0.4°) would give the critic the "visible sun

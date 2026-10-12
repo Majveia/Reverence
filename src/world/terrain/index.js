@@ -282,7 +282,8 @@ class Terrain {
     n.inView = _frustum.intersectsSphere(s);
     // only refine built nodes: their real height range bounds the children (progressive refinement)
     // shot mode: nodes outside the view stay coarse (captures only need what is on screen)
-    const lim = this.shot && !n.inView ? 0.3 : 1;
+    // (and never finer than ~50 m chunks: out-of-view terrain only matters as a near shadow caster)
+    const lim = this.shot && !n.inView ? (n.side > 50 ? 0.3 : 0) : 1;
     if (n.level < this.maxLevel && n.closest < n.D * lim && n.mesh) {
       if (!n.children) {
         const h = n.size / 2;
@@ -309,7 +310,10 @@ class Terrain {
     if (!pend.length) return;
     pend.sort((a, b) => a.prio - b.prio);
     if (this.workers.length && !this._workerFailed) {
-      const cap = this.workers.length * (this.shot ? 6 : 2);
+      // (shot mode: the camera is static, so queue every pending build at once. Software-GL progress
+      //  frames block the main thread for seconds; with a shallow queue the workers sat idle through
+      //  them — the W1 hero spent ~190 s on 466 builds that take ~30 s of worker CPU.)
+      const cap = this.shot ? 1e6 : this.workers.length * 2;
       let i = 0;
       while (this.inflight < cap && i < pend.length) {
         let w = this.workers[0];

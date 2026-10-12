@@ -170,6 +170,7 @@ uniform float uCloudCover;
 uniform vec3 uCloudLight;
 uniform vec3 uCloudShade;
 uniform vec3 uNightAmb;     // art-directed "readable night" ambient radiance (upper hemisphere)
+uniform float uSunVis;      // direct sun reaching the ground (cloud deck / weather)
 uniform vec3 uShine;        // airless bodies: planetshine / earthshine from the brightest body in the sky (uMoonDir) + starlight floor
 varying vec3 vDir;
 void main(){
@@ -197,7 +198,7 @@ void main(){
     vec3 n = normalize(p);
     float muS = dot(n, uSunDir);
     vec3 Ts = uHasAtmo > 0.5 ? atmo_sunTransmittance(length(p), muS) : vec3(smoothstep(-0.01, 0.01, muS));
-    L += T * uGroundAlbedo / RV_PI * (Ts * max(muS, 0.0) * uSunIll + uGroundIrr);
+    L += T * uGroundAlbedo / RV_PI * (Ts * max(muS, 0.0) * uSunIll * uSunVis + uGroundIrr);
   } else {
     // night sky glow + moonlit sky (inside the atmosphere)
     float cz = max(dot(dir, up), 0.0);
@@ -210,7 +211,8 @@ void main(){
     L += uNightAmb * (0.6 + 0.4 * cz) * inside;
     // planetshine on airless bodies (no sky: shadowed regolith would be pure black otherwise)
     L += uShine * (0.25 + 0.75 * max(mnu, 0.0) * max(mnu, 0.0)) * (1.0 - uHasAtmo);
-    float cov = uCloudCover * smoothstep(-0.02, 0.25, dot(dir, up)) * inside;
+    // a closed deck reaches down to the horizon (no bright clear-sky band under a storm)
+    float cov = uCloudCover * mix(smoothstep(-0.02, 0.25, dot(dir, up)), 1.0, uCloudCover * uCloudCover) * inside;
     vec3 cl = mix(uCloudShade, uCloudLight, 0.5 + 0.5 * nu);
     L = mix(L, cl, cov);
   }
@@ -284,6 +286,7 @@ export class Lighting {
       uCloudShade: { value: new THREE.Vector3(0.5, 0.5, 0.5) },
       uNightAmb: { value: new THREE.Vector3() },
       uShine: { value: new THREE.Vector3() },
+      uSunVis: { value: 1 },
       ...atmo.atmoUniforms,
     };
     this.envMat = new THREE.ShaderMaterial({ vertexShader: ENV_VERT, fragmentShader: ENV_FRAG, uniforms: this.envU, side: THREE.BackSide, depthWrite: false, depthTest: false });
@@ -389,15 +392,21 @@ export class Lighting {
     // comes back as diffuse light through the clouds
     const oc = weather?.overcast || 0;
     this.overcast = oc;
+    // rain / storm decks are thick nimbostratus / cumulonimbus: they pass far less diffuse light than a
+    // fair-weather overcast (dark, moody storm light instead of a bright grey-blue day)
+    const precip = Math.max(weather?.rain || 0, weather?.snow || 0), storm = weather?.storm || 0;
+    const deckDim = (1 - 0.42 * precip - 0.25 * storm) * (1 - above) + above;
+    this.deckDim = deckDim;
     if (oc > 0) {
       const sl = sky[0] * 0.2126 + sky[1] * 0.7152 + sky[2] * 0.0722;
-      const blocked = Math.max(0, 1 - cloudDim) * Math.max(muS, 0) * 0.3;
+      const blocked = Math.max(0, 1 - cloudDim) * Math.max(muS, 0) * 0.16 * (1 - 0.5 * storm);
       const sc0 = [starCol.r * T[0] * E, starCol.g * T[1] * E, starCol.b * T[2] * E];
       const neutral = [0.96, 0.99, 1.04];
       for (let c = 0; c < 3; c++) {
         const grey = sl * neutral[c] * 0.75 + sc0[c] * blocked;
         sky[c] += (grey - sky[c]) * oc * 0.85;
-        gr[c] *= 1 - 0.45 * oc * (1 - cloudDim);
+        sky[c] *= deckDim;
+        gr[c] *= (1 - 0.45 * oc * (1 - cloudDim)) * deckDim;
       }
     }
 
@@ -452,12 +461,13 @@ export class Lighting {
     } else this.envU.uShine.value.set(0, 0, 0);
     // cloud deck seen from below (env map / reflections): shaded bases, silver toward the sun
     const cl = this.atmo.clouds;
-    const cover = cl?.present ? THREE.MathUtils.clamp(cl.meanCover * 0.55 + (weather?.coverBoost || 0) * 0.9, 0, 0.95) : 0;
+    const cover = cl?.present ? THREE.MathUtils.clamp(cl.meanCover * 0.55 + (weather?.coverBoost || 0) * 0.9 + precip * 0.3, 0, 0.97) : 0;
+    this.envU.uSunVis.value = cloudDim;
     this.envU.uCloudCover.value = cover;
     const skyL = (sky[0] * 0.2126 + sky[1] * 0.7152 + sky[2] * 0.0722) / Math.PI;
     const shade = this.envU.uCloudShade.value, light = this.envU.uCloudLight.value;
     const na = nightAmb, nk = 0.05 / Math.PI;
-    shade.set(skyL * 0.85 + na.r * nk, skyL * 0.88 + na.g * nk, skyL * 0.92 + na.b * nk).multiplyScalar(1 - 0.4 * oc);
+    shade.set(skyL * 0.85 + na.r * nk, skyL * 0.88 + na.g * nk, skyL * 0.92 + na.b * nk).multiplyScalar((1 - 0.4 * oc) * (oc > 0 ? 1 : deckDim));
     light.set(this.sunColor.r, this.sunColor.g, this.sunColor.b).multiplyScalar(0.3 * (1 - 0.7 * oc) / Math.PI).add(shade);
 
     // periodic material auto-setup

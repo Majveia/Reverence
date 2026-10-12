@@ -118,9 +118,16 @@ void main(){
     cyc = max(cyc, fall * smoothstep(1.5, 5.0, abs(uCyc[k].w)));
     eye = max(eye, exp(-a2 / 0.0008) * smoothstep(4.0, 6.0, abs(uCyc[k].w)));
   }
-  // streaky fields (stratus / cirrus bands) stretched along latitude
+  // jet streams: a latitude-dependent zonal shift (differential rotation about the planet axis) with a
+  // large-scale meander shears the cloud fields into slanted frontal bands and streets (Earth from orbit)
+  // instead of isotropic islands; the cyclones above keep their own spirals
+  float lat = asin(clamp(d.y, -1.0, 1.0));
+  float sh = 0.55 * sin(lat * 3.0 + uSeed.x) + 0.3 * sin(lat * 5.0 + uSeed.y) + 0.3 * rv_snoise(d * 1.7 + uSeed.zxy);
+  float csh = cos(sh), ssh = sin(sh);
+  d = vec3(d.x * csh - d.z * ssh, d.y, d.x * ssh + d.z * csh);
+  // streaky fields stretched along latitude (all types a little: zonal flow; stratus / cirrus a lot)
   vec3 q = d * uFreq;
-  q.y *= mix(1.0, 2.6, uStretch);
+  q.y *= mix(1.25, 2.6, uStretch);
   vec3 w = vec3(rv_snoise(q * 0.5 + uSeed), rv_snoise(q * 0.5 + uSeed.yzx + 7.1), rv_snoise(q * 0.5 + uSeed.zxy - 3.3));
   q += w * 0.9;
   float n = rv_fbm(q + uSeed, 5) * 0.5 + 0.5;
@@ -129,14 +136,14 @@ void main(){
   vec3 db = d * 2.2 + uSeed.zxy * 0.3;
   db += 0.35 * vec3(rv_snoise(db * 1.3 + 4.0), rv_snoise(db * 1.3 + 9.0), rv_snoise(db * 1.3 + 13.0));
   float big = rv_fbm(db, 3) * 0.5 + 0.5;
-  float cov = clamp(uCoverage * 0.55 + (big - 0.5) * 1.2 + (n - 0.5) * 1.7 + cyc * 0.35 - eye, 0.0, 1.0);
+  float cov = clamp(uCoverage * 0.55 + (big - 0.5) * 1.3 + (n - 0.5) * 1.7 + cyc * 0.35 - eye, 0.0, 1.0);
   float tall = clamp(rv_fbm(q * 1.7 + uSeed.zyx + 11.0, 3) * 0.7 + 0.5, 0.0, 1.0);
   float storm = uStorms * smoothstep(0.62, 0.8, rv_fbm(d * uFreq * 0.6 + uSeed.yxz + 21.0, 3) * 0.5 + 0.5);
   cov = max(cov, storm);
   tall = max(tall, storm);
   // orbit detail: convective cells (Worley puffs) + streaks, used where the 3D noise tile is too small
   vec3 dq = d * uFreq * 2.6 + uSeed * 1.3;
-  dq.y *= mix(1.0, 1.8, uStretch);
+  dq.y *= mix(1.3, 2.0, uStretch);
   dq += 0.6 * vec3(rv_snoise(dq * 0.4), rv_snoise(dq * 0.4 + 5.0), rv_snoise(dq * 0.4 + 9.0));
   vec2 wo = rv_worley(dq), wo2 = rv_worley(dq * 2.7 + 3.0);
   // round convective cells (inverted F1, squared → discs, no Voronoi polygons) over warped fbm
@@ -210,10 +217,14 @@ float cl_base(vec3 p, float h, vec4 wx, out float prof){
     vec3 wf = texture(uNoise, pf * 0.29 + 0.53).gba - 0.5;
     pf += wf * 0.55;
     float f1 = texture(uNoise, pf + uWindA * 0.25).r;
-    float f2 = texture(uNoise, mat3(0.8, -0.36, 0.48, 0.6, 0.48, -0.64, 0.0, 0.8, 0.6) * pf * 3.71 + 0.37).g;
+    // the finer octaves are stretched east-west (zonal flow): fibrous streets and streaks, not round dots
+    vec3 pz = vec3(pf.x, pf.y * 1.35, pf.z);
+    float f2 = texture(uNoise, mat3(0.8, -0.36, 0.48, 0.6, 0.48, -0.64, 0.0, 0.8, 0.6) * pz * 3.71 + 0.37).g;
     // third, finer octave (~1 km, another rotation): fractal, frayed field edges instead of smooth cut-outs
-    float f3 = texture(uNoise, mat3(0.36, 0.48, -0.8, -0.8, 0.6, 0.0, 0.48, 0.64, 0.6) * pf * 13.3 + 0.71).b;
-    float far = clamp(wx.a * 0.55 + (f1 - 0.5) * 0.6 + (f2 - 0.45) * 0.3 + (f3 - 0.5) * 0.22 + 0.16, 0.0, 1.0);
+    float f3 = texture(uNoise, mat3(0.36, 0.48, -0.8, -0.8, 0.6, 0.0, 0.48, 0.64, 0.6) * pz * 13.3 + 0.71).b;
+    // less weight on the 14 km octave (it made separate ~10 km blobs), more on the fine texture: the field
+    // outline comes from the weather map, its inside is mottled / fibrous
+    float far = clamp(wx.a * 0.5 + (f1 - 0.5) * 0.42 + (f2 - 0.45) * 0.36 + (f3 - 0.5) * 0.3 + 0.2, 0.0, 1.0);
     // dense cores tower, thin fields stay low: relief that self-shadows under a grazing sun (terminator)
     float topF = top * mix(0.6, 1.0, smoothstep(0.25, 0.75, far));
     float profF = smoothstep(0.0, uShape2.y + 0.25, hp) * (1.0 - smoothstep(topF * 0.2, topF, hp));
@@ -226,8 +237,11 @@ float cl_base(vec3 p, float h, vec4 wx, out float prof){
   // follows the weather-map contour
   float thr = 1.0 - cover + uShape7.x * (1.0 - cl_lod) * (0.62 - n.g), xb = base * prof;
   float lin = max(cl_remap(xb, thr, 1.0, 0.0, 1.0), 0.0);
-  float soft = cl_lod > 0.0 ? smoothstep(thr - 0.25, thr + 0.2, xb) * max(cl_remap(xb, thr - 0.25, 1.0, 0.0, 1.0), 0.0) : 0.0;
+  float soft = cl_lod > 0.0 ? smoothstep(thr - 0.3, thr + 0.22, xb) * max(cl_remap(xb, thr - 0.3, 1.0, 0.0, 1.0), 0.0) : 0.0;
   base = mix(lin, soft, cl_lod) * cover;
+  // thin coverage gives no confetti of tiny puffs (noise peaks barely above the threshold) near the camera:
+  // clear sky between real cloud clusters, BotW-style
+  base *= mix(smoothstep(0.14, 0.34, cover), 1.0, cl_lod);
   // denser toward the top (wispy, translucent bases; bright, solid tops)
   base *= mix(uShape4.y, 1.0, smoothstep(0.0, 0.65, h));
   return max(base, 0.0);
@@ -408,7 +422,9 @@ void main(){
       float lr = length(lp);
       float lh = (lr - Rc0) / thick;
       if (lh > 1.0 || lh < 0.0) break;
-      od += cl_density(lp, lh, j < 2) * ls;
+      // detail erosion only on the first light step: deeper steps with detail turned the shadowed sides of
+      // thick clouds into a freckled sponge (the od noise follows the 90 m detail cells)
+      od += cl_density(lp, lh, j < 1) * ls;
       ls *= 1.9;
     }
     od *= sg;

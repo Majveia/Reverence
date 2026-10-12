@@ -231,6 +231,59 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
 * All changes keep `PlanetSurface` deterministic and worker-safe; `height()` cost unchanged
   (~7–11 µs full detail).
 
+### Round 6 changes (critic round 2, final pass: wall structure, crest needles, capture reliability)
+* **Captures no longer time out (critic item 7)**. The W1 lake-cliff view failed twice at 400 s. The
+  cause was the shot-mode dispatch: at most 6 builds per worker were queued per frame, and software-GL
+  progress frames block the main thread for seconds, so the workers sat idle (466 builds that need
+  ~30 s of worker CPU took ~190 s). Shot mode now queues every pending build at once (the camera is
+  static). Measured: W1 hero `readyMs` 188 s → 109 s, the lake view now completes (258 s total
+  under shared load, 761 builds). Out-of-view nodes in shot mode also stop refining below 50 m chunks.
+  An offline CDLOD selection simulator (scratch tool) reproduces the chunk counts per URL without a
+  browser.
+* **Jointed rock on big faces (critic items 1, 3)**. The terrain shader adds analytic **orthogonal
+  joint sets** on the two vertical planes of the local frame, at 128 m, 32 m and 8 m. Vertical joints
+  form columns that wander slightly with altitude. Sheeting joints form rows whose height (1.2–3.4 ×
+  the column width) and phase change per column. Each block has its own plane tilt, which gives crisp
+  light/dark facets from kilometres away; a heightfield wall cannot hold that relief. Each block also
+  has its own tone (±12 %) and a warm-oxidised or cool-fresh hue. Open joints are sparse (about 40 %
+  of vertical joints and 28 % of sheeting joints) with bevelled, light-catching edges. On
+  massive-rock (non-layered) worlds, some block tops become narrow lit ledges under shadowed
+  overhangs, and these collect snow or moss through the normal. Every term is footprint-faded (no
+  sub-pixel joints) and distance-gated: the 128 m set fades in beyond 0.7–1.6 km, the 32 m set beyond
+  200–550 m and the 8 m set beyond 70–220 m. Up close the baked 8 m / 2 m / 0.5 m rock layers take
+  over; a first Voronoi version read as crackle glaze and crumpled paper there. All periods divide
+  4096 m, so the pattern stays stable across origin shifts.
+* **Less "draped fabric"**: wall tone bodies are now ~1.6:1 instead of 3:1 vertical, and the macro
+  drainage-stain darkening is lowered from −62 % to −45 %.
+* **Crest needles removed (critic item 3, "isolated cones stuck on the ridge")**. A needle counter
+  (local maxima more than 12 m above an 8 m ring, 800 m patch, 2 m grid) found 276 needles on the W1
+  face crest. They came from the buttress ribs and the steep-boosted crag octaves: their positive
+  ridge crests crossed the mountain crest and stacked into pinnacles. Both terms now mostly carve:
+  the positive rib part is damped (×0.3 for buttresses, ×(1 − 0.65·steep) for crag octaves), and the
+  two finest buttress octaves are weaker. The count dropped to 24 while the range height stayed the
+  same (3523 m), so crests are notched (gendarmes and couloirs) instead of spiked. New debug bits:
+  `tgen=16` (no buttresses) and `tgen=32` (no steep crag boost).
+* **Broader cavity**: per-vertex curvature now mixes a ±2-vertex term (chunks carry a 2-vertex
+  border). A one-vertex V notch on its own drew thin dark "ink" lines along every badlands gully.
+  The cavity darkening was also lowered (−26 % → −20 %).
+* **Green flanks on lush worlds (critic item 2)**: on lush, temperate worlds grass and scrub hold to
+  steeper slopes (+0.08 in 1−cosθ, i.e. ~45–50° instead of ~40°). This fades out with altitude
+  (0.3–0.65 × amplitude), cold and dryness, so mountain flanks are green with rock breaking through
+  and bare rock stays above.
+* **Bare-ground patches (critic item 4; new API field)**: `SurfaceGen` computes a `bare` mask (worn
+  soil / gravel patches, 13 m + 48 m noise, more around rock and talus, none on sand, dunes or lakes,
+  LOD-faded). It is returned by `surface.sample().bare` and streamed per vertex as `aMat3.y`. The
+  shader paints soil and gravel there and removes the meadow blade tint, so meadows get BotW-like
+  dirt patches. About 12 % of the land on W1/W2 and 17 % on W3. Flora can thin grass on it (see
+  Requests).
+* **Caprock rims**: plateau and mesa tops carry a rock hint along the rim (the hard bed that holds
+  the table up), so the tops no longer read as one pale sand sheet from the air.
+* **Wave-cut platforms (critic item 6)**: where steep rock meets the sea, heights in [−40, +2] m are
+  pulled toward ≈ −0.6 m by a monotonic remap (it never folds). This makes a 7–15 m rock shelf at
+  the foot of 55–70° sea cliffs, patchy along the coast and broken into rocks by the fractal detail.
+  Style knob `st.shelf`; it adds no rng draw, so all other style values are unchanged.
+* **Strata contrast**: bed albedo contrast raised from ±8 % to ±~20 % (critic item 5).
+
 ## Capture URLs (verified this round, 1280×720)
 Use `view=fly` for terrain-only framing (no player body). Side light reads relief best: pick `tod` so the
 sun is ~60–120° off the view direction (sun ≈ east at tod 0.3, ≈ west at 0.68 on these worlds).

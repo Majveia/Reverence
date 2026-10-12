@@ -184,7 +184,7 @@ class Atmosphere {
     this.goldHaze = gold;
     // heavy rain: visibility of a few km (grey rain haze swallows the forest at a few hundred metres)
     const rn = W.rain || 0;
-    let rho = fog * fog * 2.0e-4 + rn * 2.1e-4 + rn * rn * 0.7e-3 + (W.snow || 0) * 1.5e-4 + dust * 1.2e-3 + gold * 2.6e-5 * (1 - 0.5 * (m.moody || 0));
+    let rho = fog * fog * 2.0e-4 + rn * 2.1e-4 + rn * rn * 1.1e-3 + (W.snow || 0) * 1.5e-4 + dust * 1.2e-3 + gold * 2.6e-5 * (1 - 0.5 * (m.moody || 0));
     if (m.lava) rho *= 0.45;
     const wF = fog + rain + dust + gold * 0.12;
     const Hf = THREE.MathUtils.lerp(320, 1600, THREE.MathUtils.clamp((rain + dust * 1.5) / Math.max(wF, 1e-3), 0, 1)) * (1 + gold * 0.6 * (1 - THREE.MathUtils.clamp(fog + rain + dust, 0, 1)));
@@ -197,7 +197,8 @@ class Atmosphere {
     if (dust > 0) c.lerp(_v.set(0.95 * Math.min(1, tint.r * 1.6 + 0.3), 0.75 * Math.min(1, tint.g * 1.4 + 0.25), 0.55 * Math.min(1, tint.b * 1.2 + 0.2)), Math.min(1, dust * 1.5));
     const sky = this.lighting.skyIrr, na = this.nightAmbient, nk = 0.03; // dark nights: no glowing fog
     // under a closed deck the haze is lit by the dark cloud bases, not by a bright sky dome
-    const ock = (1 - 0.55 * (W.overcast || 0)) / Math.PI;
+    // (a storm deck is darker still: slate-grey rain haze, not a milky fog brighter than the cloud bases)
+    const ock = (1 - 0.55 * (W.overcast || 0)) * (1 - 0.5 * (W.storm || 0)) / Math.PI;
     u.uFogAmb.value.set((sky[0] + na.r * nk) * ock, (sky[1] + na.g * nk) * ock, (sky[2] + na.b * nk) * ock);
     const sc = this.lighting.sunColor, sd = Math.max(0, W.sunDim ?? 1);
     u.uFogSun.value.set(sc.r, sc.g, sc.b).multiplyScalar(sd * sd);
@@ -235,6 +236,17 @@ class Atmosphere {
         // brighter sky dome from the ground (game-like sky vs sunlit ground), relaxed toward the LUT→march blend
         this.atmoUniforms.uSkyViewGain.value = THREE.MathUtils.lerp(1.28 - 0.2 * (this.model.moody || 0), 1, THREE.MathUtils.smoothstep(h, 0.3, 0.8));
         this.effect.u.uSpaceBlend.value = THREE.MathUtils.smoothstep(h, 0.82, 0.98);
+      }
+      // orbit look (view-only, the LUTs stay physical): compressed shell → thin graded limb; relaxed sunset
+      // reddening → a narrow orange terminator band instead of a broad orange quarter of the disc
+      if (this.model.present) {
+        const hh = (camR - this.model.Rb) / this.model.height;
+        const ok = THREE.MathUtils.smoothstep(hh, 1.2, 3.2);
+        const AU = this.atmoUniforms;
+        AU.uOrbitK.value = ok;
+        AU.uSunsetK.value = THREE.MathUtils.lerp(this.model.sunsetK, 1.15, ok);
+        AU.uSunKDrop.value = 0.18 * ok;
+        this.effect.u.uOrbitLit.value = this.lighting.highView || 0;
       }
       this.clouds?.preRender?.(renderer, camera);
       this.lighting.updateEnv(renderer);

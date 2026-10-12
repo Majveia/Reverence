@@ -299,7 +299,7 @@ export class Weather {
     // environment flash (all PBR materials): striking at night, subtle under a daylit storm
     const scene = this.world.scene;
     const dayness = this.atmo.lighting?.dayness ?? 0;
-    scene.environmentIntensity = (this.atmo.lighting?.envScale ?? 1) * (1 + st.flash * 2.5 * (1 - 0.75 * dayness));
+    scene.environmentIntensity = (this.atmo.lighting?.envScale ?? 1) * (1 + st.flash * 2.5 * (1 - 0.92 * dayness));
   }
 
   _strike(t, force, stormy = 1) {

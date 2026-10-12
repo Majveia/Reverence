@@ -58,6 +58,7 @@ uniform vec3 uCityCol;        // emitted radiance of a lit city core
 uniform float uCityGround;    // ground emission seen from altitude / orbit (near the ground civ draws its own lights)
 uniform float uCitySky;       // light-pollution sky glow seen from the ground at night
 uniform vec2 uRural;          // sparse rural / road lights over land (civ level), sea-level radius (m)
+uniform float uOrbitLit;      // 0..1: the key light is the unattenuated star (high altitude / orbit views)
 varying vec2 vUv;
 
 // Night lights of settlements seen from altitude / orbit: cores + sprawl along noise "roads", only where
@@ -252,6 +253,18 @@ void main(){
     // moonlit / starlit air (tiny, keeps night silhouettes readable)
     float airT = 1.0 - dot(a.T, vec3(0.3333));
     L += (uNightSky * 0.5 + uMoonSky * atmo_phaseRayleigh(dot(dir, uMoonDir)) * 2.0) * airT;
+    // from altitude / orbit the key light is the unattenuated star (it lights the whole disc): the sunlight
+    // that actually reaches each ground point is reddened and dimmed near the terminator (golden → red →
+    // dark band), relative to the overhead sun the materials were tuned for. Only the lit side: night-side
+    // emission (city lights) is untouched.
+    if (uOrbitLit > 0.0){
+      vec3 ph = ro + dir * tHit;
+      float rh = length(ph);
+      float muH = dot(ph / rh, uSunDir);
+      vec3 Tz = max(atmo_transmittance(max(rh, uAtmoRb + 1.0), 1.0), vec3(1e-3));
+      vec3 Tsh = min(atmo_sunTransmittance(rh, muH) / Tz, vec3(1.0));
+      col *= mix(vec3(1.0), Tsh, uOrbitLit * smoothstep(-0.1, 0.0, muH));
+    }
     outc = col * a.T + L;
     if (uCityGround > 0.0){ vec3 ph = ro + dir * tHit; outc += cityGround(normalize(ph), length(ph)) * a.T; }
     outc = applyFog(outc, ro, dir, tHit, up, nu);
@@ -388,6 +401,7 @@ export class AtmosphereEffect {
       uCityGround: { value: 0 },
       uCitySky: { value: 0 },
       uRural: { value: new THREE.Vector2(0, 0) },
+      uOrbitLit: { value: 0 },
       ...atmo.atmoUniforms,
     };
     this.mat = fsMaterial(FRAG, this.u);

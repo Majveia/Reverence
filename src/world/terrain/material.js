@@ -30,14 +30,14 @@ attribute vec4 aMorphN;  // xyz parent normal, w > 0: skirt vertex (log2-encoded
 uniform vec3 uRvPlanetC;
 attribute vec4 aMat;
 attribute vec4 aMat2;
-attribute vec4 aMat3;    // talus / rubble apron · reserved
+attribute vec4 aMat3;    // talus / rubble apron · bare ground patches · reserved
 attribute vec3 aUV;      // local texture frame: face u, v (m, per-chunk multiple of P removed) + altitude
 varying vec3 vRvUV;
 varying vec3 vRvW;
 varying vec3 vRvN;
 varying vec4 vRvMat;
 varying vec4 vRvMat2;
-varying float vRvTalus;
+varying vec2 vRvM3;
 `;
 
 const VERT_NORMAL = /* glsl */`
@@ -47,7 +47,7 @@ vec3 objectNormal = normalize( mix( normal, aMorphN.xyz, rvK ) );
 vRvN = objectNormal;
 vRvMat = aMat;
 vRvMat2 = aMat2;
-vRvTalus = aMat3.x;
+vRvM3 = aMat3.xy;
 vRvUV = vec3( aUV.xy, aUV.z + dot( aMorph.xyz, normalize( rvW0.xyz - uRvPlanetC ) ) * rvK );
 `;
 
@@ -85,7 +85,7 @@ varying vec3 vRvW;
 varying vec3 vRvN;
 varying vec4 vRvMat;
 varying vec4 vRvMat2;
-varying float vRvTalus;
+varying vec2 vRvM3;
 varying vec3 vRvUV;
 
 vec3 rvN; float rvRough; float rvAO; vec3 rvEmis; bool rvStoch;
@@ -129,11 +129,35 @@ vec4 rvFetchS( float layer, vec2 uv, vec2 dx, vec2 dy, float k, float rot ) {
   return f < 0.5 ? a : rvTexO( layer, uv, dx, dy, i + 1.0, rot );
 }
 
-// ---- analytic jointed-block facets on a vertical wall plane (Voronoi, 3x3 cells). p in cell units
-//      (x horizontal, y vertical), N = cells per 4096 m period (keeps the exact detail period →
-//      stable across floating-origin shifts). Returns: xy = per-block plane tilt (-1..1),
-//      z = distance to the nearest joint (F2 - F1, cell units), w = block id (0..1).
+// ---- jointed rock on a vertical wall plane: two ORTHOGONAL, CONTINUOUS joint sets like real granite /
+//      basalt — near-vertical joints (columns of width W, wandering gently with altitude) and sheeting
+//      joints (rows 1.8 W apart, gently undulating) that both run on across many blocks and open /
+//      close in long segments. (Voronoi cells drew a crackle-glaze net; rows offset per column drew
+//      brickwork.) Periods divide 4096 m (N = 4096 / W) → stable across floating-origin shifts.
+//      blk = (tilt across, tilt up/down, id, id2); e = (signed distance in m to the nearest vertical
+//      joint, to the nearest sheeting joint, open-ness of that vertical joint, of that sheeting joint).
 vec2 rvH22( vec2 c ) { return fract( sin( vec2( dot( c, vec2( 127.1, 311.7 ) ), dot( c, vec2( 269.5, 183.3 ) ) ) ) * 43758.5453 ); }
+void rvJoint( float hcm, float altm, float W, out vec4 blk, out vec4 e ) {
+  float N = 4096.0 / W, Hr = W * 1.8;
+  float x = hcm / W + 0.16 * sin( altm / ( W * 1.9 ) ) + 0.07 * sin( altm / ( W * 0.61 ) + 1.3 );
+  float ci = floor( x ), fx = x - ci;
+  float cim = mod( ci, N );
+  float y = altm / Hr + 0.3 * sin( 6.2832 * hcm / ( W * 8.0 ) ) + 0.12 * sin( 6.2832 * hcm / ( W * 2.0 ) + 0.7 );
+  float ri = floor( y ), fy = y - ri;
+  vec2 hb = rvH22( vec2( cim + 0.5, ri + 0.5 ) );
+  blk = vec4( hb * 2.0 - 1.0, fract( hb.x * 7.31 + hb.y * 3.17 ), rvH22( vec2( floor( cim / 4.0 ), floor( ri / 3.0 ) ) + 9.7 ).x );
+  float ex = fx < 0.5 ? -fx * W : ( 1.0 - fx ) * W;
+  float ey = fy < 0.5 ? -fy * Hr : ( 1.0 - fy ) * Hr;
+  // open joints in long segments: vertical ones per (boundary, 3-row run), sheeting ones per
+  // (row boundary, 4-column run); strength varies per segment
+  float bnd = mod( fx < 0.5 ? ci : ci + 1.0, N );
+  vec2 hv = rvH22( vec2( bnd, floor( y / 3.0 ) ) );
+  vec2 hh = rvH22( vec2( fy < 0.5 ? ri : ri + 1.0, floor( cim / 4.0 ) ) + 3.3 );
+  e = vec4( ex, ey, step( 0.58, hv.x ) * ( 0.45 + 0.55 * hv.y ), step( 0.64, hh.x ) * ( 0.45 + 0.55 * hh.y ) );
+}
+
+// big polygonal facets (Voronoi, 3x3) on a vertical plane, p in cell units (y elongated by the
+// caller), N cells per 4096 m in x: xy = plane tilt, z = seam distance, w = facet id
 vec4 rvFacet( vec2 p, float N ) {
   vec2 ip = floor( p ), fp = p - ip;
   float d1 = 8.0, d2 = 8.0; vec2 c1 = vec2( 0.0 );
@@ -146,6 +170,12 @@ vec4 rvFacet( vec2 p, float N ) {
   }
   vec2 hh = rvH22( c1 + vec2( 17.31, 5.17 ) );
   return vec4( hh * 2.0 - 1.0, sqrt( d2 ) - sqrt( d1 ), fract( hh.x * 7.31 + hh.y * 3.17 ) );
+}
+// piecewise-LINEAR periodic value noise (angular kinks, no sinuous curves): x = value (-1..1), y = slope
+vec2 rvN1L( float t, float N, float sd ) {
+  float i = floor( t ), f = t - i;
+  float a = rvH22( vec2( mod( i, N ), sd ) ).x, b = rvH22( vec2( mod( i + 1.0, N ), sd ) ).x;
+  return vec2( ( a + ( b - a ) * f ) * 2.0 - 1.0, ( b - a ) * 2.0 );
 }
 
 float rvHB( float w, float h, float c ) { // height-blend: detail height pushes transitions around
@@ -205,12 +235,19 @@ void rvTerrain( inout vec3 albedo ) {
   // ---- geometric layer weights
   float sea = uRvP.y;
   float hs = alt - sea;
-  float rockS = smoothstep( 0.13 + 0.07 * n2 + 0.05 * n4, 0.29 + 0.07 * n2, slope );
+  // (on lush, temperate worlds grass and scrub hold to steeper slopes — Faroe / Norway / BotW: green
+  //  flanks up to ~45-50° with rock breaking through, bare rock above. Fades out with altitude, cold
+  //  and dryness so high crags and arid worlds keep their rock.)
+  float hold = uRvS2.x * smoothstep( 0.3, 0.6, moist + 0.1 * n3 ) * smoothstep( 0.08, 0.3, temp )
+             * ( 1.0 - smoothstep( 0.3, 0.65, ( sea > -1e8 ? hs : alt ) / max( uRvP.z, 1.0 ) + 0.12 * n1 ) );
+  float rockS = smoothstep( 0.13 + 0.07 * n2 + 0.05 * n4 + 0.08 * hold, 0.29 + 0.07 * n2 + 0.07 * hold, slope );
   float wRock = clamp( max( rockS, rockA * 0.95 ), 0.0, 1.0 );
   float dryness = smoothstep( 0.3, 0.08, moist + 0.12 * n1 ) * ( 1.0 - 0.6 * uRvS2.x );
   // (sand edge distorted by two noise scales: no contour-following hard line between sand and grass)
   // rubble aprons at the foot of mesa / plateau / canyon walls (generator hint), noise-broken edge
-  float talusW = smoothstep( 0.25, 0.65, vRvTalus + 0.35 * ( mC.b - 0.5 ) + 0.25 * n4 ) * ( 1.0 - rockS );
+  // bare-ground patches (generator mask, also read by flora: grass thins there) — soil + gravel
+  float bareV = smoothstep( 0.12, 0.6, vRvM3.y + 0.2 * ( mC.b - 0.5 ) + 0.1 * n4 );
+  float talusW = smoothstep( 0.25, 0.65, vRvM3.x + 0.35 * ( mC.b - 0.5 ) + 0.25 * n4 ) * ( 1.0 - rockS );
   // steep shores get dark shingle / boulders instead of a bright sand line drawn along the contour
   // (beaches only where the shore is gentle; the beach band also widens/narrows with noise)
   float shingle = sea > -1e8 ? smoothstep( 0.03, 0.09, slope + 0.03 * n4 ) * ( 1.0 - smoothstep( 2.5 + 3.0 * ( mC.r - 0.3 ), 9.0, hs ) ) * smoothstep( -6.0, -1.0, hs ) : 0.0;
@@ -222,7 +259,7 @@ void rvTerrain( inout vec3 albedo ) {
   float meadow0 = smoothstep( 0.3, 0.55, moist + 0.1 * n3 ) * smoothstep( 0.1, 0.3, temp ) * uRvS2.x;
   float wTalus = smoothstep( 0.07, 0.15, slope ) * ( 1.0 - rockS ) * nearRock * smoothstep( 0.05, 0.5, curv + 0.3 * n4 + 0.25 * ( mC.b - 0.5 ) ) * ( 1.0 - 0.8 * meadow0 );
   // gravel / pebble patches on gentle ground (dry soil, around outcrops, worn paths)
-  float wPebG = smoothstep( 0.74, 0.9, mC.b * 0.5 + mA.r * 0.25 + 0.3 * n3 + 0.3 * rockA + 0.15 * n4 ) * ( 1.0 - rockS ) * ( 1.0 - 0.9 * meadow0 );
+  float wPebG = max( smoothstep( 0.74, 0.9, mC.b * 0.5 + mA.r * 0.25 + 0.3 * n3 + 0.3 * rockA + 0.15 * n4 ) * ( 1.0 - 0.9 * meadow0 ), bareV * smoothstep( 0.4, 0.75, mA.g + 0.3 * n3 ) * 0.8 ) * ( 1.0 - rockS );
   float wScree = clamp( max( max( wTalus, talusW ), max( wPebG * 0.75, shingle * 0.9 ) ) + wetA * 0.5, 0.0, 1.0 );
   float wGround = ( 1.0 - wRock ) * ( 1.0 - wSand );
 
@@ -451,35 +488,58 @@ void rvTerrain( inout vec3 albedo ) {
       float wa = a == 0 ? wg.x / sideW : wg.z / sideW;
       if ( wa < 0.02 ) continue;
       float hc = a == 0 ? L.z : L.x;
-      vec2 dH = a == 0 ? vec2( dLx.z, dLy.z ) : vec2( dLx.x, dLy.x );
-      vec2 dA = vec2( dLx.y, dLy.y );
+      float fwM = max( length( a == 0 ? vec2( dLx.z, dLy.z ) : vec2( dLx.x, dLy.x ) ), length( vec2( dLx.y, dLy.y ) ) );
+      // (1) big polygonal facets, 128 m wide x 280 m tall: planes catching the light differently
+      {
+        float fade = ( 1.0 - smoothstep( 0.06, 0.18, fwM / 128.0 ) ) * smoothstep( 350.0, 900.0, dist ) * wa;
+        if ( fade > 0.0 ) {
+          vec4 f = rvFacet( vec2( hc / 128.0 + float( a ) * 0.37, alt / 282.0 ), 32.0 );
+          gF += rvGw( a, vec2( f.x * 0.28, f.y * 0.16 ) ) * fade;
+          blkTone += ( f.w - 0.5 ) * 0.1 * fade;
+          blkHue += ( fract( f.w * 13.7 ) - 0.5 ) * fade;
+        }
+      }
+      // (2) aretes / dihedrals: creased piecewise-linear noise across the face (64 m, 16 m), short
+      //     angular kinks with altitude, coming and going — crisp vertical light/dark edges
       for ( int s = 0; s < 2; s++ ) {
-        float cs = s == 0 ? 64.0 : 16.0, ch = cs * 1.35;
-        float fw = max( length( dH ) / cs, length( dA ) / ch );
-        float fade = 1.0 - smoothstep( 0.05, 0.16, fw );
+        float W = s == 0 ? 64.0 : 16.0, amp = s == 0 ? 0.24 : 0.16;
+        float fade = ( 1.0 - smoothstep( 0.08, 0.25, fwM / W ) ) * smoothstep( s == 0 ? 150.0 : 50.0, s == 0 ? 400.0 : 140.0, dist ) * wa;
         if ( fade <= 0.0 ) continue;
-        vec4 f = rvFacet( vec2( hc / cs + float( a ) * 0.37, alt / ch ), 4096.0 / cs );
-        float amp = ( s == 0 ? 0.5 : 0.34 ) * fade * wa;
-        // tilt: across the face (in-plane horizontal) and up/down (overhang vs slab)
-        gF += rvGw( a, vec2( f.x, f.y * 0.8 ) ) * amp;
-        blkTone += ( f.w - 0.5 ) * ( s == 0 ? 0.32 : 0.2 ) * fade * wa;
-        if ( s == 0 ) blkHue += ( fract( f.w * 13.7 ) - 0.5 ) * fade * wa;
-        float jw = max( 0.025, fw * 1.2 );
-        blkCrack = max( blkCrack, ( 1.0 - smoothstep( jw * 0.6, jw * 2.2, f.z ) ) * fade * wa * ( s == 0 ? 0.75 : 0.55 ) );
-        // sheeting ledges in a subset of big blocks (spacing 7-15 m, phase per block)
-        if ( s == 0 && kMass > 0.0 && f.w < 0.6 ) {
-          float sp = 7.0 + 8.0 * fract( f.w * 5.3 );
-          float lfw = length( dA ) / sp;
-          float lfade = ( 1.0 - smoothstep( 0.08, 0.25, lfw ) ) * smoothstep( 0.04, 0.14, f.z ) * kMass;
-          if ( lfade > 0.0 ) {
-            float lp = fract( alt / sp + f.w * 11.3 );
-            float lw = max( 0.03, lfw * 1.5 );
-            float tread = smoothstep( 0.0, lw, lp ) * ( 1.0 - smoothstep( 0.1, 0.1 + lw, lp ) );
-            float riser = 1.0 - smoothstep( 0.0, 0.25 + lw, 1.0 - lp );
-            ledgeLit = max( ledgeLit, tread * lfade * wa );
-            ledgeSh = max( ledgeSh, riser * lfade * wa );
-            gF.y += ( riser * 0.9 - tread * 1.2 ) * lfade * wa;
-          }
+        float sd = float( s ) * 3.4 + float( a ) * 1.3;
+        vec2 ph = rvN1L( alt / ( W * 2.5 ), 1e6, sd + 2.0 );
+        vec2 v = rvN1L( hc / W + 0.2 * ph.x, 4096.0 / W, sd );
+        float m = smoothstep( -0.3, 0.4, rvN1L( alt / ( W * 4.0 ) + 0.5, 1e6, sd + 9.0 ).x );
+        // (antialias the crease: blend the sign over ~1.5 px)
+        float sg = clamp( v.x / max( 1e-4, abs( v.y ) * fwM / W * 1.5 ), -1.0, 1.0 );
+        gF += rvGw( a, vec2( -sg * v.y * amp, 0.0 ) ) * fade * m;
+        blkTone += ( 0.5 - abs( v.x ) ) * 0.08 * fade * m;
+      }
+      // (3) sparse open joints (32 m, 8 m): long vertical cracks and rarer sheeting joints with
+      //     light-catching bevels; on massive rock some sheeting joints are narrow lit ledges
+      for ( int s = 0; s < 2; s++ ) {
+        float W = s == 0 ? 32.0 : 8.0;
+        float fade = ( 1.0 - smoothstep( 0.06, 0.18, fwM / W ) ) * smoothstep( s == 0 ? 200.0 : 70.0, s == 0 ? 550.0 : 220.0, dist );
+        if ( fade <= 0.0 ) continue;
+        vec4 blk, e;
+        rvJoint( hc + float( a ) * 13.0 + float( s ) * 7.0, alt + float( a ) * 5.0, W, blk, e );
+        float k = fade * wa;
+        float bev = max( fwM * 2.0, W * 0.08 );
+        float bx = ( 1.0 - smoothstep( 0.0, bev, abs( e.x ) ) ) * sign( e.x ) * e.z;
+        float by = ( 1.0 - smoothstep( 0.0, bev, abs( e.y ) ) ) * sign( e.y ) * e.w;
+        gF += rvGw( a, vec2( -bx * 0.5, -by * 0.45 ) ) * k;
+        float jw = max( 0.25, fwM * 1.1 );
+        float cr = max( e.z * ( 1.0 - smoothstep( jw * 0.5, jw * 1.6, abs( e.x ) ) ), e.w * ( 1.0 - smoothstep( jw * 0.5, jw * 1.6, abs( e.y ) ) ) * 0.8 );
+        blkCrack = max( blkCrack, cr * k * ( s == 0 ? 0.6 : 0.4 ) );
+        if ( s == 0 && kMass > 0.0 && e.w > 0.0 && e.y > 0.0 ) {
+          float lfade = smoothstep( 160.0, 400.0, dist ) * kMass * ( 1.0 - smoothstep( 0.15, 0.4, fwM / 6.0 ) );
+          float tw = max( 1.2, fwM * 1.5 );
+          float tread = smoothstep( 0.0, tw * 0.5, e.y ) * ( 1.0 - smoothstep( tw, tw * 2.0, e.y ) );
+          ledgeLit = max( ledgeLit, tread * lfade * k );
+          gF.y -= tread * 0.9 * lfade * k;
+        }
+        if ( s == 0 && kMass > 0.0 && e.w > 0.0 && e.y < 0.0 ) {
+          float sh = 1.0 - smoothstep( 0.0, max( 2.5, fwM * 2.0 ), -e.y );
+          ledgeSh = max( ledgeSh, sh * smoothstep( 160.0, 400.0, dist ) * kMass * k );
         }
       }
     }
@@ -515,7 +575,7 @@ void rvTerrain( inout vec3 albedo ) {
   grassC *= 0.78 + 0.44 * mA.b + 0.2 * n4;
   // meadows (where the flora track grows dense grass): from mid distance the ground takes the grass
   // blade colour and loses soil patches, so meadows read dense where individual blades fade out
-  float meadow = ( 1.0 - wRock ) * ( 1.0 - wSand ) * smoothstep( 0.3, 0.55, moist + 0.1 * n3 ) * smoothstep( 0.1, 0.3, temp ) * uRvS2.x;
+  float meadow = ( 1.0 - wRock ) * ( 1.0 - wSand ) * smoothstep( 0.3, 0.55, moist + 0.1 * n3 ) * smoothstep( 0.1, 0.3, temp ) * uRvS2.x * ( 1.0 - bareV );
   float soilM = smoothstep( 0.68, 0.95, mC.b * 0.6 + mA.b * 0.4 + 0.15 * n1 + 0.25 * wScree ) * ( 1.0 - 0.6 * meadow );
   // (blade tint with BotW-like colour drifts: sun-dried yellow patches and lush dark-green hollows at
   //  20-200 m, so meadows are not one flat green from mid distance)
@@ -523,7 +583,8 @@ void rvTerrain( inout vec3 albedo ) {
   bladeC = mix( bladeC, bladeC * vec3( 1.18, 1.06, 0.62 ), smoothstep( 0.52, 0.78, mC.r + 0.25 * n3 ) * 0.7 );
   bladeC = mix( bladeC, bladeC * vec3( 0.72, 0.86, 0.78 ), smoothstep( 0.55, 0.8, mC.b * 0.6 + max( curv, 0.0 ) * 0.6 + 0.2 * n1 ) * 0.6 );
   grassC = mix( grassC, bladeC, meadow * mix( 0.25, 0.6, smoothstep( 15.0, 90.0, dist ) ) );
-  vec3 groundC = mix( grassC, uRvSoil, soilM * 0.55 );
+  soilM = max( soilM, bareV * 0.85 );
+  vec3 groundC = mix( grassC, uRvSoil, soilM * 0.55 + bareV * 0.3 );
   groundC *= 0.8 + 0.4 * mix( 0.5, dGround.a, fMid );
   vec3 screeC = mix( mix( uRvRock, vec3( rvLum( uRvRock ) ), 0.6 ) * 1.12, uRvSoil, 0.3 + 0.3 * wPebG ) * ( 0.72 + 0.56 * mix( 0.5, dPeb.a, fMid ) ) * ( 0.9 + 0.2 * mC.a );
   groundC = mix( groundC, screeC, clamp( wScree * mix( 0.8, 0.3 + 0.7 * smoothstep( 0.15, 0.55, dPeb.b ), fMid ), 0.0, 1.0 ) );
@@ -546,7 +607,7 @@ void rvTerrain( inout vec3 albedo ) {
   // scales), up to ±30 % from the 8 m / 2 m layers up close, sharpened (cavities darker)
   float aDet = aRock - aMacro;
   rockC *= ( 0.88 + 0.24 * aMacro ) * ( 1.0 + 1.1 * aDet * ( 1.0 - 0.7 * kLay ) );
-  rockC *= 0.8 + 0.4 * strA;
+  rockC *= 0.72 + 0.56 * strA;   // bed contrast ±~20 % (was ±8 %: on-foot strata walls read low-contrast)
   // iron / oxide staining on faces: warm broad patches (tens to hundreds of metres) under ledges
   float iron = smoothstep( 0.55, 0.85, mC.r * 0.6 + mA.b * 0.4 + 0.25 * n3 ) * smoothstep( 0.25, 0.5, slope ) * ( 0.5 + 0.5 * clamp( curv * 2.0, 0.0, 1.0 ) );
   rockC = mix( rockC, rvLum( rockC ) * vec3( 1.35, 0.95, 0.68 ), iron * 0.6 );
@@ -555,8 +616,8 @@ void rvTerrain( inout vec3 albedo ) {
   rockC *= 1.0 - 0.45 * clamp( streakM * 1.8, 0.0, 1.0 );
   // jointed blocks: per-block value / hue (warm oxidised vs cool fresh), dark joints, sheeting ledges
   rockC *= 1.0 + blkTone;
-  rockC *= mix( vec3( 1.0 ), blkHue > 0.0 ? vec3( 1.1, 1.0, 0.86 ) : vec3( 0.9, 0.97, 1.06 ), min( abs( blkHue ) * 1.6, 1.0 ) );
-  rockC *= 1.0 - 0.55 * blkCrack;
+  rockC *= mix( vec3( 1.0 ), blkHue > 0.0 ? vec3( 1.1, 1.0, 0.86 ) : vec3( 0.9, 0.97, 1.06 ), min( abs( blkHue ) * 0.9, 1.0 ) );
+  rockC *= 1.0 - 0.42 * blkCrack;
   rockC *= ( 1.0 - 0.35 * ledgeSh ) * ( 1.0 + 0.22 * ledgeLit );
   // drainage streaks: dark varnish (slightly warm) and rarer pale mineral streaks
   rockC = mix( rockC, rockC * vec3( 0.6, 0.56, 0.52 ), clamp( streakD * ( 0.35 + 0.4 * sk ), 0.0, 0.6 ) );
@@ -605,7 +666,7 @@ void rvTerrain( inout vec3 albedo ) {
   //  in sky light — atmosphere-track request; the floor keeps cavity + detail AO from going black)
   rvAO = clamp( ( 1.0 - 0.3 * cav ) * mix( mix( 0.74, 0.64, bRock ), 1.05, hD ), 0.55, 1.0 );
   rvAO *= 1.0 - ( 0.3 * ledgeSh + 0.25 * blkCrack ) * bRock * ( 1.0 - bSnow );
-  float occ = mix( 1.0, 0.7 + 0.5 * hD * hD + 0.15 * hD, bRock ) * ( 1.0 - 0.26 * cav * ( 1.0 - bSnow ) );
+  float occ = mix( 1.0, 0.7 + 0.5 * hD * hD + 0.15 * hD, bRock ) * ( 1.0 - 0.2 * cav * ( 1.0 - bSnow ) );
   col *= max( occ, 0.6 );
   col *= 1.0 + ( 0.1 + 0.16 * bRock ) * clamp( -curv, 0.0, 1.0 ) * ( 1.0 - 0.5 * bSnow );
 
@@ -732,7 +793,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v21' + (opts.lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-v27' + (opts.lite ? 'L' : '');
   return mat;
 }
 
