@@ -133,7 +133,9 @@ function leafCluster(ctx, rnd, o) {
     const L = o.L[0] + rnd() * (o.L[1] - o.L[0]), W = o.W[0] + rnd() * (o.W[1] - o.W[0]);
     if (Math.hypot(lf.x - cx, lf.y - cy) + L * 0.9 > 250) continue;
     // mild inner shading only (a bright rim on every card outlines each clump like popcorn)
-    const lum = 0.46 + 0.2 * Math.pow(Math.min(1, lf.edge), 0.7) + rnd() * 0.3;
+    // (a coherent dark-core → light-rim gradient with modest per-leaf jitter: strong per-leaf noise
+    //  read as a pixel stipple once the cluster is a few dozen pixels on screen)
+    const lum = 0.42 + 0.34 * Math.pow(Math.min(1, lf.edge), 0.8) + rnd() * 0.16;
     drawLeaf(ctx, lf.x, lf.y, lf.dir, L, W, Math.min(1, lum), rnd, o.lobes ? { lobes: 5 + ((rnd() * 3) | 0) * 2, veins: o.veins } : { sharp: o.sharp ?? 0.5, vein: o.vein });
   }
 }

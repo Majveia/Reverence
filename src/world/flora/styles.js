@@ -36,6 +36,8 @@ export function buildStyle(body, atlas) {
       density: 1, height: 0.55, cover: bw({ GRASSLAND: 1, SAVANNA: 0.95, FOREST: 0.55, JUNGLE: 0.75, TAIGA: 0.5, TUNDRA: 0.55, BEACH: 0.12, DESERT: 0.05, TOXIC: 0.6, CRYSTAL: 0.4 }),
       base: mix3(grass, [0.015, 0.035, 0.008], 0.3), tip: mix3(mix3(grass, grass2, 0.55), [0.75, 1, 0.45], 0.08), dry: mix3(sand, grass2, 0.4),
       dryAmount: 0.08, glowTip: null, flowers: [], widthMul: 1,
+      // seed heads: pale straw with a hint of the dry-grass colour
+      head: mix3(mix3(sand, grass2, 0.3), [0.55, 0.42, 0.22], 0.35),
     },
     glow: 0, cardGlow: 0, windAmp: 1, translucency: 0.9,
   };
@@ -101,6 +103,11 @@ export function buildStyle(body, atlas) {
     biomes: bw({ FOREST: 1, TAIGA: 1, TUNDRA: 0.6, JUNGLE: 0.5 }), m: [0.35, 1.5], t: [0, 1], slope: 0.9, alt: [0, 0.7],
     zone: 2, dens: 0.8, scale: [0.6, 1.5], lean: 0.1, sink: 0.12, ...o, params: { radius: 0.9, rect: R('small'), colA: mix3(fl(0), grass, 0.5), colB: fl(1), ...o.params },
   });
+  const logSp = (o = {}) => ({
+    id: 'log', layer: 'under', gen: PL.fallenLog, variants: 2, barkLayer: BARK.furrow, tint2: [0.1, 0.07, 0.04], billboard: 0, windAmp: 0,
+    biomes: bw({ FOREST: 1, TAIGA: 1, JUNGLE: 0.6 }), m: [0.25, 1.5], t: [-0.2, 1.3], slope: 0.45, alt: [0, 0.6],
+    zone: -1, dens: 0.16, scale: [0.7, 1.3], lean: 0.02, sink: 0.08, ...o, params: { length: 6, radius: 0.32, bark: mix3(barkBrown, [0.09, 0.07, 0.05], 0.3), ...o.params },
+  });
   const shrubDry = (o = {}) => ({
     id: 'dryshrub', layer: 'under', gen: PL.reeds, variants: 2,
     
@@ -119,9 +126,13 @@ export function buildStyle(body, atlas) {
       add('under', bushSp());
       add('under', fernSp());
       add('under', reedSp());
+      add('under', logSp());
       S.grass.height = 0.62; S.grass.density = 1.1;
       S.grass.flowers = [
         { rect: R('daisy'), colA: [0.9, 0.88, 0.8], colB: [1, 1, 0.92], tint2: [0.85, 0.6, 0.08], type: 'daisy', freq: 1 },
+        // BotW meadows: speckles of buttercup yellow and cornflower blue between the daisies
+        { rect: R('daisy'), colA: [1.0, 0.72, 0.06], colB: [1.0, 0.86, 0.2], tint2: [0.9, 0.35, 0.02], type: 'daisy', freq: 0.8 },
+        { rect: R('daisy'), colA: [0.3, 0.36, 0.9], colB: [0.55, 0.45, 0.95], tint2: [0.95, 0.9, 0.5], type: 'daisy', freq: 0.28 },
         { rect: R('spike'), colA: fl(3), colB: accent, tint2: fl(1), type: 'spike', freq: 0.28, height: 0.5 },
         { rect: R('cup'), colA: mix3(accent, [1, 0.3, 0.2], 0.4), colB: fl(3), tint2: [0.06, 0.12, 0.03], type: 'cup', freq: 0.45 },
       ];
@@ -137,6 +148,7 @@ export function buildStyle(body, atlas) {
       add('under', mossSp());
       add('under', bushSp({ params: { radius: 0.8, flowerChance: 0.05 }, dens: 0.6 }));
       add('under', shrubDry({ dens: 0.5 }));
+      add('under', logSp({ dens: 0.22, params: { bark: mix3(barkBrown, [0.12, 0.08, 0.05], 0.4) } }));
       S.canopy.cover = bw({ FOREST: 0.9, TAIGA: 0.92, TUNDRA: 0.35, GRASSLAND: 0.18, SAVANNA: 0.1, DESERT: 0.035, SNOW: 0.06, BEACH: 0.02 });
       S.grass.height = 0.62; S.grass.dryAmount = 0.22;
       S.grass.cover[B.DESERT] = 0.15; S.grass.cover[B.TUNDRA] = 0.65;
@@ -199,7 +211,7 @@ export function buildStyle(body, atlas) {
       add('under', fernSp({ params: { leafA: mix3(teal, capA, 0.4), leafB: capA }, biomes: bw({ FOREST: 1, JUNGLE: 1, GRASSLAND: 0.4, SAVANNA: 0.3 }), dens: 0.8 }));
       S.canopy.cover = bw({ FOREST: 0.8, JUNGLE: 0.85, GRASSLAND: 0.32, SAVANNA: 0.26, TUNDRA: 0.08, DESERT: 0.05, TOXIC: 0.8, BEACH: 0.02 });
       S.under.cover = bw({ FOREST: 0.8, JUNGLE: 0.85, GRASSLAND: 0.45, SAVANNA: 0.35, TUNDRA: 0.15, DESERT: 0.08, TOXIC: 0.8 });
-      S.grass.base = mix3(mix3(grass, teal, 0.35), [0.03, 0.04, 0.02], 0.35); S.grass.tip = mix3(mix3(grass2, capA, 0.4), teal, 0.2); S.grass.height = 0.72; S.grass.density = 1.25; S.grass.dryAmount = 0.02; S.grass.glowTip = glowC;
+      S.grass.base = mix3(mix3(grass, teal, 0.35), [0.03, 0.04, 0.02], 0.35); S.grass.tip = mix3(mix3(grass2, capA, 0.4), teal, 0.2); S.grass.height = 0.72; S.grass.density = 1.25; S.grass.dryAmount = 0.02; S.grass.glowTip = glowC; S.grass.glowTip2 = lav;
       S.grass.cover[B.DESERT] = 0.25; S.grass.cover[B.SAVANNA] = 1; S.grass.cover[B.FOREST] = 0.85; S.grass.cover[B.JUNGLE] = 0.9; S.grass.cover[B.GRASSLAND] = 1;
       S.grass.flowers = [{ rect: R('spores'), colA: glowC, colB: lav, tint2: [1, 1, 0.9], type: 'daisy', freq: 0.7, glow: 2.5 }];
       S.glow = 2.6;
@@ -227,7 +239,7 @@ export function buildStyle(body, atlas) {
     case 'bioluminescent': {
       const cyan = fl(0), mag = fl(1), blue = fl(2), dark = fl(3);
       add('canopy', oak({ params: { leafA: mix3(dark, [0.01, 0.03, 0.03], 0.3), leafB: dark, height: 12, crownR: 4.6 }, tint2: cyan, cardGlow: 0, biomes: bw({ FOREST: 1, GRASSLAND: 0.6, JUNGLE: 1, SAVANNA: 0.3 }), dens: 0.8 }));
-      add('canopy', { id: 'lanterntree', layer: 'canopy', gen: AL.lanternTree, variants: 3, collider: 'tree', params: { height: 8.5, trunkR: 0.3, bulbR: 0.36, colA: cyan, colB: mix3(cyan, blue, 0.6), trunk: mix3(dark, [0.06, 0.05, 0.07], 0.5), leafA: mix3(dark, [0.01, 0.04, 0.04], 0.4), leafB: mix3(dark, blue, 0.25), rect: R('broad') },
+      add('canopy', { id: 'lanterntree', layer: 'canopy', gen: AL.lanternTree, variants: 3, collider: 'tree', params: { height: 8.5, trunkR: 0.3, bulbR: 0.24, colA: cyan, colB: mix3(cyan, blue, 0.6), trunk: mix3(dark, [0.06, 0.05, 0.07], 0.5), leafA: mix3(dark, [0.01, 0.04, 0.04], 0.4), leafB: mix3(dark, blue, 0.25), rect: R('broad') },
         glow: 2.2, cardGlow: 0.35, tint2: cyan, billboard: 0.8, windAmp: 0.7, biomes: bw({ FOREST: 0.7, GRASSLAND: 0.8, JUNGLE: 0.8, SAVANNA: 0.4 }), m: [0.1, 1.5], t: [0.1, 1.3], slope: 0.7, alt: [0, 0.6], zone: 1, dens: 0.55, scale: [0.75, 1.3], lean: 0.08, sink: 0.3 });
       add('canopy', { id: 'glowshroom', layer: 'canopy', gen: AL.giantMushroom, variants: 2, collider: 'tree', params: { height: 6, capR: 3, stemR: 0.3, capA: mix3(dark, mag, 0.25), capB: mag, stemA: [0.08, 0.07, 0.1], stemB: mix3(mag, [0.1, 0.1, 0.1], 0.6), gill: mag, glow: true, spores: cyan },
         glow: 2.4, tint2: mag, billboard: 0, windAmp: 0.3, biomes: bw({ FOREST: 0.5, JUNGLE: 0.6, GRASSLAND: 0.3, TOXIC: 1 }), m: [0.1, 1.5], t: [0, 1.4], slope: 0.6, alt: [0, 0.6], zone: 2, dens: 0.35, scale: [0.7, 1.5], lean: 0.1, sink: 0.4 });
@@ -236,7 +248,7 @@ export function buildStyle(body, atlas) {
       add('under', { id: 'fronds', layer: 'under', gen: PL.alienFronds, variants: 2, params: { length: 1.3, rect: R('alienleaf'), colA: dark, colB: mix3(dark, blue, 0.4) }, tint2: cyan, cardGlow: 1.6,
         biomes: bw({ FOREST: 1, JUNGLE: 1, GRASSLAND: 0.4 }), m: [0.1, 1.5], t: [0, 1.4], slope: 0.8, alt: [0, 0.6], zone: 1, dens: 0.8, scale: [0.6, 1.3], lean: 0.08, sink: 0.05 });
       add('under', reedSp({ params: { colA: dark, colB: mix3(dark, cyan, 0.2) }, tint2: cyan }));
-      S.grass.base = mix3(grass, [0.01, 0.02, 0.02], 0.5); S.grass.tip = mix3(grass2, cyan, 0.15); S.grass.glowTip = cyan; S.grass.height = 0.5;
+      S.grass.base = mix3(grass, [0.01, 0.02, 0.02], 0.5); S.grass.tip = mix3(grass2, cyan, 0.15); S.grass.glowTip = cyan; S.grass.glowTip2 = mix3(blue, mag, 0.35); S.grass.height = 0.5; S.grass.hueVar = 0.4;
       S.grass.flowers = [{ rect: R('spores'), colA: cyan, colB: mag, tint2: [1, 1, 1], type: 'daisy', freq: 0.6, glow: 3 }];
       S.glow = 3.2;
       rocksDefault(0.2);
@@ -260,6 +272,8 @@ export function buildStyle(body, atlas) {
       add('under', { id: 'fronds', layer: 'under', gen: PL.alienFronds, variants: 2, params: { length: 1.5, rect: R('alienleaf'), colA: cols[1], colB: cols[4], bulb: cols[3] }, tint2: [1, 1, 1], glow: 1.5,
         biomes: bw({ JUNGLE: 1, FOREST: 0.8, GRASSLAND: 0.3 }), m: [0.1, 1.6], t: [0, 1.4], slope: 0.8, alt: [0, 0.6], zone: 0, dens: 0.8, scale: [0.6, 1.4], lean: 0.08, sink: 0.05 });
       S.canopy.cover = bw({ JUNGLE: 0.7, FOREST: 0.65, GRASSLAND: 0.12, SAVANNA: 0.06, BEACH: 0.05 });
+      // mid-scale props (tentacles, eyestalks, fronds, flowering bushes) between the giants and the grass
+      S.under.cover = bw({ JUNGLE: 0.85, FOREST: 0.7, GRASSLAND: 0.32, SAVANNA: 0.2, BEACH: 0.12 });
       S.grass.base = mix3(grass, [0.02, 0.05, 0.01], 0.35); S.grass.tip = mix3(grass2, [1, 1, 0.5], 0.15); S.grass.height = 0.55;
       S.grass.cover[B.FOREST] = 0.85; S.grass.cover[B.JUNGLE] = 0.9;
       S.grass.flowers = [

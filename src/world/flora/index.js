@@ -104,7 +104,7 @@ class Flora {
     const obr = () => {
       const taa = pipe?.stats?.taa && pipe.taa;
       FLORA_DITHER.frame.value = taa ? taa.index : (GU.uFrame?.value || 0);
-      FLORA_DITHER.amt.value = taa ? 0.3 : 0;
+      FLORA_DITHER.amt.value = taa ? 0.12 : 0; // small: camera-jitter TAA already antialiases hard alpha edges
     };
     for (const L of this.layers) L.mesh.onBeforeRender = obr;
     // debug: ?floradbg=nocast (no flora shadow casters) | noreceive (flora ignores shadows)
@@ -165,9 +165,11 @@ class Flora {
     const flowers = [];
     for (const [fi, F] of (S.grass.flowers || []).entries()) {
       const models = [];
-      for (let v = 0; v < (low ? 1 : 2); v++) {
+      // (one variant per type when a style has many flower types: every model costs two draw calls)
+      const nVar = low || (S.grass.flowers.length > 3) ? 1 : 2;
+      for (let v = 0; v < nVar; v++) {
         const rnd = mulberry(hashCombine(this.seed, 977 + fi, v));
-        const P = { rect: F.rect, colA: F.colA, colB: F.colB, type: F.type, height: F.height ?? 0.42, radius: 0.35, headSize: F.type === 'daisy' ? 0.058 : 0.09, count: F.type === 'daisy' ? 7 : 5, stem: [0.05, 0.1, 0.03] };
+        const P = { rect: F.rect, colA: F.colA, colB: F.colB, type: F.type, height: F.height ?? 0.42, radius: 0.35, headSize: F.type === 'daisy' ? 0.07 : 0.09, count: F.type === 'daisy' ? 7 : 5, stem: [0.05, 0.1, 0.03] };
         let r;
         try { r = flowerPatch(rnd, P); } catch (e) { console.warn('[flora] flower failed', e); continue; }
         const m = { idx: this.models.length, layer: 'flower', sp: { id: 'flower' + fi, tint2: F.tint2, glow: F.glow || 0, cardGlow: F.glow || 0, billboard: 0.9 }, geo0: r.lod0.build(), geo1: r.lod1.build(), height: r.height, radius: r.radius, imp: -1 };
@@ -215,7 +217,7 @@ class Flora {
     };
     // distances (m)
     const D = this.D = {
-      c0: [34 * dd, 44 * dd], c1: [140 * dd, 180 * dd], cI: [680 * dd, 800 * dd], cS: [20, 26],
+      c0: [34 * dd, 44 * dd], c1: [148 * dd, 172 * dd], cI: [680 * dd, 800 * dd], cS: [20, 26],
       u0: [20 * dd, 28 * dd], uR: 150 * dd * Math.sqrt(this.density),
       r0: [45 * dd, 60 * dd], rR: 560 * dd,
       f0: [14, 20], fR: 48 * Math.sqrt(this.density),
@@ -299,18 +301,19 @@ class Flora {
     const spacing = 0.8 / Math.pow(clamp(dens, 0.3, 1.3), 0.4);
     this.table.grass = {
       cover: Array.from(G.cover || new Float32Array(14)), spacing,
-      dryAmount: G.dryAmount ?? 0.2, flowerAmt: 0.3, flowers: this.flowerList, flowerWsum: this.flowerList.reduce((a, f) => a + f.freq, 0),
+      dryAmount: G.dryAmount ?? 0.2, flowerAmt: G.flowerAmt ?? 0.42, flowers: this.flowerList, flowerWsum: this.flowerList.reduce((a, f) => a + f.freq, 0),
     };
     if (!anyGrass) return;
     const R = this.grassR = (low ? 28 : 44) * Math.sqrt(clamp(this.density, 0.3, 1.5));
     const hgt = G.height ?? 0.55;
     const pR = spacing * 1.25; // Gaussian patches (σ = 0.5 spacing) → even coverage, see grass.js
     const common = {
-      base: G.base, tip: G.tip, dry: G.dry, glowTip: G.glowTip, glowAmt: 1.6, push: this.pushU,
+      base: G.base, tip: G.tip, dry: G.dry, glowTip: G.glowTip, glowTip2: G.glowTip2, glowAmt: 1.6, push: this.pushU,
+      head: G.head, hueVar: G.hueVar ?? 1,
       height: hgt * 0.66, patchR: pR, transl: 0.9, stiff: 1,
     };
     // tall blades (Bézier strips) over a turf carpet of short single-triangle blades
-    const dense = makeGrassPatch(low ? 36 : 64, low ? 3 : 4, 11, low ? 70 : 150);
+    const dense = makeGrassPatch(low ? 36 : 64, low ? 3 : 4, 11, low ? 80 : 180);
     const sparse = makeGrassPatch(low ? 16 : 28, 3, 23, low ? 24 : 56);
     const far = makeGrassPatch(low ? 12 : 22, 2, 37, low ? 12 : 24);
     const nearF = low ? [6, 9] : [8, 11.5];

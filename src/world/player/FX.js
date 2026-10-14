@@ -296,7 +296,7 @@ export class FX {
             vec2 bc = p - vec2(0.0, mix(0.0, 0.5, mv));
             float e = length(bc / vec2(mix(0.42, 0.36, mv), mix(0.42, 1.05, mv)));
             float n1 = vn(p * 7.0 + vec2(0.0, t * 1.5 * (0.3 + mv))) * 0.6 + vn(p * 17.0 - vec2(t * 0.7, 0.0)) * 0.4;
-            float collar = smoothstep(1.45, 1.0, e) * smoothstep(0.82, 1.0, e) * (0.45 + 0.75 * n1);
+            float collar = smoothstep(1.25, 1.0, e) * smoothstep(0.88, 1.0, e) * (0.3 + 0.9 * smoothstep(0.35, 0.75, n1));
             // Kelvin arms (19.5 deg) from the head
             float yb = p.y + 0.15;
             float arm = abs(abs(p.x) - max(yb, 0.0) * 0.36);
@@ -308,8 +308,8 @@ export class FX {
             float inside = smoothstep(0.08, -0.08, abs(p.x) - max(yb, 0.0) * 0.36) * step(0.0, yb);
             float tr = pow(0.5 + 0.5 * sin((yb + abs(p.x) * 0.4) * 10.0 - t * 7.0), 3.0) * inside * exp(-max(yb, 0.0) * 0.55);
             // churned kick foam behind the feet
-            float kick = smoothstep(0.3, 0.0, abs(p.x) + (n1 - 0.5) * 0.25) * smoothstep(1.1, 1.7, yb) * exp(-max(yb - 1.7, 0.0) * 1.1) * n1 * n1;
-            float a = collar * 0.42 + (armA * 0.16 + tr * 0.04 + kick * 0.26) * mv;
+            float kick = smoothstep(0.3, 0.0, abs(p.x) + (n1 - 0.5) * 0.25) * smoothstep(1.1, 1.7, yb) * exp(-max(yb - 1.7, 0.0) * 1.8) * smoothstep(0.35, 0.8, vn(p * vec2(11.0, 6.0) + vec2(0.0, t * 2.0)));
+            float a = collar * 0.34 + (armA * 0.12 + tr * 0.04 + kick * 0.16) * mv;
             a *= uAlpha * smoothstep(3.4, 2.6, abs(p.x)) * smoothstep(5.5, 3.5, p.y) * smoothstep(-1.6, -1.2, p.y);
             if (a < 0.004) discard;
             gl_FragColor = vec4(uSunColor * 0.06 + uAmbientSky * 0.7 + 0.02, min(a, 0.6));

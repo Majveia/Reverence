@@ -131,6 +131,53 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
   * **Flora lab** (`/src/world/flora/lab/`, dev only): the real flora subsystem on the real planet
     surface with a stand-in ground/sky/sun, captured in ~30–120 s instead of 4–8 min. See below.
 
+* **Round 4 (critic round 2 follow-up)**:
+  * **No more stipple / hatch**: (1) the dither used for LOD crossfades, leaf alpha edges and
+    near-dissolve is now **stratified over 4 TAA sub-frames** (`rvDither = fract(IGN + k/4)`): every
+    pixel steps through 4 evenly spaced thresholds, so the default 4-sample shot / TAA history
+    resolves a fade to a uniform level instead of a frozen screen-door; (2) **shadow casters no
+    longer dither** their distance fade (that hatch was projected by the sun onto every leaf and
+    the ground): LOD0 casters and the near-impostor depth layer switch per instance at a hashed
+    distance inside the band (`rvLodStep`), complementary; (3) leaf alpha jitter only on near
+    cards (mip < 2.5) — far crowns use a clean threshold on the mipped coverage; (4) impostors
+    **blend** side/top views instead of dithering between them; (5) narrower LOD1 → impostor band
+    (148–172 m).
+  * **Painterly crowns**: leaf-cluster cards get a **domed shading normal** (crown/clump normal +
+    the card-local radial offset, `uDome`), so each cluster shades as a rounded mass; the
+    shadow-map visibility on leaves is blended (`uLeafSoft` 0.55) with an **analytic crown-shell
+    term** (outer sun-facing leaves lit, inner/lower leaves in the crown's own shade, still
+    shadowed by other trees) → soft lit masses with bright rims and darker cores instead of a
+    mosaic of lit/unlit cards; card shadow footprint 10 % → 30 %; leaf atlas lum = coherent
+    dark-core → light-rim gradient with less per-leaf noise. Impostor bake uses the same domed
+    normals.
+  * **Stands**: `rvStandTint` — low-frequency (~150–500 m) value/hue field per planet position on
+    trees and impostors (warm yellow-green ↔ cool blue-green, ±13 % value): forests read as
+    patches of stands. Canopy scale follows the cluster field (bigger trees in stand cores) and
+    4.5 % of trees are emergent giants (×1.3–1.55).
+  * **Grass**: per-blade height ×0.45–1.8 modulated by world-space tussocks (~2 m) and swales
+    (~14 m); 7 % **seed-head stalks** (tall, slender, spindle spikelet in straw `S.grass.head`),
+    13 % **broad-leaf blades** (2.3× wider, deeper blue-green, arching); root → tip gradient
+    brighter; **two-octave hue field** (~25 m and ~2.5 m) between warm yellow-green and cool
+    blue-green; turf carpet wider and denser (180/patch) and survives density thinning longer
+    (sparse patches = short sward + few tall blades, not spikes on soil). **Player push** is a
+    wide smooth falloff with a moderate bend and lifted AO (no dark radial stamp). Night glow
+    tips vary in hue (`glowTip` ↔ `glowTip2` in drifting patches) and strength per blade.
+  * **Flowers**: lush meadows add buttercup-yellow and violet-blue drifts, bigger heads,
+    flowerAmt 0.3 → 0.42 (one variant per type when a style has > 3 types: draw calls).
+  * **Bushes**: ~2× more, smaller cluster cards (domed) → soft leafy masses instead of faceted
+    blobs.
+  * **Trunks**: moss on up-facing limbs and in a damp band at the base, root collar darkening
+    into the soil (no hard ground line).
+  * **Alien solids**: thin-shell translucency on caps/balloons/bands (back-lit caps glow) and a
+    velvet **sheen** rim (`uSheen`); gills darken toward the stem; gill/band/rib patterns are
+    antialiased with distance (no shimmer).
+  * **Lantern trees (W4)**: 4–7 smaller lanterns per limb, varied size and strength (30 % bright,
+    most dim embers), teardrop with a dark calyx and bright belly; less glow bounce on leaves.
+  * **Weather (inbox)**: `G.uWetness` darkens bark/solids/grass and lowers roughness (glossy wet
+    leaves), `G.uSnow` settles on up-facing leaves, limbs, caps, rocks and grass tips.
+  * **Inbox**: grass blades within ~0.5–1.5 m of the camera shrink away; glowing grass tips fade
+    within 3 m of the lens.
+
 ## API (`world.get('flora')`)
 * `.clearAround(pos, radius, keep = 0)` → id (cull vegetation in a disc around a planet-local
   position, e.g. a parked ship); `.removeClear(id)`.

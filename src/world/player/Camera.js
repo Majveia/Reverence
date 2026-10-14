@@ -94,7 +94,16 @@ export class CameraRig {
       const k = st === 'glide' ? 1.1 : st === 'slide' ? 1.3 : st === 'swim' ? 0.6 : 0.55;
       this.recenter(up, vt, k * smoothstep(1.5, 7, sp), dt, st === 'glide' || st === 'slide' ? 3.0 : 2.3);
     }
-    const vyC = ctx.vel.dot(up);
+    // measured motion of the feet (finite difference, smoothed): ground-snapped states (slide / run downhill) move
+    // along the slope while their integrated velocity stays tangent to the sphere, so the true vertical rate
+    // must come from the actual displacement
+    if (!this._pp) { this._pp = new THREE.Vector3().copy(ctx.pos); this.mvel = new THREE.Vector3(); }
+    if (dt > 1e-5) {
+      _u.copy(ctx.pos).sub(this._pp).divideScalar(dt);
+      if (_u.lengthSq() < 250 * 250) this.mvel.lerp(_u, dampF(10, dt)); else this.mvel.copy(ctx.vel);
+    }
+    this._pp.copy(ctx.pos);
+    const vyC = st === 'slide' || st === 'ground' ? this.mvel.dot(up) : ctx.vel.dot(up);
     if (st === 'climb' && ctx.climbN && this.idleLook > 0.9) {
       // climbing: swing to a ¾ view of the wall on the side we came from, looking a touch up the route
       // high on the face the lens swings wider along the wall and looks down past the climber, so the
@@ -108,7 +117,8 @@ export class CameraRig {
       this.pitch = damp(this.pitch, lerp(0.02, -0.2, hi), 1.2, dt);
     } else if (this.idleLook > 0.9 && sp > 2.5 && (st === 'slide' || st === 'ground')) {
       // follow the grade of the motion: look down the slope you're surfing / running down
-      const target = clamp(-0.13 + Math.atan2(vyC, sp) * 0.75 - (st === 'slide' ? 0.16 : 0), -0.95, 0.25);
+      const target = st === 'slide' ? clamp(-0.2 + Math.atan2(vyC, sp) * 0.25, -0.6, 0.1) // surf: keep the run-out and the horizon in frame
+        : clamp(-0.13 + Math.atan2(vyC, sp) * 0.75, -0.95, 0.25);
       this.pitch = damp(this.pitch, target, 1.6 * smoothstep(2.5, 9, sp), dt);
     } else if (this.idleLook > 2.2) {
       const target = st === 'glide' ? -0.1 : st === 'swim' ? -0.32 : st === 'slide' ? -0.2 : sp > 7 ? -0.16 : -0.12;
@@ -116,19 +126,20 @@ export class CameraRig {
     }
     // ---- arm length by state
     const glideK = st === 'glide' ? 1 : 0;
-    let arm = 3.7 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (0.75 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? 0.35 : st === 'slide' ? -0.45 : 0) + (st === 'climb' ? 0.2 + 0.7 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
+    let arm = 3.7 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (0.75 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? 0.35 : st === 'slide' ? -0.15 : 0) + (st === 'climb' ? 0.2 + 0.7 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
     // looking up from low: shorten the arm so the camera does not dig into the ground (BotW)
     arm *= 1 - 0.35 * smoothstep(0.05, 0.9, this.pitch);
     arm *= this.zoom;
     // ---- pivot (critically damped; looser in the air so jumps don't jerk the frame)
-    const pivotH = st === 'swim' ? 1.6 : st === 'slide' ? 1.05 : st === 'glide' ? 1.75 : 1.45;
+    const pivotH = st === 'swim' ? 1.6 : st === 'slide' ? 0.5 : st === 'glide' ? 1.75 : 1.45;
     this.pivot.omega = st === 'glide' ? 10 : st === 'air' ? 12 : st === 'slide' ? 14 : 18;
     // velocity feed-forward cancels the spring's steady-state lag (2v/ω): fast falls / glides / sprints stay
     // framed, while small hops (|vy| < 4 m/s) keep their vertical smoothing
-    const vy = ctx.vel.dot(up);
+    const vy = st === 'slide' || st === 'ground' ? vyC : ctx.vel.dot(up);
     const ff = 2 / this.pivot.omega;
-    const tgt = _a.copy(ctx.pos).addScaledVector(up, pivotH).addScaledVector(vt, (st === 'slide' ? 0.02 : 0.1) + ff * 0.85)
-      .addScaledVector(up, vy * ff * smoothstep(4, 12, Math.abs(vy)));
+    const tgt = _a.copy(ctx.pos).addScaledVector(up, pivotH);
+    if (st === 'slide') tgt.addScaledVector(this.mvel, ff); // steady fall-line motion: cancel the whole 3D lag (else the pivot trails uphill and the rider drops out of the bottom of the frame)
+    else tgt.addScaledVector(vt, 0.1 + ff * 0.85).addScaledVector(up, vy * ff * smoothstep(4, 12, Math.abs(vy)));
     if (st === 'climb' && ctx.climbN) { // chest height along the wall, pulled off the rock
       tgt.copy(ctx.pos).addScaledVector(ctx.climbUp, 1.2).addScaledVector(ctx.climbN, 0.55);
     }

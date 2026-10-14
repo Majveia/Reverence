@@ -18,7 +18,29 @@ float rvIGN(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.0
 // temporal dither: the pattern shifts every TAA sub-frame / frame so crossfades and alpha edges
 // resolve to smooth gradients instead of a fixed screen-door pattern
 uniform float uDitherF; uniform float uDitherA;
-float rvDither(vec2 p){ return rvIGN(p + 5.588238 * mod(uDitherF, 64.0)); }
+// Stratified temporal dither: every pixel steps through 4 evenly spaced thresholds over any 4
+// consecutive TAA sub-frames (spatial IGN only sets the phase). A 4-sample shot / TAA history then
+// resolves a dithered fade to a uniform level (residual ≤ 1/4 step) instead of a frozen
+// screen-door hatch, which is what stills showed with a per-frame shifted IGN.
+float rvDither(vec2 p){ return fract(rvIGN(p) + 0.25 * mod(uDitherF, 4.0)); }
+// Low-frequency "stand" variation over the landscape (planet-local position, ~150–500 m): trees of
+// one stand share value/hue so forests read as patches of stands instead of clone-tiled crowns.
+vec3 rvStandTint(vec3 pl, float seed, float amt){
+  float n1 = sin(dot(pl, vec3(0.0123, 0.0171, -0.0137)) + 1.7 * sin(dot(pl, vec3(-0.0291, 0.0213, 0.0187))));
+  float n2 = sin(dot(pl, vec3(0.0411, -0.0337, 0.0297)) + 2.1 + 1.3 * sin(dot(pl, vec3(0.0093, 0.0121, 0.0077))));
+  float v = 1.0 + amt * (0.13 * n1 + 0.06 * n2 + (seed - 0.5) * 0.18);
+  float h = amt * (0.65 * n2 + 0.35 * sin(seed * 19.0));
+  // + toward warm yellow-green, − toward cool blue-green
+  return v * vec3(1.0 + 0.12 * h, 1.0 + 0.02 * h, 1.0 - 0.2 * h);
+}
+// per-instance hard switch inside a distance band (shadow casters): no dithered screen-door in the
+// shadow map — that projected as a fine hatch onto every receiver
+vec2 rvLodStep(float d, vec4 f, float seed){
+  float k = fract(seed * 7.31 + 0.13);
+  float fin = f.y > f.x ? step(mix(f.x, f.y, k), d) : 1.0;
+  float fout = f.w > f.z ? step(d, mix(f.z, f.w, k)) : 1.0;
+  return vec2(fin, fout);
+}
 // LOD band: x..y fade in, z..w fade out (linear so neighbouring LODs are exactly complementary)
 vec2 rvLodFade(float d, vec4 f){
   float fin = f.y > f.x ? clamp((d - f.x) / (f.y - f.x), 0.0, 1.0) : 1.0;
@@ -74,9 +96,10 @@ attribute vec4 aInfo; attribute vec3 aShade; attribute vec3 aColor; attribute ve
 varying vec3 vGlowL;
 uniform vec4 uFade; uniform vec4 uDFade; uniform vec4 uThin; uniform float uWindAmp; uniform float uBillboard;
 uniform vec3 uCamPos; uniform vec3 uPlanetCenter; uniform float uTime; uniform vec3 uWindDir; uniform float uWindStrength;
-uniform float uTintVar; uniform float uShadowPush;
+uniform float uTintVar; uniform float uShadowPush; uniform float uStandVar;
 #include <rv_flora_wind>
 varying vec2 vAtlasUv; varying vec4 vInfo; varying vec3 vCol; varying vec3 vShadeN; varying vec2 vFade; varying vec3 vObjPos; varying float vSeed;
+varying vec2 vCardP; varying vec3 vObjN; varying vec3 vUpV;
 vec3 rvCardC = vec3(0.0); float rvIsCard = 0.0;
 `;
 
@@ -90,7 +113,7 @@ vec3 transformed;
   vec3 up = normalize(pl);
   float d = length(wb - uCamPos);
   #ifdef DEPTH_PASS
-    vFade = rvLodFade(d, uDFade);
+    vFade = rvLodStep(d, uDFade, iData.x);
   #else
     vFade = rvLodFade(d, uFade);
   #endif
@@ -127,7 +150,13 @@ vec3 transformed;
   #endif
   float tv = (iData.z - 0.5) * uTintVar;
   vCol = aColor * vec3(1.0 + tv * 0.6, 1.0 + tv * 0.25, 1.0 - tv * 0.35) * (1.0 + (iData.x - 0.5) * uTintVar * 0.35);
+  vCol *= rvStandTint(pl, iData.x, uStandVar);
+  // position inside a billboarded leaf-cluster card (−1..1, unit length at the corners): the
+  // fragment shader domes the card's shading normal so each cluster shades as a soft rounded mass
+  vCardP = aCorner.z > 0.5 ? aCorner.xy / max(length(aCorner.xy), 1e-4) : vec2(0.0);
   vObjPos = position;
+  vObjN = normal;
+  vUpV = normalize((viewMatrix * vec4(up, 0.0)).xyz);
   vSeed = iData.x;
 }
 `;
@@ -141,7 +170,7 @@ const PLANT_SHADOW_VERT = /* glsl */`
 #if defined( USE_SHADOWMAP ) && NUM_SUN_LIGHT_SHADOWS > 0
   if (rvIsCard > 0.5) {
     vec3 rvCW = (modelMatrix * vec4(rvCardC, 1.0)).xyz;
-    vSunShadowWorldPosition.xyz = mix(rvCW, vSunShadowWorldPosition.xyz, 0.1);
+    vSunShadowWorldPosition.xyz = mix(rvCW, vSunShadowWorldPosition.xyz, 0.3);
   }
 #endif
 `;
@@ -153,6 +182,10 @@ uniform vec3 uTint2; uniform float uTransl; uniform float uGlowStr; uniform floa
 uniform vec3 uMoss; uniform float uMossAmt; uniform float uAtlasSize; uniform float uSpec;
 varying vec3 vGlowL;
 varying vec2 vAtlasUv; varying vec4 vInfo; varying vec3 vCol; varying vec3 vShadeN; varying vec2 vFade; varying vec3 vObjPos; varying float vSeed;
+varying vec2 vCardP; varying vec3 vObjN; varying vec3 vUpV;
+uniform float uWet; uniform float uSnowG;
+uniform float uDome; uniform float uLeafSoft;
+#define rvIsBb (dot(vCardP, vCardP) > 1e-6 ? 1.0 : 0.0)
 float rvTransl = 0.0;
 float rvWrap = 0.0;
 float rvKind = 0.0;
@@ -177,6 +210,8 @@ float rvVN3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f
   return mix(mix(mix(rvH3(i), rvH3(i + vec3(1,0,0)), f.x), mix(rvH3(i + vec3(0,1,0)), rvH3(i + vec3(1,1,0)), f.x), f.y),
              mix(mix(rvH3(i + vec3(0,0,1)), rvH3(i + vec3(1,0,1)), f.x), mix(rvH3(i + vec3(0,1,1)), rvH3(i + vec3(1,1,1)), f.x), f.y), f.z); }
 float rvSolidN = 0.5;
+float rvSheen = 0.0;
+uniform float uSolidTransl; uniform float uSheen;
 vec3 rvPattern(float pat, vec2 uv, vec3 col){
   if (pat < 0.5) return col;
   if (pat < 1.5) { // spots (mushroom caps): jittered dots
@@ -204,16 +239,20 @@ vec3 rvPattern(float pat, vec2 uv, vec3 col){
     c *= 1.0 - 0.35 * smoothstep(0.55, 0.75, sin(uv.x * 40.0) * 0.5 + 0.5) * step(0.25, r) * step(r, 0.6) * 0.3;
     return c;
   }
-  if (pat < 5.5) { // radial gills
-    float g = 0.5 + 0.5 * sin(uv.x * 6.2832 * 48.0);
-    return col * (0.55 + 0.45 * g);
+  if (pat < 5.5) { // radial gills: fine lamellae, darker toward the stem, antialiased with distance
+    float ph = uv.x * 6.2832 * 48.0;
+    float aa = 1.0 - smoothstep(0.6, 2.2, fwidth(ph));
+    float g = 0.5 + 0.5 * sin(ph) * aa;
+    return col * (0.55 + 0.45 * g) * (0.55 + 0.45 * smoothstep(0.0, 0.8, 1.0 - uv.y));
   }
   if (pat < 6.5) { // bands
-    float b = 0.5 + 0.5 * sin(uv.y * 30.0 + sin(uv.x * 6.2832 * 3.0) * 0.8);
+    float ph = uv.y * 30.0 + sin(uv.x * 6.2832 * 3.0) * 0.8;
+    float b = 0.5 + 0.5 * sin(ph) * (1.0 - smoothstep(0.6, 2.2, fwidth(ph)));
     return col * (0.75 + 0.35 * b);
   }
   // vertical ribs (cactus, stalks)
-  float rb = 0.5 + 0.5 * cos(uv.x * 6.2832 * 12.0);
+  float ph = uv.x * 6.2832 * 12.0;
+  float rb = 0.5 + 0.5 * cos(ph) * (1.0 - smoothstep(0.6, 2.2, fwidth(ph)));
   return col * (0.7 + 0.35 * rb);
 }
 `;
@@ -245,7 +284,13 @@ if (kind < 0.5) {
     rvGrad = vec2(hx - bk.g, hy - bk.g) * (0.35 + 0.65 * nearK);
   }
   albedo = vCol * (0.5 + 0.8 * bk.r);
-  albedo = mix(albedo, uMoss * (0.6 + 0.6 * bk.r), clamp(bk.b * uMossAmt * 1.5, 0.0, 1.0));
+  // moss: texture mask, more on up-facing limbs and in a damp band at the trunk base; the base
+  // also darkens into the soil (root collar / contact AO) so trunks don't end at a hard line
+  float upF = smoothstep(0.25, 0.85, normalize(vObjN).y);
+  float baseB = 1.0 - smoothstep(0.05, 1.1, vObjPos.y);
+  float mossK = clamp(bk.b * uMossAmt * 1.5 + (upF * 0.55 + baseB * 0.6) * uMossAmt * (0.4 + 0.6 * bk.b), 0.0, 1.0);
+  albedo = mix(albedo, uMoss * (0.6 + 0.6 * bk.r), mossK);
+  albedo *= 0.55 + 0.45 * smoothstep(-0.25, 0.5, vObjPos.y);
 } else if (kind < 2.5) {
   vec4 tx = texture2D(uAtlas, vAtlasUv);
   vec2 px = vAtlasUv * uAtlasSize;
@@ -254,7 +299,9 @@ if (kind < 0.5) {
   alpha = tx.a * (1.0 + mip * 0.14);
   // soft alpha-tested leaf edges: jitter the coverage threshold (TAA averages it into a soft edge);
   // test here, before the relief fetches and lighting
-  if (uDitherA > 0.0) alpha += (dth - 0.5) * uDitherA;
+  // (only near: on distant cards the mipped coverage hovers near the threshold over whole crowns,
+  //  where any jitter left a residual hatch — a clean threshold gives smooth blob silhouettes)
+  if (uDitherA > 0.0) alpha += (dth - 0.5) * uDitherA * (1.0 - smoothstep(0.5, 1.5, mip));
   if (alpha < 0.5) discard;
   albedo = mix(vCol, uTint2, tx.g) * (0.38 + tx.r * 0.95);
   rvBarkH = tx.r;
@@ -266,12 +313,18 @@ if (kind < 0.5) {
   }
   rvTransl = tx.b * uTransl * (kind > 1.5 ? 1.3 : 1.0);
   rvWrap = 0.5;
+  rvLeafSoft = uLeafSoft * (rvIsBb > 0.5 ? 1.0 : 0.5);
+  rvLeafAO = vInfo.z;
   if (uCardGlow > 0.0 && kind > 1.5) rvGlow = albedo * uCardGlow * (0.05 + uNight) * (0.8 + 0.2 * sin(uTime * 1.3 + vSeed * 20.0));
 } else {
   albedo = rvPattern(pat, vAtlasUv, vCol);
   // material breakup on solids (caps, stalks, bulbs): mottling + fine grain, drives roughness too
   rvSolidN = rvVN3(vObjPos * 2.3 + vSeed * 17.0) * 0.6 + rvVN3(vObjPos * 9.0 + 3.1) * 0.4;
   albedo *= 0.8 + 0.38 * rvSolidN;
+  // caps, balloons and fleshy bodies are thin, waxy shells: some sunlight scatters through
+  // (back-lit caps glow), and a soft velvet sheen lifts their rims (see PLANT_AO)
+  rvTransl = uSolidTransl * (pat > 0.5 && pat < 3.5 || pat > 5.5 && pat < 6.5 ? 1.0 : 0.45);
+  rvSheen = uSheen;
   if (kind > 3.5 && kind < 4.5) {
     float pulse = 0.85 + 0.15 * sin(uTime * (0.8 + vSeed) + vSeed * 30.0 + vObjPos.y * 0.5);
     rvGlow = albedo * uGlowStr * (0.08 + 0.92 * uNight) * pulse;
@@ -288,7 +341,7 @@ if (kind < 0.5) {
 if (uGlowStr > 0.0 && kind < 3.5) {
   // bark relief modulates the bounce (furrows stay dark) so glow-lit trunks keep their texture
   float relief = kind < 0.5 ? (0.25 + 1.1 * rvBarkH * rvBarkH) : 1.0;
-  rvGlow += (albedo + 0.05) * vGlowL * uGlowStr * 0.6 * (0.03 + 0.97 * uNight) * relief;
+  rvGlow += (albedo + 0.05) * vGlowL * uGlowStr * (kind < 0.5 ? 0.6 : 0.38) * (0.03 + 0.97 * uNight) * relief;
 }
 diffuseColor.rgb *= albedo;
 diffuseColor.a = alpha;
@@ -297,8 +350,9 @@ diffuseColor.a = alpha;
 const PLANT_NORMAL = /* glsl */`
 #include <normal_fragment_begin>
 if (rvKind > 0.5 && rvKind < 2.5) {
-  // crown-level (spherified) normal + per-leaf relief from the atlas luminance: sunlit vs shaded leaves
-  normal = normalize(vShadeN);
+  // crown-level (spherified) normal, domed across the card (the card is a slice through a rounded
+  // leaf mass: its rim turns away from the viewer) + per-leaf relief from the atlas luminance
+  normal = normalize(normalize(vShadeN) + vec3(vCardP * uDome, 0.0));
   normal = rvPerturb(normal, -vViewPosition, vAtlasUv, rvGrad, 2.2);
 } else if (rvKind < 0.5) {
   normal = rvPerturb(normal, -vViewPosition, vAtlasUv * vec2(1.0, uBarkScale), rvGrad, 5.0);
@@ -311,9 +365,32 @@ if (rvKind > 0.5 && rvKind < 2.5) {
 // already includes the shadow term).
 export const PLANT_LIGHT_PARS = /* glsl */`
 #include <lights_physical_pars_fragment>
-void RE_Direct_Flora(const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in PhysicalMaterial material, inout ReflectedLight reflectedLight) {
-  RE_Direct_Physical(directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
+float rvLeafSoft = 0.0;   // 0..1: blend of shadow-map visibility toward the analytic crown-shell term
+float rvLeafAO = 1.0;
+void RE_Direct_Flora(const in IncidentLight directLight0, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in PhysicalMaterial material, inout ReflectedLight reflectedLight) {
+  IncidentLight directLight = directLight0;
   float nl = dot(geometryNormal, directLight.direction);
+  #if NUM_SUN_LIGHTS > 0 || NUM_DIR_LIGHTS > 0
+  if (rvLeafSoft > 0.0) {
+    // Painterly canopy light: shadow-map visibility on ~1.5 m leaf-cluster cards is close to binary
+    // per card (a mosaic of lit / unlit cards). Part of it is replaced by an analytic crown-shell
+    // term (outer, sun-facing leaves lit; inner, lower leaves in the crown's own shade), so crowns
+    // read as soft lit masses with a bright rim and a darker core, still shadowed by other trees.
+    #if NUM_SUN_LIGHTS > 0
+    vec3 un = sunLights[0].color;
+    #else
+    vec3 un = directionalLights[0].color;
+    #endif
+    #ifdef RV_CLOUD_SHADOW
+    un *= rv_cloudShadow(((vec4(geometryPosition, 1.0) - viewMatrix[3]) * viewMatrix).xyz);
+    #endif
+    float u1 = max(dot(un, vec3(1.0)), 1e-6);
+    float vis = clamp(dot(directLight.color, vec3(1.0)) / u1, 0.0, 1.0);
+    float shell = smoothstep(-0.45, 0.65, nl) * mix(0.35, 1.0, rvLeafAO);
+    directLight.color = un * mix(vis, min(shell, 0.35 + vis), rvLeafSoft);
+  }
+  #endif
+  RE_Direct_Physical(directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
   if (rvWrap > 0.0) {
     float w = clamp((nl + rvWrap) / (1.0 + rvWrap), 0.0, 1.0) - clamp(nl, 0.0, 1.0);
     reflectedLight.directDiffuse += directLight.color * BRDF_Lambert(material.diffuseContribution) * w * 0.8;
@@ -331,6 +408,12 @@ void RE_Direct_Flora(const in IncidentLight directLight, const in vec3 geometryP
 
 const PLANT_AO = /* glsl */`
 {
+  if (rvSheen > 0.0) {
+    // velvet / wax sheen: grazing-angle lift of the ambient + direct light (no plastic highlight)
+    float fr = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 3.0);
+    reflectedLight.indirectDiffuse *= 1.0 + rvSheen * 1.6 * fr;
+    reflectedLight.directDiffuse *= 1.0 + rvSheen * 0.8 * fr;
+  }
   float ao = vInfo.z;
   reflectedLight.indirectDiffuse *= ao;
   reflectedLight.indirectSpecular *= ao;
@@ -338,6 +421,20 @@ const PLANT_AO = /* glsl */`
   reflectedLight.directSpecular *= ao * uSpec;
 }
 #include <aomap_fragment>
+`;
+
+// weather (G.uWetness / G.uSnow): rain darkens bark and fleshy solids and makes everything glossier;
+// snow settles on up-facing leaves, limbs and caps (after the shading normal is known)
+const PLANT_WEATHER = /* glsl */`
+if (uWet > 0.001 || uSnowG > 0.001) {
+  float upd = dot(normal, vUpV);
+  float wet = uWet * (rvKind < 0.5 || rvKind > 2.5 ? 1.0 : 0.6);
+  diffuseColor.rgb *= 1.0 - 0.4 * wet;
+  roughnessFactor = mix(roughnessFactor, rvKind > 0.5 && rvKind < 2.5 ? 0.3 : 0.22, wet * 0.8);
+  float sn = uSnowG * smoothstep(0.15, 0.65, upd + (rvSolidN - 0.5) * 0.3) * (rvKind > 3.5 ? 0.3 : 1.0);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.89, 0.93), sn * 0.9);
+  roughnessFactor = mix(roughnessFactor, 0.62, sn);
+}
 `;
 
 const PLANT_ROUGH = /* glsl */`
@@ -364,6 +461,8 @@ export function linkCommon(shader, u) {
   shader.uniforms.uCamPos = G.uCameraPos;
   shader.uniforms.uPlanetCenter = G.uPlanetCenter;
   shader.uniforms.uNight = G.uNight;
+  shader.uniforms.uWet = G.uWetness;
+  shader.uniforms.uSnowG = G.uSnow;
   shader.uniforms.uDitherF = FLORA_DITHER.frame;
   shader.uniforms.uDitherA = FLORA_DITHER.amt;
   for (const k in u) shader.uniforms[k] = u[k];
@@ -388,6 +487,8 @@ export function makePlantMaterials(p) {
     uThin: { value: new THREE.Vector4(...(p.thin ?? [0, 1, 0, 0])) },
     uWindAmp: { value: p.windAmp ?? 1 }, uBillboard: { value: p.billboard ?? 0.85 },
     uTintVar: { value: p.tintVar ?? 0.35 }, uShadowPush: { value: p.shadowPush ?? 0.35 }, uSpec: { value: p.spec ?? 1 },
+    uStandVar: { value: p.standVar ?? 1 }, uDome: { value: p.dome ?? 0.65 }, uLeafSoft: { value: p.leafSoft ?? 0.55 },
+    uSolidTransl: { value: p.solidTransl ?? 0.35 }, uSheen: { value: p.sheen ?? 0.5 },
   };
   const mat = new THREE.MeshStandardMaterial({
     color: 0xffffff, roughness: 0.65, metalness: 0, side: THREE.DoubleSide,
@@ -411,10 +512,10 @@ export function makePlantMaterials(p) {
     fs = fs.replace('#include <aomap_fragment>', PLANT_AO);
     // glowing solids: brightest facing the viewer, dimmer toward the rim → lanterns read as round,
     // translucent bodies with form instead of flat bloom discs
-    fs = fs.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n{ float fr = (rvKind > 3.5 && rvKind < 4.5) ? mix(0.3, 1.0, pow(clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 1.3)) : 1.0; totalEmissiveRadiance += rvGlow * fr; }');
+    fs = fs.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n{ float fr = (rvKind > 3.5 && rvKind < 4.5) ? mix(0.3, 1.0, pow(clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 1.3)) : 1.0; totalEmissiveRadiance += rvGlow * fr; }\n' + PLANT_WEATHER);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-flora-plant-v5';
+  mat.customProgramCacheKey = () => 'rv-flora-plant-v6';
 
   const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide });
   depth.name = 'flora-plant-depth';
@@ -443,7 +544,7 @@ float rvIGNd(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.
 }`);
     shader.fragmentShader = fs;
   };
-  depth.customProgramCacheKey = () => 'rv-flora-plant-depth-v2';
+  depth.customProgramCacheKey = () => 'rv-flora-plant-depth-v3';
   return { material: mat, depth, uniforms: u };
 }
 
@@ -502,6 +603,7 @@ const ROCK_MAP = /* glsl */`
   alb = mix(alb, uMossC * (0.55 + 0.7 * det), rkMoss);
   float sn = smoothstep(0.45, 0.8, upf + (mn - 0.5) * 0.4) * uSnow;
   alb = mix(alb, uSnowC, sn);
+  alb *= 1.0 - 0.45 * uWet * (1.0 - sn);
   diffuseColor.rgb *= alb;
 }
 `;
@@ -522,8 +624,8 @@ export function makeRockMaterials(p) {
   const u = {
     uRockTex: { value: p.tex }, uRockA: { value: new THREE.Color().fromArray(p.colA) }, uRockB: { value: new THREE.Color().fromArray(p.colB) },
     uMossC: { value: new THREE.Color().fromArray(p.moss ?? [0.1, 0.15, 0.05]) }, uMossAmt: { value: p.mossAmt ?? 0.5 },
-    uStrata: { value: p.strata ?? 0.3 }, uTexScale: { value: p.texScale ?? 0.35 }, uWet: { value: 0 },
-    uSnowC: { value: new THREE.Color(0.9, 0.93, 0.97) }, uSnow: { value: p.snow ?? 0 },
+    uStrata: { value: p.strata ?? 0.3 }, uTexScale: { value: p.texScale ?? 0.35 }, uWet: G.uWetness,
+    uSnowC: { value: new THREE.Color(0.9, 0.93, 0.97) }, uSnow: G.uSnow,
     uFade: { value: new THREE.Vector4(...(p.fade ?? [0, 0, 1e9, 1e9])) }, uThin: { value: new THREE.Vector4(...(p.thin ?? [0, 1, 0, 0])) },
   };
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.88, metalness: 0 });
@@ -539,7 +641,7 @@ export function makeRockMaterials(p) {
     fs = fs.replace('#include <common>', '#include <common>\n' + ROCK_FRAG_PARS);
     fs = fs.replace('#include <map_fragment>', ROCK_MAP);
     fs = fs.replace('#include <normal_fragment_begin>', ROCK_NORMAL);
-    fs = fs.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(0.86, 1.0, rkMoss) - rkH * 0.08;');
+    fs = fs.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(mix(0.86, 1.0, rkMoss) - rkH * 0.08, 0.25, uWet * 0.75);');
     fs = fs.replace('#include <aomap_fragment>', '{ reflectedLight.indirectDiffuse *= 0.45 + 0.55 * vRock.x; reflectedLight.indirectSpecular *= vRock.x; }\n#include <aomap_fragment>');
     shader.fragmentShader = fs;
   };

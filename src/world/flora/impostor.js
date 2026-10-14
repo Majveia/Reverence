@@ -14,13 +14,15 @@ varying vec2 vUv; varying vec4 vInfo; varying vec3 vCol; varying vec3 vN; varyin
 uniform float uModelSpaceN;
 void main(){
   vec3 p = position;
+  vec3 dome = vec3(0.0);
   if (aCorner.z > 0.5) {
     vec3 camR = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
     vec3 camU = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
     p += camR * aCorner.x + camU * aCorner.y;
+    dome = (camR * aCorner.x + camU * aCorner.y) / max(length(aCorner.xy), 1e-4) * 0.65;
   }
   float kind = floor(aInfo.x / 16.0 + 0.001);
-  vec3 n = (kind > 0.5 && kind < 2.5) ? aShade : normalize(mix(normal, aShade, 0.3));
+  vec3 n = (kind > 0.5 && kind < 2.5) ? normalize(aShade + dome) : normalize(mix(normal, aShade, 0.3));
   vN = uModelSpaceN > 0.5 ? n : normalize((viewMatrix * vec4(n, 0.0)).xyz);
   vUv = uv; vInfo = aInfo; vCol = aColor; vObj = position;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
@@ -154,7 +156,8 @@ const IMP_VERT_PARS = /* glsl */`
 #include <rv_flora>
 attribute vec4 iPos; attribute vec4 iRot; attribute vec4 iData;
 uniform vec3 uCamPos; uniform vec3 uPlanetCenter; uniform vec4 uFade; uniform vec4 uDFade; uniform vec4 uThin; uniform vec4 uDims[${MAX_IMP}];
-uniform vec2 uGrid; uniform float uScaleMul;
+uniform vec2 uGrid; uniform float uScaleMul; uniform float uStandVar;
+varying vec3 vStand;
 varying vec2 vUvS; varying vec2 vUvT; varying float vTopW; varying vec2 vFade; varying vec3 vR; varying vec3 vU; varying vec3 vV;
 varying vec3 vMX; varying vec3 vMY; varying vec3 vMZ; varying float vTint; varying float vGlowLvl; varying float vSeedI;
 vec3 rvQrotI(vec4 q, vec3 v){ return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
@@ -167,7 +170,7 @@ const IMP_CORE = /* glsl */`
   vec3 baseW = (modelMatrix * vec4(iPos.xyz, 1.0)).xyz;
   float d = length(baseW - uCamPos);
   #ifdef DEPTH_PASS
-    vFade = rvLodFade(d, uDFade);
+    vFade = rvLodStep(d, uDFade, iData.x);
   #else
     vFade = rvLodFade(d, uFade);
   #endif
@@ -199,6 +202,7 @@ const IMP_CORE = /* glsl */`
   vUvT = (cell1 + clamp(tp * 0.5 + 0.5, 0.0, 1.0)) / uGrid;
   vR = r; vU = u; vV = v; vMX = mX; vMY = up; vMZ = mZ;
   vTint = iData.z; vGlowLvl = dm.w; vSeedI = iData.x;
+  vStand = rvStandTint(baseW - uPlanetCenter, iData.x, uStandVar);
   rvImpN = v;
   if (vFade.x * vFade.y <= 0.001 || sc <= 1e-4) rvImpPos = iPos.xyz;
 }
@@ -209,6 +213,7 @@ const IMP_FRAG_PARS = /* glsl */`
 uniform sampler2D uImpA; uniform sampler2D uImpN; uniform vec2 uAtlasPx; uniform float uNight; uniform float uTime; uniform float uTransl; uniform float uGlowStr; uniform float uTintVar;
 varying vec2 vUvS; varying vec2 vUvT; varying float vTopW; varying vec2 vFade; varying vec3 vR; varying vec3 vU; varying vec3 vV;
 varying vec3 vMX; varying vec3 vMY; varying vec3 vMZ; varying float vTint; varying float vGlowLvl; varying float vSeedI;
+varying vec3 vStand;
 float rvTransl = 0.0; float rvWrap = 0.0; vec3 rvGlow = vec3(0.0); vec3 rvImpNW = vec3(0.0, 1.0, 0.0);
 float rvImpAlpha(sampler2D t, vec2 uv){
   vec2 px = uv * uAtlasPx; vec2 dx = dFdx(px), dy = dFdy(px);
@@ -221,19 +226,24 @@ const IMP_MAP = /* glsl */`
   float dth = rvDither(gl_FragCoord.xy);
   if (vFade.y < 0.999 && dth >= vFade.y) discard;
   if (vFade.x < 0.999 && (1.0 - dth) >= vFade.x) discard;
-  bool top = fract(dth * 7.31 + 0.37) < vTopW;
-  vec2 uv = top ? vUvT : vUvS;
-  float a = rvImpAlpha(uImpA, uv);
+  // side and top views are blended (not dithered between: that left a stipple in aerial stills)
+  float aS = vTopW < 0.999 ? rvImpAlpha(uImpA, vUvS) : 0.0;
+  float aT = vTopW > 0.001 ? rvImpAlpha(uImpA, vUvT) : 0.0;
+  float a = mix(aS, aT, vTopW);
+  if (uDitherA > 0.0) a += (dth - 0.5) * uDitherA * 0.5;
   if (a < 0.5) discard;
-  vec4 A = texture2D(uImpA, uv);
-  vec4 N = texture2D(uImpN, uv);
-  vec3 n = N.xyz * 2.0 - 1.0;
-  rvImpNW = top ? normalize(vMX * n.x + vMY * n.y + vMZ * n.z) : normalize(vR * n.x + vU * n.y + vV * n.z);
+  float wT = vTopW > 0.001 && vTopW < 0.999 ? clamp(vTopW * aT / max(mix(aS, aT, vTopW), 1e-3), 0.0, 1.0) : vTopW;
+  vec4 A = mix(texture2D(uImpA, vUvS), texture2D(uImpA, vUvT), wT);
+  vec4 NS = texture2D(uImpN, vUvS), NT = texture2D(uImpN, vUvT);
+  vec3 nS = NS.xyz * 2.0 - 1.0, nT = NT.xyz * 2.0 - 1.0;
+  vec4 N = mix(NS, NT, wT);
+  rvImpNW = normalize(mix(vR * nS.x + vU * nS.y + vV * nS.z, vMX * nT.x + vMY * nT.y + vMZ * nT.z, wT));
   float tv = (vTint - 0.5) * uTintVar;
-  vec3 alb = A.rgb * vec3(1.0 + tv * 0.6, 1.0 + tv * 0.25, 1.0 - tv * 0.35);
+  vec3 alb = A.rgb * vec3(1.0 + tv * 0.6, 1.0 + tv * 0.25, 1.0 - tv * 0.35) * vStand;
   diffuseColor.rgb *= alb;
   rvTransl = uTransl * 0.8;
   rvWrap = 0.5;
+  rvLeafSoft = 0.45; rvLeafAO = clamp(A.a * 0.0 + 0.85, 0.0, 1.0);
   if (N.a > 0.0) rvGlow = alb * N.a * 4.0 * uGlowStr * vGlowLvl * (0.08 + 0.92 * uNight);
 }
 `;
@@ -246,6 +256,7 @@ export function makeImpostorMaterials(bk, p = {}) {
     uGrid: { value: new THREE.Vector2(bk.cols, bk.rows) },
     uFade: { value: new THREE.Vector4(...(p.fade ?? [0, 0, 1e9, 1e9])) }, uDFade: { value: new THREE.Vector4(...(p.dfade ?? p.fade ?? [0, 0, 1e9, 1e9])) }, uThin: { value: new THREE.Vector4(...(p.thin ?? [0, 1, 0, 0])) },
     uScaleMul: { value: p.scaleMul ?? 1 }, uTransl: { value: p.transl ?? 0.8 }, uGlowStr: { value: p.glow ?? 1 }, uTintVar: { value: p.tintVar ?? 0.35 },
+    uStandVar: { value: p.standVar ?? 1 },
   };
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0, side: THREE.DoubleSide });
   mat.name = 'flora-impostor';
@@ -264,7 +275,7 @@ export function makeImpostorMaterials(bk, p = {}) {
     fs = fs.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += rvGlow;');
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-flora-imp-v1';
+  mat.customProgramCacheKey = () => 'rv-flora-imp-v2';
 
   const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide });
   depth.onBeforeCompile = (shader) => {
@@ -288,6 +299,6 @@ varying vec2 vUvS; varying vec2 vFade;
 }`);
     shader.fragmentShader = fs;
   };
-  depth.customProgramCacheKey = () => 'rv-flora-imp-depth-v1';
+  depth.customProgramCacheKey = () => 'rv-flora-imp-depth-v2';
   return { material: mat, depth, uniforms: u };
 }

@@ -157,7 +157,13 @@ export function placeLayer(gen, T, layerName, cell, opt = {}) {
       const sp = Ly.species[q];
       const r3 = h01(seed + 4, cellId, k, L), r4 = h01(seed + 6, cellId, k, L), r5 = h01(seed + 7, cellId, k, L);
       const variant = Math.min(sp.models.length - 1, Math.floor(r3 * sp.models.length));
-      const scale = (sp.scale[0] + (sp.scale[1] - sp.scale[0]) * r4 * r4) * (opt.scaleMul || 1);
+      let scale = (sp.scale[0] + (sp.scale[1] - sp.scale[0]) * r4 * r4) * (opt.scaleMul || 1);
+      if (layerName === 'canopy') {
+        // older, taller trees in the cores of stands and a few emergent giants above the canopy
+        // (a size distribution instead of a clone-tiled crown carpet seen from the air)
+        scale *= 0.86 + 0.28 * clamp(clus, 0, 1);
+        if (h01(seed + 14, cellId, k, L) < 0.045) scale *= 1.3 + 0.25 * r4;
+      }
       const yaw = r5 * 6.283185;
       const lr = h01(seed + 8, cellId, k, L) * 6.283185, lm = sp.lean * h01(seed + 10, cellId, k, L);
       let ux = dx, uy = dy, uz = dz;

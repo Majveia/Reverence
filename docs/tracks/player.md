@@ -126,17 +126,17 @@ the frame shows the drop and the vista. First person (V) from the animated eye (
 * `zoom=<k>` arm multiplier (0.5 = close-up), `fov=<deg>`.
 * Surface/fp spawns snap to the nearest walkable spot within 45 m (`flat=0` disables).
 
-## Best captures (round 3, verified at 1280x720 unless noted)
+## Best captures (round 4, verified at 1280x720 unless noted; `props=0` keeps parked vehicles out of frame)
 
 | view | URL | steps |
 |---|---|---|
-| W1 golden-hour run toward the capital | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.27&pitch=-7` | `[{"advance":1},{"move":[0.05,1],"sec":2.5},{"advance":1.3}]` |
-| hero portrait (front ¾, sun-lit, gold visor) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.3&facesun=-46&camyaw=151&zoom=0.5&pitch=2` | `[{"advance":2}]` |
-| hero portrait (backlit, vista) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.3&yaw=210&camyaw=155&zoom=0.5&pitch=2` | `[{"advance":2}]` |
+| W1 golden-hour run toward the capital | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.27&props=0&pitch=-7` | `[{"advance":1},{"move":[0.05,1],"sec":2.5},{"advance":1.3}]` |
+| hero portrait (front ¾, sun-lit, gold visor) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.3&props=0&facesun=-46&camyaw=151&zoom=0.5&pitch=2` | `[{"advance":2}]` |
+| hero portrait (backlit, vista) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.3&props=0&yaw=210&camyaw=155&zoom=0.5&pitch=2` | `[{"advance":2}]` |
 | W2 paraglider banking over the valley | `/?mode=system&galaxy=0&star=11&planet=0&view=surface&alt=60&lat=18.18&lon=-50.80&yaw=22&pitch=-14&tod=0.3` | `[{"advance":1.5},{"move":[0.7,0.6],"sec":2},{"advance":1.4}]` |
 | W2 climbing high on a sea cliff (deterministic `act=climb`) | `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=18.3733&lon=-51.0533&yaw=90&tod=0.35&act=climb&climbh=12` | `[{"advance":1},{"move":[0.2,1],"sec":1.2},{"advance":1.2}]` |
-| W3 surfing a sand dune (new spot — the old one is now covered in rock spires) | `/?mode=system&galaxy=0&star=9&planet=2&view=surface&lat=22.65&lon=56.2&act=slide&tod=0.68&flat=0` | `[{"hold":"KeyC","sec":4},{"advance":2.2},{"move":[0.4,0],"sec":0.8},{"advance":0.8}]` |
-| W3 first person (dune, rover, crawlers) | `/?mode=system&galaxy=0&star=9&planet=2&view=fp&lat=22.65&lon=56.2&yaw=240&pitch=-10&tod=0.68&flat=0` | `[{"advance":1},{"move":[0,0.4],"sec":1.5},{"advance":1.2}]` |
+| W3 surfing a sand dune down into the river canyon (the old `22.65/56.2` spot now has a giant flora trunk + crawler in frame) | `/?mode=system&galaxy=0&star=9&planet=2&view=surface&lat=22.62&lon=56.68&act=slide&tod=0.68&flat=0&props=0` | `[{"hold":"KeyC","sec":4},{"advance":2.2},{"move":[0.4,0],"sec":0.8},{"advance":0.8}]` |
+| W3 first person (dune, rover, crawlers) | `/?mode=system&galaxy=0&star=9&planet=2&view=fp&props=0&lat=22.65&lon=56.2&yaw=240&pitch=-10&tod=0.68&flat=0` | `[{"advance":1},{"move":[0,0.4],"sec":1.5},{"advance":1.2}]` |
 | W1 swimming (front crawl) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=1.086&lon=-28.557&yaw=0&pitch=-8&tod=0.3` | `[{"advance":1},{"move":[0.3,1],"sec":5},{"advance":5}]` |
 | W1 diving over the sand (underwater) | same URL | `[{"advance":1},{"move":[0,1],"sec":6},{"advance":3},{"move":[0,0.8],"sec":4},{"hold":"KeyC","sec":2.5},{"advance":3.5}]` |
 | jetpack double jump | W1 default spawn | `[{"advance":1},{"hold":"ShiftLeft","sec":3},{"move":[0.3,1],"sec":3},{"advance":2},{"press":"Space"},{"advance":0.35},{"press":"Space"},{"advance":0.3}]` |
@@ -171,9 +171,13 @@ Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (
   heavily weathered Starfield look; there is no fabric wrinkle simulation.
 
 ## Requests
-* **terrain / flora** (new) — the old W3 slide spot (`lat=22.571&lon=56.286`) now renders as a dense field
-  of needle spikes (rock-spire instances or new small-scale relief) while the CPU heightfield there is smooth;
-  moved the slide capture to `lat=22.65&lon=56.2`.
+* **flora** (new, round 4) — W3 at `lat=22.65&lon=56.2` has a giant smooth brown trunk/pillar (~15 m wide, no bark
+  texture, strata or normal detail) right next to the spawn; the critic read it as a bug. Please give large trunks /
+  spires bark or strata detail, or keep them out of open dune fields. The player captures moved to `22.62/56.68`.
+* **fauna** (new, round 4) — large creatures (W3 iridescent crawler, grazers) walk straight through the player at the
+  dune spawn; please avoid / steer around `world.player.pos` (≥ 3 m) or register a dynamic collider.
+* **vehicles** (new, round 4) — the W1 default spawn parks the hoverbike in the lower-right foreground of the run view;
+  captures now use `props=0`.
 * **flora** (new) — fade / dither-out grass and small plant billboards within ~1.5 m of the camera (distance to
   `G.uCameraPos`): at low camera angles single blades fill the frame as giant ribbons. The player camera now
   keeps ~1 m ground clearance on foot, but tall grass (W4, W2 clifftops) still reaches it.

@@ -408,3 +408,8 @@ visualizations). What separates AAA from "tech demo":
   W1 `view=orbit&tod=0.22`.
 * **terrain / flora** (from atmosphere, still open) — add a golden-hour rim/wrap term on grass and foliage using
   `G.uSunDir` and `G.uSunColor`.
+* **all tracks** (from terrain, fix r2) — `height()` is now continuous everywhere (zero-width steps of 0.15–30 m
+  were removed). Re-check hard-coded lat/lon spawns and parked props at the foot of ranges, on fjord coasts and
+  near karst towers. Runtime placement through `surface.sample` is unaffected.
+* **flora** (from terrain, fix r2) — thin grass where `sample().bare > 0.5` and on talus where
+  `sample().slope > 0.45`; root grass blades with `world.get('terrain')?.renderedHeight(x, y, z)`.

@@ -343,14 +343,23 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
   W1 meadow backdrop wall and the wavy lines on the W1 face. Rare crisp-edged **rock plates** (pale
   exfoliation scars / dark weathered plates, 128 × 282 m cells) take over part of the soft noise
   blotches on big walls (blotches −35 % there). Vertical drainage stains are sparser and lighter
-  (macro −35 % → −25 %, fine −60 % → −50 % max), so walls read less "combed".
+  (macro −35 % → −25 %, fine −60 % → −50 % max), so walls read less "combed". Wall crag / block
+  normals (256 m and 32 m layers) are 1.5× stronger on real walls (crevice shading from kilometres);
+  the big facet tilt is gentler (it read as a low-poly mosaic).
+* **Macro rock layer**: the 256 m layer-0 tile was domain-warped by 1.4 tiles, which compressed it up to
+  ~3× in one direction (brush-stroke grain); the warp is now 0.22 tiles and the tile fades out where it
+  is magnified (< ~200 m), where the 32 m / 8 m layers carry the detail. The W3 badlands "fur" is
+  reduced, not gone (A/B with the new `tfoff` bits showed most of it comes from the macro layer).
+* **Vista lighting**: the W1 lake-cliff URL now uses `tod=0.22` (alpenglow on the wall: the low sun
+  rakes the face, so blocks and ledges read) and the W1 hero `tod=0.26`.
+* `node tools/check.mjs`: ALL OK after these changes.
 
 ## Capture URLs (verified this round, 1280×720)
 Use `view=fly` for terrain-only framing (no player body). Side light reads relief best: pick `tod` so the
 sun is ~60–120° off the view direction (sun ≈ east at tod 0.3, ≈ west at 0.68 on these worlds).
 Aerial heroes add `tk=1.7` (finer capture LOD; ~+50 % chunks — do NOT use it on foot).
-* **W1 fjord spires, aerial (hero)**:
-  `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=1800&lat=-8.83&lon=101.969&yaw=180&pitch=-12&tod=0.3&tk=1.7`
+* **W1 fjord spires, aerial (hero)** (`tod=0.3` front-lit, `0.62` backlit spires):
+  `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=1800&lat=-8.83&lon=101.969&yaw=180&pitch=-12&tod=0.26&tk=1.7`
 * **W1 buttressed mountain face over a fjord (new wall relief)**:
   `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=1500&lat=7.691&lon=-131.848&yaw=0&pitch=-10&tod=0.3&tk=1.7`
 * **W3 Moebius mesa country + lake, aerial**:
@@ -368,8 +377,8 @@ Aerial heroes add `tk=1.7` (finer capture LOD; ~+50 % chunks — do NOT use it o
   `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=1300&lat=-11.6&lon=101.969&yaw=180&pitch=8&tod=0.3&tk=1.7`
 * W3 badlands / mesa strata from 60 m (the old "fur" test):
   `/?mode=system&galaxy=0&star=9&planet=2&view=fly&alt=60&lat=38.65&lon=51.31&yaw=67.5&pitch=-4&tod=0.68`
-* **W1 lake cliffs (streak test; it timed out before this round and now captures in ~150–260 s)**: `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=30&lat=3.96&lon=-29.58&yaw=315&pitch=-3&tod=0.3`
-  (front-lit at this tod; night: `tod=0.02`)
+* **W1 lake cliffs, alpenglow (streak test; ~90–430 s under load)**: `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=30&lat=3.96&lon=-29.58&yaw=315&pitch=-3&tod=0.22`
+  (`tod=0.3` front-lit / flat, `0.42` noon, night `tod=0.02`)
 * W12 arctic fjord cliffs (snow, moody): `/?mode=system&galaxy=0&star=9&planet=5&view=fly&alt=300&lat=-34.389&lon=-165.406&yaw=225&pitch=0&tod=0.3`
 * W2 archipelago: `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=60&lat=18.18&lon=-50.80&yaw=22&pitch=-8&tod=0.3`
 * W1 fjord spires, low with reflections: `…star=6&planet=1&view=fly&alt=400&lat=-8.83&lon=101.969&yaw=180&pitch=0&tod=0.3`
@@ -385,7 +394,8 @@ Debug URL params: `tdebug=1` (blend weights: red rock, green ground, blue sand, 
 `13` local-frame normal, `14` shading normal, `15` N·L (geometry only);
 `tgen=<bits>`: 1 no buttresses, 2 no 3D wall relief / ledges, 4 no gully erosion, 8 no fractal detail (A/B),
 `tk=<K>` (LOD range override), `trelief=<0..1.5>` (relief-aware split boost; 0 = off),
-`tlite=0|1` (force PBR / Lambert terrain lighting).
+`tlite=0|1` (force PBR / Lambert terrain lighting), `tfoff=<bits>` (rock layers off: 1 = 8 m, 2 = 32 m,
+4 = macro 512/256 m, 8 = detail-height occlusion, 16 = near 2 m / 0.5 m layers).
 
 `__rv.state().terrain` → `{chunks, casters, desired, inflight, uploads, maxLevel, K, workers, tex,
 inView, levels, ms, msMax, readyMs, builds}` (`readyMs` = time until the terrain first became complete).
@@ -405,6 +415,11 @@ inView, levels, ms, msMax, readyMs, builds}` (`readyMs` = time until the terrain
 * `low` tier: Lambert lighting, coarser LOD (0.8 m leaves, 14 px/quad), no anisotropy.
 
 ## Known issues
+* (round 7) W3 badlands at a grazing low sun (`lat=38.65&lon=51.31`) still show some fine "fur" grain on
+  30–45° rock slopes, now weaker. Big 80°+ walls in flat diffuse light (W1 lake at `tod=0.3`) still read
+  as smooth slabs with tone variation; under raking light (`tod=0.22`) blocks and ledges read.
+* (round 7) The height-field discontinuity fixes changed heights by up to a few metres only where a step
+  was (and by tens of metres on a few fjord / karst coasts): the W1 meadow spawn moved by ~1 m.
 * The white "iceberg" shapes on the W2 horizon are NOT terrain: they are the water track's shore foam
   drawn where the ocean surface occludes islands beyond the horizon (A/B: `tdebug=1` leaves them white,
   `disable=terrain` removes the islands) — see Requests (water).
@@ -437,6 +452,9 @@ inView, levels, ms, msMax, readyMs, builds}` (`readyMs` = time until the terrain
   Requests: flora should forward `surface.onFlattenChange`).
 
 ## Requests
+* **all tracks** (round 7): `height()` is now continuous everywhere (zero-width steps of 0.15–30 m were
+  removed, see Round 7). Placement through `surface.sample` is unaffected; hard-coded lat/lon spawns at
+  the foot of ranges, on fjord coasts or near karst towers may sit a little higher or lower.
 * **water** (still visible on W2 this round): (1) shore foam appears on the ocean surface wherever it occludes terrain beyond the horizon
   (W2 `lat=18.18&lon=-50.80&yaw=22`: white flat "icebergs" under every distant island). In
   `shaders.js` `depthBelow = max(uRs - length(bed - uPC), 0)` is 0 when the reconstructed bed point is

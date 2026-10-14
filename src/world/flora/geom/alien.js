@@ -355,15 +355,20 @@ export function lanternTree(rnd, P) {
           kind: KIND.LEAF, flex: 0.5, ao: 0.6 + rnd() * 0.3, phase: l.phase, color: col, shade: norm3(Math.cos(l.a), 0.6, Math.sin(l.a)) });
       }
       // hanging lanterns: teardrop bulbs on thin stalks below the limb
-      const nl = rnd.int(3, 5);
+      // (many small lanterns of varied size and strength: a few bright ones, most dim embers — big
+      //  uniform bulbs read as plastic balloons)
+      const nl = rnd.int(4, 7);
       for (let k = 0; k < nl; k++) {
-        const q = l.path[Math.floor(rnd.range(0.4, 1.0) * (l.path.length - 1))];
-        const drop = rnd.range(0.5, 1.6);
-        const br = (P.bulbR ?? 0.3) * rnd.range(0.6, 1.1);
+        const q = l.path[Math.floor(rnd.range(0.35, 1.0) * (l.path.length - 1))];
+        const drop = rnd.range(0.3, 1.5);
+        const br = (P.bulbR ?? 0.3) * rnd.range(0.45, 1.05);
         const cy = q.y - drop - br;
-        const col = cv(rnd, P.colA, P.colB);
-        if (!detail) b.tube([{ x: q.x, y: q.y, z: q.z, r: 0.02, flex: 0.5 }, { x: q.x, y: cy + br * 0.9, z: q.z, r: 0.015, flex: 0.9 }], { segs: 3, kind: KIND.SOLID, color: P.trunk, phase: l.phase });
-        b.sphere({ c: [q.x, cy, q.z], r: [br * 0.85, br * 1.2, br * 0.85], wSegs: detail ? 6 : 10, hSegs: detail ? 4 : 7, kind: KIND.GLOW, pattern: PAT.BANDS, color: col, flex: 0.9, phase: l.phase, ao: 1 });
+        const lum = rnd() < 0.3 ? rnd.range(0.75, 1.0) : rnd.range(0.18, 0.5);
+        const col = cv(rnd, P.colA, P.colB, rnd(), lum);
+        if (!detail) b.tube([{ x: q.x, y: q.y, z: q.z, r: 0.015, flex: 0.5 }, { x: q.x, y: cy + br * 0.9, z: q.z, r: 0.01, flex: 0.9 }], { segs: 3, kind: KIND.SOLID, color: P.trunk, phase: l.phase });
+        // teardrop: dark calyx cap at the stalk, glowing belly (bright core toward the bottom)
+        b.sphere({ c: [q.x, cy, q.z], r: [br * 0.8, br * 1.25, br * 0.8], wSegs: detail ? 6 : 9, hSegs: detail ? 4 : 7, kind: KIND.GLOW, pattern: PAT.BANDS,
+          color: (x, y) => { const k2 = 0.25 + 0.75 * smooth(0.85, -0.4, y); return [col[0] * k2, col[1] * k2, col[2] * k2]; }, flex: 0.9, phase: l.phase, ao: 1 });
       }
     }
     return b;
