@@ -213,7 +213,7 @@ export class CameraRig {
     this.roll = damp(this.roll, rollT, 3, dt);
     const rollJ = tr > 1e-4 ? fbm1(this.t * 19, 3) * 0.018 * tr : 0;
     // tilt down to keep the hero framed when the lens rose over terrain
-    const look = this.lift > 0.02 ? _d.copy(camF).addScaledVector(up, -this.lift * 0.95 / Math.max(this.dist, 1)).normalize() : camF;
+    const look = this.lift > 0.02 ? _d.copy(camF).addScaledVector(up, -this.lift * (st === 'slide' ? 0.5 : 0.95) / Math.max(this.dist, 1)).normalize() : camF; // surfing: let the rider sit low so the run-out + horizon stay in frame
     quatLookDir(look, up, this.cam.quaternion);
     if (this.roll || rollJ) { _q.setFromAxisAngle(_u.set(0, 0, 1), this.roll + rollJ); this.cam.quaternion.multiply(_q); }
     // ---- FOV kick

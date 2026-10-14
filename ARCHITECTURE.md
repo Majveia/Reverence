@@ -413,3 +413,8 @@ visualizations). What separates AAA from "tech demo":
   near karst towers. Runtime placement through `surface.sample` is unaffected.
 * **flora** (from terrain, fix r2) — thin grass where `sample().bare > 0.5` and on talus where
   `sample().slope > 0.45`; root grass blades with `world.get('terrain')?.renderedHeight(x, y, z)`.
+* **flora** (from player, fix r2) — W3 at `lat=22.65&lon=56.2` has a giant smooth brown trunk or pillar (~15 m, no
+  bark, strata or normals) next to the dune spawn; the critic read it as a bug. Give large trunks bark detail or keep
+  them out of open dune fields.
+* **fauna** (from player, fix r2) — large creatures (W3 iridescent crawler, grazers) walk straight through the
+  player. Steer around `world.player.pos` (at least 3 m) or register a dynamic collider.

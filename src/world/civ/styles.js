@@ -508,6 +508,7 @@ S.neon = {
     ctx.neonM = M.neon;
     if (lot.type === 'landmark') return arcology(g, ctx, w, d);
     if (lot.type === 'spaceport') return spaceportPad(g, ctx);
+    if (lot.type === 'tower' && lot.mega) return megatower(g, ctx, w, d, lot.mega);
     if (lot.type === 'tower') {
       const lvl = ctx.level;
       const H = (lvl >= 5 ? 1.3 : 1) * (t < 0.25 ? rng.range(110, 220) : t < 0.5 ? rng.range(60, 130) : rng.range(35, 75)) * (ctx.kind === 'town' ? 0.55 : 1);
@@ -657,6 +658,56 @@ function neonDress(g, ctx, w, d, H) {
   // rooftop red aviation lights
   g.light(w / 2 - 0.3, H + 0.8, d / 2 - 0.3, '#ff2a1a', 5, 1.4, 1);
   g.light(-w / 2 + 0.3, H + 0.8, -d / 2 + 0.3, '#ff2a1a', 5, 1.4, 1);
+}
+
+/**
+ * Neon megatower (300-450 m): a skyline anchor seen from everywhere in the city. Podium with shopfronts,
+ * three setback shafts with neon corner strips and ring bands at every setback, a holo band mid-height,
+ * a faceted crown with a lit ring and a blinking aviation beacon on the mast.
+ */
+function megatower(g, ctx, w, d, H) {
+  const { M, rng } = ctx;
+  const nm = M.neon[rng.int(0, M.neon.length - 1)], nm2 = M.neon[rng.int(0, M.neon.length - 1)];
+  // podium
+  g.windows(4, 4.2, 0);
+  g.box(0, 0, 0, w + 8, 12.6, d + 8, 0.1, M.wall2);
+  g.box(0, 12.6, 0, w + 8.6, 0.6, d + 8.6, 0.05, M.trim);
+  for (const sz of [-1, 1]) g.box(0, 11.6, sz * (d / 2 + 4.35), w + 6, 0.25, 0.12, 0, nm);
+  let y = 13.2, ww = w, dd = d;
+  const segs = [0.46, 0.3, 0.16];
+  for (let i = 0; i < segs.length; i++) {
+    const sh = (H - 13.2) * segs[i];
+    g.windows(2.2, 3.8, y);
+    g.box(0, y, 0, ww, sh, dd, 0.3, i === 1 ? M.wall2 : M.wall);
+    // corner neon strips running the full height of the shaft
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.box(sx * (ww / 2 + 0.06), y + 2, sz * (dd / 2 + 0.06), 0.22, sh - 4, 0.22, 0, i % 2 ? nm2 : nm);
+    // mullion fins on the long faces
+    const nf = Math.max(3, Math.round(ww / 4));
+    for (let k = 0; k < nf; k++) { const x = -ww / 2 + (k + 0.5) * ww / nf; for (const sz of [-1, 1]) g.box(x, y, sz * (dd / 2 + 0.25), 0.35, sh, 0.5, 0, M.trim); }
+    y += sh;
+    // setback ledge + neon ring band
+    g.box(0, y, 0, ww + 1.2, 1.0, dd + 1.2, 0.08, M.trim);
+    g.box(0, y + 0.2, dd / 2 + 0.65, ww + 1.0, 0.35, 0.1, 0, nm);
+    g.box(0, y + 0.2, -dd / 2 - 0.65, ww + 1.0, 0.35, 0.1, 0, nm);
+    g.box(ww / 2 + 0.65, y + 0.2, 0, 0.1, 0.35, dd + 1.0, 0, nm);
+    g.box(-ww / 2 - 0.65, y + 0.2, 0, 0.1, 0.35, dd + 1.0, 0, nm);
+    g.collider(0, y - sh / 2, 0, ww / 2, sh / 2, dd / 2);
+    y += 1.0;
+    ww *= 0.76; dd *= 0.76;
+  }
+  // holo band on the first shaft
+  const hm = M.holo[rng.int(0, M.holo.length - 1)];
+  const by = 13.2 + (H - 13.2) * 0.3;
+  g.push().translate(0, by, d / 2 + 0.7); g.box(0, 0, 0, w * 0.86, 14, 0.12, 0, hm); g.pop();
+  g.light(0, by + 7, d / 2 + 3, hm.color, 12, 14, 0);
+  // faceted crown: tapered cap, lit ring, mast + beacon
+  g.cyl(0, y, 0, Math.max(ww, dd) * 0.68, Math.max(ww, dd) * 0.2, H * 0.07, 8, true, M.wallUp);
+  g.cyl(0, y + H * 0.02, 0, Math.max(ww, dd) * 0.66, Math.max(ww, dd) * 0.64, 0.6, 8, false, nm2);
+  const top = y + H * 0.07;
+  g.cyl(0, top, 0, 0.9, 0.25, H * 0.09, 6, true, M.metal);
+  g.light(0, top + H * 0.09 + 1, 0, '#ff2a1a', 14, 7, 1);
+  g.light(0, y + H * 0.03, 0, nm2.color, 10, Math.max(ww, dd) * 0.9, 0);
+  return top + H * 0.09;
 }
 
 function arcology(g, ctx, w, d) {

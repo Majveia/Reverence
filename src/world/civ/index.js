@@ -18,10 +18,13 @@ import { makeCivMaterial, makeGlowMaterial } from './material.js';
 import { getStyle, buildLamp, parts as P } from './styles.js';
 import { makeNPCs, makeTraffic, makeBoats, makeElevator } from './life.js';
 import { makePools } from './pools.js';
+import { makeContactShadows } from './contact.js';
 import { applyCivCam } from './camera.js';
+import { CityFX } from './fx.js';
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _m = new THREE.Matrix4();
 const _X = new THREE.Vector3(), _Y = new THREE.Vector3(), _Z = new THREE.Vector3();
+const FIELD_STYLES = new Set(['village', 'harbor', 'monastery', 'hearth', 'frontier', 'nomad']);
 const MODERN = new Set(['neon', 'industrial', 'outpost', 'nasapunk', 'frontier', 'brutalist', 'spire', 'crystal', 'bizarre']);
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
@@ -68,6 +71,14 @@ class Civ {
     // far LOD geometry + orbit lights for all sites (time-sliced, but required before ready)
     for (const s of this.sites) this.jobs.push({ site: s, kind: 'far', gen: this._buildFar(s) });
     this._roadsBetween();
+    // screen-space city pass: wet-street reflections + night smog / light pollution (pipeline effect)
+    try {
+      const pipe = world.engine?.pipeline;
+      if (pipe?.addEffect && this.q.tier !== 'low' && !String(world.params?.civdbg || '').includes('nofx')) {
+        this.fx = new CityFX(this);
+        this._fxRemove = pipe.addEffect(this.fx);
+      }
+    } catch (e) { console.warn('[civ] city fx unavailable', e); this.fx = null; }
   }
 
   // ------------------------------------------------------------------ setup
@@ -79,7 +90,7 @@ class Civ {
       const M = style.mats(this.body, rng);
       const look = style.look || {};
       const mainMat = makeCivMaterial(look, { key: '' });
-      const roadMat = makeCivMaterial(look, { key: 'road', polygonOffset: true, reversed: !!this.world.engine?.reversedDepth, canyon: style.canyon ?? (style.pave ? 0.7 : 0.15) });
+      const roadMat = makeCivMaterial(look, { key: 'road', polygonOffset: true, reversed: !!this.world.engine?.reversedDepth, canyon: style.canyon ?? (style.pave ? 0.7 : 0.15), ragged: style.pave ? 0 : 1 });
       mainMat.userData.shared = true; roadMat.userData.shared = true;
       k = { name, style, M, mainMat, roadMat };
       this.world.lighting?.setupMaterial?.(mainMat);
@@ -93,7 +104,8 @@ class Civ {
     const S = this.S;
     s.h0 = S.height(s.up.x, s.up.y, s.up.z);
     const sea = S.seaLevel > -1e8 ? S.seaLevel : -Infinity;
-    if (s.h0 < sea + 3.5 && (s.style === 'neon' || s.style === 'harbor' || s.style === 'organic')) s.h0 = sea + 3.5;
+    s.deck = this._deckH();
+    if (s.h0 < sea + s.deck && (s.style === 'neon' || s.style === 'harbor' || s.style === 'organic')) s.h0 = sea + s.deck;
     s.pos = s.up.clone().multiplyScalar(s.R + s.h0);
     s.kit = s.kind === 'ruin' ? 'ruins' : s.kind === 'camp' ? 'nomad' : this.styleName;
     s.detail = null; s.far = null; s.layout = null; s.building = false;
@@ -102,6 +114,19 @@ class Civ {
     const kind = s.capital || s.kind === 'metropolis' || s.kind === 'city' ? 'city' : s.kind === 'ruin' ? 'ruin' : s.kind === 'monument' ? 'monument' : 'village';
     try { this.world.addPOI({ kind, name: s.name, pos: s.pos.clone(), radius: s.radius, data: { style: s.kit, level: s.level, capital: !!s.capital, civ: this.body.civ?.name } }); } catch (_) { /* ignore */ }
     this.sites.push(s);
+  }
+
+  /** Deck height above sea level for water cities: clear of the water track's (storm) wave crests. */
+  _deckH() {
+    if (this._deck !== undefined) return this._deck;
+    let d = 3.5;
+    try {
+      const W = this.world.get?.('water');
+      const mh = W?.waves?.maxHeight;
+      if (W && W.liquid !== 'ice' && mh > 0) d = Math.min(14, Math.max(3.5, mh * 1.38 * 0.75 + 1.4));
+    } catch (_) { /* optional neighbour */ }
+    this._deck = d;
+    return d;
   }
 
   /**
@@ -133,6 +158,21 @@ class Civ {
       s.layout = s.kind === 'monument' ? { roads: [], lots: [], props: [], paths: [], plaza: { x: 0, z: 0, r: 16, h: s.h0 }, ground: null, water: false }
         : layoutSite(s, this.S, prof, this.qk * ({ metropolis: 0.68, city: 0.85 }[s.kind] ?? 1));
       if (s.hamlet) this._hamletRoad(s);
+      const L = s.layout;
+      // ---- skyline anchors: the biggest central tower lots of a neon capital / metropolis become megatowers
+      if (s.kit === 'neon' && s.level >= 4 && (s.capital || s.kind === 'metropolis') && !L._mega) {
+        L._mega = true;
+        const cand = L.lots.filter((l) => l.type === 'tower' && l.w >= 17 && l.d >= 17 && Math.hypot(l.x, l.z) > (L.plaza?.r ?? 20) + 25)
+          .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
+        const picked = [];
+        for (const l of cand) {
+          if (picked.length >= (s.kind === 'metropolis' || s.level >= 5 ? 3 : 2)) break;
+          if (picked.some((p) => Math.hypot(p.x - l.x, p.z - l.z) < 90)) continue;
+          picked.push(l);
+        }
+        const mr = new RNG(s.seed ^ 0x3e6a);
+        picked.forEach((l, i) => { l.mega = [430, 340, 290][i] * (0.92 + 0.16 * mr.next()); });
+      }
     }
     return s.layout;
   }
@@ -202,6 +242,7 @@ class Civ {
 
   _guessH(s, lot) {
     const t = lot.type;
+    if (lot.mega) return lot.mega;
     if (t === 'tower') return this.styleName === 'neon' ? 90 : 35;
     if (t === 'landmark') return 30;
     if (t === 'spaceport') return 8;
@@ -326,10 +367,23 @@ class Civ {
     if (s.kind !== 'monument') this._plazaPiece(g, s, L, M, rng, ctx);
     else this._monument(g, s, M, rng, ctx);
     yield;
+    // ---- walkable decks of water cities: collider tiles wherever the deck stands over sea / low ground
+    if (L.water && L.ground && (s.kind === 'city' || s.kind === 'metropolis' || s.kind === 'town')) {
+      const G = L.ground, T = 48, RR = s.radius * 1.02, top = sea + (s.deck ?? 3.5) + 0.09;
+      for (let x = -RR; x <= RR; x += T) for (let z = -RR; z <= RR; z += T) {
+        if (x * x + z * z > RR * RR) continue;
+        if (G.h(x, z) > top - 0.4) continue;
+        g.begin(this._frame(s, x, z, 0, top, _m), 0);
+        g.collider(0, -1.5, 0, T / 2, 1.5, T / 2);
+      }
+      yield;
+    }
     // ---- roads & plaza surface
     const rg = new Geo();
     this._roads(rg, s, L, kit);
     yield;
+    // ---- farmland: crop-field patchwork with hedgerows / dry-stone walls around rural towns
+    if (FIELD_STYLES.has(s.kit) && s.kind !== 'monument' && s.kind !== 'ruin' && !L.water) { this._fields(g, rg, s, L, kit, rng); yield; }
     // ---- assemble
     const grp = new THREE.Group();
     grp.name = 'civ-site-' + s.id;
@@ -351,6 +405,7 @@ class Civ {
     const pts = this._points(g.lights, 1);
     if (pts) { pts.material.uniforms.uFarFade.value.set(0, this.dropR + 2000); grp.add(pts); }
     try { const pl = this._pools(s, L, g.lights); if (pl) grp.add(pl); } catch (e) { if (!this.stats.err) this.stats.err = 'pools: ' + (e?.message || e); }
+    try { const cs = this._contact(s, L); if (cs) grp.add(cs); } catch (e) { if (!this.stats.err) this.stats.err = 'contact: ' + (e?.message || e); }
     // ---- life
     const npcPaths = [];
     // busiest near the centre: sort walk segments by distance (with jitter) before the budget cut
@@ -464,6 +519,97 @@ class Civ {
     return makePools(out, !!this.world.engine?.reversedDepth);
   }
 
+  /**
+   * Fields around the settlement: rotated rectangles on gentle dry ground between the roads, each a
+   * draped crop decal (rows, furrows, per-field crop colour) in the road mesh, bordered by hedgerows
+   * (leafy, gappy) or dry-stone walls, with the odd tree at a corner. Reads as a lived-in countryside
+   * from the aerial shots instead of houses scattered on a lawn.
+   */
+  _fields(g, rg, s, L, kit, rng) {
+    const G = L.ground; if (!G) return;
+    const M = kit.M, R = s.radius;
+    const n = Math.round(({ metropolis: 26, city: 22, town: 18, village: 12, camp: 6 }[s.kind] ?? 10) * (s.hamlet ? 0.5 : 1) * Math.max(0.5, this.qk));
+    const crops = s.kit === 'nomad' ? ['#b8a060', '#8a9a50', '#a08850'] : s.kit === 'frontier' ? ['#a87a48', '#8a6a3a', '#b89a5a'] :
+      ['#c9a94a', '#7a9a3a', '#5e8a2e', '#8a6a42', '#b9b05a', '#9a7ab8', '#6f9a44'];
+    const hedgeM = s.kit === 'monastery' || s.kit === 'frontier' ? (M.stone || M.found) : tint(M.leaf || mat('#4f7a33', 0.95), 0.75);
+    const stoneWall = hedgeM === M.stone || hedgeM === M.found;
+    const placed = [];
+    const roadPts = [];
+    for (const r of L.roads) for (let i = 0; i < r.pts.length; i += 2) roadPts.push(r.pts[i]);
+    const ident = new THREE.Matrix4();
+    for (let tries = 0; tries < n * 6 && placed.length < n; tries++) {
+      const a = rng.range(0, Math.PI * 2), dist = R * rng.range(0.85, 1.9) + 20;
+      const cx = Math.cos(a) * dist, cz = Math.sin(a) * dist;
+      const fw = rng.range(28, 64), fd = rng.range(22, 48);
+      // align with the nearest road (fields front lanes), else radial
+      let rot = a, best = 1e9;
+      for (const p of roadPts) { const d = Math.hypot(p.x - cx, p.z - cz); if (d < best) { best = d; rot = Math.atan2(p.z - cz, p.x - cx); } }
+      const rad = Math.hypot(fw, fd) / 2;
+      if (best < rad * 0.75) continue;
+      if (placed.some((f) => Math.hypot(f.x - cx, f.z - cz) < (f.rad + rad) * 0.82)) continue;
+      if (L.lots.some((l) => Math.hypot(l.x - cx, l.z - cz) < rad + Math.max(l.w, l.d) * 0.6)) continue;
+      const c = Math.cos(rot), sn = Math.sin(rot);
+      const P2 = (u, v) => ({ x: cx + u * c - v * sn, z: cz + u * sn + v * c });
+      // gentle, dry ground only
+      let mn = Infinity, mx = -Infinity, wet = false;
+      for (const [u, v] of [[0, 0], [-1, -1], [1, -1], [1, 1], [-1, 1]]) { const q = P2(u * fw / 2, v * fd / 2); const h = G.h(q.x, q.z); if (G.wet(q.x, q.z)) wet = true; mn = Math.min(mn, h); mx = Math.max(mx, h); }
+      if (wet || mx - mn > Math.max(fw, fd) * 0.16) continue;
+      placed.push({ x: cx, z: cz, rad });
+      // ---- crop decal (draped grid, uv in metres along the rows)
+      const Mc = mat(crops[rng.int(0, crops.length - 1)], 0.95, 0, PAT.FIELD);
+      const nu = 7, nv = 6, base = rg.vc;
+      rg.begin(ident, rng.next() * 50);
+      for (let j = 0; j <= nv; j++) for (let i = 0; i <= nu; i++) {
+        const u = (i / nu - 0.5) * fw, v = (j / nv - 0.5) * fd;
+        const q = P2(u, v), h = G.g(q.x, q.z) + 0.1;
+        offsetDir(s, q.x, q.z, _v);
+        const vi = rg.vert(_v.x * (s.R + h) - s.pos.x, _v.y * (s.R + h) - s.pos.y, _v.z * (s.R + h) - s.pos.z, _v.x, _v.y, _v.z, u, v, Mc);
+        rg.X.a[vi * 2] = Math.max(Math.abs(i / nu - 0.5), Math.abs(j / nv - 0.5)) * 2;
+      }
+      for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) { const a0 = base + j * (nu + 1) + i; rg.quadIdx(a0, a0 + nu + 1, a0 + nu + 2, a0 + 1); }
+      // ---- hedgerow / dry-stone wall segments along the border (gaps for gates)
+      const edges = [[[-1, -1], [1, -1]], [[1, -1], [1, 1]], [[1, 1], [-1, 1]], [[-1, 1], [-1, -1]]];
+      for (const [[u0, v0], [u1, v1]] of edges) {
+        if (rng.next() < 0.25) continue;
+        const A = P2(u0 * fw / 2, v0 * fd / 2), B = P2(u1 * fw / 2, v1 * fd / 2);
+        const len = Math.hypot(B.x - A.x, B.z - A.z), seg = stoneWall ? 3 : 3.6;
+        const ang = Math.atan2(B.x - A.x, B.z - A.z);
+        for (let t = seg / 2; t < len; t += seg) {
+          if (rng.next() < 0.1) continue;
+          const x = A.x + (B.x - A.x) * t / len, z = A.z + (B.z - A.z) * t / len;
+          g.begin(this._frame(s, x, z, ang, G.g(x, z) - 0.15, _m), rng.next() * 50);
+          if (stoneWall) g.box(0, 0, 0, 0.7, rng.range(0.8, 1.05), seg + 0.05, 0.12, hedgeM);
+          else g.box(0, 0, 0, rng.range(1.0, 1.4), rng.range(1.1, 1.9), seg + rng.range(0.2, 0.8), 0.35, tint(hedgeM, rng.range(0.85, 1.12)));
+        }
+        if (!stoneWall && rng.next() < 0.5) { g.begin(this._frame(s, A.x, A.z, 0, G.g(A.x, A.z) - 0.1, _m), rng.next() * 50); P.tree(g, 0, 0, 0, rng.range(7, 11), M, rng); }
+      }
+    }
+  }
+
+  /** Soft ground contact shadows around building footprints (multiplicative skirt). */
+  _contact(s, L) {
+    const G = L.ground; if (!G) return null;
+    const items = [], F = new THREE.Matrix4(), p = new THREE.Vector3();
+    for (const lot of L.lots) {
+      if (lot.type === 'garden' || lot.type === 'farm' || lot.type === 'spaceport') continue;
+      const h = lot.farH ?? 6;
+      const reach = THREE.MathUtils.clamp(1.3 + h * 0.1, 1.6, 4.5);
+      const hw = lot.w / 2 + 0.25, hd = lot.d / 2 + 0.25;
+      this._frame(s, lot.x, lot.z, lot.rot, lot.hMax, F);
+      const verts = [], q = [];
+      for (const lz of [-hd - reach, 0, hd + reach]) for (const lx of [-hw - reach, 0, hw + reach]) {
+        p.set(lx, 0, lz).applyMatrix4(F);
+        const x = p.dot(s.east), z = p.dot(s.north);
+        const gh = Math.max(G.g(x, z), lot.hMin - 0.3) + 0.16;
+        offsetDir(s, x, z, _v);
+        verts.push([_v.x * (s.R + gh) - s.pos.x, _v.y * (s.R + gh) - s.pos.y, _v.z * (s.R + gh) - s.pos.z]);
+        q.push([lx, lz]);
+      }
+      items.push({ verts, q, hw, hd, reach, k: lot.water ? 0.4 : 0.6 });
+    }
+    return makeContactShadows(items, !!this.world.engine?.reversedDepth);
+  }
+
   _boatSpots(s, rng) {
     const S = this.S, spots = [];
     const sea = S.seaLevel;
@@ -490,6 +636,8 @@ class Civ {
     for (const r of L.roads) {
       const Mr = style.road?.(r) === 'path' ? (M.path || M.road) : (M.road || M.path);
       const len = polyLen(r.pts);
+      // asphalt / dirt shading works across the road in -1..1; stone patterns need true meters
+      const ux = Mr.pat === PAT.COBBLE || Mr.pat === PAT.PAVING ? r.w / 2 : 1;
       const step = 3.2;
       const n = Math.max(2, Math.ceil(len / step));
       const base = rg.vc;
@@ -501,7 +649,8 @@ class Civ {
           const h = G.g(x, z) + lift + (Math.abs(a) < 0.9 ? 0.04 : 0);
           offsetDir(s, x, z, _v);
           const px = _v.x * (s.R + h) - s.pos.x, py = _v.y * (s.R + h) - s.pos.y, pz = _v.z * (s.R + h) - s.pos.z;
-          rg.vert(px, py, pz, _v.x, _v.y, _v.z, a, len * i / n, { ...Mr });
+          const vi = rg.vert(px, py, pz, _v.x, _v.y, _v.z, ux * a, len * i / n, Mr);
+          rg.X.a[vi * 2] = Math.abs(a); // aux.x on the road mesh = edge factor (ragged, worn borders)
         }
         if (i > 0) for (let j = 0; j < across.length - 1; j++) {
           const a0 = base + (i - 1) * across.length + j, b0 = a0 + across.length;
@@ -522,7 +671,9 @@ class Civ {
         if (!L.water && G.wet(x, z)) continue;
         const h = G.g(x, z) + 0.09;
         offsetDir(s, x, z, _v);
-        idx[j * (nx + 1) + i] = rg.vert(_v.x * (s.R + h) - s.pos.x, _v.y * (s.R + h) - s.pos.y, _v.z * (s.R + h) - s.pos.z, _v.x, _v.y, _v.z, x, z, Mv);
+        const vi = rg.vert(_v.x * (s.R + h) - s.pos.x, _v.y * (s.R + h) - s.pos.y, _v.z * (s.R + h) - s.pos.z, _v.x, _v.y, _v.z, x, z, Mv);
+        rg.X.a[vi * 2] = 0;
+        idx[j * (nx + 1) + i] = vi;
       }
       for (let j = 0; j < nx; j++) for (let i = 0; i < nx; i++) {
         const a = idx[j * (nx + 1) + i], b = idx[j * (nx + 1) + i + 1], c = idx[(j + 1) * (nx + 1) + i + 1], d = idx[(j + 1) * (nx + 1) + i];
@@ -542,7 +693,8 @@ class Civ {
         const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
         const h = G.g(x, z) + lift + 0.06;
         offsetDir(s, x, z, _v);
-        rg.vert(_v.x * (s.R + h) - s.pos.x, _v.y * (s.R + h) - s.pos.y, _v.z * (s.R + h) - s.pos.z, _v.x, _v.y, _v.z, x, z, Mp);
+        const vi = rg.vert(_v.x * (s.R + h) - s.pos.x, _v.y * (s.R + h) - s.pos.y, _v.z * (s.R + h) - s.pos.z, _v.x, _v.y, _v.z, x, z, Mp);
+        rg.X.a[vi * 2] = i / rings;
       }
     }
     for (let j = 0; j < segs; j++) rg.tri(c0, c0 + 1 + j, c0 + 1 + (j + 1) % segs);
@@ -785,7 +937,9 @@ class Civ {
     g.cyl(0, 0, 0, L.plaza.r * 0.32, L.plaza.r * 0.32, 0.7, 24, true, M.stone || M.found);
     g.cyl(0, 0.7, 0, L.plaza.r * 0.28, L.plaza.r * 0.28, 0.05, 24, true, mat('#2a4a5a', 0.04, 0.3));
     g.push().translate(0, 0.7, 0);
-    P.statue(g, Math.min(22, L.plaza.r * 0.55), M, rng, rng.next() < 0.5 ? 1 : 0);
+    // cast bronze with a verdigris patina (or the kit's own statue material), never the masonry pattern
+    const bronze = (M.statue && M.statue.pat !== PAT.STONE) ? M.statue : mat(s.kit === 'spire' || s.kit === 'monastery' ? '#e8e2d6' : '#5d7b6c', s.kit === 'spire' || s.kit === 'monastery' ? 0.38 : 0.42, s.kit === 'spire' || s.kit === 'monastery' ? 0.0 : 0.72, PAT.PLAIN);
+    P.statue(g, Math.min(22, L.plaza.r * 0.55), { ...M, statue: bronze }, rng, rng.next() < 0.5 ? 1 : 0);
     g.pop();
     void ctx;
   }
@@ -828,8 +982,8 @@ class Civ {
   _update(dt) {
     this._t = (this._t || 0) + (dt || 0);
     if (this._debug.includes('npcbig') && !this._npcbig) { this._npcbig = true; this.root.traverse((o) => { if (o.name === 'civ-npcs') o.geometry.attributes.aP.array.forEach((v, i, a) => { if (i % 4 === 2) a[i] = 8; }); }); }
-    if (this._debug && /no(roads|pools|bld|glow|npc)/.test(this._debug)) {
-      const hide = { 'civ-roads': 'noroads', 'civ-pools': 'nopools', 'civ-buildings': 'nobld', 'civ-glow': 'noglow', 'civ-npcs': 'nonpc' };
+    if (this._debug && /no(roads|pools|bld|glow|npc|contact)/.test(this._debug)) {
+      const hide = { 'civ-contact': 'nocontact', 'civ-roads': 'noroads', 'civ-pools': 'nopools', 'civ-buildings': 'nobld', 'civ-glow': 'noglow', 'civ-npcs': 'nonpc' };
       this.root.traverse((o) => { const k = hide[o.name]; if (k && this._debug.includes(k)) o.visible = false; });
     }
     if (this._debug.includes('noflora')) { const f = this.world.get?.('flora'); if (f?.group) f.group.visible = false; }
@@ -867,6 +1021,7 @@ class Civ {
     const h = this.world.engine?.renderer?.domElement?.height || this.world.engine?.height || 720;
     const fov = (this.world.camera.fov || 60) * Math.PI / 180;
     for (const m of this.glowMats) { m.uniforms.uPixH.value = h; m.uniforms.uFov.value = fov; }
+    if (this.fx) this.fx.update(cam);
   }
 
   _drop(s) {
@@ -916,6 +1071,7 @@ class Civ {
   onOriginShift() { /* everything is parented to world.root in planet-local coordinates */ }
 
   dispose() {
+    try { this._fxRemove?.(); this.fx?.dispose(); } catch (_) { /* ignore */ }
     try { for (const id of this.flats || []) this.S?.removeFlatten?.(id); } catch (_) { /* ignore */ }
     for (const s of this.sites) { this._drop(s); if (s.far) { s.far.traverse((o) => o.geometry?.dispose?.()); s.far.removeFromParent(); } }
     for (const k of this.kits.values()) { k.mainMat.dispose(); k.roadMat.dispose(); }

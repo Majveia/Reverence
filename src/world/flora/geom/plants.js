@@ -23,7 +23,7 @@ export function bush(rnd, P) {
     for (const c of clumps) {
       // many smaller cluster cards (domed normals in the shader) → a soft leafy mass, not a few
       // big flat cards that read as faceted cubes
-      const m = Math.max(3, Math.round(c.r * c.r * (P.density ?? 30) * (detail ? 0.2 : 1)));
+      const m = Math.max(3, Math.round(c.r * c.r * (P.density ?? 30) * (detail ? 0.4 : 1)));
       for (let i = 0; i < m; i++) {
         let dx = rnd.gauss(), dy = Math.abs(rnd.gauss()) * 0.7 + 0.1, dz = rnd.gauss();
         const dl = Math.hypot(dx, dy, dz) || 1; dx /= dl; dy /= dl; dz /= dl;
@@ -32,11 +32,12 @@ export function bush(rnd, P) {
         const sh = norm3(px * 0.8, (py - R * 0.3) * 1.2 + 0.3, pz * 0.8);
         const top = smooth(-0.3, 1, sh[1]);
         const ao = clamp(0.35 + 0.65 * smooth(0, R * 1.1, py) * (0.6 + 0.4 * top), 0.2, 1);
-        const s = (P.leafSize ?? 0.8) * 0.68 * R * (detail ? 1.9 : 1) * rnd.range(0.75, 1.2) * (0.8 + 0.3 * (rr / c.r));
-        const flower = P.flowerRect && rnd() < (P.flowerChance ?? 0.25);
-        b.bcard({ c: [px, py, pz], w: s * 0.5, h: s * 0.5, roll: rnd() * 6.28, rect: flower ? P.flowerRect : P.rect,
+        const s = (P.leafSize ?? 0.8) * 0.68 * R * (detail ? 1.45 : 1) * rnd.range(0.75, 1.2) * (0.8 + 0.3 * (rr / c.r));
+        const flower = P.flowerRect && rnd() < (P.flowerChance ?? 0.25) && top > 0.35;
+        const fs = flower ? 0.5 : 1;   // blossoms are small sprays on the outer leaves, not blobs
+        b.bcard({ c: [px, py, pz], w: s * 0.5 * fs, h: s * 0.5 * fs, roll: rnd() * 6.28, rect: flower ? P.flowerRect : P.rect,
           kind: flower ? KIND.FLOWER : KIND.LEAF, flex: 0.25 + py / R * 0.3, ao, phase: c.phase,
-          color: flower ? cv(rnd, P.flowerA, P.flowerB, rnd(), 1.1) : cv(rnd, P.leafA, P.leafB, top * 0.6 + rnd() * 0.4, 0.9 + top * 0.2), shade: sh });
+          color: flower ? cv(rnd, P.flowerA, P.flowerB, rnd(), 1.1) : cv(rnd, P.leafA, P.leafB, top * 0.7 + rnd() * 0.2, 0.9 + top * 0.16), shade: sh });
       }
     }
     return b;
@@ -290,16 +291,19 @@ export function fallenLog(rnd, P) {
     const r = r0 * (1 - 0.35 * t) * (1 + 0.5 * Math.exp(-t * 9));     // root flare at one end
     pts.push({ x, y: r * 0.55 + Math.sin(t * 3.1) * 0.05, z: Math.sin(t * Math.PI) * bend * L * 0.15, r, flex: 0, ao: 0.55 + 0.45 * Math.sin(t * Math.PI) });
   }
+  // closed root end (a flat-ish cone of tiny length), so the hollow tube never shows its inside
+  const p0 = pts[0];
+  pts.unshift({ x: p0.x - 0.02, y: p0.y, z: p0.z, r: p0.r * 0.08, flex: 0, ao: 0.5 });
   const stubs = [];
   for (let k = 0; k < rnd.int(2, 4); k++) {
-    const t = rnd.range(0.25, 0.9), q = pts[Math.floor(t * n)];
+    const t = rnd.range(0.25, 0.9), q = pts[1 + Math.floor(t * n)];
     const a = rnd.range(-1.2, 1.2) + (rnd() < 0.5 ? Math.PI : 0);
     const len = rnd.range(0.4, 1.3);
     stubs.push({ q, a, len, up: rnd.range(0.2, 0.9) });
   }
   const emit = (detail) => {
     const b = new PlantBuilder();
-    b.tube(detail ? pts.filter((_, i) => i % 3 === 0 || i === n) : pts, { segs: detail ? 6 : 12, color: P.bark || [0.1, 0.075, 0.05], capTip: true });
+    b.tube(detail ? pts.filter((_, i) => i < 2 || i % 3 === 0 || i === n + 1) : pts, { segs: detail ? 6 : 12, color: P.bark || [0.1, 0.075, 0.05], capTip: true });
     if (!detail) for (const s of stubs) {
       const q = s.q, ca = Math.cos(s.a), sa = Math.sin(s.a);
       b.tube([{ x: q.x, y: q.y, z: q.z, r: q.r * 0.35, flex: 0, ao: 0.6 },

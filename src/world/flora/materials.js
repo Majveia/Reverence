@@ -22,7 +22,14 @@ uniform float uDitherF; uniform float uDitherA;
 // consecutive TAA sub-frames (spatial IGN only sets the phase). A 4-sample shot / TAA history then
 // resolves a dithered fade to a uniform level (residual ≤ 1/4 step) instead of a frozen
 // screen-door hatch, which is what stills showed with a per-frame shifted IGN.
-float rvDither(vec2 p){ return fract(rvIGN(p) + 0.25 * mod(uDitherF, 4.0)); }
+// The spatial phase is a 2×2 Bayer pattern (multiples of 1/4), so over the 4 sub-frames every pixel
+// sees exactly the same threshold set {0, ¼, ½, ¾}: the resolved fade is spatially uniform (no
+// residual hatch at all; it quantizes to 5 levels across a fade band, which is invisible).
+float rvDither(vec2 p){
+  vec2 q = mod(floor(p), 2.0);
+  float b = (q.x * 2.0 + q.y * 3.0 - 4.0 * q.x * q.y) * 0.25;   // (0,0)=0 (1,0)=½ (0,1)=¾ (1,1)=¼
+  return fract(b + 0.25 * mod(uDitherF, 4.0) + 0.125);
+}
 // Low-frequency "stand" variation over the landscape (planet-local position, ~150–500 m): trees of
 // one stand share value/hue so forests read as patches of stands instead of clone-tiled crowns.
 vec3 rvStandTint(vec3 pl, float seed, float amt){

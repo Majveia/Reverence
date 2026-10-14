@@ -105,7 +105,7 @@ export class InstanceLayer {
     const g = this.geometry;
     g.instanceCount = this.count;
     this.mesh.position.copy(this.anchor);
-    this.mesh.visible = this.count > 0;
+    this.mesh.visible = this.count > 0 && !this.hidden;
     if (this.count > 0) {
       const n = this.count * 4;
       for (const a of [this.aPos, this.aRot, this.aDat]) {

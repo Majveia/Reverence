@@ -18,6 +18,8 @@ import * as THREE from 'three';
 import { dirToLatLon, tangentFrame } from '../../core/math.js';
 import { offsetDir } from './planner.js';
 import { polyLen, along } from './layout.js';
+import { Geo } from './geo.js';
+import { RNG } from '../../core/rng.js';
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _e = new THREE.Vector3(), _n = new THREE.Vector3();
 
@@ -43,6 +45,24 @@ function blocked(S, R0, eye, tgt, steps = 20) {
   }
   return b;
 }
+
+/** Exact height of a lot's building: dry-run the style kit into a scratch builder (once per lot). */
+function estimateH(civ, s, lot) {
+  if (lot._estH !== undefined) return lot._estH;
+  let h = 18;
+  try {
+    const kit = civ._kit(s.kit);
+    const g = new Geo();
+    g.begin(new THREE.Matrix4(), 0);
+    const ctx = { M: kit.M, rng: new RNG(s.seed ^ 0x51ee), site: s, style: s.kit, level: s.level, kind: s.kind, neonM: kit.M.neon };
+    const r = kit.style.build(g, lot, ctx);
+    let mx = 0; const X = g.X.a; for (let i = 0; i < g.X.n; i += 2) if (X[i] > mx) mx = X[i];
+    h = Math.max(typeof r === 'number' ? r : 0, mx) || 18;
+  } catch (_) { /* fall back */ }
+  lot._estH = h;
+  return h;
+}
+function guessH(civ, s, lot) { return lot.farH ?? civ._guessH(s, lot); }
 
 /**
  * Compute the camera for a preset. Returns {lat, lon, yaw, pitch, alt?, view} (degrees / meters) where
@@ -147,30 +167,63 @@ export function frameSite(civ, s, preset) {
     return frameSite(civ, s, 'plaza');
   }
   if (preset === 'hero') {
-    // around the plaza rim, pick the spot with no building in the lens' way (near the camera or between it
-    // and the plaza centre), preferring the side opposite the landmark
-    let bestA = landA + Math.PI, bestS = -Infinity;
-    for (let k = 0; k < 16; k++) {
-      const a = landA + Math.PI + (k / 16 - 0.5) * Math.PI * 1.6;
-      const cx = Math.cos(a) * (pr + 18), cz = Math.sin(a) * (pr + 18);
-      let pen = 0;
-      for (const l of L.lots) {
-        const r0 = Math.max(l.w, l.d) / 2;
-        const dc = Math.hypot(l.x - cx, l.z - cz) - r0;
-        if (dc < 16) pen += (16 - dc) / 4 * (l.type === 'tower' || l.type === 'landmark' ? 2 : 1);
-        // between the camera and a point halfway to the centre
-        const mx = cx * 0.55, mz = cz * 0.55;
-        if (Math.hypot(l.x - mx, l.z - mz) - r0 < 6) pen += 1.5;
+    // Composition solver: the landmark is the focal silhouette. Pick a viewpoint whose distance fits the
+    // whole landmark in frame (top ~1/6 below the frame edge, horizon on the upper third), whose line of
+    // sight to the landmark and plaza is clear of buildings, with nothing tall right next to the lens;
+    // then turn the camera so the landmark sits on a rule-of-thirds vertical with the plaza on the other side.
+    const Hl = land ? estimateH(civ, s, land) : 18;
+    const fx = land ? land.x : 0, fz = land ? land.z : 0;
+    const hF = G ? G.g(fx, fz) : hC;
+    const camUp = THREE.MathUtils.clamp(Hl * 0.32, 22, 70);
+    const vfov = 58 * Math.PI / 180, pitch0 = -9 * Math.PI / 180;
+    const topAng = vfov / 2 + pitch0 - 0.1;
+    const Dfit = Math.max(pr + 30, (Hl + hF - (hC + camUp)) / Math.tan(topAng));
+    const hOf = (l) => (l === land ? Hl : guessH(civ, s, l));
+    let best = null;
+    for (let k = 0; k < 24; k++) {
+      const a = landA + Math.PI + (k / 24 - 0.5) * Math.PI * 1.9;
+      for (const dk of [1, 1.25, 1.6]) {
+        const D = Dfit * dk;
+        const cx = fx + Math.cos(a) * D, cz = fz + Math.sin(a) * D;
+        if (Math.hypot(cx, cz) > R * 1.6 + 200) continue;
+        const gh = G ? G.g(cx, cz) : hC;
+        const camH = Math.max(hC + camUp, gh + 18);
+        let pen = 0;
+        for (const l of L.lots) {
+          const r0 = Math.max(l.w, l.d) * 0.55, lh = hOf(l) + (l.hMax ?? hC);
+          // tall things right at the lens fill the frame
+          const dc = Math.hypot(l.x - cx, l.z - cz) - r0;
+          if (dc < 25 && lh > camH - 12) pen += (25 - dc) / 5 * (lh > camH ? 2 : 1);
+          if (l === land) continue;
+          // occluders on the sight lines to the landmark (mid-height) and to the plaza centre
+          for (const [tx, tz, th] of [[fx, fz, hF + Hl * 0.45], [0, 0, hC + 2]]) {
+            for (let i = 1; i < 12; i++) {
+              const t = i / 12;
+              const px = cx + (tx - cx) * t, pz = cz + (tz - cz) * t, py = camH + (th - camH) * t;
+              if (Math.hypot(l.x - px, l.z - pz) < r0 && py < lh) { pen += 1.2; break; }
+            }
+          }
+        }
+        // terrain in the way
+        const eye = pt(cx, cz, camH);
+        pen += blocked(S, s.R, eye, pt(fx, fz, hF + Hl * 0.4), 14) * 0.05;
+        // the plaza should be in the same view as the landmark (less than ~22° apart)
+        const aF = Math.atan2(fz - cz, fx - cx), aP = Math.atan2(-cz, -cx);
+        const sep = Math.abs(Math.atan2(Math.sin(aP - aF), Math.cos(aP - aF)));
+        pen += Math.max(0, sep - 0.38) * 6;
+        const sc = -pen - (dk - 1) * 0.8 + Math.cos(a - landA - Math.PI) * 0.4 - parkPenalty(cx, cz, (fx - cx) / D, (fz - cz) / D) * 0.3;
+        if (!best || sc > best.sc) best = { sc, cx, cz, camH, D, aF, aP, gh };
       }
-      const dl = Math.hypot(cx, cz) || 1;
-      const sc = -pen + Math.cos(a - landA - Math.PI) * 1.2 - parkPenalty(cx, cz, -cx / dl, -cz / dl) * 0.8;
-      if (sc > bestS) { bestS = sc; bestA = a; }
     }
-    const a = bestA;
-    const x = Math.cos(a) * (pr + 18), z = Math.sin(a) * (pr + 18);
-    const gh = G ? G.g(x, z) : hC;
-    const lx = land ? land.x : 0, lz = land ? land.z : 0;
-    return res(x, z, lx * 0.5, lz * 0.5, hC + 4, gh + 28, { view: 'fly', alt: 28 });
+    const { cx, cz, camH, D, aF, aP, gh } = best;
+    // rule of thirds: landmark on the vertical third line, plaza toward the other side
+    const hfovT = Math.tan(vfov / 2) * 16 / 9;
+    const off = Math.atan(hfovT / 3);
+    const side = Math.sin(aP - aF) >= 0 ? -1 : 1; // plaza to the left of the landmark → landmark on the right third
+    const look = aF + side * off;
+    const r = res(cx, cz, cx + Math.cos(look) * D, cz + Math.sin(look) * D, camH + Math.tan(pitch0) * D, camH, { view: 'fly', alt: Math.round(camH - gh) });
+    r.pitch = pitch0 * 180 / Math.PI;
+    return r;
   }
   if (preset === 'top') {
     const lx = land ? land.x : 20, lz = land ? land.z : 0;

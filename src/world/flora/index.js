@@ -112,6 +112,9 @@ class Flora {
     try { dbg = new URL(window.location.href).searchParams.get('floradbg') || ''; } catch (_) { /* no window */ }
     if (dbg.includes('nocast')) for (const L of this.layers) L.mesh.castShadow = false;
     if (dbg.includes('noreceive')) for (const L of this.layers) L.mesh.receiveShadow = false;
+    // floradbg=hide:bush+fern → hide layers whose name contains any of the parts (identify props in captures)
+    const hm = /hide:([\w+-]+)/.exec(dbg);
+    if (hm) { const parts = hm[1].split('+'); for (const L of this.layers) if (parts.some((p) => L.name.includes(p))) { L.hidden = true; L.mesh.visible = false; } }
     if (dbg.includes('grassnodepth') && this.grass) for (const L of [this.grass.dense, this.grass.sparse, this.grass.far]) L.material.depthTest = false;
     this._startWorkers();
     this.ready = false;
@@ -200,6 +203,9 @@ class Flora {
       transl: S.translucency ?? 0.9, glow: sp.glow ?? 0, cardGlow: sp.cardGlow ?? 0,
       moss: S.rock.moss, mossAmt: S.key === 'moss' ? 0.8 : 0.3, windAmp: (sp.windAmp ?? 1) * (S.windAmp ?? 1),
       billboard: sp.billboard ?? 0.85, fade, thin, tintVar: 0.4, alphaToCoverage: (this.q.msaa ?? 0) > 0,
+      // small plants (bushes): cards are a large fraction of the plant, so per-card shadow-map
+      // visibility and a strong per-card dome read as faceted cubes → mostly analytic, gentler dome
+      leafSoft: m.layer === 'canopy' ? 0.55 : 0.85, dome: m.layer === 'canopy' ? 0.65 : 0.4,
     });
     return p;
   }
@@ -218,7 +224,7 @@ class Flora {
     // distances (m)
     const D = this.D = {
       c0: [34 * dd, 44 * dd], c1: [148 * dd, 172 * dd], cI: [680 * dd, 800 * dd], cS: [20, 26],
-      u0: [20 * dd, 28 * dd], uR: 150 * dd * Math.sqrt(this.density),
+      u0: [24 * dd, 32 * dd], uR: 150 * dd * Math.sqrt(this.density),
       r0: [45 * dd, 60 * dd], rR: 560 * dd,
       f0: [14, 20], fR: 48 * Math.sqrt(this.density),
     };

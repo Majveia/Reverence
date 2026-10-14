@@ -80,7 +80,7 @@ export function layoutSite(site, S, prof, quality = 1) {
   const rng = new RNG(site.seed ^ 0x1a7);
   const R = site.radius;
   const water = WATER_STYLES.has(site.style) && prof.water !== false;
-  const G = new Ground(site, S, water ? 3.5 : 0);
+  const G = new Ground(site, S, water ? (site.deck ?? 3.5) : 0);
   const occ = new Occ(R);
   const kind = site.kind;
   const big = kind === 'city' || kind === 'metropolis';
@@ -254,9 +254,12 @@ export function layoutSite(site, S, prof, quality = 1) {
         const dist = Math.hypot(p.x, p.z);
         const t = Math.min(1.2, dist / R);
         const spec = prof.lot(t, rng, kind, r.type);
-        if (!spec || rng.next() > density * (prof.fill?.(t) ?? 1)) { s += (spec?.w ?? 8) + 3; continue; }
+        // density gradient: a tight historic core (continuous street frontage) thinning out to the edge
+        const grad = prof.grid ? 1 : 1.3 - 0.75 * Math.min(1, Math.max(0, (t - 0.25) / 0.75));
+        if (!spec || rng.next() > density * grad * (prof.fill?.(t) ?? 1)) { s += (spec?.w ?? 8) + 3; continue; }
         const nx = -p.tz * side, nz = p.tx * side; // left normal * side
-        const off = r.w / 2 + (spec.setback ?? 2) + spec.d / 2;
+        const sb = prof.grid ? (spec.setback ?? 2) : (spec.setback ?? 2) * (0.45 + 0.9 * Math.min(1, t));
+        const off = r.w / 2 + sb + spec.d / 2;
         const x = p.x + nx * off, z = p.z + nz * off;
         const rot = Math.atan2(-nx, -nz); // front (+z local) faces the road
         const L2 = { x, z, w: spec.w, d: spec.d, rot, t, type: spec.type, spec, gap: spec.gap ?? 2 };
@@ -269,7 +272,7 @@ export function layoutSite(site, S, prof, quality = 1) {
             tryLot({ x: lx, z: lz, w: s2.w, d: s2.d, rot: rot + rng.range(-0.2, 0.2), t, type: s2.type, spec: s2, gap: s2.gap ?? 2 });
           }
         }
-        s += spec.w + (spec.gap ?? 2) + rng.range(0, 3);
+        s += spec.w + (spec.gap ?? 2) * (prof.grid ? 1 : 0.6 + 0.6 * Math.min(1, t)) + rng.range(0, 3) * Math.min(1, t + 0.3);
       }
     }
   }

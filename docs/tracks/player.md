@@ -65,7 +65,14 @@ a low plume of overlapping dust drifts back beside the board at ~half the rider'
 plus a curtain of ~170 stretched sand grains / s (rooster tail) that falls back ballistically. Visor: a soft
 horizon gradient (the crisp brown horizon line across the dome read as lips / a mouth), env reflection
 reduced to a faint layer, and a crisp curved glass highlight on the upper dome. Swim camera: longer arm and
-steeper pitch, so the boots no longer fill the foreground and the stroke reads.
+steeper pitch, so the boots no longer fill the foreground and the stroke reads; the swim wake's Kelvin arms /
+kick foam break into speckled foam streaks and the ripple rings are broken up (no more smoky white bands).
+Slide camera: ground-snapped states (slide, downhill runs) move along the slope while their integrated
+velocity stays tangent to the sphere, so the rig now measures the feet's real motion (finite difference,
+smoothed) for the pivot feed-forward and the fall-line pitch — before, the pivot trailed ~1.4 m uphill and
+the surfer dropped out of the bottom of the frame. Surfing keeps a shallower pitch and only half the
+terrain-lift look-down, so the rider, the run-out and the horizon share the frame. Climb camera ~1 m closer.
+Scarf flutter amplitude grows toward the free end (flag-like) instead of streaming as a plank.
 Swim: front crawl rides at the surface; **hold C to dive** (streamlined underwater glide, profile
 camera under water, Space / release to surface); ice and lava seas are walkable (`water.solid`).
 
@@ -156,6 +163,8 @@ Suit bake: one-time at build (voxel grid 0.7 MB, AO cached per tessellation leve
 Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (a few hundred lookups).
 
 ## Known issues
+* The W4 `view=surface` spawn lands in tall grass (flora); use `zoom` / `pitch` or a nearby lat/lon for clean captures.
+* Large fauna can walk through the explorer (no creature colliders yet) — see Requests.
 * Climbing works on the heightfield only (not on building / boulder colliders); the mantle is a hop,
   not an animated vault.
 * Flora rocks on some worlds (W2) register few colliders, so the player can walk through small boulders;

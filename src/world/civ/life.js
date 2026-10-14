@@ -60,6 +60,16 @@ function figureGeo(style) {
   return geo;
 }
 
+/** Additive-looking light trail: two crossed ribbons from (x,y,z0) backwards, colour fading to black. */
+function trail(g, x, y, z0, len, w, col) {
+  const hot = mat(col, 0.3, 0, PAT.NEON, 15), cold = mat('#000000', 0.3, 0, PAT.NEON, 15);
+  for (const [ax, ay] of [[w, 0], [0, w]]) {
+    const a = g.vert(x - ax, y - ay, z0, 0, 1, 0, 0, 0, hot), b = g.vert(x + ax, y + ay, z0, 0, 1, 0, 1, 0, hot);
+    const c = g.vert(x + ax * 0.3, y + ay * 0.3, z0 - len, 0, 1, 0, 1, 1, cold), d = g.vert(x - ax * 0.3, y - ay * 0.3, z0 - len, 0, 1, 0, 0, 1, cold);
+    g.quadIdx(a, b, c, d); g.quadIdx(a, d, c, b);
+  }
+}
+
 function carGeo(kind) {
   const k = 'car-' + kind;
   if (_cache.has(k)) return _cache.get(k);
@@ -87,6 +97,9 @@ function carGeo(kind) {
     g.box(0, -0.05, -2.31, 1.6, 0.12, 0.05, 0, mat('#ff2a1a', 0.2, 0, PAT.NEON, 10));
     g.box(0, -0.72, 0, 1.4, 0.04, 3.4, 0, mat(kind === 'neon' ? '#ff2e88' : '#40c8ff', 0.2, 0, PAT.NEON, 6));
     for (const s of [-1, 1]) g.cyl(s * 1.1, -0.5, -1.5, 0.28, 0.28, 0.6, 8, true, paint);
+    // light trails (night only, dithered fade along their length; see PAT.NEON emit 15 in material.js)
+    const head = kind === 'neon' ? '#ff3a6a' : '#ff4a2a';
+    for (const sx of [-0.55, 0.55]) trail(g, sx, -0.05, -2.35, 16, 0.16, head);
   }
   const geo = g.build();
   _cache.set(k, geo);

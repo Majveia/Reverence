@@ -150,6 +150,13 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
     mosaic of lit/unlit cards; card shadow footprint 10 % → 30 %; leaf atlas lum = coherent
     dark-core → light-rim gradient with less per-leaf noise. Impostor bake uses the same domed
     normals.
+  * **Dither final form**: the spatial phase of the dither is a 2×2 Bayer pattern (multiples of ¼),
+    so over 4 sub-frames every pixel sees the identical threshold set → crossfades resolve
+    spatially uniform (no IGN hatch even where LOD1 and impostors differ in tone).
+  * **Impostor shadow casters** are pushed to the far side of the crown along the light (no
+    self-shadow acne stripes on LOD1/impostor canopies).
+  * **Fallen logs** (`PL.fallenLog`, lush + boreal forests): mossy half-sunk trunks with broken limb
+    stubs and a closed root end — mid-scale forest-floor detail.
   * **Stands**: `rvStandTint` — low-frequency (~150–500 m) value/hue field per planet position on
     trees and impostors (warm yellow-green ↔ cool blue-green, ±13 % value): forests read as
     patches of stands. Canopy scale follows the cluster field (bigger trees in stand cores) and
@@ -185,7 +192,11 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
   `.getState()` → `{style, ready, readyMs, cells:{band:"cells/jobs/ms"}, instances, drawCalls,
   trisM, top (heaviest layers), colliders}`.
 
-## Capture URLs (verified this round at 1280×720 or 960×540; each renders in ~3–6 min under load)
+## Capture URLs (verified round 4 at 1280×720 with the default 4 TAA shot samples, ~2–3 min each)
+Round 4 finals: `scratchpad/shots/flora/r4/final_*.png`. `taas=2` is no longer needed (and should not
+be used: the stratified dither resolves exactly over 4 sub-frames).
+* W2 forest interior, golden hour: `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=-25.292&lon=-104.202&yaw=0&pitch=2&tod=0.33`
+* W11 Nausicaä fungus forest: `/?mode=system&galaxy=0&star=0&planet=0&view=surface&lat=7.276&lon=3.168&yaw=0&pitch=-3&tod=0.45
 * W1 golden meadow (turf + sward shade, forked oaks, autumn trees): `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=16.122&lon=5.848&yaw=0&pitch=-2&tod=0.3`
 * W2 forested hill + lake from the air (canopy shade, LOD1 → impostors → far forest): `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=90&lat=-25.292&lon=-104.202&yaw=30&pitch=-8&tod=0.3`
 * W2 noon meadow (steep TP view onto the sward, player push): `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=-15.355&lon=146.556&yaw=0&pitch=-3&tod=0.5`
@@ -194,13 +205,8 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
 * W4 bioluminescent meadow at night from 4 m: `/?mode=system&galaxy=0&star=2&planet=0&view=fly&alt=4&lat=16.432&lon=151.962&yaw=150&pitch=-4&tod=0.02`
 * W5 Rick & Morty jungle: `/?mode=system&galaxy=0&star=1&planet=2&view=surface&lat=31.786&lon=-28.943&yaw=22.5&pitch=-3&tod=0.42`
 * W10 noon meadow on a terraced hillside: `/?mode=system&galaxy=0&star=17&planet=0&view=surface&lat=-15.355&lon=146.556&yaw=0&pitch=-2&tod=0.5`
-* W11 Nausicaä fungus forest (shelf towers, spore trees, dense sward): `/?mode=system&galaxy=0&star=0&planet=0&view=surface&lat=7.276&lon=3.168&yaw=0&pitch=-3&tod=0.45&taas=2`
-* W2 forest interior, golden hour (forked BotW oaks, sward, ferns): `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=-25.292&lon=-104.202&yaw=0&pitch=2&tod=0.33&taas=2`
-  — the two heaviest views on software GL (~45 s per frame on the loaded capture box): without
-  `taas=2` (2 instead of 4 TAA shot samples, Pipeline param) the shot can exceed shoot.mjs' 180 s
-  screenshot timeout (the W2 one did in round 1 too). Verified at 1280×720 with `taas=2`.
 * W2 capital clearing (ruins among the forest, civ clearings honoured): `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=140&lat=6.45&lon=25.95&pitch=-18&tod=0.35`
-* Debug: `&floradbg=nocast` (flora casts no shadows), `&floradbg=noreceive` (flora ignores shadows),
+* Debug: `&floradbg=hide:bush+log` (hide layers whose name contains a part), `&floradbg=nocast` (flora casts no shadows), `&floradbg=noreceive` (flora ignores shadows),
   `&floradbg=sward` (sward shade painted red), `sward,nodepth`, `grassnodepth`.
 * Wind: `[{"advance":0.5},{"shot":"a.png"},{"advance":0.7},{"shot":"b.png"}]` on any view — grass and
   foliage move between frames.
@@ -218,6 +224,13 @@ Lighting/ground differ from the game (no terrain material, no atmosphere/post), 
 must still be checked in-game.
 
 ## Performance (high)
+* Round 4, measured at 1280×720 in-game (capture profile, floraDensity 0.45): W1 meadow 43 draws /
+  0.97 M tris, W2 forest 57 / 1.83 M, W2 aerial 32 / 0.79 M, W2 noon 54 / 1.1 M, W4 night 45 /
+  2.27 M, W5 62 / 1.98 M, W10 44 / 1.08 M, W11 48 / 2.25 M (whole scenes 200–300 draws, other
+  tracks included). New this round: +2 under species layers per style with logs, dense grass
+  patch +30 turf triangles, bush LOD0 ≈ 2× cards (2 tris each); LOD0 understory to 24–32 m.
+  Shader cost: leaf fragments add one 4-tap normal dome + the crown-shell blend (ALU only);
+  impostors fetch side + top views (2 extra fetches) only inside the 0.62–0.9 elevation blend.
 * Flora ≈ 30–60 draw calls in the main pass (+2 this round: `flora-sward`, `flora-canopy-shade`).
   Shadow casters: canopy LOD0 < 26 m (was 38), big understory LOD0 < 22 m, rock LOD0, one
   near-impostor depth layer (20–800 m). Grass never casts. Canopy LOD0 < 34–44 m (was 55–70).
@@ -236,6 +249,15 @@ must still be checked in-game.
   fewer blades/segments.
 
 ## Known issues
+* Residual dither: a 4-sample shot resolves dithered fades uniformly, but the TAA sub-pixel jitter
+  moves crossfading geometry slightly between sub-frames, so a very faint fine checker can remain
+  on trees inside the LOD1 → impostor band (148–172 m); `taas=2` or no TAA shows the raw 2×2
+  ordered dither.
+* Ground showing between short turf on worlds whose terrain paints forest/jungle floors as dirt
+  (W5): the sward can only darken the ground (multiplicative), it cannot recolour it.
+* Night ground fog / volumetric haze around glowing forests (Pacific Drive look) is the
+  atmosphere track's; the big green out-of-focus discs in W4 night views are not flora (grass
+  glow now fades within 3 m of the lens).
 * The dithered LOD1 → impostor crossfade (140–180 m) can leave a faint stipple in stills when only a
   few TAA sub-frames are accumulated.
 * The sward/canopy shade discs are pulled toward the camera (≈ 0.2–0.3 m / sin(view elevation),
@@ -245,13 +267,17 @@ must still be checked in-game.
 * W10's hillside shows faint horizontal bands 5–15 m out: those are the terrain's terracettes
   (±0.5–0.8 m ledges at ~1 m scale in the analytic surface) seen at a grazing angle, not placement
   (instance dumps show uniform density/height there).
-* The W2 forest-interior hero view is too heavy for the 180 s screenshot timeout on the shared
-  software renderer (see Capture URLs); on a real GPU it is fine.
 * Changing the placement noise (gradient instead of value noise) re-rolled species stands: forests
   at old showcase coordinates differ from round 1 (W2 surface spot is now an oak wood).
 * Removing a clearing (`removeClear`) re-streams all cells (instances are compacted out on accept).
 
 ## Requests
+* **terrain** (round 4): on worlds whose flora grass cover is high in FOREST/JUNGLE (e.g. W5
+  `wacky`, W11 `fungal`), tint those floors toward the palette grass colour too (the meadow tint
+  only covers grassland): `world.get('flora')?.S.grass.cover[biome]` gives flora's grass cover per
+  biome; between short turf the brown dirt otherwise shows through.
+* **atmosphere** (round 4): height fog / in-scatter at night around W4's glowing forest (teal
+  haze so the tree line fades), and stronger aerial perspective on far forests (W2 aerial).
 * **terrain**: (done by terrain: meadow tint) — flora now also darkens the ground between stems
   itself (sward shade). Optional: expose the rendered CDLOD height (or the vertex `lod` used near the
   camera) so flora can root grass exactly on the drawn mesh instead of the analytic surface.
@@ -268,6 +294,11 @@ must still be checked in-game.
   source; a tighter bloom kernel / lower threshold weight for small bright discs keeps silhouettes.
 
 ### Done (from the inbox)
+* (round 4) cloud shadows via `lighting.setupMaterial` (auto-applied), `G.uWetness` + `G.uSnow` on
+  every flora material (plants, grass, rocks); grass shrinks within ~1.5 m of the camera; glowing
+  grass tips fade within 3 m of the lens; golden-hour wrap/translucency on grass and foliage use the
+  actual key light (RE_Direct), so they follow `uSunDir/uSunColor`; W3 "needle spikes"
+  (`lat=22.571&lon=56.286`) re-checked: the spot is open dune sand with no flora spikes now.
 * civ clearings (`world.civ.clearings`, `civ:clearings` event) — honoured in all bands + colliders.
 * vehicles: `flora.clearAround(pos, radius, keep)` + `world.pois` of kind `'landing'` honoured.
 * terrain: flatten stamps forwarded to workers (`onFlattenChange` → `{type:'flats'}` →

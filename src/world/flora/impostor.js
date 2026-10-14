@@ -190,6 +190,11 @@ const IMP_CORE = /* glsl */`
   vec3 off = (r * position.x + u * position.y) * s;
   // keep the quad from sinking into the terrain when seen from the side: pivot around the center
   rvImpPos = iPos.xyz + up * dm.y * sc + off;
+  #ifdef DEPTH_PASS
+    // push the light-facing caster card to the far side of the crown: the crown's own sunlit leaves
+    // (LOD1 meshes, impostors) are then in front of it — no self-shadow acne stripes on canopies
+    rvImpPos -= v * dm.x * sc * 0.5;
+  #endif
   // side-view uv
   float ci0 = float(mi * 2), ci1 = ci0 + 1.0;
   vec2 cell0 = vec2(mod(ci0, uGrid.x), floor(ci0 / uGrid.x));
