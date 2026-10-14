@@ -112,7 +112,7 @@ void main(){
     float laneWin = (gType == 1 ? smoothstep(0.85 * gR0, 1.05 * gR0, r) : smoothstep(gR0 * 0.04, gR0 * 0.4, r)) * (1.0 - smoothstep(gArmEnd[a.k] * 0.8, gArmEnd[a.k] * 1.1, r)) * mix(1.0, gArmAmp[a.k], 0.6);
     // the lane breaks into segments and re-forms; thick and dark inside, thinner and wispier outside
     float seg = smoothstep(-0.35, 0.25, nAl2 + 0.5 * nAl + 0.2);
-    float lane = bundle * (0.42 + 0.95 * strand) * (0.35 + 0.65 * seg) * laneWin * (1.25 - 0.6 * rN);
+    float lane = bundle * (0.2 + 1.1 * strand) * (0.35 + 0.65 * seg) * laneWin * (1.25 - 0.6 * rN);
     // secondary thin lane further upstream (M51 has 2–3 parallel lanes per arm)
     float dl2 = (x - xl - wl * (2.2 + 0.8 * nAl)) / (wl * 0.35);
     lane += 0.45 * exp(-0.5 * dl2 * dl2) * smoothstep(0.4, 0.8, st1) * laneWin * smoothstep(-0.1, 0.4, nAl2);
@@ -144,9 +144,9 @@ void main(){
     float xs = (x - (xl - wl * 1.1)) / 0.55;
     float strip = exp(-0.5 * xs * xs) * win * frag;
     float cplx = smoothstep(-0.05, 0.45, rv_fbm(vec3(al * 16.0, kSeed + 71.0, 3.0), 3) + 0.1);
-    vec3 qk = vec3(al * 150.0, ac * 150.0, kSeed + 81.0);
-    vec3 qk2 = vec3(al * 65.0, ac * 65.0, kSeed + 91.0);
-    float kn = knots(qk, 0.55, 0.2), kn2 = knots(qk2, 0.68, 0.24);
+    vec3 qk = vec3(al * 90.0, ac * 90.0, kSeed + 81.0);
+    vec3 qk2 = vec3(al * 42.0, ac * 42.0, kSeed + 91.0);
+    float kn = knots(qk, 0.5, 0.22), kn2 = knots(qk2, 0.7, 0.2);
     hiiStr = strip * cplx * cplx * (kn * 1.4 * cplx + kn2 * 2.6);
     young += strip * (0.3 + cplx) * (knots(qk, 0.55, 0.42) * 0.3 + knots(qk2, 0.68, 0.5) * 0.45);
     // diffuse HII glow along the young ridge

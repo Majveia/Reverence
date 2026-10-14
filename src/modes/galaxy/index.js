@@ -524,6 +524,8 @@ export default class GalaxyMode extends Mode {
       this.stars.update(this.camera, this.pat, this.tau, this._camPat, e.pipeline.height);
       this._updateLod();
       this.backdrop?.update(this.camera);
+      // foreground field stars (our own galaxy, in front of the target) only make sense from outside
+      this.backdrop?.setForeground?.(smoothstep(0.3 * R, 0.9 * R, this.camera.position.length()) * smoothstep(0.2 * R, 0.6 * R, this.rig.distance));
       this.nebulae?.update(this.camera, this.pat, this._camPat, dt, e.time.t);
       this._updateSelectionUi();
       this._updateTelemetry(dt);

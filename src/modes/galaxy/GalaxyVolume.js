@@ -27,8 +27,8 @@ export function galaxyPalette(S) {
   const early = S.type === 'lenticular' || S.type === 'elliptical';
   // (Sombrero-like S0s read almost neutral white-lavender in Hubble colour: strong bulge, no blue arms)
   const ring = S.type === 'lenticular' && S.dustRing;
-  const bulge = norm(mix(ring ? [1.0, 0.9, 0.8] : early ? [1.0, 0.8, 0.6] : [1.0, 0.64, 0.36], c.core, ring ? 0.08 : 0.2));
-  const old = norm(mix(ring ? [1.0, 0.94, 0.9] : early ? [1.0, 0.86, 0.72] : [1.0, 0.74, 0.5], c.core, ring ? 0.05 : 0.15));
+  const bulge = norm(mix(ring ? [1.0, 0.9, 0.8] : early ? [1.0, 0.8, 0.6] : [1.0, 0.7, 0.44], c.core, ring ? 0.08 : 0.2));
+  const old = norm(mix(ring ? [1.0, 0.94, 0.9] : early ? [1.0, 0.86, 0.72] : [1.0, 0.8, 0.62], c.core, ring ? 0.05 : 0.15));
   const young = norm(mix([0.16, 0.4, 1.0], c.arms, 0.1));
   const hii = norm(mix([1.0, 0.12, 0.34], c.hii, 0.2));
   return { bulge, old, young, hii };

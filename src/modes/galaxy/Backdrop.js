@@ -63,6 +63,53 @@ void main(){
   gl_FragColor = vec4(vColor * I * soft * mix(1.0, 1.0 / norm, 0.0) , 1.0);
 }`;
 
+// Foreground stars (our own galaxy's field stars between us and the target, as in every Hubble / JWST
+// frame): a few hundred sharp point sources with a Euclidean count law N(>F) ∝ F^-1.5, blackbody
+// colours, and analytic diffraction spikes (Hubble-like 4-point cross) whose length grows with flux.
+// Drawn after the galaxy (they are in front of it). Fades out when the camera dives into a galaxy.
+const FG_VERT = /* glsl */ `
+attribute vec4 aDir;      // xyz direction, w = flux
+attribute vec4 aCol;      // rgb, w = spike angle
+uniform float uPixScale, uFade;
+uniform vec2 uRes;
+varying vec2 vQ;
+varying vec3 vCol;
+varying float vFlux, vHalf, vAng;
+void main(){
+  vec3 d = normalize(aDir.xyz);
+  vec4 c = projectionMatrix * vec4(mat3(viewMatrix) * d, 1.0);
+  float F = aDir.w * uFade;
+  // sprite half-size (px): the spikes of bright stars reach further
+  float hs = clamp(3.0 + 26.0 * sqrt(F), 3.0, 64.0);
+  vec2 off = position.xy * hs / (0.5 * uRes);
+  c.xy += off * c.w;
+  c.z = c.w * 0.99999;
+  gl_Position = F < 1e-4 ? vec4(2.0, 2.0, 2.0, 1.0) : c;
+  vQ = position.xy * hs;
+  vCol = aCol.rgb;
+  vFlux = F;
+  vHalf = hs;
+  vAng = aCol.w;
+}`;
+const FG_FRAG = /* glsl */ `
+precision highp float;
+varying vec2 vQ;
+varying vec3 vCol;
+varying float vFlux, vHalf, vAng;
+void main(){
+  vec2 q = vQ;
+  float ca = cos(vAng), sa = sin(vAng);
+  q = vec2(ca * q.x - sa * q.y, sa * q.x + ca * q.y);
+  float r2 = dot(q, q);
+  float core = exp(-r2 / (2.0 * 0.55 * 0.55)) / (6.2831853 * 0.3025);
+  float halo = 0.06 / (3.14159265 * 4.0 * (1.0 + r2 / 4.0) * (1.0 + r2 / 4.0));
+  vec2 a = abs(q);
+  float len = 2.0 + 30.0 * sqrt(vFlux);
+  float spike = (exp(-a.y * a.y * 2.2) * exp(-a.x / len) + exp(-a.x * a.x * 2.2) * exp(-a.y / len)) * 0.045 * smoothstep(0.02, 0.4, vFlux);
+  float edge = 1.0 - smoothstep(0.75, 1.0, length(vQ) / vHalf);
+  gl_FragColor = vec4(vCol * vFlux * (core + halo + spike) * edge, 1.0);
+}`;
+
 export class Backdrop {
   constructor(engine, galaxy) {
     const r = new RNG(hashCombine(galaxy.seed, 0xbac6));
@@ -110,11 +157,52 @@ export class Backdrop {
     this.object.frustumCulled = false;
     this.object.renderOrder = -10;
     this.engine = engine;
+
+    // foreground stars
+    const nFg = q.tier === 'low' ? 260 : q.tier === 'med' ? 420 : 640;
+    const fd = new Float32Array(nFg * 4), fc = new Float32Array(nFg * 4);
+    const bb = (T) => {           // blackbody → linear rgb (normalized), Planck-ish fit
+      const t = T / 100;
+      let rr = t <= 66 ? 1 : Math.min(1, 1.29 * Math.pow(t - 60, -0.1332));
+      let gg = t <= 66 ? Math.max(0, Math.min(1, 0.39 * Math.log(t) - 0.632)) : Math.min(1, 1.13 * Math.pow(t - 60, -0.0755));
+      let b2 = t >= 66 ? 1 : t <= 19 ? 0 : Math.max(0, Math.min(1, 0.543 * Math.log(t - 10) - 1.196));
+      rr **= 2.2; gg **= 2.2; b2 **= 2.2;
+      const m = Math.max(rr, gg, b2); return [rr / m, gg / m, b2 / m];
+    };
+    for (let i = 0; i < nFg; i++) {
+      const z = r.range(-1, 1), a = r.range(0, Math.PI * 2), s2 = Math.sqrt(1 - z * z);
+      // Euclidean counts: F = Fmin u^(-2/3), a handful of bright stars, hundreds of faint ones
+      const F = Math.min(3.2, 0.012 * Math.pow(Math.max(1e-6, r.next()), -2 / 3));
+      fd.set([s2 * Math.cos(a), z, s2 * Math.sin(a), F], i * 4);
+      const u = r.next();
+      const T = u < 0.55 ? r.range(3600, 5600) : u < 0.85 ? r.range(5600, 7500) : r.range(7500, 16000);
+      const c = bb(T);
+      fc.set([c[0], c[1], c[2], 0], i * 4);
+    }
+    const fg = new THREE.InstancedBufferGeometry();
+    fg.setAttribute('position', g.getAttribute('position'));
+    fg.setIndex(g.getIndex());
+    fg.setAttribute('aDir', new THREE.InstancedBufferAttribute(fd, 4));
+    fg.setAttribute('aCol', new THREE.InstancedBufferAttribute(fc, 4));
+    fg.instanceCount = nFg;
+    this.fgMat = new THREE.ShaderMaterial({
+      vertexShader: FG_VERT, fragmentShader: FG_FRAG,
+      uniforms: { uPixScale: { value: 700 }, uFade: { value: 1 }, uRes: { value: new THREE.Vector2(1280, 720) } },
+      transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    this.foreground = new THREE.Mesh(fg, this.fgMat);
+    this.foreground.frustumCulled = false;
+    this.foreground.renderOrder = 8;
+    this.object.add(this.foreground);
   }
+
+  /** 1 = full foreground star field (outside the galaxy), 0 = none (inside it: the real local stars take over). */
+  setForeground(k) { this.fgMat.uniforms.uFade.value = k; this.foreground.visible = k > 0.002; }
 
   update(camera) {
     this.mat.uniforms.uPixScale.value = this.engine.pipeline.height / (2 * Math.tan(camera.fov * Math.PI / 360));
+    this.fgMat.uniforms.uRes.value.set(this.engine.pipeline.width, this.engine.pipeline.height);
   }
 
-  dispose() { this.object.geometry.dispose(); this.mat.dispose(); }
+  dispose() { this.object.geometry.dispose(); this.mat.dispose(); this.foreground.geometry.dispose(); this.fgMat.dispose(); }
 }
