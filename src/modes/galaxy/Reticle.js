@@ -9,15 +9,17 @@ export class Reticle {
       uniforms: { uA: { value: 0 }, uT: { value: 0 } },
       vertexShader: /* glsl */ `
         uniform float uT;
-        void main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = 34.0 + 3.0 * sin(uT * 3.0); }`,
+        void main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = 46.0 + 3.0 * sin(uT * 3.0); }`,
       fragmentShader: /* glsl */ `
         uniform float uA;
         void main(){
           vec2 q = gl_PointCoord * 2.0 - 1.0;
           float r = length(q);
-          float ring = smoothstep(0.08, 0.0, abs(r - 0.82)) ;
-          float gap = smoothstep(0.1, 0.22, min(abs(q.x), abs(q.y)));
-          gl_FragColor = vec4(vec3(0.75, 0.88, 1.0) * ring * gap * uA * 0.9, 1.0);
+          // bright ring (≈ 38 px) with four short gaps, plus a soft dark under-glow so it reads on bright stars
+          float ring = smoothstep(0.075, 0.02, abs(r - 0.82));
+          float gap = smoothstep(0.06, 0.14, min(abs(q.x), abs(q.y)));
+          float tick = smoothstep(0.05, 0.0, min(abs(q.x), abs(q.y))) * smoothstep(0.62, 0.66, r) * (1.0 - smoothstep(0.74, 0.78, r));
+          gl_FragColor = vec4(vec3(0.85, 0.94, 1.0) * (ring * gap + tick) * uA * 1.6, 1.0);
         }`,
       transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
     });

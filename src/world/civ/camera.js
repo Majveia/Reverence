@@ -211,6 +211,14 @@ export function frameSite(civ, s, preset) {
         const aF = Math.atan2(fz - cz, fx - cx), aP = Math.atan2(-cz, -cx);
         const sep = Math.abs(Math.atan2(Math.sin(aP - aF), Math.cos(aP - aF)));
         pen += Math.max(0, sep - 0.38) * 6;
+        // an open vista behind the landmark (valley, sea, distant ranges), not a cliff wall filling the frame
+        if (G) {
+          const ux = (fx - cx) / D, uz = (fz - cz) / D;
+          for (const dd of [250, 500, 900, 1500]) {
+            const bh = G.h(fx + ux * dd, fz + uz * dd);
+            pen += Math.max(0, bh - (camH + (D + dd) * 0.09)) / 30;
+          }
+        }
         const sc = -pen - (dk - 1) * 0.8 + Math.cos(a - landA - Math.PI) * 0.4 - parkPenalty(cx, cz, (fx - cx) / D, (fz - cz) / D) * 0.3;
         if (!best || sc > best.sc) best = { sc, cx, cz, camH, D, aF, aP, gh };
       }

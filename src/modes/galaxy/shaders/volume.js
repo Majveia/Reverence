@@ -34,6 +34,7 @@ uniform int uSteps;
 uniform vec4 uNoiseF;          // f1, f2, f3, pixel angle
 uniform float uDustNoise, uFrame;
 uniform vec3 uElDust;          // elliptical dust lane: tilt, yaw, radius (0 = none)
+uniform float uResolvedR;      // radius (kly) around the camera whose stars are drawn individually (LOD)
 varying vec2 vUv;
 
 vec4 bulgeG(float t, float sqA, float h, vec4 c2){
@@ -163,6 +164,14 @@ void main(){
     // mip level from the pixel footprint on the disk (stretched along grazing rays)
     float footM = pixA * max(tcr, 1e-4) / max(abs(rd.y), 0.2);
     float lodM = max(0.0, log2(footM / uMapTexel) - 0.5);
+    // magnified (camera inside the disk): bilinear texels would show as flat, stretched rectangles.
+    // Domain-warp the lookup with smooth 3-D noise at a few texels' scale → organic, cloud-like edges
+    float magW = 1.0 - smoothstep(0.04, 0.5, footM / uMapTexel);
+    if (magW > 0.0) {
+      vec3 wn = texture(tNoise, pm / (14.0 * uMapTexel)).rgb - 0.5;
+      vec3 wn2 = texture(tNoise, pm / (4.0 * uMapTexel) + 0.37).rgb - 0.5;
+      uv += (wn.xy * 5.0 + wn2.yz * 1.6) * uMapTexel / (2.0 * uMapR) * magW;
+    }
     vec4 M = (abs(uv.x - 0.5) < 0.5 && abs(uv.y - 0.5) < 0.5) ? textureLod(tMap, uv, lodM) : vec4(0.0);
     // magnified far beyond the map's resolution (camera inside the disk) bilinear texels would show
     // as a checkerboard: blend toward a smoother (coarser) level there
@@ -190,6 +199,9 @@ void main(){
     // magnified far beyond its resolution (inside the disk) the map's HII / cluster knots would show
     // as blocky texels: they fade out there (the individual nebulae and LOD stars take over)
     vec3 E = uColOld * (M.r * uOldL * IO) + (uColYoung * (M.g * uYoungL * mix(0.35, 1.0, magK)) + uColHII * (M.a * uHiiL * magK)) * (IY * gm);
+    // starlight of the resolved neighbourhood is drawn as individual stars (LOD + faint crowd), not as glow:
+    // only the unresolved, distant disk forms the band (dust still absorbs at all distances)
+    if (uResolvedR > 0.0) E *= smoothstep(0.3 * uResolvedR, uResolvedR, 0.5 * (t + tb));
     // clumpy dust mixed with the stars: local obscuration of this sample's own light
     float yl = pm.y / (1.6 * hD);
     E *= exp(-uExt * (M.b * uScreen * dm * exp(-yl * yl)));

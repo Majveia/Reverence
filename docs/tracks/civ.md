@@ -36,8 +36,9 @@ Owner paths: `src/world/civ/**`, this file. Subsystem `civ`, order 35.
 * **Composition (#4)** — `civcam=hero` is a framing solver: the landmark's real height is measured by a dry-run build, the
   viewpoint distance fits it whole (top ~1/6 under the frame edge, horizon on the upper third), sight lines to the landmark
   and the plaza are tested against every lot, tall things within 25 m of the lens are rejected, and the camera is yawed so
-  the landmark sits on a rule-of-thirds vertical with the plaza on the other side. `civcam=aerial` tilts up until the tallest
-  skyline anchor is whole.
+  the landmark sits on a rule-of-thirds vertical with the plaza on the other side; viewpoints whose background (250–1500 m
+  past the landmark) is a wall of terrain above the eye line are penalised, so the hero shot looks out over a vista (W10:
+  observatory against the valley instead of a cliff). `civcam=aerial` tilts up until the tallest skyline anchor is whole.
 * **Layout (#5)** — organic towns have a density gradient (tight continuous frontage in the core, sparser edge, smaller
   setbacks and gaps near the plaza). **Farmland**: around village / harbor / monastery / hearth / frontier / nomad towns, crop
   fields (new `PAT.FIELD`: rows, furrows, per-field crop colour, growth patches) bordered by hedgerows or dry-stone walls
@@ -157,15 +158,16 @@ use `--advance 2.5` for the normal night look.
 | W7 Tarkovsky kremlin-monastery town (+ walled fields) | `star=3&planet=2&tod=0.4&civcam=aerial` |
 | W6 Roger Dean sea metropolis + space elevator | `star=1&planet=3&tod=0.4&civcam=aerial` |
 | W8 Stålenhag industrial metropolis | `star=2&planet=1&tod=0.3&civcam=aerial` (heavy storm fog at t≈0.5 — atmosphere) |
-| W10 Hearthian village | `star=17&planet=0&tod=0.3&civcam=hero` |
+| W10 Hearthian village (observatory on stilts, launch tower, valley vista) | `star=17&planet=0&tod=0.3&civcam=hero` (960×540 is ~2× faster than 1280 under load) |
 | W2 BotW ruins city | `star=11&planet=0&tod=0.4&civcam=hero` / `civcam=aerial` |
 | W11 Nausicaä nomad town | `star=0&planet=0&tod=0.4&civcam=hero` |
 | City lights from orbit (night side) | `star=9&planet=2&tod=0.0&view=orbit` |
 | M1 Kubrick monolith (civ 0) | `star=0&planet=2.0&tod=0.4` (monolith ~200 m ahead of the default spawn) |
 
 ## Known issues
-* `node tools/check.mjs`: see the result at the end of this round's summary. Under heavy shared load `system-surface` can
-  exceed its readiness timeout with or without civ; civ itself is ready ~4 s after create (`readyMs`).
+* `node tools/check.mjs` passes (ALL OK, round 4). Under heavy shared load `system-surface` can exceed its readiness timeout
+  with or without civ; civ itself is ready ~4 s after create (`readyMs`). W10 `civcam=hero` at 1280×720 can exceed the 580 s
+  capture wrapper under load — use 960×540.
 * SSR is screen-space: things off screen (behind the camera, above the frame) are not reflected; rays that leave the frame
   reuse its edge (sky / far facades). Faint stochastic speckle remains in rough reflections under the 4-sample shot TAA.
 * The light-pollution glow is applied after the cloud pass on every sky pixel near a city; a clear night sky gets the same

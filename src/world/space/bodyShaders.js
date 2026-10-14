@@ -265,9 +265,9 @@ vec3 gasColor(vec3 p, float shift, float phaseSeed, int OCT, out float stormMask
   float e0 = abs(bandLum(q.y + 0.012) - bandLum(q.y - 0.012));
   float shear = smoothstep(0.015, 0.09, e0);
   // curl-flow advection (zonal-dominant): displacement ~ feature size at each octave
-  vec3 aniso = vec3(1.0, 5.0, 1.0);
+  vec3 aniso = vec3(1.0, 4.0, 1.0);
   vec3 s3 = q;
-  float amp = 0.03 * uTurb * (0.25 + 1.7 * shear + 1.8 * wake);
+  float amp = 0.024 * uTurb * (0.3 + 1.6 * shear + 1.8 * wake);
   float f = 2.6;
   float nAcc = 0.0;
   float yMid = q.y;
@@ -281,7 +281,7 @@ vec3 gasColor(vec3 p, float shift, float phaseSeed, int OCT, out float stormMask
     v.y *= 0.4;                                              // meridional motion is weaker than zonal
     s3 += v * (amp / f);
     nAcc += n * (1.0 / f);
-    f *= 2.07; amp *= 0.78;
+    f *= 2.07; amp *= 0.96;            // fine octaves keep real displacement → small eddies, not smeared paint
   }
   float y = s3.y;
   vec3 col = texture2D(uBands, vec2(clamp(y * 0.5 + 0.5, 0.0, 1.0), 0.5)).rgb;
@@ -293,7 +293,10 @@ vec3 gasColor(vec3 p, float shift, float phaseSeed, int OCT, out float stormMask
   // large-scale longitudinal variation of each band (brighter / darker segments, colour drift)
   float lv = rv_snoise(vec3(q.x * 1.6, q.y * 9.0, q.z * 1.6) + uSeedOff * 0.7);
   col *= 0.9 + 0.14 * lv;
-  col *= 0.86 + 0.2 * (nAcc * 1.2 + 0.5) + 0.09 * str;
+  col *= 0.86 + 0.2 * (nAcc * 1.2 + 0.5) + 0.16 * str;
+  // mottling that follows the flow (cloud texture inside every band; a real deck is never a flat fill)
+  float mot = uDetail > 0.05 ? rv_fbm(vec3(s3.x * 11.0, s3.y * 34.0, s3.z * 11.0) + uSeedOff * 0.9 + phaseSeed, uDetail > 0.4 ? 4 : 3) : 0.0;
+  col *= 0.92 + 0.26 * mot;
   // bright plumes / dark festoons in the shear zones: upwelling ammonia clouds vs clear blue-grey holes
   float pl = smoothstep(0.35, 0.75, nAcc * 1.6 + str * 0.6);
   col = mix(col, col * 0.9 + vec3(0.1, 0.095, 0.09), pl * shear * 0.55);
@@ -307,7 +310,7 @@ vec3 gasColor(vec3 p, float shift, float phaseSeed, int OCT, out float stormMask
     col = mix(col, mix(vec3(0.96, 0.93, 0.88), col * vec3(0.7, 0.55, 0.45), step(0.5, fract(wo.y * 7.3))), oval * 0.6 * uDetail);
   }
   // the vortex: storm colour with spiral texture from the advected field, pale collar around it
-  stormIn *= 0.8 + 0.4 * str;
+  stormIn *= clamp(0.55 + 0.9 * str + 1.2 * nAcc, 0.0, 1.2);   // broken, turbulent collar (not a bullseye ring)
   return col;
 }
 void main(){
@@ -376,14 +379,14 @@ void main(){
   bool hitP = tp.x < tp.y && tp.y > 0.0;
   if (hitP) t1 = max(tp.x, t0);
   float H = (uTop - 1.0) * uHScale;
-  const int STEPS = 10;
+  const int STEPS = 14;
   float dt = (t1 - t0) / float(STEPS);
   vec3 L = uSunDir;
   float nu = dot(rd, L);
   vec3 sumR = vec3(0.0); vec3 sumM = vec3(0.0);
   vec3 odV = vec3(0.0);
   vec3 betaE = uBetaR + uBetaM * 1.1;
-  float jit = rv_ign(gl_FragCoord.xy);
+  float jit = 0.25 + 0.5 * rv_ign(gl_FragCoord.xy);   // mild jitter: no visible dither hatching in captures
   for (int i = 0; i < STEPS; i++){
     float t = t0 + dt * (float(i) + jit);
     vec3 x = ro + rd * t;

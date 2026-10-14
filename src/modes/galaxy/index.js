@@ -17,6 +17,7 @@ import { Nebulae } from './Nebulae.js';
 import { Backdrop } from './Backdrop.js';
 import { Reticle } from './Reticle.js';
 import { FaintStars } from './FaintStars.js';
+import { GlobularClusters } from './GlobularClusters.js';
 
 const DEG = Math.PI / 180;
 const CLASS_NAMES = ['O', 'B', 'A', 'F', 'G', 'K', 'M'];
@@ -80,6 +81,8 @@ export default class GalaxyMode extends Mode {
     this.scene.add(this.stars.group);
     this.faint = safe(() => new FaintStars(e, this.volume.uniforms));
     if (this.faint) this.scene.add(this.faint.points);
+    this.gcs = safe(() => new GlobularClusters(e, gal, { maxPointSize: Math.min(64, maxPt || 64) }));
+    if (this.gcs) this.scene.add(this.gcs.points);
     const n = Math.min(GLOBAL_STARS, Math.floor((gal.displayStars || 1.2e6) * e.quality.particleScale));
     this.starCount = n;
     this.stars.initGlobal(n);
@@ -92,6 +95,7 @@ export default class GalaxyMode extends Mode {
         if (un && typeof un.value === 'number' && Number.isFinite(+v)) un.value = +v;
         else if (k === 'exp') { this.look.exposure = +v; this._expSet = true; }
         else if (k === 'stars') this.starGainMul = +v;
+        else if (k === 'gc') this.gcGain = +v;
         else if (k === 'HaloL') this.volume.uniforms.uHalo.value.y = +v;
         else if (k === 'BarL') this.volume.uniforms.uBar.value.w = +v;
         else if (k === 'EnvL') this.volume.uniforms.uBulgeH.value.y = +v;
@@ -117,7 +121,7 @@ export default class GalaxyMode extends Mode {
     const R = this.R;
     const yaw = params.yaw !== undefined ? parseFloat(params.yaw) * DEG : 0.55;
     // Sombrero-like lenticulars are shown nearly edge-on (their dust ring is the point)
-    const pitch = params.pitch !== undefined ? parseFloat(params.pitch) * DEG : (gal.type === 'lenticular' && S.dustRing ? 6.5 : 44) * DEG;
+    const pitch = params.pitch !== undefined ? parseFloat(params.pitch) * DEG : (gal.type === 'lenticular' && S.dustRing ? 5.2 : 44) * DEG;
     // default framing: fit the visible disk into the frame (Hubble-like: the galaxy fills the shot)
     this.frameExt = gal.type === 'lenticular' && S.dustRing ? S.dustRing.r / 1000 * 1.18
       : S.ringStyle === 'cartwheel' || S.ringStyle === 'hoag' ? (S.ringOut + 2.5 * S.ringW + Math.hypot(S.ringOff[0], S.ringOff[1])) / 1000
@@ -132,10 +136,10 @@ export default class GalaxyMode extends Mode {
     if (gal.type === 'lenticular' || gal.type === 'elliptical') {
       if (!this._meterSet) this.edgeMeter = 0.12;
       this.look.filmLook = { power: 1.04, saturation: 1.12 };
-      if (!this._expSet) this.look.exposure = gal.type === 'lenticular' ? 1.0 : 0.85;
+      if (!this._expSet) this.look.exposure = gal.type === 'lenticular' ? 1.0 : 1.7;
     }
     e.ui.setLocation({ scale: 'Galaxy', title: gal.name, subtitle: `${gal.type} galaxy` });
-    e.ui.showTitle(gal.name.toUpperCase(), `${gal.type} galaxy · ${(gal.starCount / 1e9).toFixed(0)} billion stars`, 3000);
+    e.ui.showTitle(gal.name.toUpperCase(), `${gal.type} galaxy · ${(gal.starCount / 1e9).toFixed(0)} billion stars`, 2600);
     e.ui.hint('drag to orbit · scroll or pinch to zoom · tap a star to select · double-tap to travel');
     e.audio.setScene('galaxy');
   }
@@ -222,10 +226,14 @@ export default class GalaxyMode extends Mode {
     } else if (f.startsWith('star') || f === 'local' || params.star !== undefined) {
       const idx = f.startsWith('star') ? parseInt(f.split(':')[1] ?? '0', 10) : params.star !== undefined ? parseInt(params.star, 10) : 6;
       const st = this.engine.universe.star(this.galaxyIndex, idx || 0);
-      this.rig.setView({ target: st.position.clone().multiplyScalar(1 / 1000) });
+      const tgt = st.position.clone().multiplyScalar(1 / 1000);
+      // stellar neighbourhood: sit inside the thin dust layer (like the Sun, ~50 ly from the midplane) so
+      // the galaxy wraps around the sky as a band split by dust rifts, instead of a dust "floor" below
+      if (f === 'local') tgt.y = Math.sign(tgt.y || 1) * Math.min(Math.abs(tgt.y), 0.06 * S.hDust / 1000);
+      this.rig.setView({ target: tgt });
       // local neighbourhood: look along the disk toward the galactic centre (the band + bulge ahead)
       if (f === 'local' && params.yaw === undefined) this.rig.setView({ yaw: Math.atan2(st.position.x, st.position.z) });
-      setD(f === 'local' ? 0.25 : 0.04, f === 'local' ? 5 : 14);
+      setD(f === 'local' ? 0.25 : 0.04, f === 'local' ? 1.5 : 14);
       if (f !== 'local') this._select({ index: idx || 0, pos: st.position.clone().multiplyScalar(1 / 1000), follow: 1 });
     }
     void S;
@@ -329,6 +337,7 @@ export default class GalaxyMode extends Mode {
       lm.uWeight.value = 0;
       if (this.faint) this.faint.points.visible = false;
       this.stars.globalMat.uniforms.uLodRadius.value = 0;
+      this.volume.uniforms.uResolvedR.value = 0;
       return;
     }
     lod.on = true;
@@ -355,6 +364,7 @@ export default class GalaxyMode extends Mode {
       const gm = this.stars.globalMat.uniforms;
       gm.uLodCenter.value.copy(lod.center);
       gm.uLodRadius.value = lod.radius * k;
+      this.volume.uniforms.uResolvedR.value = lod.radius * 0.85 * k;
     }
   }
 
@@ -435,6 +445,12 @@ export default class GalaxyMode extends Mode {
     try { st = this.engine.universe.star(this.galaxyIndex, sel.index); } catch (err) { console.warn('[galaxy] star lookup failed', err); }
     if (!st) return;
     this.selected = { ...sel, star: st };
+    // the arrival title card makes way for the selection (UI track API, optional)
+    try {
+      const ui = this.engine.ui;
+      if (ui.hideTitle) ui.hideTitle();
+      else if (ui.titleS && ui.titleS.t > 0) ui.titleS.dur = Math.min(ui.titleS.dur, ui.titleS.t + 0.6);   // fade the card out now
+    } catch (_) { /* optional */ }
     this.engine.ui.prompt('galaxy', `Travel to ${st.name}`, 'interact');
     this.engine.audio?.play?.('select');
   }
@@ -517,13 +533,14 @@ export default class GalaxyMode extends Mode {
         let bk = 1;
         if (this.blackHole) bk = smoothstep(2.4, 4.4, Math.log10(Math.max(1, this.blackHole.distanceRs(this.camera))));
         this._bk = bk;
-        this.volume.compositeMat.uniforms.uGain.value = (0.16 + 0.84 * k * k * (3 - 2 * k)) * (1 - 0.85 * nf) * (0.02 + 0.98 * bk);
+        this.volume.compositeMat.uniforms.uGain.value = (0.3 + 0.7 * k * k * (3 - 2 * k)) * (1 - 0.85 * nf) * (0.02 + 0.98 * bk);
       }
       this.volume.update(this.camera, this.pat);
       rotTheta(this.camera.position, -this.pat, this._camPat);
       this.stars.update(this.camera, this.pat, this.tau, this._camPat, e.pipeline.height);
       this._updateLod();
       this.backdrop?.update(this.camera);
+      this.gcs?.update(this.camera, this.pat, (this.galaxy.type === 'elliptical' ? 0.014 : this.galaxy.type === 'lenticular' ? 0.012 : 0.009) * (this.gcGain ?? 1));
       // foreground field stars (our own galaxy, in front of the target) only make sense from outside
       this.backdrop?.setForeground?.(smoothstep(0.3 * R, 0.9 * R, this.camera.position.length()) * smoothstep(0.2 * R, 0.6 * R, this.rig.distance));
       this.nebulae?.update(this.camera, this.pat, this._camPat, dt, e.time.t);
@@ -547,7 +564,9 @@ export default class GalaxyMode extends Mode {
       const vis = v.z < 1 && v.z > -1 && Math.abs(v.x) < 1.2 && Math.abs(v.y) < 1.2;
       const st = this.selected.star;
       const sub = `${st.cls}-class ${CLASS_DESC[st.cls] ?? 'star'} · ${Math.round(st.temperature).toLocaleString('en-US')} K`;
-      list.push({ id: 'gx-sel', x: (v.x * 0.5 + 0.5) * e.width, y: (0.5 - v.y * 0.5) * e.height - 22, visible: vis, label: st.name, sub });
+      // label clear of the reticle (≈ 23 px radius): above it, or below when the star is near the top edge
+      const sy = (0.5 - v.y * 0.5) * e.height;
+      list.push({ id: 'gx-sel', x: (v.x * 0.5 + 0.5) * e.width, y: sy < 90 ? sy + 34 : sy - 46, visible: vis, label: st.name, sub });
     } else this.reticle.hide();
     const key = list.map((m) => m.id).join('|');
     if (list.length || this._markerKey) e.ui.setMarkers(list);
@@ -615,6 +634,7 @@ export default class GalaxyMode extends Mode {
     this.backdrop?.dispose();
     this.reticle?.dispose();
     this.faint?.dispose();
+    this.gcs?.dispose();
   }
 
   getState() {

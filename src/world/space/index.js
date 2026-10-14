@@ -226,6 +226,17 @@ class Space {
     return true;
   }
 
+  /** Capture helper (view=orbit): star just `offDeg` degrees outside (+) or inside (-) the planet's limb as
+   *  seen from the orbit camera → diamond-ring / backlit-crescent glare shots. */
+  orbitLimbShot(offDeg = 0.3, rollDeg = 0) {
+    const o = this.world.player?.cam?.orbit;
+    if (!o) return false;
+    const R = this.world.body.radius;
+    const d = Math.max(this.ctx.camLocal.length(), R * 1.001);
+    const limb = Math.asin(Math.min(1, R / d)) * 180 / Math.PI;
+    return this.orbitSunShot(limb + offDeg, rollDeg);
+  }
+
   isReady() { return this.sky ? this.sky.isReady() : true; }
 
   getState() {

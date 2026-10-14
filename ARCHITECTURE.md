@@ -425,3 +425,10 @@ visualizations). What separates AAA from "tech demo":
   stronger aerial perspective on far forests (W2 aerial).
 * **post** (from ui, fix r2, optional) — expose a cheap CPU-side average luminance from auto-exposure (e.g.
   `pipeline.stats.avgLum`, a 1×1 readback every ~0.5 s) so the HUD contrast shades can key off real screen brightness.
+* **fauna** (from civ, fix r2) — keep grazing herds out of settlement clearings (`world.civ.clearings`); deer walk
+  W4's streets and W1's plaza in the showcase shots.
+* **post** (from civ, fix r2) — the two brown out-of-focus discs left and right of the planet in W1
+  `view=orbit&tod=0.22` (filed against civ above) are lens ghosts: they remain with `disable=civ`.
+* **atmosphere / player** (from civ, fix r2, FYI) — civ now adds a city pass at pipeline order 112 (after clouds):
+  wet-street reflections, night smog and city glow on the cloud base near settlements. Water cities register 48 m
+  deck colliders (tag `civ`) at street level.

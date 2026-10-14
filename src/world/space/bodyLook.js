@@ -108,14 +108,26 @@ export function gasLook(b) {
   let y = 0;
   while (y < 1) { edges.push(y); y += r.range(0.03, 0.1); }
   edges.push(1.0001);
+  // coherent band colours: zones take the palette's light tones, belts its dark/warm ones (a real giant
+  // has 2-3 cloud chemistries, not a random colour per stripe), with small per-band drift
+  const byL = pal.map((c) => ({ c, l: c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722 })).sort((a, b2) => b2.l - a.l);
+  const lightC = byL.slice(0, Math.ceil(byL.length / 2)).map((x) => x.c);
+  const darkC = byL.slice(Math.floor(byL.length / 2)).map((x) => x.c);
+  const zoneA = lightC[r.int(0, lightC.length - 1)], zoneB = lightC[r.int(0, lightC.length - 1)];
+  const beltA = darkC[r.int(0, darkC.length - 1)], beltB = darkC[r.int(0, darkC.length - 1)];
+  const accentBelt = fam === 'exotic' ? pal[r.int(0, pal.length - 1)] : null;
   const bandCols = [];
   for (let i = 0; i < edges.length; i++) {
-    const base = pal[r.int(0, pal.length - 1)].clone();
     const zone = i % 2 === 0;
+    const base = (zone ? zoneA.clone().lerp(zoneB, r.next()) : beltA.clone().lerp(beltB, r.next()));
+    if (!zone && accentBelt && r.chance(0.25)) base.lerp(accentBelt, 0.6);
     // zones: bright, creamy (high ammonia clouds); belts: darker, warmer (deeper, coloured layers)
-    base.multiplyScalar(zone ? r.range(1.0, 1.14) : r.range(0.5, 0.78));
-    if (!zone && fam !== 'ice') base.lerp(new THREE.Color(base.r * 1.08, base.g * 0.86, base.b * 0.7), 0.5);
-    base.lerp(tint, fam === 'exotic' ? 0.12 : 0.05);
+    base.multiplyScalar(zone ? r.range(1.0, 1.1) : r.range(0.62, 0.86));
+    if (!zone && fam !== 'ice') base.lerp(new THREE.Color(base.r * 1.08, base.g * 0.88, base.b * 0.72), 0.4);
+    base.lerp(tint, fam === 'exotic' ? 0.1 : 0.04);
+    // photographic (slightly desaturated) colour: real giants are pastel, not candy-striped
+    const lb = base.r * 0.2126 + base.g * 0.7152 + base.b * 0.0722;
+    base.lerp(new THREE.Color(lb, lb, lb), 0.18);
     bandCols.push(base);
   }
   // thin sub-belts (dark lanes) inside the broad bands
@@ -123,6 +135,11 @@ export function gasLook(b) {
   const nl = r.int(8, 16);
   for (let i = 0; i < nl; i++) lanes.push([r.range(0.05, 0.95), r.range(0.002, 0.007), r.range(0.72, 0.9)]);
   const c = new THREE.Color();
+  // polar hood colour: the mean band colour, greyed and cooled
+  const polCol = new THREE.Color();
+  for (const bc of bandCols) polCol.add(bc);
+  polCol.multiplyScalar(0.78 / bandCols.length);
+  { const lp = polCol.r * 0.2126 + polCol.g * 0.7152 + polCol.b * 0.0722; polCol.lerp(new THREE.Color(lp * 0.92, lp * 0.97, lp * 1.08), 0.55); }
   for (let i = 0; i < N; i++) {
     const t = i / (N - 1);
     // symmetric-ish about the equator (real giants roughly are)
@@ -138,7 +155,7 @@ export function gasLook(b) {
     // polar darkening/greying
     const lat = Math.abs(t - 0.5) * 2;
     const pol = THREE.MathUtils.smoothstep(lat, 0.72, 0.98);
-    c.lerp(new THREE.Color(c.r * 0.55, c.g * 0.6, c.b * 0.7), pol);
+    c.lerp(polCol, pol * 0.85);   // greyer, bluer polar hood (no dark painted cap)
     const sub = 0.96 + 0.08 * Math.sin(t * 190 + ph0) * Math.sin(t * 57);
     data[i * 4] = Math.min(255, c.r * sub * 255);
     data[i * 4 + 1] = Math.min(255, c.g * sub * 255);
@@ -208,14 +225,22 @@ export function ringTexture(b) {
     const lk = Math.min(nl - 1, Math.floor(t * nl));
     const lf = t * nl - lk;
     const ls = Math.min(1, Math.max(0, (lf - 0.42) * 6)); // crisp ringlet edges
-    const lop = lo[lk] + (lo[Math.min(nl - 1, lk + 1)] - lo[lk]) * ls * ls;
+    let lop = lo[lk] + (lo[Math.min(nl - 1, lk + 1)] - lo[lk]) * ls * ls;
+    // ringlet contrast by region: the C ring and the outer A ring are full of plateaus and ringlets, the
+    // dense B ring is smoother (broad bright/dim bands rather than vinyl grooves)
+    const inB = t > cIn + 0.05 && t < cass - 0.02 ? 1 : 0;
+    lop = 1 + (lop - 1) * (inB ? 0.4 : t > cass + cassW ? 0.7 : 1.0);
     op *= lop;
+    op *= 0.82 + 0.18 * noise1(t * 28, 0);            // broad density undulations
     op *= 0.7 + 0.3 * (noise1(t * 260, 1) * 0.5 + 0.5);
     op *= 0.72 + 0.28 * (noise1(t * 1100, 2) * 0.5 + 0.5);
     op *= THREE.MathUtils.smoothstep(t, 0.0, 0.02);
     op = THREE.MathUtils.clamp(op * (0.7 + (ring.opacity ?? 0.6) * 0.45), 0, 0.97);
     col.copy(c);
-    const v = (la[lk] + (la[Math.min(nl - 1, lk + 1)] - la[lk]) * ls) * (0.9 + 0.12 * noise1(t * 40, 2));
+    let v = (la[lk] + (la[Math.min(nl - 1, lk + 1)] - la[lk]) * ls) * (0.9 + 0.12 * noise1(t * 40, 2));
+    v = 1 + (v - 1) * (inB ? 0.5 : 1.0);
+    // the B ring is the brightest (fresh ice), the C ring darker and greyer
+    v *= t < cIn ? 0.8 : inB ? 1.08 + 0.06 * Math.sin(Math.PI * (t - cIn) / (cass - cIn)) : 0.95;
     data[i * 4] = Math.min(255, col.r * v * 235);
     data[i * 4 + 1] = Math.min(255, col.g * v * 235);
     data[i * 4 + 2] = Math.min(255, col.b * v * 235);

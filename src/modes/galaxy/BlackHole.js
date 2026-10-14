@@ -73,15 +73,32 @@ vec4 disk(vec3 p, vec3 ph){
   float phi = atan(p.z, p.x) - om * uTime * 6.0;
   float lr = log(r);
   float n = rv_fbm(vec3(cos(phi) * 2.2, sin(phi) * 2.2, lr * 9.0 + uSeed), 5);
-  float n2 = rv_fbm(vec3(cos(phi) * 7.0, sin(phi) * 7.0, lr * 26.0 + 3.1 + uSeed), 3);
-  float dens = smoothstep(-0.55, 0.55, n + 0.35 * n2);
+  // trailing log-spiral striations (MRI turbulence sheared by the Keplerian flow, Ω ∝ r^-3/2)
+  float phS = phi + 2.4 * lr;
+  float n2 = rv_fbm(vec3(cos(phS) * 7.0, sin(phS) * 7.0, lr * 26.0 + 3.1 + uSeed), 3);
+  float dens = smoothstep(-0.55, 0.55, n + 0.4 * n2);
+  // a few compact hot spots (flares) riding the flow at their own Keplerian rate
+  float hot = 0.0;
+  for (int k = 0; k < 3; k++) {
+    float fk = float(k);
+    float rk = uDiskIn * (1.6 + 1.3 * fk) + 0.7 * sin(uSeed + fk * 2.1);
+    float ak = uSeed * (1.3 + fk) + fk * 2.4 - sqrt(0.5 / (rk * rk * rk)) * uTime * 6.0;
+    vec2 hp = vec2(cos(ak), sin(ak)) * rk;
+    vec2 dd = p.xz - hp;
+    hot += exp(-dot(dd, dd) / (0.35 + 0.25 * fk)) * (1.4 - 0.3 * fk);
+  }
+  dens = min(1.0, dens + 0.6 * hot);
   float edgeIn = smoothstep(uDiskIn * 0.98, uDiskIn * 1.12, r);
   float edgeOut = 1.0 - smoothstep(uDiskOut * 0.45, uDiskOut, r);
   float a = clamp((0.35 + 0.75 * dens) * edgeIn * edgeOut, 0.0, 0.97);
   float T = uDiskT * prof * g;
   vec3 col = rv_blackbody(T);
   col /= max(max(col.r, col.g), max(col.b, 1e-3));
-  float I = uDiskGain * prof * prof * pow(g, 3.0) * (0.45 + 0.9 * dens);
+  // relativistic beaming I ∝ g³ (+ gravitational redshift), with a soft knee on the approaching side so
+  // the boosted limb keeps its structure instead of clipping to a white smear
+  float gb = pow(g, 3.0);
+  gb = gb <= 1.0 ? gb : 1.0 + (gb - 1.0) / (1.0 + 0.45 * (gb - 1.0));
+  float I = uDiskGain * prof * prof * gb * (0.45 + 0.9 * dens) * (1.0 + 1.2 * hot);
   return vec4(col * I, a);
 }
 

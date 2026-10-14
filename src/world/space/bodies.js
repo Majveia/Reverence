@@ -158,10 +158,10 @@ export class Bodies {
       // ---- atmosphere limb shell (not for the current body: the atmosphere track owns that)
       const atm = b.atmosphere;
       if ((!isCurrent || e.visR > b.radius) && atm?.present) {
-        const top = b.isGas ? 1.025 : 1.045;
+        const top = b.isGas ? 1.014 : 1.045;
         const tint = new THREE.Color(b.isGas ? (e.look.haze ? new THREE.Color(e.look.haze.x, e.look.haze.y, e.look.haze.z) : 0xa0c8ff) : (b.art?.palette?.sky || '#7ab8ff'));
         const m = Math.max(tint.r, tint.g, tint.b, 1e-3);
-        const hScale = b.isGas ? 0.22 : 0.28;
+        const hScale = b.isGas ? 0.2 : 0.28;
         const H = (top - 1) * hScale;
         const dens = THREE.MathUtils.clamp(atm.density ?? 1, 0.1, 2);
         const tauV = (b.isGas ? 0.1 : 0.13) * dens;

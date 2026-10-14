@@ -71,7 +71,7 @@ export class GalaxyVolume {
       const bc = S.bulgeComp;
       bulgeA = new THREE.Vector4(S.nucA * K, bc[0].a * K * 1.2, bc[1].a * K * 1.1, bc[2].a * K * 2.2);
       bulgeW = new THREE.Vector4(0.03, 0.26, 0.5, 0.0);
-      bulgeH = S.dustRing ? new THREE.Vector2(S.dustRing.r * K * 0.42, 3.6) : new THREE.Vector2(bc[2].a * K * 0.9, type === 'lenticular' ? 0.7 : S.barA > 0 ? 0.15 : 0.4);
+      bulgeH = S.dustRing ? new THREE.Vector2(S.dustRing.r * K * 0.38, 2.6) : new THREE.Vector2(bc[2].a * K * 0.9, type === 'lenticular' ? 0.7 : S.barA > 0 ? 0.15 : 0.4);
       bulgeS = new THREE.Vector3(1, S.bulgeQ, 1);
       const fb = galaxy.bulgeFrac;
       bulgeL = (type === 'lenticular' ? (S.dustRing ? 60 : 20) : 24) * (fb / 0.14) * (S.barA > 0 ? 0.45 : 1);
@@ -84,7 +84,7 @@ export class GalaxyVolume {
       uInvProj: { value: new THREE.Matrix4() },
       uRayMat: { value: new THREE.Matrix3() },
       uR: { value: R }, uRmax: { value: R * 1.3 }, uYmax: { value: 7 * S.hOld * K * (1 + S.flare) },
-      uHOld: { value: S.hOld * K }, uHYoung: { value: S.hYoung * K }, uHDust: { value: S.hDust * K }, uFlare: { value: S.flare },
+      uHOld: { value: S.hOld * K }, uHYoung: { value: S.hYoung * K }, uHDust: { value: S.hDust * K * (S.dustRing ? 0.45 : 1) }, uFlare: { value: S.flare },
       uColOld: { value: new THREE.Vector3(...pal.old) }, uColYoung: { value: new THREE.Vector3(...pal.young) },
       uColHII: { value: new THREE.Vector3(...pal.hii) }, uColBulge: { value: new THREE.Vector3(...pal.bulge) },
       uColBar: { value: new THREE.Vector3(...pal.bulge).lerp(new THREE.Vector3(...pal.old), 0.4) },
@@ -97,13 +97,14 @@ export class GalaxyVolume {
       uBulgeA: { value: bulgeA }, uBulgeH: { value: new THREE.Vector2(bulgeH.x, bulgeH.y * bulgeL) }, uBulgeW: { value: bulgeW }, uBulgeS: { value: bulgeS }, uBulgeL: { value: bulgeL },
       uBar: { value: new THREE.Vector4(S.barA * K || 1, S.barB * K || 1, S.barC * K || 1, S.barA > 0 ? 250 * (galaxy.bulgeFrac / 0.14) : 0) },
       uBarAng: { value: S.phi0 },
-      uHalo: { value: new THREE.Vector2(S.haloA * K, type === 'elliptical' ? 0.6 : 0.35) },
+      uHalo: { value: new THREE.Vector2(S.haloA * K, type === 'elliptical' ? 0.6 : S.dustRing ? 0.12 : 0.35) },
       uDsMin: { value: S.hDust * K * 0.25 }, uDsMax: { value: R / 36 }, uDsNear: { value: 0.02 },
       uSteps: { value: this.steps },
       uNoiseF: { value: new THREE.Vector4(1 / 5.0, 1 / 0.9, 1 / 0.16, 0.002) },
       uDustNoise: { value: 1.0 },
       uFrame: { value: 0 },
       uElDust: { value: new THREE.Vector3(0, 0, 0) },
+      uResolvedR: { value: 0 },
     };
 
     this.volumeMat = fsMaterial(VOLUME_FRAG, this.uniforms, { glslVersion: null });
@@ -158,6 +159,7 @@ export class GalaxyVolume {
       uSeedF: { value: (S.seed % 1000) * 0.137 },
       uDustRing: { value: new THREE.Vector3(S.dustRing ? S.dustRing.r * K : 0, S.dustRing ? S.dustRing.w * K : 1, S.dustRing ? S.dustRing.amp : 0) },
       uBar: { value: new THREE.Vector3(S.barA * K || 1, S.barB * K || 1, S.barC * K || 1) },
+      uElLane: { value: new THREE.Vector2(S.dustLane ? S.dustLane.r * K : 0, S.dustLane ? S.dustLane.w * K : 0) },
     });
     const prevTarget = renderer.getRenderTarget();
     this.quad.material = mapMat;

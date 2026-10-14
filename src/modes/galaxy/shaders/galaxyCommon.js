@@ -82,7 +82,7 @@ float gx_young(vec2 p){
       float di = (r - gRingIn) / (gR * 0.035);
       if (gRingStyle == 2) v = exp(-0.5 * dout * dout);
       else if (gRingStyle == 1) {
-        float spokes = v * 0.4 * smoothstep(gRingIn * 1.05, gRingIn * 1.5, r) * (1.0 - smoothstep(gRingOut * 0.92, gRingOut, ro));
+        float spokes = v * 0.4 * smoothstep(gRingIn * 1.05, gRingIn * 1.5, r) * (1.0 - smoothstep(gRingOut * 0.92, gRingOut, ro)) * (0.35 + 0.65 * smoothstep(gRingIn * 1.2, gRingOut * 0.85, r));
         v = max(max(spokes, 0.55 * exp(-0.5 * di * di)), exp(-0.5 * dout * dout));
       } else v = max(max(v * smoothstep(gRingIn * 0.95, gRingIn * 1.15, r), exp(-0.5 * di * di)), 0.7 * exp(-0.5 * dout * dout));
     }

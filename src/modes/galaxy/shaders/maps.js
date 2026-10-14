@@ -10,6 +10,7 @@ precision highp int;
 uniform float uMapR, uRd, uRdY, uDust, uSpur, uFloc, uHii, uSeedF;
 uniform vec3 uDustRing;      // r, w, amp (kly)
 uniform vec3 uBar;           // a, b, c (kly)
+uniform vec2 uElLane;        // elliptical dust lane: r, w (kly; w = 0 → none)
 varying vec2 vUv;
 
 // small bright knots: jittered-grid Gaussian blobs, gated per cell (fraction 1-thr survives)
@@ -73,7 +74,7 @@ void main(){
     // along-arm variations of brightness, lane position and thickness
     float nAl = rv_fbm(vec3(al * 9.0, kSeed, 11.0), 3);
     float nAl2 = rv_fbm(vec3(al * 26.0, kSeed + 3.1, 13.0), 2);
-    float bAl = 0.3 + 0.85 * smoothstep(-0.5, 0.4, nAl);
+    float bAl = 0.2 + 1.0 * smoothstep(-0.45, 0.45, nAl + 0.35 * nAl2);
     // braided arm: 3 strands wandering around the ridge, appearing / vanishing along the arm
     float armY = 0.0;
     for (int j = 0; j < 3; j++) {
@@ -146,11 +147,18 @@ void main(){
     float cplx = smoothstep(-0.05, 0.45, rv_fbm(vec3(al * 16.0, kSeed + 71.0, 3.0), 3) + 0.1);
     vec3 qk = vec3(al * 90.0, ac * 90.0, kSeed + 81.0);
     vec3 qk2 = vec3(al * 42.0, ac * 42.0, kSeed + 91.0);
-    float kn = knots(qk, 0.5, 0.22), kn2 = knots(qk2, 0.7, 0.2);
-    hiiStr = strip * cplx * cplx * (kn * 1.4 * cplx + kn2 * 2.6);
+    float kn = knots(qk, 0.42, 0.22), kn2 = knots(qk2, 0.66, 0.2);
+    hiiStr = strip * cplx * (kn * 2.0 * cplx + kn2 * 2.6);
     young += strip * (0.3 + cplx) * (knots(qk, 0.55, 0.42) * 0.3 + knots(qk2, 0.68, 0.5) * 0.45);
     // diffuse HII glow along the young ridge
     hii += 0.02 * young * smoothstep(0.1, 0.6, n3 + 0.3);
+    if (gType == 2 && gRingStyle == 1) {
+      // Cartwheel spokes: broad, faint, irregular along their length, brighter toward the ring
+      float along = smoothstep(gRingIn * 1.2, gRingOut * 0.85, r);
+      young *= 0.38 * (0.3 + 1.0 * smoothstep(-0.35, 0.45, nAl + 0.4 * nAl2)) * (0.35 + 0.65 * along);
+      hiiStr *= 0.25 * along;
+      dust *= 0.6;
+    }
   }
   float gap = 0.0;
   if (gType == 2) {
@@ -212,8 +220,23 @@ void main(){
     young = yv * (0.25 + 1.4 * smoothstep(-0.25, 0.55, n2 + n3 * 0.6));
     armRidge = yv;
     hii += 0.45 * yv * smoothstep(0.2, 0.7, n3 + n2 * 0.4);
-    dust += 0.8 * yv * smoothstep(0.25, 0.75, rid) + 0.3 * smoothstep(0.4, 0.8, ridF) * exp(-r / (0.5 * R));
-    old = exp(-r / uRd) * cut * (0.6 + 0.8 * smoothstep(-0.4, 0.6, n1));
+    dust += 0.45 * yv * smoothstep(0.45, 0.85, rid) + 0.25 * smoothstep(0.5, 0.85, ridF) * exp(-r / (0.5 * R));
+    // asymmetric old body (lopsided, like the LMC / NGC 4449)
+    vec2 adir = normalize(vec2(cos(uSeedF * 2.3), sin(uSeedF * 2.3)));
+    old = exp(-r / uRd) * cut * (0.6 + 0.8 * smoothstep(-0.4, 0.6, n1)) * (1.0 + 0.45 * clamp(dot(P, adir) * 1.6, -1.0, 1.0));
+    // gas filaments / bridges between the star-forming complexes (domain-warped ridged noise)
+    vec2 wq = P * 2.6 + 0.7 * vec2(n1, n2);
+    float fil = smoothstep(0.72, 0.95, rv_ridged(vec3(wq, 27.0 + uSeedF), 4)) * (1.0 - smoothstep(0.45 * R, 0.95 * R, r));
+    young += 0.22 * fil * (0.6 + 0.6 * smoothstep(0.0, 0.5, n3 + 0.3));
+    hii += 0.35 * fil * smoothstep(0.1, 0.6, n3 + n2 * 0.5);
+    // super star clusters: a few very compact, very bright knots in the largest complexes
+    float ssc = knots(vec3(P * 28.0, 31.0 + uSeedF), 0.86, 0.12) * smoothstep(0.35, 0.8, yv);
+    young += 2.2 * ssc;
+    hii += 1.2 * knots(vec3(P * 28.0, 31.0 + uSeedF), 0.86, 0.3) * smoothstep(0.35, 0.8, yv);
+    // one ragged dust lane across the body
+    vec2 ldir = vec2(-adir.y, adir.x);
+    float dl = (dot(P, ldir) - 0.08 + 0.12 * n1 + 0.04 * n2) / (0.03 + 0.02 * n3);
+    dust += 0.9 * exp(-0.5 * dl * dl) * (1.0 - smoothstep(0.25 * R, 0.6 * R, r)) * (0.4 + 0.9 * smoothstep(0.2, 0.7, ridF));
   }
   if (gType == 3) {
     old = exp(-r / uRd) * cut + 0.25 * (1.0 - smoothstep(0.18 * R, 0.4 * R, r));
@@ -235,7 +258,7 @@ void main(){
     float envD = exp(-r / (0.7 * R)) * smoothstep(gR0 * 0.05, gR0 * 0.5, r) * cut;
     dust += (1.1 * smoothstep(0.5, 0.88, fd) + 0.6 * smoothstep(0.58, 0.9, fd2) + 0.35 * smoothstep(0.62, 0.92, fd3)) * envD * smoothstep(0.3, 0.75, n1 * 0.6 + n2 * 0.6 + 0.5);
   }
-  if (gap > 0.0) { old *= 1.0 - 0.85 * gap; young *= 1.0 - 0.55 * gap; dust *= 1.0 - 0.6 * gap; }
+  if (gap > 0.0) { old *= 1.0 - 0.6 * gap; young *= 1.0 - 0.55 * gap; dust *= 1.0 - 0.6 * gap; }
   // Sombrero-like dust ring: a crisp, optically thick lane with fibrous edges, a bright rim of
   // starlight just outside it and a bright smooth inner lens
   if (uDustRing.z > 0.0) {
@@ -243,21 +266,23 @@ void main(){
     float th = atan(p.y, p.x + 1e-9);
     float rn = rv_fbm(vec3(cos(th) * 6.0, sin(th) * 6.0, r / R * 10.0) + so + 3.0, 5);
     float rf = rv_ridged(vec3(cos(th) * 30.0, sin(th) * 30.0, r / R * 60.0) + so + 7.0, 4);
-    float core = exp(-0.5 * pow(abs(dr) / 0.75, 3.0));                 // flat-topped lane, sharp edges
-    // granular lane: dense clumps and thinner gaps (reddened light leaks through → brown, not black)
-    float gr = rv_fbm(vec3(cos(th) * 55.0, sin(th) * 55.0, r / R * 140.0) + so + 11.0, 3);
-    dust += 2.0 * uDustRing.z * core * (0.5 + 0.6 * smoothstep(-0.4, 0.5, rn)) * (0.45 + 0.75 * rf) * (0.4 + 1.2 * smoothstep(-0.25, 0.45, gr));
-    float dr2 = (r - uDustRing.x * 0.86) / (uDustRing.y * 0.3);
-    dust += 0.9 * uDustRing.z * exp(-0.5 * dr2 * dr2) * smoothstep(0.0, 0.6, rn);
+    // a crisp, optically thick annulus (flat-topped radial profile, sharp edges) with fibrous borders:
+    // smooth enough to read as one dark lane, not a dotted band
+    float core = exp(-0.5 * pow(abs(dr) / 0.62, 4.0));
+    float gr = rv_fbm(vec3(cos(th) * 40.0, sin(th) * 40.0, r / R * 90.0) + so + 11.0, 3);
+    // τ varies 1–6 along the lane: brown where reddened light leaks through, near-black in the clumps
+    dust += 1.7 * uDustRing.z * core * (0.45 + 0.7 * smoothstep(-0.4, 0.5, rn)) * (0.55 + 0.7 * rf) * (0.75 + 0.5 * gr);
+    float dr2 = (r - uDustRing.x * 0.9) / (uDustRing.y * 0.25);
+    dust += 0.7 * uDustRing.z * exp(-0.5 * dr2 * dr2) * smoothstep(0.1, 0.6, rn);
     // fibrous wisps just inside / outside the lane
-    dust += 0.7 * uDustRing.z * exp(-0.5 * dr * dr / 4.0) * smoothstep(0.55, 0.9, rf);
-    float rim = exp(-0.5 * pow((r - uDustRing.x - 1.3 * uDustRing.y) / (uDustRing.y * 0.7), 2.0));
-    // bright flat lens inside the ring (Sombrero's white inner disk), almost nothing beyond the ring
-    float lens = 1.0 - smoothstep(uDustRing.x * 0.7, uDustRing.x * 1.02, r);
-    old = old * (0.85 + 0.6 * exp(-r / (0.3 * uDustRing.x))) + 0.16 * lens * (0.85 + 0.3 * n2);
-    old *= 1.0 - 0.93 * smoothstep(uDustRing.x + 1.2 * uDustRing.y, uDustRing.x + 3.5 * uDustRing.y, r);
-    old += 0.035 * rim;
-    young += 0.06 * exp(-0.5 * dr * dr) * smoothstep(0.3, 0.8, rn + n3 * 0.4) + 0.02 * rim * knots(vec3(P * 90.0, 5.0 + uSeedF), 0.5, 0.3);
+    dust += 0.6 * uDustRing.z * exp(-0.5 * dr * dr / 3.0) * smoothstep(0.6, 0.9, rf) * (1.0 - smoothstep(0.3, 1.0, dr));
+    float rim = exp(-0.5 * pow((r - uDustRing.x - 0.9 * uDustRing.y) / (uDustRing.y * 0.6), 2.0));
+    // bright flat lens filling the ring right up to the lane (no dark gap), almost nothing beyond the ring
+    float lens = 1.0 - smoothstep(uDustRing.x * 0.86, uDustRing.x * 1.0, r);
+    old = old * (0.85 + 0.6 * exp(-r / (0.3 * uDustRing.x))) + 0.2 * lens * (0.9 + 0.2 * n2);
+    old *= 1.0 - 0.96 * smoothstep(uDustRing.x + 0.7 * uDustRing.y, uDustRing.x + 1.7 * uDustRing.y, r);
+    old += 0.03 * rim;
+    young += 0.03 * exp(-0.5 * dr * dr) * smoothstep(0.3, 0.8, rn + n3 * 0.4);
     hii += 0.05 * exp(-0.5 * dr * dr) * smoothstep(0.5, 0.9, rn + n3 * 0.4) * knots(vec3(P * 70.0, 3.0 + uSeedF), 0.6, 0.25);
   }
 
@@ -287,7 +312,7 @@ void main(){
     bool armed = gType <= 1 && gM > 0.5;
     if (armed) {
       // spirals: HII complexes are strung along the lanes (hiiStr); the shared sites stay as the giant ones
-      hk *= 0.6;
+      hk *= 0.4;
       hk += hiiStr + ridgeK * 0.6 * kB * (0.35 + 0.9 * cplx);
       hk += smoothstep(0.02, 0.3, young) * (1.0 - ridgeK) * 0.35 * kD * smoothstep(0.35, 0.8, n3 + 0.3 * n2);
     } else {
@@ -300,6 +325,19 @@ void main(){
     dust += 0.3 * hk * smoothstep(0.0, 0.4, n3 + 0.2);
   }
   dust *= uDust;
+  if (gType == 4) {
+    // ellipticals: a small nuclear dust disk (NGC 4261-like) silhouetted on the core, and when the galaxy
+    // swallowed a spiral, a large filamentary dust lane (Centaurus A-like) in its equatorial plane
+    float th = atan(p.y, p.x + 1e-9);
+    float rnd = rv_fbm(vec3(cos(th) * 5.0, sin(th) * 5.0, r / R * 30.0) + so + 13.0, 4);
+    float rr = r / (0.03 * R);
+    dust += 0.7 * exp(-rr * rr * rr * rr) * (0.55 + 0.6 * smoothstep(-0.3, 0.5, rnd));
+    if (uElLane.y > 0.0) {
+      float dl = (r - uElLane.x) / uElLane.y;
+      float fil = rv_ridged(vec3(cos(th) * 18.0, sin(th) * 18.0, r / R * 40.0) + so + 17.0, 4);
+      dust += 1.4 * exp(-0.5 * dl * dl) * (0.3 + 0.9 * smoothstep(-0.2, 0.6, rnd + 0.6 * fil));
+    }
+  }
   gl_FragColor = vec4(old, young, dust, hii);
 }
 `;

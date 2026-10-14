@@ -201,9 +201,14 @@ function buildStructure(g) {
     S.armEnd.push(R * (strong ? r.range(0.95, 1.15) : r.range(0.7, 1.05)));
   }
   if (S.ringStyle === 'cartwheel') {
-    S.armW *= 0.45;
-    // spokes run from the inner ring out to (not through) the collisional ring
-    for (let k = 0; k < S.m; k++) { S.armEnd[k] = S.ringOut * 0.9; S.armAmp[k] = 0.35 + 0.45 * U(hash32(hashCombine(g.seed, 0x5b0c + k))); }
+    // broad, faint, irregular spokes (Cartwheel): log-normal-ish lengths and strengths, running from
+    // the inner ring out toward (not through) the collisional ring
+    S.armW *= 1.1;
+    for (let k = 0; k < S.m; k++) {
+      const a = U(hash32(hashCombine(g.seed, 0x5b0c + k))), b = U(hash32(hashCombine(g.seed, 0x5b1c + k)));
+      S.armEnd[k] = S.ringOut * Math.min(0.92, 0.5 + 0.42 * Math.sqrt(b));
+      S.armAmp[k] = 0.18 + 0.62 * a * a;
+    }
   }
   S.armCum = [];
   { let t = 0; for (const a of S.armAmp) { t += a; S.armCum.push(t); } for (let k = 0; k < S.armCum.length; k++) S.armCum[k] /= t; }
@@ -347,7 +352,7 @@ function ringYoung(S, x, z, r, v) {
   if (S.ringStyle === 'hoag') return Math.exp(-0.5 * dout * dout);
   const di = (r - S.ringIn) / (S.R * 0.035);
   if (S.ringStyle === 'cartwheel') {
-    const spokes = v * 0.4 * smooth(S.ringIn * 1.05, S.ringIn * 1.5, r) * (1 - smooth(S.ringOut * 0.92, S.ringOut, ro));
+    const spokes = v * 0.4 * smooth(S.ringIn * 1.05, S.ringIn * 1.5, r) * (1 - smooth(S.ringOut * 0.92, S.ringOut, ro)) * (0.35 + 0.65 * smooth(S.ringIn * 1.2, S.ringOut * 0.85, r));
     return Math.max(spokes, 0.55 * Math.exp(-0.5 * di * di), Math.exp(-0.5 * dout * dout));
   }
   return Math.max(v * smooth(S.ringIn * 0.95, S.ringIn * 1.15, r), Math.exp(-0.5 * di * di), 0.7 * Math.exp(-0.5 * dout * dout));
@@ -457,7 +462,7 @@ function placeStar(S, component, ci, young, h, out) {
   const R = S.R;
   let x = 0, y = 0, z = 0, sub = 'field', follow = 0;
   // collisional / Hoag rings: most young "arm" stars live in the outer ring
-  if (component === 'arm' && S.ringStyle && (S.m === 0 || (S.ringStyle === 'cartwheel' && U(h(60)) < 0.62))) component = 'ring';
+  if (component === 'arm' && S.ringStyle && (S.m === 0 || (S.ringStyle === 'cartwheel' && U(h(60)) < 0.78))) component = 'ring';
   if (component === 'disk' && (S.ringStyle === 'cartwheel' || S.ringStyle === 'hoag')) {
     // the gap between nucleus and ring is swept clear: most old stars there were carried outward
     const r = sampleExpDisk(S.rd, U(h(2)), U(h(3)), 1.2 * R, U(h(22)));
@@ -488,6 +493,8 @@ function placeStar(S, component, ci, young, h, out) {
         if (r < 0.8 * S.r0) r = 0.8 * S.r0 + 0.8 * S.r0 * U(h(36 + j));
       }
     }
+    // (retries above may have re-sampled r: cartwheel spokes still end inside the collisional ring)
+    if (S.ringStyle === 'cartwheel' && r > S.armEnd[k]) r = S.r0 + (S.armEnd[k] - S.r0) * U(h(39));
     const rr = Math.max(r, R * 0.02);
     let th = Math.log(rr / S.r0) / S.tanP + S.phi0 + k * TAU / S.m;
     for (let it = 0; it < 2; it++) {
@@ -495,7 +502,7 @@ function placeStar(S, component, ci, young, h, out) {
       th = Math.log(rr / S.r0) / S.tanP + S.phi0 + k * TAU / S.m - w;
     }
     const sigY = S.armW * (0.7 + 0.6 * r / R);
-    const sig = sigY * SPREAD[ci];
+    const sig = sigY * SPREAD[ci] * (S.ringStyle === 'cartwheel' ? 2.0 : 1);     // cartwheel spokes: broad, diffuse
     const mu = -0.35 * sigY * YOUTH[ci];
     const d = mu + sig * gauss(h(9), h(10));
     th += d / (rr * S.sinP);
