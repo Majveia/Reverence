@@ -48,6 +48,7 @@ export class GalaxyVolume {
     this.maxPixels = q.tier === 'ultra' ? 1.6e6 : q.tier === 'high' ? 9e5 : q.tier === 'med' ? 4.5e5 : 2.2e5;
     this.enabled = true;
     this.frame = 0;
+    this.dustNoiseBase = 1;
     this.mapR = S.R * K * 1.3;
 
     const pal = galaxyPalette(S);
@@ -222,6 +223,11 @@ export class GalaxyVolume {
     const dDisk = Math.max(Math.abs(u.uCamPos.value.y), 0.002);
     u.uDsNear.value = Math.min(0.2, Math.max(0.0005, dDisk * 0.25 + 0.002));
     u.uFrame.value = this.engine.shot ? 0 : (this.frame++ % 64);
+    // 3-D noise texture of dust and gas: essential up close (volumetric structure inside the disk), but
+    // seen from outside the map already holds the (much sharper, structured) lanes: the low-frequency
+    // 3-D noise would only add a blotchy "cracked mud" mottling there
+    const far = THREE.MathUtils.smoothstep(p.length() / Math.max(1e-6, u.uR.value), 0.25, 1.4);
+    u.uDustNoise.value = this.dustNoiseBase * (1 - 0.75 * far);
   }
 
   render(renderer) {

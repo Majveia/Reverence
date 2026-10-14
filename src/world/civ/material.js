@@ -115,7 +115,26 @@ const ANIM_POS = /* glsl */`
 }
 `;
 
+// npc clothing: tops take the instance tint, trousers (marked by their base colour) a per-walker palette
+const NPC_TINT = /* glsl */`
+if (aMat.w > 17.5 && aMat.w < 18.5) {
+  if (abs(aCol.r - 0.2275) < 0.006 && abs(aCol.b - 0.1922) < 0.006) {
+    float ph = fract(aP.y * 3.71 + aP.z * 7.3);
+    vec3 tr = ph < 0.32 ? vec3(0.035, 0.05, 0.1) : ph < 0.55 ? vec3(0.09, 0.07, 0.05) : ph < 0.75 ? vec3(0.02) : ph < 0.88 ? vec3(0.16, 0.14, 0.1) : aTint * 0.55;
+    vColL = tr;
+  } else vColL = aTint;
+}
+`;
 const VERT_MAIN = /* glsl */`
+#ifdef RV_ROAD
+{
+  // decal depth bias: slide the vertex along the view ray toward the camera (no on-screen shift), more
+  // with distance, so draped roads / plazas / fields never sink into coarser terrain LODs far away
+  vec3 rvWpR = (modelMatrix * vec4(transformed, 1.0)).xyz;
+  vec3 rvTc = cameraPosition - rvWpR; float rvDl = length(rvTc);
+  transformed += rvTc / max(rvDl, 1e-3) * min(rvDl * 0.0035, 8.0);
+}
+#endif
 vColL = pow(aCol, vec3(2.2));
 vMatA = vec4(aMat.x / 255.0, aMat.y / 255.0, aMat.z / 16.0, aMat.w);
 vAux = aAux; vUvM = aUv; vLPos = position;
@@ -323,7 +342,7 @@ if (rvPat == 1 || rvPat == 6 || rvPat == 15 || rvPat == 22) {
   float room = mix(1.0, (0.65 + 0.9 * hot) * (1.0 - 0.75 * furn) * (1.0 - 0.9 * person), dfade);
   // blinds / curtains on some windows
   float bl = fp.y * 9.0; float fwb = fwidth(bl) * 1.2;
-  float blinds = hsh2 > 0.45 && hsh2 < 0.7 ? mix(0.72, 0.4 + 0.6 * smoothstep(0.4 - fwb, 0.4 + fwb, abs(fract(bl) - 0.5) * 2.0), 1.0 - smoothstep(0.12, 0.25, fwb)) : 1.0;
+  float blinds = hsh2 > 0.45 && hsh2 < 0.7 ? mix(0.72, 0.4 + 0.6 * smoothstep(0.4 - fwb, 0.4 + fwb, abs(fract(bl) - 0.5) * 2.0), 1.0 - smoothstep(0.05, 0.1, fwb)) : 1.0;
   // light gradient: lampshade glow in the upper part of the pane, plus a dim floor-lamp pool low
   float grad = (0.55 + 0.6 * smoothstep(0.2, 0.95, fp.y)) * blinds * room;
   float onK = mix(0.03, 1.0, night);
@@ -718,7 +737,7 @@ export function makeCivMaterial(style = {}, opts = {}) {
         .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + ANIM_POS);
       if (anim === 'npc') vs = vs.replace('#include <begin_vertex>', '#include <begin_vertex>');
     }
-    vs = vs.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + VERT_MAIN + (anim === 'npc' ? '\n if (aMat.w > 17.5 && aMat.w < 18.5) vColL = aTint;\n' : ''));
+    vs = vs.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + VERT_MAIN + (anim === 'npc' ? NPC_TINT : ''));
     sh.vertexShader = vs;
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' + FRAG_PARS)

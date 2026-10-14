@@ -730,7 +730,7 @@ function arcology(g, ctx, w, d) {
 
 // ------------------------------------------------------------------------------- industrial (Stålenhag / Pacific Drive)
 S.industrial = {
-  pave: true,
+  pave: false, // Stålenhag: asphalt roads and yards in wet grass, not a paved disc
   look: { winCol: '#ffc98a', winCol2: '#d8e8ff', litFrac: 0.45, age: 0.6, winRect: [0.25, 0.3, 0.75, 0.8], emit: 1 },
   mats() {
     return {

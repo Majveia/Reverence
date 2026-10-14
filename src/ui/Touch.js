@@ -4,38 +4,42 @@
 import { icon } from './icons.js';
 import { Params } from '../core/Params.js';
 
-// Button slots around the bottom-right corner: [dx, dy] from the corner (px, before safe-area).
+// Thumb arc around the primary button (bottom-right). Polar slots [radius px, angle deg] from the primary's
+// centre (0° = right, 90° = up); the primary sits at PRIMARY from the safe bottom-right corner.
+const PRIMARY = { land: [-80, -84], port: [-76, -100] };
 const SLOTS = {
-  A: [-74, -86],    // primary (large)
-  B: [-150, -58],   // left of primary
-  C: [-50, -168],   // above primary
-  D: [-134, -140],  // diagonal
-  E: [-212, -38],   // far left low
+  A: [0, 0],        // primary (large)
+  B: [86, 180],     // left of primary
+  D: [86, 135],     // diagonal
+  C: [86, 90],      // above primary
+  E: [152, 166],    // outer, low-left (small)
+  F: [152, 112],    // outer, high (small)
 };
 
 const LAYOUTS = {
   character: [
-    { id: 'jump', slot: 'A', action: 'jump', icon: 'jump', size: 'lg', label: ' ' },
+    { id: 'jump', slot: 'A', action: 'jump', icon: 'jump', size: 'lg', label: 'jump' },
     { id: 'slide', slot: 'B', action: 'descend', icon: 'slide', label: 'slide' },
     { id: 'vehicle', slot: 'C', action: 'vehicle', icon: 'vehicle', ctx: 'vehicle', label: 'ride' },
-    { id: 'interact', slot: 'D', action: 'interact', icon: 'interact', ctx: 'interact', accent: true },
-    { id: 'view', slot: 'E', action: 'view', icon: 'view', size: 'sm' },
+    { id: 'interact', slot: 'D', action: 'interact', icon: 'interact', ctx: 'interact', accent: true, label: 'use' },
+    { id: 'view', slot: 'E', action: 'view', icon: 'view', size: 'sm', label: 'view' },
   ],
   vehicle: [
     { id: 'boost', slot: 'A', action: 'boost', icon: 'boost', size: 'lg', label: 'boost' },
     { id: 'jump', slot: 'B', action: 'jump', icon: 'jump', label: 'hop' },
-    { id: 'exit', slot: 'C', action: 'vehicle', icon: 'exit', size: 'sm', label: 'exit' },
-    { id: 'view', slot: 'E', action: 'view', icon: 'view', size: 'sm' },
+    { id: 'exit', slot: 'C', action: 'vehicle', icon: 'exit', label: 'exit' },
+    { id: 'view', slot: 'E', action: 'view', icon: 'view', size: 'sm', label: 'view' },
   ],
   flight: [
     { id: 'boost', slot: 'A', action: 'boost', icon: 'boost', size: 'lg', label: 'boost' },
-    { id: 'up', slot: 'B', action: 'ascend', icon: 'ascend' },
-    { id: 'down', slot: 'D', action: 'descend', icon: 'descend' },
-    { id: 'exit', slot: 'C', action: 'vehicle', icon: 'exit', size: 'sm', label: 'exit' },
-    { id: 'view', slot: 'E', action: 'view', icon: 'view', size: 'sm' },
+    { id: 'down', slot: 'B', action: 'descend', icon: 'descend', label: 'down' },
+    { id: 'up', slot: 'C', action: 'ascend', icon: 'ascend', label: 'up' },
+    { id: 'exit', slot: 'F', action: 'vehicle', icon: 'exit', size: 'sm', label: 'exit' },
+    { id: 'view', slot: 'E', action: 'view', icon: 'view', size: 'sm', label: 'view' },
   ],
   orbit: [],
 };
+const USED_KEY = 'rv.touchUsed';
 
 // four tiny direction chevrons inside the ring (100×100 viewBox)
 const TICKS = `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -85,6 +89,9 @@ export class Touch {
     this.usedStick = false; this.usedPinch = false; this.pinchT = 0;
     this._last = { sx: NaN, sy: NaN, kx: NaN, ky: NaN, lx: NaN, ly: NaN };
     this.sawDesktop = false;
+    this.used = new Set();
+    if (!this.engine.shot) { try { for (const k of JSON.parse(localStorage.getItem(USED_KEY) || '[]')) this.used.add(k); } catch (_) { /* ignore */ } }
+    this._portrait = null;
     const desk = (e) => { if (!e.pointerType || e.pointerType === 'mouse') this.sawDesktop = true; };
     window.addEventListener('keydown', desk, true);
     window.addEventListener('pointerdown', desk, true);
@@ -110,11 +117,8 @@ export class Touch {
     for (const d of layout) {
       const el = document.createElement('div');
       el.className = `rv-tb${d.size ? ' ' + d.size : ''}${d.accent ? ' accent' : ''}`;
-      el.innerHTML = `<span>${icon(d.icon)}</span>${d.label ? `<div class="rv-tb-lbl">${d.label}</div>` : ''}`;
-      const [dx, dy] = SLOTS[d.slot];
-      el.style.left = `calc(${dx}px - var(--safe-right))`;
-      el.style.top = `calc(${dy}px - var(--safe-bottom))`;
-      const b = { ...d, el, span: el.firstChild, lbl: el.querySelector('.rv-tb-lbl'), down: false, pid: -1, a: d.ctx ? 0 : 1, shown: true, curIcon: d.icon };
+      el.innerHTML = `<i class="rv-tb-pulse"></i><span>${icon(d.icon)}</span>${d.label ? `<div class="rv-tb-lbl">${d.label}</div>` : ''}`;
+      const b = { ...d, el, span: el.querySelector('span'), ring: el.querySelector('.rv-tb-pulse'), lbl: el.querySelector('.rv-tb-lbl'), down: false, pid: -1, a: d.ctx ? 0 : 1, shown: true, curIcon: d.icon, pulse: 0, avail: false, lblA: this.used.has(d.id) ? 0 : 1 };
       el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); b.pid = e.pointerId; try { el.setPointerCapture(e.pointerId); } catch (_) {} this._press(b); });
       const up = (e) => { if (e.pointerId !== b.pid && b.pid !== -1) return; e.preventDefault(); this._release(b); };
       el.addEventListener('pointerup', up);
@@ -124,12 +128,17 @@ export class Touch {
       this.btnsEl.appendChild(el);
       this.buttons.push(b);
     }
+    this._portrait = null; // re-place on next update
     this.pinchT = 0;
   }
 
   _press(b) {
     if (b.down) return;
     b.down = true; b.el.classList.add('on');
+    if (!this.used.has(b.id)) {
+      this.used.add(b.id);
+      if (!this.engine.shot) { try { localStorage.setItem(USED_KEY, JSON.stringify([...this.used])); } catch (_) { /* ignore */ } }
+    }
     this.input.setVirtual(b.action, true);
     if (b.action === 'jump') this.input.setVirtual('glide', true);
     if (b.action === 'boost') this.input.setVirtual('sprint', true);
@@ -144,6 +153,19 @@ export class Touch {
   }
 
   releaseAll() { for (const b of this.buttons) this._release(b); }
+
+  /** Position the cluster on its thumb arc (portrait and landscape use a slightly different primary inset). */
+  _place(portrait) {
+    this._portrait = portrait;
+    const [px, py] = PRIMARY[portrait ? 'port' : 'land'];
+    for (const b of this.buttons) {
+      // portrait: the outer low slot climbs a little so it stays clear of the move stick
+      const [r, deg] = portrait && b.slot === 'E' ? [140, 150] : SLOTS[b.slot] || [0, 0];
+      const x = px + r * Math.cos(deg * Math.PI / 180), y = py - r * Math.sin(deg * Math.PI / 180);
+      b.el.style.left = `calc(${x.toFixed(1)}px - var(--safe-right))`;
+      b.el.style.top = `calc(${y.toFixed(1)}px - var(--safe-bottom))`;
+    }
+  }
 
   update(dt, ctx) {
     const show = this.active && !ctx.hidden;
@@ -199,19 +221,39 @@ export class Touch {
     if (this.pinchA > 0.01) { this.pinchEl.classList.remove('rv-hide'); this.pinchEl.style.opacity = this.pinchA.toFixed(3); }
     else this.pinchEl.classList.add('rv-hide');
 
-    // ---- buttons: position relative to the bottom-right corner, context visibility + icon swaps
+    // ---- buttons: thumb arc from the bottom-right corner, context visibility + icon swaps
+    const portrait = H > W;
+    if (portrait !== this._portrait) this._place(portrait);
     for (const b of this.buttons) {
-      let want = 1;
+      let want = 1, avail = true;
       if (b.ctx === 'vehicle') {
         const near = ctx.prompts.has('vehicle') && !ctx.prompts.get('vehicle').dying;
-        want = near ? 1 : 0.55;
+        want = near ? 1 : 0.62; avail = near;
         const l = near ? 'ride' : 'hold · call';
         if (b.lbl && b.lblT !== l) { b.lbl.textContent = l; b.lblT = l; }
+        if (near && !b.avail) b.lblA = 1; // the meaning changed: show the word again
       }
-      if (b.ctx === 'interact') want = ctx.promptActions.has('interact') ? 1 : 0;
+      if (b.ctx === 'interact') { want = ctx.promptActions.has('interact') ? 1 : 0; avail = want > 0; }
       if (b.id === 'slide') want = ctx.playerState === 'ground' || ctx.playerState === 'slide' ? 1 : 0.0;
       if (b.down) want = 1;
+      // a context action just became available: one soft ring pulse draws the thumb to it
+      if (b.ctx && avail && !b.avail) b.pulse = 1;
+      b.avail = avail;
       b.a += (want - b.a) * (1 - Math.exp(-dt * 10));
+      if (b.pulse > 0) {
+        b.pulse = Math.max(0, b.pulse - dt / 1.1);
+        const k = 1 - b.pulse;
+        b.ring.style.opacity = (Math.sin(Math.min(1, k * 1.4) * Math.PI) * 0.8).toFixed(3);
+        b.ring.style.transform = `scale(${(1 + k * 0.55).toFixed(3)})`;
+      } else if (b.ring._on !== false) { b.ring.style.opacity = '0'; b.ring._on = false; }
+      if (b.pulse > 0) b.ring._on = true;
+      // labels teach the layout, then step aside once that button has been used
+      if (b.lbl) {
+        const lt = this.used.has(b.id) && !(b.ctx === 'vehicle' && b.lblT === 'ride' && b.lblA > 0.5) ? 0 : 1;
+        b.lblA += (lt - b.lblA) * (1 - Math.exp(-dt * 3));
+        const lo = b.lblA.toFixed(2);
+        if (b._lo !== lo) { b._lo = lo; b.lbl.style.opacity = lo; }
+      }
       const vis = b.a > 0.02;
       if (vis !== b.shown) { b.el.style.visibility = vis ? '' : 'hidden'; b.shown = vis; }
       if (b.id === 'jump' && scheme === 'character') {
@@ -219,8 +261,8 @@ export class Touch {
         const ic = ctx.playerState === 'air' || ctx.playerState === 'glide' || ctx.playerState === 'fall' ? 'glide' : ctx.playerState === 'swim' ? 'ascend' : 'jump';
         if (ic !== b.curIcon) {
           b.span.innerHTML = icon(ic); b.curIcon = ic; b.morph = 1;
-          const l = ic === 'glide' ? 'glide' : ic === 'ascend' ? 'swim up' : '';
-          if (b.lbl) b.lbl.textContent = l;
+          const l = ic === 'glide' ? 'glide' : ic === 'ascend' ? 'swim up' : 'jump';
+          if (b.lbl) { b.lbl.textContent = l; if (ic !== 'jump') b.lblA = 1; }
         }
       }
       // icon morph: a quick shrink-and-grow of the glyph when its meaning changes
@@ -228,7 +270,8 @@ export class Touch {
       if (b.morph > 0) { b.morph = Math.max(0, b.morph - dt * 5); ms = 1 - Math.sin(b.morph * Math.PI) * 0.22; }
       if (vis) {
         b.el.style.opacity = b.a.toFixed(3);
-        b.el.style.transform = `scale(${(0.8 + 0.2 * b.a).toFixed(3)})`;
+        const st = b.down ? '' : `scale(${(0.82 + 0.18 * b.a).toFixed(3)})`;
+        if (b._st !== st) { b._st = st; b.span.style.transform = st; }
         const svg = b.span.firstChild;
         if (svg && svg.style) { const t = ms < 0.999 ? `scale(${ms.toFixed(3)})` : ''; if (svg._rvT !== t) { svg.style.transform = t; svg._rvT = t; } }
       }

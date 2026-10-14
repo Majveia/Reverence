@@ -90,7 +90,7 @@ class Civ {
       const M = style.mats(this.body, rng);
       const look = style.look || {};
       const mainMat = makeCivMaterial(look, { key: '' });
-      const roadMat = makeCivMaterial(look, { key: 'road', polygonOffset: true, reversed: !!this.world.engine?.reversedDepth, canyon: style.canyon ?? (style.pave ? 0.7 : 0.15), ragged: style.pave ? 0 : 1 });
+      const roadMat = makeCivMaterial(look, { key: 'road', polygonOffset: true, reversed: !!this.world.engine?.reversedDepth, canyon: style.canyon ?? (name === 'neon' ? 0.7 : style.pave ? 0.3 : 0.15), ragged: style.pave ? 0 : 1 });
       mainMat.userData.shared = true; roadMat.userData.shared = true;
       k = { name, style, M, mainMat, roadMat };
       this.world.lighting?.setupMaterial?.(mainMat);
@@ -511,8 +511,8 @@ class Civ {
       const bx = _w.x * (s.R + gh) - s.pos.x, by = _w.y * (s.R + gh) - s.pos.y, bz = _w.z * (s.R + gh) - s.pos.z;
       // pools are additive: overlapping skirts of many lights sum into a flat wash, so keep each dim and
       // compact (a lit disc under each lamp, dark pavement between)
-      const k = 0.03 * Math.min(1.5, 4.5 / Math.max(2, hgt));
-      out.push({ x: bx, y: by, z: bz, nx: _w.x, ny: _w.y, nz: _w.z, r: l.r * k, g: l.g * k, b: l.b * k, rad: Math.min(5, Math.max(2, hgt * 0.95)), hgt, w: lum * k });
+      const k = (s.kit === 'neon' ? 0.03 : 0.05) * Math.min(1.5, 4.5 / Math.max(2, hgt));
+      out.push({ x: bx, y: by, z: bz, nx: _w.x, ny: _w.y, nz: _w.z, r: l.r * k, g: l.g * k, b: l.b * k, rad: Math.min(s.kit === 'neon' ? 5 : 6.5, Math.max(2, hgt * (s.kit === 'neon' ? 0.95 : 1.25))), hgt, w: lum * k });
     }
     // over budget: keep the brightest pools (street lamps and shopfronts beat faint window spill)
     if (out.length > max) { out.sort((a, b) => b.w - a.w); out.length = max; }
@@ -553,7 +553,7 @@ class Civ {
       // gentle, dry ground only
       let mn = Infinity, mx = -Infinity, wet = false;
       for (const [u, v] of [[0, 0], [-1, -1], [1, -1], [1, 1], [-1, 1]]) { const q = P2(u * fw / 2, v * fd / 2); const h = G.h(q.x, q.z); if (G.wet(q.x, q.z)) wet = true; mn = Math.min(mn, h); mx = Math.max(mx, h); }
-      if (wet || mx - mn > Math.max(fw, fd) * 0.16) continue;
+      if (wet || mx - mn > Math.max(fw, fd) * 0.3) continue;
       placed.push({ x: cx, z: cz, rad });
       // ---- crop decal (draped grid, uv in metres along the rows)
       const Mc = mat(crops[rng.int(0, crops.length - 1)], 0.95, 0, PAT.FIELD);

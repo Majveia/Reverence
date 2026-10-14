@@ -97,23 +97,24 @@ export class Menu {
     const kb = (a) => uiDev === 'touch' ? '' : `<span class="kb">${glyphFor(this.input, a, uiDev)}</span>`;
     let html = `<div class="rv-mn-brand">REVERENCE</div>
       <div class="rv-mn-loc">${escapeHtml(loc.title)}</div>
-      <div class="rv-mn-sub">${escapeHtml(loc.subtitle)}</div>`;
+      <div class="rv-mn-sub" title="${escapeHtml(loc.subtitle)}">${escapeHtml(loc.subtitle)}</div>`;
     if (this.page === 'main') {
       const s = this.settings;
       const q = this.engine.quality?.tier ?? 'high';
-      html += `<div class="rv-mn-list">
+      html += `<div class="rv-mn-quick">
+        <button class="rv-qb" data-act="photo" data-sfx="ui.open" aria-label="Photo mode"><span class="ic">${icon('photo')}</span><span class="t">Photo</span></button>
+        <button class="rv-qb" data-act="share" aria-label="Share this place"><span class="ic">${icon('share')}</span><span class="t" data-share>Share</span></button>
+        <button class="rv-qb" data-act="controls" data-sfx="ui.open" aria-label="Controls"><span class="ic">${icon('controls')}</span><span class="t">Controls</span></button>
+      </div>
+      <div class="rv-mn-list">
         <button class="rv-row" data-act="resume" data-sfx="ui.back"><span class="ic">${icon('resume')}</span><span class="lbl">Resume</span>${kb('menu')}</button>
         <button class="rv-row" data-act="map" data-sfx="ui.open"><span class="ic">${icon('map')}</span><span class="lbl">Map &amp; scale travel</span>${kb('map')}</button>
         ${loc.up ? `<button class="rv-row" data-act="up" data-sfx="ui.open"><span class="ic">${icon('up')}</span><span class="lbl">${escapeHtml(loc.up.label)}</span></button>` : ''}
-        <button class="rv-row" data-act="photo" data-sfx="ui.open"><span class="ic">${icon('photo')}</span><span class="lbl">Photo mode</span>${kb('photo')}</button>
-        <button class="rv-row" data-act="share"><span class="ic">${icon('share')}</span><span class="lbl">Share this place</span><span class="val" data-share></span></button>
-        <button class="rv-row" data-act="controls" data-sfx="ui.open"><span class="ic">${icon('controls')}</span><span class="lbl">Controls</span><span class="ic">${icon('chevron')}</span></button>
         <div class="rv-sep"></div>
-        <div class="rv-mn-sec" style="margin:4px 10px 6px">Settings</div>
-        <div class="rv-set" style="flex-direction:column;align-items:stretch;gap:8px;padding-top:4px;padding-bottom:6px"><div style="display:flex;justify-content:space-between"><span class="lbl">Quality</span><span class="val" style="font-size:10px;color:var(--ui-faint)">${this.engine.quality?.mobile ? 'mobile' : ''}</span></div>
-          <div class="rv-seg" data-seg="q">${TIERS.map((t) => `<button data-q="${t}" class="${t === q ? 'on' : ''}">${t}</button>`).join('')}</div></div>
+        <div class="rv-set rv-set-q"><span class="lbl">Quality</span><span class="val">${this.engine.quality?.mobile ? 'mobile' : ''}</span></div>
+        <div class="rv-seg rv-seg-q" data-seg="q">${TIERS.map((t) => `<button data-q="${t}" class="${t === q ? 'on' : ''}">${t}</button>`).join('')}</div>
         <div class="rv-set"><span class="lbl">Look sensitivity</span><input class="rv-range" type="range" min="0.3" max="2.5" step="0.05" value="${s.sens}" data-set="sens" style="--p:${((s.sens - 0.3) / 2.2) * 100}%"></div>
-        <div class="rv-set"><span class="lbl">Invert look Y</span><button class="rv-tog ${s.invertY ? 'on' : ''}" data-tog="invertY"><i></i></button></div>
+        <div class="rv-set"><span class="lbl">Invert look Y</span><button class="rv-tog ${s.invertY ? 'on' : ''}" data-tog="invertY" aria-label="Invert look Y"><i></i></button></div>
         <div class="rv-set"><span class="lbl">Volume</span><input class="rv-range" type="range" min="0" max="1" step="0.02" value="${s.volume}" data-set="volume" style="--p:${s.volume * 100}%"></div>
       </div>
       <div class="rv-mn-foot"><span>${escapeHtml(loc.coords || '')}</span><span>seed ${this.engine.universe?.seed ?? Params.seed}</span></div>`;
@@ -167,7 +168,8 @@ export class Menu {
         try { const ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy'); ta.remove(); } catch (_) { ok = false; }
       }
     }
-    if (out) out.textContent = ok ? 'copied' : '';
+    if (out) out.textContent = ok ? 'Copied' : 'In URL';
+    if (el) { el.classList.add('done'); const ic = el.querySelector('.ic'); if (ic) ic.innerHTML = icon('check'); }
     if (!ok) try { history.replaceState(null, '', url); } catch (_) { /* ignore */ }
     this.ui.toast(ok ? 'Link copied' : 'Link is in the address bar', { kind: 'info', eyebrow: 'Share', icon: 'share', ms: 2600 });
   }
@@ -184,7 +186,7 @@ export class Menu {
 
   // keyboard / gamepad navigation inside the menu
   nav(dir) {
-    const items = [...this.panel.querySelectorAll('.rv-row, .rv-seg button, .rv-range, .rv-tog')];
+    const items = [...this.panel.querySelectorAll('.rv-qb, .rv-row, .rv-seg button, .rv-range, .rv-tog')];
     if (!items.length) return;
     items.forEach((i) => i.classList.remove('focus'));
     this.focusIdx = (this.focusIdx + dir + items.length) % items.length;
@@ -193,7 +195,7 @@ export class Menu {
     try { it.focus({ preventScroll: false }); } catch (_) {}
   }
   activate() {
-    const items = [...this.panel.querySelectorAll('.rv-row, .rv-seg button, .rv-range, .rv-tog')];
+    const items = [...this.panel.querySelectorAll('.rv-qb, .rv-row, .rv-seg button, .rv-range, .rv-tog')];
     items[this.focusIdx]?.click?.();
   }
 

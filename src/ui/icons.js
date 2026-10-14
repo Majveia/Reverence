@@ -53,6 +53,10 @@ export const ICONS = {
   whale: S('<path d="M3 13c2-4 7-5.5 12-4 2.5.8 4 2.5 4.5 4.5l2.5-2.5-.5 4.5-2.5 1c-3 2.5-9 3-12.5 1.5C4.8 17 3.5 15.3 3 13z"/><circle cx="8" cy="12" r=".7" fill="currentColor"/><path d="M9 7.5c0-1.5 1-2.5 2-2.8M9 7.5c-.3-1.2-1.3-2-2.4-2" opacity=".6"/>'),
   jelly: S('<path d="M5.5 12c0-4 3-6.5 6.5-6.5s6.5 2.5 6.5 6.5z"/><path d="M8 12c0 3-1 5-1 7M11 12c0 3 .8 5 0 8M14 12c0 3-.6 5 .5 7.5M17 12c0 2.5 1 4.5 .5 6.5" opacity=".7"/>'),
   fish: S('<path d="M3.5 12c3-4 9-5 13-1.5L21 7v10l-4.5-3.5C12.5 17 6.5 16 3.5 12z"/><circle cx="7.5" cy="11.3" r=".8" fill="currentColor"/>'),
+  // hint glyphs (touch): drag / tap; reticle for flight
+  drag: S('<path d="M12 4v16M4 12h16"/><path d="M9.5 6.5L12 4l2.5 2.5M9.5 17.5L12 20l2.5-2.5M6.5 9.5L4 12l2.5 2.5M17.5 9.5L20 12l-2.5 2.5"/>'),
+  tap: S('<circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="6.5" opacity=".65"/><circle cx="12" cy="12" r="9.5" opacity=".3"/>'),
+  check: S('<path d="M5.5 12.5l4 4 9-9"/>'),
   discovery: S('<path d="M12 4l2.2 5.8L20 12l-5.8 2.2L12 20l-2.2-5.8L4 12l5.8-2.2z"/>'),
 };
 

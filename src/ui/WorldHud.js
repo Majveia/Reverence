@@ -69,11 +69,13 @@ export class WorldHud {
     const el = document.createElement('div');
     el.className = `rv-mk ${type}`;
     el.style.display = 'none';
+    // name + distance sit on a small dark glass plate so they read over sunlit foliage, snow and bright planets
     el.innerHTML = type === 'body'
-      ? `<span class="rv-mk-dot"></span><span class="rv-mk-name"></span><span class="rv-mk-dist"></span><span class="rv-mk-tgt">${icon('target')}</span>`
-      : '<span class="rv-mk-dia"></span><span class="rv-mk-name"></span><span class="rv-mk-dist"></span>';
+      ? `<span class="rv-mk-dot"></span><span class="rv-mk-lab"><span class="rv-mk-name"></span><span class="rv-mk-dist"></span></span><span class="rv-mk-tgt">${icon('target')}</span>`
+      : '<span class="rv-mk-dia"></span><span class="rv-mk-lab"><span class="rv-mk-name"></span><span class="rv-mk-dist"></span></span>';
     this.markerLayer.appendChild(el);
-    return { el, dia: el.firstChild, name: el.children[1], dist: el.children[2], a: 0, shown: false, key: null, txt: '', dtxt: '', col: '', x: 0, y: 0 };
+    const lab = el.children[1];
+    return { el, dia: el.firstChild, lab, name: lab.firstChild, dist: lab.lastChild, a: 0, shown: false, key: null, txt: '', dtxt: '', col: '', x: 0, y: 0 };
   }
 
   /** Queue a BotW-style location title ("— ASHVALE —  village"). */
@@ -99,9 +101,11 @@ export class WorldHud {
         const orbitView = pl?.view === 'orbit' && world.controller === pl;
         cA = onPlanet && !orbitView && !ctx.hidden ? ctx.hudAlpha : 0;
         this._heading(cam);
-        this._pois(dt, world, cam, ctx, onPlanet && !orbitView && !ctx.hidden ? ctx.hudAlpha : 0);
+        // markers step back while an arrival title card is on screen (they would cross the caption)
+        const tk = ctx.titleShown ? 0.25 : 1;
+        this._pois(dt, world, cam, ctx, onPlanet && !orbitView && !ctx.hidden ? ctx.hudAlpha * tk : 0);
         this._discovery(dt, world, ctx);
-        this._bodies(dt, world, cam, ctx, space * (ctx.hidden ? 0 : ctx.hudAlpha));
+        this._bodies(dt, world, cam, ctx, space * (ctx.hidden ? 0 : ctx.hudAlpha) * tk);
       } catch (e) {
         if (!this._warned) { console.warn('[ui] world hud', e); this._warned = true; }
       }
@@ -196,7 +200,7 @@ export class WorldHud {
       }
       const key = c ? c.p : null;
       if (key !== m.key) { m.key = key; if (want > 0) m.a = Math.min(m.a, 0.05); }
-      m.a += (want - m.a) * (1 - Math.exp(-dt * 5));
+      m.a += (want - m.a) * (1 - Math.exp(-dt * (want > m.a ? 8 : 5)));
       if (m.a < 0.01) { if (m.shown) { m.el.style.display = 'none'; m.shown = false; } continue; }
       if (!m.shown) { m.el.style.display = ''; m.shown = true; }
       m.x = x; m.y = y;
@@ -208,8 +212,16 @@ export class WorldHud {
       if (c && cap !== m.cap) { m.el.classList.toggle('cap', cap); m.cap = cap; }
       const dt2 = c ? fmtDist(c.dist) : m.dtxt;
       if (dt2 !== m.dtxt) { m.dist.textContent = dt2; m.dtxt = dt2; }
-      const full = i < 2 || m.cap ? '' : 'none';
-      if (m.full !== full) { m.name.style.display = full; m.dist.style.display = full; m.full = full; }
+      // label declutter: a plate needs a free ~140×46 px box (higher-priority markers claim theirs first)
+      let lab = (i < 2 || m.cap) && m.a > 0.15;
+      if (lab) {
+        for (let j = 0; j < i; j++) {
+          const o = this.pool[j];
+          if (o.shown && o.full === '' && Math.abs(o.x - x) < 140 && Math.abs(o.y - y) < 46) { lab = false; break; }
+        }
+      }
+      const full = lab ? '' : 'none';
+      if (m.full !== full) { m.lab.style.display = full; m.full = full; }
       m.el.style.transform = `translate3d(${x.toFixed(1)}px,${y.toFixed(1)}px,0) translate(-50%,-6px)`;
       m.el.style.opacity = m.a.toFixed(3);
     }
@@ -267,14 +279,14 @@ export class WorldHud {
       const isT = !!tn && b?.name === tn;
       if (m.tgt !== isT) { m.el.classList.toggle('tgt', isT); m.tgt = isT; }
       const want = c?.ok ? alpha * (isT ? 1 : b.isMoon ? 0.7 : 0.92) * (c.band && !isT ? 0.45 : 1) : 0;
-      m.a += (want - m.a) * (1 - Math.exp(-dt * 4));
+      m.a += (want - m.a) * (1 - Math.exp(-dt * (want > m.a ? 8 : 4)));
       if (m.a < 0.01 || !c) { if (m.shown) { m.el.style.display = 'none'; m.shown = false; } continue; }
       if (!m.shown) { m.el.style.display = ''; m.shown = true; }
       if (b.name !== m.txt) { m.name.textContent = b.name; m.txt = b.name; }
       const d = fmtDist(c.dist);
       if (d !== m.dtxt) { m.dist.textContent = d; m.dtxt = d; }
       const full = c.label ? '' : 'none';
-      if (m.full !== full) { m.name.style.display = full; m.dist.style.display = full; m.full = full; }
+      if (m.full !== full) { m.lab.style.display = full; m.full = full; }
       if (c.ok) m.el.style.transform = `translate3d(${c.x.toFixed(1)}px,${c.y.toFixed(1)}px,0) translate(-50%,-4px)`;
       m.el.style.opacity = m.a.toFixed(3);
     }
@@ -338,7 +350,7 @@ export class WorldHud {
   // ---------------------------------------------------------------- compass drawing
   _drawCompass() {
     const cvs = this.canvas;
-    const w = this.compassEl.clientWidth || 320, h = this.compassEl.clientHeight || 34;
+    const w = this.compassEl.clientWidth || 384, h = this.compassEl.clientHeight || 40;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const key = `${(this.heading * 573).toFixed(0)}|${w}|${h}|${this.compassPois.length}`;
     if (key === this._lastDrawn) return;
@@ -347,14 +359,21 @@ export class WorldHud {
     const c = this.ctx2d || (this.ctx2d = cvs.getContext('2d'));
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     c.clearRect(0, 0, w, h);
+    const small = h < 38;
     const fov = Math.PI * 0.62; // visible heading span
     const pxPerRad = w / fov;
-    const cx = w / 2, baseY = 15;
+    const cx = w / 2, baseY = small ? 16 : 18;
     const hd = this.heading;
     const fade = (x) => { const t = Math.abs(x - cx) / (w / 2); return Math.max(0, 1 - t * t * 1.05); };
-    c.font = '600 9px "RV Inter", system-ui, sans-serif';
+    // soft dark plate (an ellipse that fades out at the ends): keeps letters readable over sky and snow
+    c.save();
+    c.translate(cx, baseY + 4); c.scale(w / 2 / 16, 1);
+    const pg = c.createRadialGradient(0, 0, 0, 0, 0, 16);
+    pg.addColorStop(0, 'rgba(4,8,12,0.42)'); pg.addColorStop(0.6, 'rgba(4,8,12,0.26)'); pg.addColorStop(1, 'rgba(4,8,12,0)');
+    c.fillStyle = pg; c.fillRect(-16, -16, 32, 32);
+    c.restore();
     c.textAlign = 'center'; c.textBaseline = 'middle';
-    c.shadowColor = 'rgba(0,0,0,.55)'; c.shadowBlur = 4;
+    c.lineJoin = 'round';
     // ticks every 15°
     for (let deg = 0; deg < 360; deg += 15) {
       const a = deg * Math.PI / 180;
@@ -363,45 +382,51 @@ export class WorldHud {
       const x = cx + dA * pxPerRad;
       const f = fade(x);
       const card = deg % 90 === 0, inter = deg % 45 === 0;
-      if (card) {
-        c.fillStyle = `rgba(255,255,255,${(0.95 * f).toFixed(3)})`;
-        c.font = '600 10px "RV Inter", system-ui, sans-serif';
-        c.fillText('NESW'[deg / 90], x, baseY);
-      } else if (inter) {
-        c.fillStyle = `rgba(228,234,255,${(0.55 * f).toFixed(3)})`;
-        c.font = '500 8px "RV Inter", system-ui, sans-serif';
-        c.fillText(['NE', 'SE', 'SW', 'NW'][(deg - 45) / 90], x, baseY);
+      const prox = Math.max(0, 1 - Math.abs(x - cx) / (w * 0.13));
+      if (card || inter) {
+        const fs = card ? (small ? 11 : 12) + prox * 4 : (small ? 8.5 : 9.5) + prox * 2;
+        c.font = `${card ? 650 : 550} ${fs.toFixed(1)}px "RV Inter", system-ui, sans-serif`;
+        const t = card ? 'NESW'[deg / 90] : ['NE', 'SE', 'SW', 'NW'][(deg - 45) / 90];
+        c.lineWidth = 3; c.strokeStyle = `rgba(0,0,0,${(0.5 * f).toFixed(3)})`;
+        c.strokeText(t, x, baseY);
+        c.fillStyle = card ? `rgba(255,255,255,${(0.98 * f).toFixed(3)})` : `rgba(232,238,255,${((0.7 + 0.3 * prox) * f).toFixed(3)})`;
+        c.fillText(t, x, baseY);
       } else {
-        c.fillStyle = `rgba(255,255,255,${(0.38 * f).toFixed(3)})`;
-        c.fillRect(x - 0.5, baseY - 3, 1, 6);
+        c.fillStyle = `rgba(0,0,0,${(0.35 * f).toFixed(3)})`;
+        c.fillRect(x - 1.5, baseY - 4.5, 3, 9);
+        c.fillStyle = `rgba(255,255,255,${(0.6 * f).toFixed(3)})`;
+        c.fillRect(x - 0.6, baseY - 3.5, 1.2, 7);
       }
     }
-    // POI ticks
+    // POI ticks (outlined diamonds in the kind colour)
     const cam = this.world?.camera;
+    const py = baseY + (small ? 12 : 13);
     if (cam) {
       for (const { p, dist } of this.compassPois) {
         let dA = this._bearing(p.pos, cam) - hd; dA = Math.atan2(Math.sin(dA), Math.cos(dA));
         const clamped = Math.max(-fov / 2 * 0.96, Math.min(fov / 2 * 0.96, dA));
         const x = cx + clamped * pxPerRad;
-        const f = Math.max(0.35, fade(x));
+        const f = Math.max(0.4, fade(x));
         const near = 1 - Math.min(1, dist / (KIND_RANGE[p.kind] ?? 6000) / 1.6);
         c.save();
-        c.globalAlpha = f * (0.45 + near * 0.55);
-        c.translate(x, baseY + 11);
+        c.globalAlpha = f * (0.55 + near * 0.45);
+        c.translate(x, py);
         c.rotate(Math.PI / 4);
-        c.fillStyle = KIND_COL[p.kind] || '#fff';
-        const s = 2.2 + near * 1.4;
-        c.fillRect(-s, -s, s * 2, s * 2);
+        const sz = 2.6 + near * 1.5 + (p.data?.capital ? 0.8 : 0);
+        c.fillStyle = 'rgba(0,0,0,.55)'; c.fillRect(-sz - 1.2, -sz - 1.2, (sz + 1.2) * 2, (sz + 1.2) * 2);
+        c.fillStyle = (p.data?.capital ? KIND_COL.city : KIND_COL[p.kind]) || '#fff';
+        c.fillRect(-sz, -sz, sz * 2, sz * 2);
         c.restore();
       }
     }
-    // centre notch + hairline
-    c.shadowBlur = 0;
+    // hairline + centre notch
     const g = c.createLinearGradient(0, 0, w, 0);
-    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,.28)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-    c.fillStyle = g; c.fillRect(0, baseY + 6.5, w, 1);
-    c.fillStyle = 'rgba(255,255,255,.95)';
-    c.beginPath(); c.moveTo(cx - 3.5, 1); c.lineTo(cx + 3.5, 1); c.lineTo(cx, 5.5); c.closePath(); c.fill();
+    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,.4)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g; c.fillRect(0, baseY + 7.5, w, 1);
+    c.fillStyle = 'rgba(0,0,0,.45)';
+    c.beginPath(); c.moveTo(cx - 5.5, 0); c.lineTo(cx + 5.5, 0); c.lineTo(cx, 7); c.closePath(); c.fill();
+    c.fillStyle = 'rgba(255,255,255,.98)';
+    c.beginPath(); c.moveTo(cx - 4, 0.5); c.lineTo(cx + 4, 0.5); c.lineTo(cx, 5.6); c.closePath(); c.fill();
     void escapeHtml;
   }
 }

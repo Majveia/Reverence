@@ -40,7 +40,10 @@ export function makeContactShadows(items, reversed = false) {
       varying vec2 vQ; varying vec4 vB; varying float vFade;
       void main(){
         vQ = aQ; vB = aB;
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
+        vec3 tc = cameraPosition - wp; float dl = length(tc);
+        wp += tc / max(dl, 1e-3) * min(dl * 0.0035, 8.0);
+        vec4 mv = viewMatrix * vec4(wp, 1.0);
         vFade = 1.0 - smoothstep(500.0, 900.0, -mv.z);
         gl_Position = projectionMatrix * mv;
       }`,

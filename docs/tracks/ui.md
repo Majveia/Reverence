@@ -22,6 +22,47 @@ elements appear when relevant and fade away. Every animation that can appear in 
 | `MapNav.js` | map / scale navigation: scale ladder (Universe › Galaxy › Star › World), galaxies (cosmic), notable systems (galaxy), orrery of the current system with planets + moons (system) — click to travel |
 | `Warp.js` | cinematic transitions above the director's fade veil on every `mode:leaving → mode:enter`: tinted nebula tunnel in the destination's palette, a **procedural portrait of the destination** looming out of the dark (the target galaxy with its real type/arm count/pitch/colours/bar/ring + dust lanes; the target star with blackbody colour, diffraction spikes, orbit and the destination world as a lit crescent; the cosmic web as filaments + clusters), seeded star streaks, vignette, "ENTERING · <name> · <type / class · K>" caption. Sprites are pre-rendered once per transition; rAF only while visible; boot wordmark loader |
 
+### Round 3 changes (critic r2 fixes)
+* **Contrast protection (critical)** — two contrast shades behind the HUD bands (`.rv-shade.top` / `.bot`, soft
+  `rgba(4,8,12,.55) → 0` gradients). Their opacity follows the light at the camera (`G.uNight`, on-planet factor from
+  altitude): ~full in daylight on a planet, ~30 % at night, 0 in space and in the black cosmic/galaxy modes. Every HUD
+  text node uses the two-layer shadow `0 0 1px rgba(0,0,0,.9), 0 1px 6px rgba(0,0,0,.65)`; breadcrumb crumbs .8 and
+  subline .84 opacity (10.5 px). POI / body marker labels sit on a small dark glass plate (`.rv-mk-lab`, blur 6 px);
+  diamonds/dots get dark hairlines. The compass canvas draws a soft dark elliptical plate, stroke-outlined letters and
+  outlined POI diamonds.
+* **Toasts (critical)** — one toast at a time, top-centre under the compass (or under the portrait telemetry);
+  the rest queue (max 4) and follow with a 0.45 s gap; a waiting toast shortens the visible one to 2.6 s. Single-line
+  pill (icon · EYEBROW · name); on short viewports (≤ 460 px tall) no icon, 12 px, ≤ 360 px wide. Enter/exit =
+  translateY + opacity + scale, shimmer sweep. The old left/right collision solver is gone.
+* **Touch (major)** — one button spec (56 px hit, 44 px disc — primary 72/60, small 56/38 — tinted glass
+  `rgba(10,14,20,.4)` + blur 8, 1.5 px light rim, dark hairlines inside and out, 2 px icon strokes). Buttons sit on a
+  thumb arc around the primary (polar slots 86 px at 180°/135°/90°, outer 152 px). Labels 10 px at .92 with a dark
+  shadow, retired per button after its first use (persisted in `localStorage['rv.touchUsed']`, not in shot mode) and
+  brought back when the meaning changes (glide, ride). Context buttons fire a soft ring pulse when they become
+  available; the idle "hold · call" ghost is at .62.
+* **Desktop surface HUD (major)** — the keys legend fades after ~8 s of actual play (or 40 s) and comes back only
+  after 20 s standing idle early in the session; idle auto-hide moved to 36 s. Compass 384×40 (260×36 on phones),
+  12 px cardinals that grow to 16 px at the centre. Prompts are BotW-style: on foot in third person the pill is
+  anchored beside the character (projected from the hip, smoothed, clamped); first person / vehicles / galaxy fall back
+  to bottom-centre. Top-right buttons stay hidden on desktop until the pointer moves (or Esc), always visible on touch.
+* **Warp (major)** — streaks are tapered sprites (transparent tail → bright head, halo, baked red-leading /
+  blue-trailing fringes) in a 5-step black-body ramp, additive, width 0.55–2.65 px and brightness by depth (z²
+  distribution, per-star magnitude), head glows on near stars, streak length ramps on easeInOutCubic. A radial
+  zoom-blur / chromatic split pass (half-res, quarter on mobile, red/neutral/blue copies scaled 1.025–1.13 about the
+  centre) scales with warp speed; stronger vignette. The destination portrait grows from ~17 % to ~67 % of the screen
+  height (ease-in over the warp) with a bloom halo in its own colour. Caption 22 px / 10.5 px with a glow.
+* **Ship HUD (major)** — arrival title cards are compact lower-third captions (21 px, ~4.4 s total); only the opening
+  cosmic card stays centred (40 px hero with a glow and a 0.5→0.36 em tracking reveal). Free-text hints become
+  icon+label chips (`W/S throttle` → [W][S] throttle, `Mouse steer` → mouse glyph, `drag to orbit` → device glyph
+  that adapts to keyboard / touch / gamepad), fading in one after another and dimming once the player is active. Speed
+  readout 28 px weight 500 tabular with a thin arc gauge (soft-saturating per unit) whose tick turns violet under pulse
+  drive; larger status pill; centre reticle in flight.
+* **Menu (minor)** — Photo / Share / Controls as an icon row at the top (Share shows a ✓ Copied state), panel
+  `max-height: calc(100dvh - 32px - safe)` with a sticky footer, one-line ellipsized subtitle, 34 px rows on short
+  viewports.
+* **Requests** — cosmic: `.rv-tv-k` nowrap + 24 px gap between telemetry items; cosmic/external marker labels have a
+  strong dark text shadow and a 40 % radial backdrop.
+
 ### Round 2 changes (critic r1 fixes)
 * **Toast ↔ telemetry collision (critical)** — `UI._layoutToasts()` is a real collision solver: 4×/s while toasts exist
   (or immediately when a toast/telemetry/resize changes) it measures the visible HUD blocks (telemetry, touch
@@ -89,6 +130,8 @@ elements appear when relevant and fade away. Every animation that can appear in 
 ui.setLocation({scale,title,subtitle})  ui.showTitle(t, sub, ms)  ui.prompt(id, text, action)  ui.clearPrompt(id)
 ui.toast(text, {kind, ms, eyebrow, icon})  ui.hint(text, ms)  ui.setTelemetry(obj|null)  ui.setControls(scheme)
 ui.setMarkers([{id, x, y, visible, label, kind, distance, sub, unit}])   // label "A · B" → name A, sub B; no '◦' prefix
+ui.hint(text)  // "Key label · Key label" / "drag to orbit" segments render as device-adaptive glyph chips
+ui.toast(...)  // queued: one visible at a time, top-centre
 ui.openMenu/closeMenu/toggleMenu()  ui.openMap/closeMap/toggleMap()  ui.setPhoto(bool)  ui.reveal(name, kind)
 ui.locationInfo() → {title, subtitle, crumbs, up, coords}   ui.shareState() → params for buildQuery()
 ui.visible  (false in photo mode)
@@ -111,7 +154,8 @@ Input: adds action `menu` (`Escape`, `Pad9`); removes those codes from `back`.
 | warp → cosmic web | `/?mode=cosmic&uipanel=warp` | `[{"advance":2}]` |
 | touch landscape, toasts + telemetry (collision case) | `/?mode=system&galaxy=0&star=6&planet=1&view=bike&tod=0.35&touch=1` (`--w 844 --h 390`) | `[{"advance":5},{"hold":"KeyW","sec":2.5},{"advance":2}]` |
 | touch glide glyph | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.35&touch=1` (`--w 844 --h 390`) | `[{"advance":5},{"hold":"Space","sec":0.25},{"advance":0.35}]` |
-| ship pulse: PULSE pill, target row, hint footnote | `/?mode=system&galaxy=0&star=2&planet=0&view=ship&tod=0.45&alt=120000&pitch=10&pulse=20000` | `[{"advance":2}]` |
+| ship pulse: arc gauge, PULSE pill, target row + lead marker, reticle, key chips | `/?mode=system&galaxy=0&star=2&planet=0&view=ship&tod=0.45&alt=120000&pitch=10&pulse=20000` | `[{"advance":3}]` (lower-third title still up at 2 s) |
+| BotW prompt beside the player (swim: Dive · C) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=1.086&lon=-28.557&tod=0.4` | `[{"advance":4}]` |
 | cosmic title over forming structure | `/?mode=cosmic` | `[{"advance":6}]` |
 
 ## Perf
@@ -122,11 +166,18 @@ only during transitions. No per-frame allocations in hot paths except the small 
 `Celestial` (space only).
 
 ## Known issues
+* The arrival title card (lower third) can still sit over the hero object when the framing puts it low (W4 ship
+  at 3 s: the planet); world markers dim to 25 % while it is shown.
+* Contrast shades key off `G.uNight` + altitude, not measured screen luminance (no CPU readback of the frame);
+  bright snow at night would get the weaker shade.
+* Warp chromatic split is done with tinted half-res copies of the streak layer (no per-pixel CA shader); the
+  2D-canvas warp costs ~4 extra half-res blits per frame while visible (quarter-res on mobile).
+* Touch button labels retire per button after first use (`localStorage['rv.touchUsed']`); clear it to see them again.
 * Galaxy portraits in the warp use `Universe.galaxy().colors` which are pale (L = 0.7), so arms read whitish.
 * The toast solver measures DOM rects (≤ 12 `getBoundingClientRect` calls, 4 Hz, only while toasts exist).
 * Quality tier cannot be switched live (engine detects it once) → the menu reloads with `q=` at the same place.
-* Hints from other tracks are free text (keyboard wording even on touch, e.g. vehicle hints check
-  `lastDevice`, which is `keyboard` when the touch layer is forced with `&touch=1`).
+* Hints from other tracks are free text; `W/S throttle`-style and `drag/scroll/tap …` segments become glyph chips,
+  anything else is shown as a plain label.
 * Warp star field uses `Math.random` (cosmetic only).
 
 ## Requests

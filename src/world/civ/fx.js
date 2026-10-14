@@ -1,4 +1,4 @@
-// City screen-space pass (pipeline effect, order 98: after GTAO and the water passes, before the atmosphere at 100).
+// City screen-space pass (pipeline effect, order 112: after water (95), atmosphere / sky (100) and clouds (110)).
 //
 //  1. Wet-street reflections (SSR): every flat, up-facing pixel inside a settlement (asphalt, plazas,
 //     roofs, the harbour water) reflects the frame itself — lit facades, neon signs, shopfronts — by a
@@ -45,7 +45,7 @@ uniform vec4 uSite[4];   // xyz centre (scene space), w radius (m)
 uniform vec4 uSiteP[4];  // x ground radius from the planet centre, y wet, z smog density, w smog scale height
 uniform vec3 uSmogA[4], uSmogB[4];
 uniform int uN;
-uniform float uWet, uTime, uFrame, uSSR, uSmogK;
+uniform float uWet, uTime, uFrame, uSSR, uSmogK, uDbg;
 varying vec2 vUv;
 
 float lin(float d){ return rvp_isSky(d) ? 1e9 : rvp_linDepth(d, uNearFar.x, uNearFar.y); }
@@ -182,28 +182,71 @@ void main(){
           refl = min(refl, vec3(40.0));
           refl = mix(smogCol * uSmogK * 1.5 * nightP, refl, edge);
         } else {
-          // ray escaped: mirror of the (lit) smog / dark sky above the street
-          refl = smogCol * uSmogK * 1.5 * nightP;
+          // ray escaped the screen: reuse the frame where it left (sky at the top edge, far facades at the sides),
+          // plus the lit smog at night
+          vec2 euv = clamp(P0 + dP * sMax, vec2(0.002), vec2(0.998));
+          refl = texture2D(tColor, euv).rgb * 0.85 + smogCol * uSmogK * 1.5 * nightP;
+          refl = min(refl, vec3(20.0));
         }
         float k = F * wet * flat_ * mix(0.55, 1.0, puddle);
         col = col * (1.0 - k * 0.8) + refl * k;
+        if (uDbg > 0.5) { gl_FragColor = vec4(k * 4.0, hit, flat_, 1.0); return; }
       }
     }
   }
 
   // ---------------------------------------------------------------- smog / light pollution (night)
+  // height fog confined to a dome over each settlement: integrate only the chord of the view ray inside the
+  // dome (chord length → 0 at its rim, so there is no visible boundary), sum over the nearby settlements
   float nightC = 1.0 - smoothstep(-0.12, 0.06, dot(upC, uSunDir));
   float night = max(nightC, nightP);
   if (night > 0.01 && uSmogK > 0.0) {
-    float mAvg = (mC + mM * 2.0 + mP) * 0.25;
-    if (mAvg > 0.002) {
-      float hC = length(uCamPos - uPC) - SP.x;
-      float ry = dot(rdW, upC);
-      float tMax = sky ? (ry > 0.0 ? min(5000.0, (SP.w * 6.0) / max(ry, 0.02)) : 5000.0) : dist;
-      float tau = fogInt(hC, ry, tMax, SP.z, SP.w) * mAvg;
-      float f = 1.0 - exp(-tau);
-      vec3 inscat = smogCol * uSmogK * (0.6 + 0.4 * tn) * night;
+    float tMax = sky ? 8000.0 : dist;
+    float tauT = 0.0; vec3 inT = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+      if (i >= uN) break;
+      vec3 C = uSite[i].xyz; float Rf = uSite[i].w * 1.5 + 250.0;
+      vec3 oc = uCamPos - C;
+      float b = dot(oc, rdW), c = dot(oc, oc) - Rf * Rf;
+      float disc = b * b - c;
+      if (disc <= 0.0) continue;
+      float sq = sqrt(disc);
+      float t0 = max(0.0, -b - sq), t1 = min(tMax, -b + sq);
+      if (t1 <= t0) continue;
+      vec3 upS = normalize(C - uPC);
+      float h0 = dot(uCamPos + rdW * t0 - uPC, upS) - uSiteP[i].x;
+      float ry = dot(rdW, upS);
+      float tau = fogInt(h0, ry, t1 - t0, uSiteP[i].z, uSiteP[i].w);
+      vec3 pc = uCamPos + rdW * (0.5 * (t0 + t1)) - uPC;
+      float tn2 = rv_vnoise(pc * 0.0021 + vec3(uTime * 0.01, 0.0, 0.0)) * 0.65 + rv_vnoise(pc * 0.0083) * 0.35;
+      inT += mix(uSmogA[i], uSmogB[i], smoothstep(0.3, 0.7, tn2)) * tau * (0.6 + 0.4 * tn2);
+      tauT += tau;
+    }
+    if (tauT > 1e-5) {
+      float f = 1.0 - exp(-tauT);
+      vec3 inscat = inT / tauT * uSmogK * night;
       col = col * (1.0 - f * 0.55) + inscat * f;
+    }
+    // light-pollution sky glow: the low sky toward (or above) a city glows with its light, fading upward
+    // (runs after the cloud pass: under an overcast deck this is the city light on the cloud base)
+    if (sky) {
+      for (int i = 0; i < 4; i++) {
+        if (i >= uN) break;
+        vec3 C = uSite[i].xyz; vec3 upS = normalize(C - uPC);
+        vec3 tc = C - uCamPos; float dc = length(tc);
+        vec3 th = tc - upS * dot(tc, upS); float lth = length(th);
+        float inside = 1.0 - smoothstep(uSite[i].w * 0.6, uSite[i].w * 1.6 + 200.0, lth);
+        vec3 rh = rdW - upS * dot(rdW, upS);
+        float toward = lth > 1.0 && length(rh) > 1e-3 ? max(0.0, dot(normalize(rh), th / lth)) : 1.0;
+        float dirF = mix(pow(toward, 3.0), 1.0, inside);
+        float ry = dot(rdW, upS);
+        float prox = 1.0 - smoothstep(1500.0, 9000.0, dc);
+        // mottled like a lit cloud base, brightest low over the city, fading toward the zenith
+        vec3 dn = rdW * 3.0 + vec3(uTime * 0.004, 0.0, 0.0);
+        float mott = 0.45 + 0.75 * (rv_vnoise(dn) * 0.6 + rv_vnoise(dn * 2.7) * 0.4);
+        float g = exp(-max(ry, 0.0) * mix(13.0, 6.0, inside)) * dirF * prox * uSiteP[i].z * 420.0 * mott;
+        col += mix(uSmogA[i], uSmogB[i], 0.5 + 0.5 * sin(atan(rh.x, rh.z) * 2.0 + float(i))) * g * night * uSmogK;
+      }
     }
   }
   gl_FragColor = vec4(col, 1.0);
@@ -216,7 +259,7 @@ export class CityFX {
   constructor(civ) {
     this.civ = civ;
     this.name = 'civ-city';
-    this.order = 98; // after the water surface / shore pass (95): harbour water gets the city reflections + smog too
+    this.order = 112; // after water (95), atmosphere (100) and clouds (110): reflections see the real sky, the glow lights the cloud base
     this.enabled = true;
     const tier = civ.q?.tier || 'high';
     this.steps = { low: 0, med: 12, high: 22, ultra: 32 }[tier] ?? 22;
@@ -231,7 +274,7 @@ export class CityFX {
       uSmogA: { value: [0, 1, 2, 3].map(() => new THREE.Color()) },
       uSmogB: { value: [0, 1, 2, 3].map(() => new THREE.Color()) },
       uN: { value: 0 }, uWet: G.uWetness, uTime: G.uTime, uFrame: G.uFrame,
-      uSSR: { value: this.steps > 0 ? 1 : 0 }, uSmogK: { value: 1 },
+      uSSR: { value: this.steps > 0 ? 1 : 0 }, uSmogK: { value: 1 }, uDbg: { value: String(civ.world?.params?.civdbg || '').includes('fxdbg') ? 1 : 0 },
     };
     this.mat = makeFullscreenMaterial(FRAG, this.U);
     this.mat.defines = { SSR_STEPS: Math.max(1, this.steps) };
@@ -260,8 +303,9 @@ export class CityFX {
       const lvl = 0.6 + 0.1 * (s.level || 3) + (s.kind === 'metropolis' ? 0.3 : s.kind === 'city' ? 0.15 : s.kind === 'village' || s.kind === 'camp' || s.hamlet ? -0.35 : 0);
       U.uSite.value[i].set(s.pos.x + root.x, s.pos.y + root.y, s.pos.z + root.z, s.radius * (s.hamlet ? 1.2 : 1));
       U.uSiteP.value[i].set(s.R + s.h0, p.wet, p.dens * Math.max(0.2, lvl), p.H);
-      U.uSmogA.value[i].set(p.a).multiplyScalar(p.k * Math.max(0.2, lvl));
-      U.uSmogB.value[i].set(p.b).multiplyScalar(p.k * Math.max(0.2, lvl));
+      // slightly desaturated toward a warm grey: city haze, not coloured gel
+      U.uSmogA.value[i].set(p.a).lerp(_c.set('#b89a8a'), 0.3).multiplyScalar(p.k * Math.max(0.2, lvl));
+      U.uSmogB.value[i].set(p.b).lerp(_c.set('#8aa0b0'), 0.3).multiplyScalar(p.k * Math.max(0.2, lvl));
       smogK = 1;
     }
     U.uN.value = n;

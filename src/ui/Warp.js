@@ -6,7 +6,9 @@
 //   2. the destination itself looming out of the dark: a procedural portrait of the target galaxy
 //      (its real arm count / pitch / colours / type from Universe.galaxy), the target star (blackbody
 //      colour, diffraction spikes, orbit + planet crescent) or the cosmic web (filaments + clusters)
-//   3. star streaks (≤ 340, seeded → deterministic captures)
+//   3. star streaks (≤ 340, seeded → deterministic captures): tapered head-bright sprites in a black-body
+//      ramp with baked chromatic fringes, width/brightness by depth, additive; then a radial zoom-blur /
+//      chromatic split pass (half-res copies scaled about the centre) proportional to warp speed
 //   4. "ENTERING · <destination>" caption
 // The rAF loop only runs while visible; `&uipanel=warp` in shot mode drives it from ui.update (deterministic).
 import { events } from '../core/events.js';
@@ -22,6 +24,10 @@ function rng(seed) {
   return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
+const easeInOutCubic = (x) => { const t = clamp01(x); return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
+const easeInQuad = (x) => { const t = clamp01(x); return t * t; };
+// black-body ramp for streaks (≈ 3200 K → 12000 K) with rough stellar frequencies
+const BB = [['255,176,104', 0.12], ['255,212,160', 0.2], ['255,240,226', 0.3], ['226,234,255', 0.24], ['178,202,255', 0.14]];
 const smooth = (x) => { const t = clamp01(x); return t * t * (3 - 2 * t); };
 /** THREE.Color-like (linear) or {r,g,b} → 'r,g,b' sRGB 0..255 string, optionally lifted towards white. */
 function rgbStr(c, lift = 0, lin = true) {
@@ -57,7 +63,10 @@ export class Warp {
     this.barEl = this.label.querySelector('.bar i');
     this.ctx = null;
     this.rand = rng(0x5eed);
-    this.stars = { x: new Float32Array(N), y: new Float32Array(N), z: new Float32Array(N), pz: new Float32Array(N), hue: new Uint8Array(N) };
+    this.stars = { x: new Float32Array(N), y: new Float32Array(N), z: new Float32Array(N), pz: new Float32Array(N), hue: new Uint8Array(N), mag: new Float32Array(N) };
+    this.streaks = BB.map(([c]) => this._streakSprite(c));
+    this.headGlow = this._blob('255,255,255');
+    this.stretch = 0;
     this.neb = { a: new Float32Array(NB), r: new Float32Array(NB), z: new Float32Array(NB), c: new Uint8Array(NB), s: new Float32Array(NB) };
     this.phase = 'idle';     // idle | in | out | boot
     this.t = 0;
@@ -96,9 +105,14 @@ export class Warp {
     const s = this.stars, R = this.rand;
     const a = R() * Math.PI * 2, r = 0.02 + Math.pow(R(), 0.7) * 1.2;
     s.x[i] = Math.cos(a) * r; s.y[i] = Math.sin(a) * r;
-    s.z[i] = anywhere ? 0.05 + R() * 1.0 : (this.dir > 0 ? 1.0 + R() * 0.1 : 0.03 + R() * 0.05);
+    // z² distribution: most stars far away (thin, faint), a few close (thick, bright)
+    s.z[i] = anywhere ? 0.05 + Math.sqrt(R()) * 1.05 : (this.dir > 0 ? 1.0 + R() * 0.1 : 0.03 + R() * 0.05);
     s.pz[i] = s.z[i];
-    s.hue[i] = R() < 0.22 ? 1 : R() < 0.16 ? 2 : 0;
+    let u = R(), h = 0;
+    while (h < BB.length - 1 && u > BB[h][1]) { u -= BB[h][1]; h++; }
+    s.hue[i] = h;
+    const m = R();
+    s.mag[i] = 0.3 + 0.7 * m * m;
   }
 
   _resetNeb(i, anywhere) {
@@ -163,6 +177,25 @@ export class Warp {
     const g = x.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
     g.addColorStop(0, `rgba(${c},0.55)`); g.addColorStop(0.35, `rgba(${c},0.26)`); g.addColorStop(0.7, `rgba(${c},0.07)`); g.addColorStop(1, `rgba(${c},0)`);
     x.fillStyle = g; x.fillRect(0, 0, S, S);
+    return cv;
+  }
+
+  /** Tapered streak: transparent tail → bright head (x = 244 of 256), soft halo, red/blue fringes. */
+  _streakSprite(c) {
+    const Wd = 256, Ht = 24, cv = mkCanvas(Wd, Ht), x = cv.getContext('2d'), cy = Ht / 2, hx = 244;
+    x.globalCompositeOperation = 'lighter';
+    const line = (col, a, off, h) => {
+      const g = x.createLinearGradient(0, 0, hx + off, 0);
+      g.addColorStop(0, `rgba(${col},0)`); g.addColorStop(0.55, `rgba(${col},${(a * 0.18).toFixed(3)})`);
+      g.addColorStop(0.9, `rgba(${col},${(a * 0.7).toFixed(3)})`); g.addColorStop(1, `rgba(${col},${a})`);
+      x.fillStyle = g;
+      x.beginPath(); x.moveTo(0, cy - h * 0.15); x.lineTo(hx + off, cy - h / 2); x.arc(hx + off, cy, h / 2, -Math.PI / 2, Math.PI / 2); x.lineTo(0, cy + h * 0.15); x.closePath(); x.fill();
+    };
+    line(c, 0.22, 0, 7);            // halo
+    line('255,90,70', 0.38, 2, 2.4);  // red fringe leads
+    line('80,120,255', 0.38, -3, 2.4); // blue fringe trails
+    line(c, 1, 0, 2);               // core
+    line('255,255,255', 0.85, 0, 0.9); // hot centre
     return cv;
   }
 
@@ -363,6 +396,31 @@ export class Warp {
     return cv;
   }
 
+  _zoomBlur(ctx, W, H, cx, cy, k) {
+    const sc = this.engine.quality?.mobile ? 0.25 : 0.5;
+    const bw = Math.max(2, Math.round(W * sc)), bh = Math.max(2, Math.round(H * sc));
+    if (!this.zb || this.zb.width !== bw || this.zb.height !== bh) {
+      this.zb = mkCanvas(bw, bh); this.zbR = mkCanvas(bw, bh); this.zbB = mkCanvas(bw, bh);
+      this.zbx = this.zb.getContext('2d'); this.zbRx = this.zbR.getContext('2d'); this.zbBx = this.zbB.getContext('2d');
+    }
+    const b = this.zbx;
+    b.globalCompositeOperation = 'copy'; b.drawImage(this.sl, 0, 0, bw, bh);
+    // tinted copies (multiply by a colour, then restore the alpha of the source)
+    const tint = (tx, col) => {
+      tx.globalCompositeOperation = 'copy'; tx.drawImage(this.zb, 0, 0);
+      tx.globalCompositeOperation = 'multiply'; tx.fillStyle = col; tx.fillRect(0, 0, bw, bh);
+      tx.globalCompositeOperation = 'destination-in'; tx.drawImage(this.zb, 0, 0);
+    };
+    tint(this.zbRx, 'rgb(255,120,90)'); tint(this.zbBx, 'rgb(90,140,255)');
+    ctx.globalCompositeOperation = 'lighter';
+    const put = (img, s, a) => { ctx.globalAlpha = Math.min(1, a); ctx.drawImage(img, cx - (W * s) / 2, cy - (H * s) / 2, W * s, H * s); };
+    put(this.zbR, 1.03, 0.5 * k);
+    put(this.zb, 1.06, 0.32 * k);
+    put(this.zbB, 1.1, 0.45 * k);
+    put(this.zb, 1.16, 0.2 * k);
+    ctx.globalAlpha = 1;
+  }
+
   _setLabel(k, n, sub) {
     this.label.querySelector('.k').textContent = String(k || '').toUpperCase();
     this.label.querySelector('.n').innerHTML = escapeHtml(n || '');
@@ -414,6 +472,8 @@ export class Warp {
     else if (ph === 'out') { targetSpeed = 0.02; targetAlpha = 0; targetLabel = 0; targetDest = 0; }
     const k = 1 - Math.exp(-dt * (ph === 'out' ? 3.2 : 4));
     this.speed += (targetSpeed - this.speed) * k;
+    // streak length ramps in on an ease-in-out curve (no pop), relaxes as the warp ends
+    this.stretch = ph === 'in' ? easeInOutCubic(this.t / 1.4) : ph === 'boot' ? 0.15 : this.stretch * Math.exp(-dt * 3);
     this.alpha += (targetAlpha - this.alpha) * (1 - Math.exp(-dt * (ph === 'out' ? 2.6 : 5)));
     this.labelA += (targetLabel - this.labelA) * (1 - Math.exp(-dt * (ph === 'out' ? 6 : 3)));
     this.destA += (targetDest - this.destA) * (1 - Math.exp(-dt * (ph === 'out' ? 3 : 1.6)));
@@ -428,7 +488,8 @@ export class Warp {
 
   _draw(dt, draw = true) {
     this._resize();
-    const ctx = this.ctx, W = this.canvas.width, H = this.canvas.height;
+    let ctx = this.ctx;
+    const W = this.canvas.width, H = this.canvas.height;
     if (draw) ctx.clearRect(0, 0, W, H);
     if (this.alpha < 0.004) return;
     const cx = W / 2, cy = H / 2, f = Math.max(W, H) * 0.5;
@@ -466,13 +527,21 @@ export class Warp {
     // ---- 2. destination portrait looming out of the dark
     const D = this.dest;
     if (D && draw && !onWhite && this.destA > 0.01) {
+      // diving in, the destination grows from ~15 % to ~60 % of the screen height (ease-in over the second
+      // half of the warp); climbing out it recedes from beyond the frame
       const p = 1 - Math.exp(-this.t * 0.75);
-      const base = Math.min(W, H);
-      const scale = this.phase === 'out' ? 1 : 1;
-      const size = (this.dir > 0 ? 0.1 + p * 0.62 : 1.25 - p * 0.72) * base * scale * (D.kind === 'system' ? 1.3 : 1);
-      const ga = A * this.destA * (D.kind === 'system' ? 1 : 0.92);
+      const grow = easeInQuad((this.t - 0.25) / 2.0);
+      const frac = this.dir > 0 ? 0.16 + 0.42 * grow : 1.3 - p * 0.75;
+      const size = frac * H * (D.kind === 'system' ? 1.35 : D.kind === 'cosmic' ? 1.15 : 1.05);
+      const ga = A * this.destA * (D.kind === 'system' ? 1 : 0.85);
+      const py = cy - H * 0.05 * (this.dir > 0 ? grow : 0); // keep the portrait clear of the caption
+      // bloom halo behind the destination (its own colour)
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = Math.min(1, ga * (D.kind === 'system' ? 0.4 : 0.26));
+      const hs = size * 1.7;
+      ctx.drawImage(this.nebSprites[0], cx - hs / 2, py - hs / 2, hs, hs);
       ctx.save();
-      ctx.translate(cx, cy);
+      ctx.translate(cx, py);
       ctx.globalCompositeOperation = 'lighter';
       ctx.globalAlpha = Math.min(1, ga);
       ctx.rotate(D.rot + this.t * D.spin);
@@ -482,25 +551,61 @@ export class Warp {
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
     }
 
-    // ---- 3. star streaks
-    ctx.lineCap = 'round';
+    // ---- 3. star streaks (tapered sprites, additive; width + brightness by depth)
     const pal = this.palette;
+    const stretch = this.stretch;
+    // streaks render into their own layer so the zoom blur smears only them (not the portrait or the gas)
+    const main = ctx;
+    if (draw && !onWhite) {
+      if (!this.sl || this.sl.width !== W || this.sl.height !== H) { this.sl = mkCanvas(W, H); this.slx = this.sl.getContext('2d'); }
+      ctx = this.slx;
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over'; ctx.clearRect(0, 0, W, H);
+    }
+    if (draw) ctx.globalCompositeOperation = onWhite ? 'source-over' : 'lighter';
     for (let i = 0; i < N; i++) {
       s.pz[i] = s.z[i];
       s.z[i] -= v * dt * 0.9;
       if (s.z[i] < 0.03 || s.z[i] > 1.12) { this._reset(i, false); continue; }
       if (!draw) continue;
-      const z = s.z[i], pz = Math.min(1.12, Math.max(0.03, s.pz[i] + v * 0.035)); // stretch tail for streaks
+      const z = s.z[i];
+      const tz = Math.min(1.12, Math.max(0.03, z + v * (0.012 + 0.07 * stretch))); // tail depth → streak length
       const x1 = cx + (s.x[i] / z) * f, y1 = cy + (s.y[i] / z) * f;
-      const x0 = cx + (s.x[i] / pz) * f, y0 = cy + (s.y[i] / pz) * f;
-      if (x1 < -50 || x1 > W + 50 || y1 < -50 || y1 > H + 50) { if (this.dir > 0) this._reset(i, false); continue; }
-      const near = Math.min(1, (1.1 - z) / 1.05);
-      const a = A * (0.15 + near * 0.85);
-      const c = s.hue[i] === 1 ? '255,214,170' : s.hue[i] === 2 ? (pal[0] || '170,205,255') : '235,240,255';
-      ctx.strokeStyle = onWhite ? `rgba(90,110,150,${(a * 0.55).toFixed(3)})` : `rgba(${c},${a.toFixed(3)})`;
-      ctx.lineWidth = (0.6 + near * 1.6) * this.dpr;
-      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1 + 0.01, y1); ctx.stroke();
+      const x0 = cx + (s.x[i] / tz) * f, y0 = cy + (s.y[i] / tz) * f;
+      if (x1 < -80 || x1 > W + 80 || y1 < -80 || y1 > H + 80) { if (this.dir > 0) this._reset(i, false); continue; }
+      const near = clamp01((1.1 - z) / 1.05);
+      const n2 = near * near;
+      const a = A * s.mag[i] * (0.18 + n2 * 0.82);
+      if (a < 0.015) continue;
+      const w = (0.55 + 2.1 * n2) * this.dpr * (0.7 + 0.3 * s.mag[i]);
+      const dx = x1 - x0, dy = y1 - y0;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const L = Math.max(len, w * 1.5);
+      const cs = len > 1e-3 ? dx / len : 1, sn = len > 1e-3 ? dy / len : 0;
+      if (onWhite) {
+        ctx.strokeStyle = `rgba(90,110,150,${(a * 0.55).toFixed(3)})`; ctx.lineWidth = w;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1 + 0.01, y1); ctx.stroke();
+        continue;
+      }
+      ctx.globalAlpha = Math.min(1, a);
+      ctx.setTransform(cs, sn, -sn, cs, x1, y1);
+      ctx.drawImage(this.streaks[s.hue[i]], -L * (244 / 256), -6 * w, L * (256 / 244) , 12 * w);
+      if (near > 0.45) { // head glow on the close ones
+        const g = (2.5 + 5 * n2) * this.dpr;
+        ctx.globalAlpha = Math.min(1, a * 0.55);
+        ctx.drawImage(this.headGlow, -g, -g, g * 2, g * 2);
+      }
     }
+    if (draw) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; }
+    if (draw && !onWhite) {
+      ctx = main;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.drawImage(this.sl, 0, 0);
+      // ---- 4. radial zoom blur + chromatic split of the streak layer (half-res copies scaled about the centre)
+      const zb = Math.min(1, Math.abs(this.speed) / 2.2) * A * (0.4 + 0.6 * stretch);
+      if (zb > 0.04) this._zoomBlur(ctx, W, H, cx, cy, zb);
+    }
+    if (draw) ctx.globalCompositeOperation = 'source-over';
     // quiet band behind the destination label
     if (draw && this.labelA > 0.02 && !onWhite) {
       const ly = H - H * 0.14 - 40 * this.dpr, rx = Math.min(W * 0.4, 360 * this.dpr);
@@ -522,7 +627,7 @@ export class Warp {
     if (draw && !onWhite) {
       const vg = this._vig && this._vigW === W && this._vigH === H ? this._vig : (() => {
         const g = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.35, cx, cy, Math.hypot(W, H) * 0.6);
-        g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.6)');
+        g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.6, 'rgba(0,0,0,0.3)'); g.addColorStop(1, 'rgba(0,0,0,0.82)');
         this._vig = g; this._vigW = W; this._vigH = H; return g;
       })();
       ctx.globalAlpha = A; ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;

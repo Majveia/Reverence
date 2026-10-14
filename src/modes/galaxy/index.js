@@ -87,6 +87,7 @@ export default class GalaxyMode extends Mode {
     if (params.gx) {
       for (const kv of String(params.gx).split(',')) {
         const [k, v] = kv.split(':');
+        if (k === 'DustNoise') { this.volume.dustNoiseBase = +v; continue; }
         const un = this.volume.uniforms['u' + k] ?? this.stars.common['u' + k] ?? this.stars.globalMat.uniforms['u' + k];
         if (un && typeof un.value === 'number' && Number.isFinite(+v)) un.value = +v;
         else if (k === 'exp') { this.look.exposure = +v; this._expSet = true; }

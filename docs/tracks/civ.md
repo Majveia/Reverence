@@ -15,7 +15,44 @@ Owner paths: `src/world/civ/**`, this file. Subsystem `civ`, order 35.
 | `parts.js` | shared parts: doors, timber frames, chimneys, flower boxes, balconies, awnings, antennas, dishes, pipes, signs, 4 lamp types, trees, fences, stalls, clutter, catenary cables with lanterns, windmill, lattice towers, colossal statue, obelisk, beacon, arch |
 | `life.js` | GPU-animated walkers (gait, arm swing, idle, ~40 % carry a swaying hand lantern that glows at night), flying traffic on looping lanes (hover cars / gliders / wooden ships), bobbing boats, space elevator (screen-space tether ≥1.4 px, climbers, beacons) |
 | `camera.js` | `civcam` capture presets: computes a framing from the settlement's own layout (plaza, landmark, roads, lots) at create time and writes the player's spawn params before the player spawns — capture URLs no longer go stale when terrain changes |
+| `fx.js` | **city screen-space pass** (pipeline effect, order 112 — after water 95, atmosphere 100, clouds 110): wet-street **SSR** (perspective-correct screen-space march against the depth buffer, binary refine, puddle mask, vertically smeared rough-asphalt streaks, Fresnel; escaped rays reuse the frame edge = real sky), **night smog** (exponential height fog integrated only over the view-ray chord inside a dome over each settlement, lit from below with the style's palette) and **light-pollution sky glow** on the cloud base (mottled, fading to the zenith). Skipped when no settlement is within 4.5 km; off on `low`, 12/22/32 steps on med/high/ultra |
+| `contact.js` | soft multiplicative contact-shadow skirt on the ground around every building footprint (1 draw / site) |
 | `pools.js` | ground light pools under every low light (street lamps, lanterns, shopfronts, blade signs): one additive draw per site; on wet ground (`G.uWetness`) each pool stretches into a reflection streak toward the camera (neon on wet asphalt) |
+
+### Round 4 changes (critic round 2 fixes)
+* **Night streets (critical #2)** — `fx.js`: wet streets now mirror the lit facades, shopfronts and neon (real SSR, not decals),
+  puddles are sharp, asphalt between them is a streaky rough reflection; a dome of city smog gives the street layered depth
+  (teal/magenta haze, desaturated) and the low sky / storm-cloud base glows with the city's light (no more black void above
+  W4). Water cities' decks are raised clear of the water track's storm wave crests (`waves.maxHeight` → deck height,
+  previously W4's streets were flooded) and get **deck colliders** (48 m tiles) so the player walks on them.
+* **Materials (critical #1)** — windows are now **recessed openings**: parallax-offset panes inside a reveal (cotangent frame
+  from screen derivatives), the sun casts the lintel/jamb shadow onto the pane, projecting sills with their shadow, rain grime
+  washed down from every sill; interior details (furniture, people, blinds) fade out below ~10 px per window (no dithered
+  speckle on distant facades). Per-building value/temperature variation, stronger plaster mottling, two-scale rain streaks,
+  ground-floor bounce-shadow ramp, noisy rising-damp / splash dirt at the base, roof eave grime + lichen. Statues are cast
+  bronze with verdigris (marble for spire/monastery) instead of the masonry pattern.
+* **Day lighting / grounding (#3)** — `contact.js` contact-shadow skirts under every building (terrain, roads and plazas darken
+  where they meet walls) on top of the pipeline GTAO.
+* **Composition (#4)** — `civcam=hero` is a framing solver: the landmark's real height is measured by a dry-run build, the
+  viewpoint distance fits it whole (top ~1/6 under the frame edge, horizon on the upper third), sight lines to the landmark
+  and the plaza are tested against every lot, tall things within 25 m of the lens are rejected, and the camera is yawed so
+  the landmark sits on a rule-of-thirds vertical with the plaza on the other side. `civcam=aerial` tilts up until the tallest
+  skyline anchor is whole.
+* **Layout (#5)** — organic towns have a density gradient (tight continuous frontage in the core, sparser edge, smaller
+  setbacks and gaps near the plaza). **Farmland**: around village / harbor / monastery / hearth / frontier / nomad towns, crop
+  fields (new `PAT.FIELD`: rows, furrows, per-field crop colour, growth patches) bordered by hedgerows or dry-stone walls
+  with trees at corners, aligned to the nearest road.
+* **Roads (#6)** — rural paths and plazas fray into the terrain (noise-perturbed discard at the border, dusty worn rim);
+  stone road patterns use metric UVs (cobbles were stretched across the road); all draped decals (roads, plazas, fields,
+  contact shadows) use a view-ray depth bias so they never sink into coarser far terrain LODs.
+* **Neon skyline (#9)** — 2–3 **megatowers** (290–450 m) on the central tower lots of a neon capital: podium, three setback
+  shafts with neon corner strips and ring bands, holo band, faceted crown with a lit ring, mast and blinking beacon. Hover
+  cars carry dithered **light trails** at night.
+* **Industrial (W8)** — no longer paves the whole site (a black wet disc under the storm): asphalt roads and yards in grass.
+* **NPCs (#7)** — trousers get a per-walker palette (jeans, browns, black, tinted), tops keep the instance tint.
+* **Orbit (#8)** — verified: night-side light clusters and the inter-city light network read from orbit (W3 `view=orbit&tod=0`).
+  The "two brown discs left and right of the planet" (W1 `view=orbit&tod=0.22`) remain with `disable=civ`: post lens ghosts.
+* Debug: `civdbg=nofx` (no city pass), `fxdbg` (SSR coverage: red = reflection weight, green = hit, blue = flat), `nocontact`.
 
 ### Round 3 changes (critic round 1, second pass)
 * **Robust capture framing: `&civcam=plaza|street|hero|aerial|top|edge` (+ `&civsite=<id>`)** — settlement positions follow
@@ -85,7 +122,8 @@ Owner paths: `src/world/civ/**`, this file. Subsystem `civ`, order 35.
 * POIs: every site (`city` / `village` / `ruin` / `monument`) with `data {style, level, capital, civ}`.
 
 ### Performance
-* One merged mesh per detailed site (buildings, 1 draw call) + roads (1) + glow sprites (1) + light pools (1) + walkers (1) + traffic (1) + boats (1). Far LOD: 2 draw calls per visible site.
+* One merged mesh per detailed site (buildings, 1 draw call) + roads/plazas/fields (1) + contact shadows (1) + glow sprites (1) + light pools (1) + walkers (1) + traffic (1) + boats (1). Far LOD: 2 draw calls per visible site. City pass: 1 fullscreen pass (SSR only on wet flat pixels inside settlements; smog only at night near a settlement).
+* Measured (high, 960×540 captures): W4 street 231 calls / 2.66 M tris total (civ 0.92 M), W1 plaza 295 / 2.5 M (civ 0.29 M), W8 aerial ~300 / ~3.1 M (civ 0.9 M; industrial metropolis with pylons is the heaviest).
 * Detail radius `3.2 km × drawDistance`, dropped beyond +2.5 km; builds are generators time-sliced (5 ms/frame live, 250 ms in shot mode before ready).
 * Building counts / walkers / traffic scale with the tier (low 0.45 · med 0.7 · high 1 · ultra 1.25).
 * Typical detailed town: 0.2–0.6 M triangles.
@@ -106,16 +144,17 @@ use `--advance 2.5` for the normal night look.
 
 | view | URL |
 |---|---|
-| W4 Blade Runner street canyon, night (10 m, fixed coords — W4 capital has not moved) | `star=2&planet=0&tod=0.95&view=fly&alt=10&pitch=2&lat=1.54880&lon=32.96537&yaw=275&camyaw=180` (advance 2.5) |
-| W4 street, eye level, night | `star=2&planet=0&tod=0.95&civcam=street` (advance 2.5) |
-| W4 neon megacity aerial, night | `star=2&planet=0&tod=0.95&civcam=aerial` (advance 2.5) |
+| **W4 street, eye level, night** (wet SSR street, shopfronts, smog) | `star=2&planet=0&tod=0.95&civcam=street` (advance 2.5) |
+| **W4 neon megacity aerial, night** (megatowers, glowing storm sky) | `star=2&planet=0&tod=0.95&civcam=aerial` (advance 2.5) |
+| W8 Stålenhag wet street, day (sky reflections in puddles) | `star=2&planet=1&tod=0.3&civcam=street` |
 | W1 village plaza, day (church, statue, stalls, townsfolk) | `star=6&planet=1&tod=0.36&civcam=plaza` |
 | W1 village plaza, night (lantern strings, lit church) | `star=6&planet=1&tod=0.84&civcam=plaza` |
 | W1 village street at dusk (lamps, lantern carriers, lit windows) | `star=6&planet=1&tod=0.84&civcam=street` |
 | W1 capital from 110 m at night (round-1 "0 tris" case) | `star=6&planet=1&tod=0.05&civcam=top` |
 | W1 establishing aerial | `star=6&planet=1&tod=0.35&civcam=aerial` |
+| W1 village street (recessed windows, cobbles, walkers) | `star=6&planet=1&tod=0.36&civcam=street` |
 | W3 Moebius spire town (plaza, statue, domes, towers) | `star=9&planet=2&tod=0.33&civcam=hero` |
-| W7 Tarkovsky kremlin-monastery town | `star=3&planet=2&tod=0.4&civcam=aerial` |
+| W7 Tarkovsky kremlin-monastery town (+ walled fields) | `star=3&planet=2&tod=0.4&civcam=aerial` |
 | W6 Roger Dean sea metropolis + space elevator | `star=1&planet=3&tod=0.4&civcam=aerial` |
 | W8 Stålenhag industrial metropolis | `star=2&planet=1&tod=0.3&civcam=aerial` (heavy storm fog at t≈0.5 — atmosphere) |
 | W10 Hearthian village | `star=17&planet=0&tod=0.3&civcam=hero` |
@@ -125,28 +164,36 @@ use `--advance 2.5` for the normal night look.
 | M1 Kubrick monolith (civ 0) | `star=0&planet=2.0&tod=0.4` (monolith ~200 m ahead of the default spawn) |
 
 ## Known issues
-* `node tools/check.mjs` passes (ALL OK). Under heavy shared load `system-surface` can exceed its 180 s readiness timeout
-  with or without civ (`disable=civ` is as slow); civ itself is ready ~4 s after create (`readyMs`), flora ~24–28 s.
-* Parked vehicles (vehicles track) still appear in settlement shots when no open, flat patch exists behind the lens
-  (`props=0` not honoured yet — see Requests).
-* W8's storm (rain 0.9, fog 0.45 at t≈0.5 s) buries the industrial metropolis in fog in aerial captures (atmosphere weather).
-* Big green/red bokeh discs in W4 street shots near the lens are not civ (hidden with `civdbg=noglow` they remain): flora
-  bioluminescent motes / post lens effects.
-* Night exposure on non-neon worlds is still brighter than the neon world (atmosphere track).
-* Street-level neon facades above the podium are still mostly window grids (now with room lighting / silhouettes, but no
-  balconies or signage on high floors of every tower type).
-* Layout of each far site is computed on the main thread (50–150 ms per metropolis) during the first frames; planning ~0.3–1 s
-  at create.
-* Triangle cost: 0.15–0.6 M per detailed town/city, ~0.75–1.0 M for level-5 metropolises at `high`.
-* Terrain grading covers plazas / monument terraces only.
+* `node tools/check.mjs`: see the result at the end of this round's summary. Under heavy shared load `system-surface` can
+  exceed its readiness timeout with or without civ; civ itself is ready ~4 s after create (`readyMs`).
+* SSR is screen-space: things off screen (behind the camera, above the frame) are not reflected; rays that leave the frame
+  reuse its edge (sky / far facades). Faint stochastic speckle remains in rough reflections under the 4-sample shot TAA.
+* The light-pollution glow is applied after the cloud pass on every sky pixel near a city; a clear night sky gets the same
+  low glow (brightest toward the city, fading to the zenith), which is physically right but tints the stars near the horizon.
+* Fauna (deer / grazers) walk through W4's streets and W1's plaza (fauna track — see Requests).
+* Big bokeh discs in W4 street shots and the two brown discs beside the planet in W1 `view=orbit&tod=0.22` are not civ
+  (they remain with `civdbg=noglow` / `disable=civ`): post lens ghosts / flora motes.
+* Building geometry is still simple massing (boxes, lathes, gable/hip roofs) with shader detail; no sculpted ornament.
+* NPCs are rigid-part figures with a GPU gait (no skinning, no cloth), 2 tints each.
+* W11 `civcam=hero`: flora (giant mushrooms) and terrain rock towers can still enter the foreground — the framing solver only
+  knows civ lots and the terrain height field (flora colliders do not exist yet when civ frames the shot).
+* Layout of each far site is computed on the main thread (50–150 ms per metropolis) during the first frames.
+* Triangle cost: 0.15–0.6 M per detailed town/city, ~0.9–1.0 M for level-5 metropolises at `high` (W6, W8).
 
 ## Requests
+* **fauna** — keep grazing herds out of settlement clearings (`world.civ.clearings`, `[dir, cosR, keep]`): deer currently
+  wander W4's deck streets and W1's plaza in the civ showcase shots.
+* **post** — the two brown out-of-focus discs left/right of the planet in W1 `view=orbit&tod=0.22` (listed under civ in the
+  inbox) are lens ghosts: they remain with `disable=civ`.
 * **vehicles** — honour `props=0` (skip `spawnAll()` / `spawnAtSettlements()`): the civ `civcam` presets set it so parked
   starships/bikes stay out of settlement framings. Also avoid parking on civ plazas: `world.civ.clearings` / POIs of kind
   city/village (`radius`) — the flattest spot found by `findSpot` is often a graded plaza.
 * **atmosphere** — (1) night ambient on W1/W7 is brighter than W4 at the same sun elevation; (2) W8 storm fog at t≈0.5 s whites
-  out the whole valley from 100–400 m; (3) the round-1 hard-edged moon/sun rectangle at dusk (W1) — radial falloff.
-* **flora / post** — W4 street captures show large green/red out-of-focus discs right at the lens (bioluminescent motes or
+  out the whole valley from 100–400 m. FYI: civ now adds a city pass at pipeline order 112 (after clouds) — wet-street SSR,
+  night smog and light-pollution glow on the cloud base near settlements.
+* **flora / post** — W4 street captures show large green/teal out-of-focus discs right at the lens (bioluminescent motes or
   lens droplets); consider fading motes within ~3 m of the camera.
-* **flora** — thanks for honouring `clearings` (W4 streets are clear). Paved (grid) cities send `keep = 0`.
-* **player** — (done) faces `world.civ.spawnTarget`; `camyaw` works in `fp`/`fly`, which `civcam` relies on.
+* **flora** — thanks for honouring `clearings` (W4 streets are clear). Paved (grid) cities send `keep = 0`; farmland fields lie
+  outside the clearings (grass growing on the crop decals reads as crops).
+* **player** — (done) faces `world.civ.spawnTarget`; `camyaw` works in `fp`/`fly`, which `civcam` relies on. Water cities now
+  register 48 m deck colliders (tag `civ`) at street level.

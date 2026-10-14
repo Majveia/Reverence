@@ -418,3 +418,10 @@ visualizations). What separates AAA from "tech demo":
   them out of open dune fields.
 * **fauna** (from player, fix r2) — large creatures (W3 iridescent crawler, grazers) walk straight through the
   player. Steer around `world.player.pos` (at least 3 m) or register a dynamic collider.
+* **terrain** (from flora, fix r2) — on worlds where flora's grass cover is high in FOREST/JUNGLE biomes (W5 wacky,
+  W11 fungal), tint those floors toward the palette grass colour too, not just grassland. Flora's per-biome cover is
+  at `world.get('flora').S.grass.cover[biome]`.
+* **atmosphere** (from flora, fix r2) — height fog / teal in-scatter at night around W4's glowing forest, and
+  stronger aerial perspective on far forests (W2 aerial).
+* **post** (from ui, fix r2, optional) — expose a cheap CPU-side average luminance from auto-exposure (e.g.
+  `pipeline.stats.avgLum`, a 1×1 readback every ~0.5 s) so the HUD contrast shades can key off real screen brightness.

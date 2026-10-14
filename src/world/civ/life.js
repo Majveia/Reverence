@@ -21,7 +21,7 @@ function figureGeo(style) {
   const dark = mat('#2a2622', 0.8);
   const robe = style === 'monastery' || style === 'nomad' || style === 'spire' || style === 'ruins';
   const hair = mat(style === 'bizarre' ? '#3a2a6a' : '#2a1c14', 0.85);
-  const pants = mat('#3a3630', 0.85);
+  const pants = mat('#3a3631', 0.85, 0, PAT.FABRIC); // recoloured per instance in the npc shader (trousers palette)
   // shoes + tapered legs (x = ±0.1, below 0.86 m: the gait shader swings them)
   for (const s of [-1, 1]) {
     g.box(s * 0.1, 0, 0.03, 0.11, 0.08, 0.24, 0.03, dark);

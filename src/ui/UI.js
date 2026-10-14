@@ -31,6 +31,8 @@ import { Menu } from './Menu.js';
 import { MapNav } from './MapNav.js';
 import { WorldHud, fmtDist } from './WorldHud.js';
 import { Warp } from './Warp.js';
+import { G } from '../core/Uniforms.js';
+import * as THREE from 'three';
 
 const DEG = 180 / Math.PI;
 const KIND_TOAST = {
@@ -59,6 +61,7 @@ export class UI {
     this.root = document.getElementById('rv-ui');
     this.root.innerHTML = `
       <div class="rv-markers"></div>
+      <div class="rv-shade top" style="opacity:0"></div><div class="rv-shade bot" style="opacity:0"></div>
       <div class="rv-hud">
         <div class="rv-crumbs rv-anim"><div class="rv-crumb-row"></div><div class="rv-crumb-sub"></div></div>
         <div class="rv-title rv-anim" style="display:none"><div class="rv-title-main"></div><div class="rv-title-rule"></div><div class="rv-title-sub"></div></div>
@@ -67,6 +70,7 @@ export class UI {
         <div class="rv-hint rv-anim" style="opacity:0"></div>
         <div class="rv-onboard rv-anim" style="display:none"></div>
         <div class="rv-tele rv-anim" style="display:none"></div>
+        <div class="rv-reticle" style="opacity:0"><i></i><i></i><i></i><i></i><b></b></div>
       </div>
       <div class="rv-fx"></div>
       <div class="rv-topbtns">
@@ -80,6 +84,7 @@ export class UI {
       title: q('.rv-title'), titleMain: q('.rv-title-main'), titleRule: q('.rv-title-rule'), titleSub: q('.rv-title-sub'),
       toasts: q('.rv-toasts'), prompts: q('.rv-prompts'), hint: q('.rv-hint'), onboard: q('.rv-onboard'), tele: q('.rv-tele'),
       markers: q('.rv-markers'), fx: q('.rv-fx'), topbtns: q('.rv-topbtns'), photoExit: q('.rv-photo-exit'),
+      shadeTop: q('.rv-shade.top'), shadeBot: q('.rv-shade.bot'), reticle: q('.rv-reticle'),
     };
     // ---- state
     this.device = 'keyboard';
@@ -190,8 +195,11 @@ export class UI {
     this._refreshPromptActions();
   }
 
+  /**
+   * Discovery / notification toast. One toast is visible at a time (top-centre, under the compass); the rest
+   * wait in a short queue and follow with a small gap, so a burst of discoveries never stacks over the view.
+   */
   toast(text, { kind = 'info', ms = 4200, eyebrow, icon: ic } = {}) {
-    this._layoutDirty = true;
     const key = `${kind}|${text}`;
     const now = this.engine.time?.real ?? 0;
     if (this._recentToasts.has(key) && now - this._recentToasts.get(key) < 6) return;
@@ -201,18 +209,21 @@ export class UI {
     const isInfo = !info && (kind === 'info' || !kind);
     el.className = `rv-toast rv-anim${isInfo ? ' info' : ''}`;
     el.style.opacity = '0';
+    el.style.display = 'none';
     const eb = eyebrow ?? (info ? info[0] : (kind && kind !== 'info' ? String(kind) : 'Notice'));
-    el.innerHTML = `<span class="rv-toast-ic">${icon(ic ?? (info ? info[1] : isInfo ? 'discovery' : 'discovery'))}</span>
-      <span class="rv-toast-txt"><span class="rv-toast-eyebrow">${escapeHtml(eb)}</span><span class="rv-toast-name">${escapeHtml(text)}</span></span>`;
+    el.innerHTML = `<span class="rv-toast-ic">${icon(ic ?? (info ? info[1] : 'discovery'))}</span>`
+      + `<span class="rv-toast-eyebrow">${escapeHtml(eb)}</span><span class="rv-toast-dot"></span><span class="rv-toast-name">${escapeHtml(text)}</span>`;
     this.el.toasts.appendChild(el);
-    this.toasts.push({ el, t: 0, dur: Math.max(1.5, ms / 1000), w: 0 });
-    while (this.toasts.length > 4) { const o = this.toasts.shift(); o.el.remove(); }
+    this.toasts.push({ el, t: -1, dur: Math.max(1.6, Math.min(6, ms / 1000)), w: 0 });
+    // keep the queue short: drop the oldest waiting ones (never the visible one)
+    while (this.toasts.length > 4) { const i = this.toasts[0].t >= 0 ? 1 : 0; const o = this.toasts.splice(i, 1)[0]; o.el.remove(); }
+    this._layoutDirty = true;
   }
 
   hint(text, ms = 6000) {
     const h = this.hintS;
     if (!text) { h.ms = 0.001; h.t = 1; return; }
-    if (text !== h.text) { this.el.hint.innerHTML = hintHTML(this._adaptHint(String(text))); h.text = text; h.a = Math.min(h.a, 0.1); }
+    if (text !== h.text) { h.text = text; this._renderHint(); h.a = Math.min(h.a, 0.1); }
     h.t = 0; h.ms = ms > 0 ? ms / 1000 : Infinity;
   }
 
@@ -228,10 +239,13 @@ export class UI {
       this.el.tele.innerHTML = Object.keys(obj).map((k, i) => {
         const cls = BADGE_KEYS.has(k) ? ' badge' : k === 'target' ? ' tgt' : i === 0 ? ' big' : '';
         const lbl = BADGE_KEYS.has(k) ? '' : `<span class="rv-tv-k">${k === 'target' ? `<i class="rv-tv-ic">${icon('target')}</i>` : ''}${escapeHtml(TELE_LABEL[k] ?? k)}</span>`;
-        return `<div class="rv-tv${cls}" data-k="${escapeHtml(k)}">${lbl}<span class="rv-tv-v"></span>${BAR_KEYS.has(k) ? '<span class="rv-tv-bar"><i></i></span>' : ''}</div>`;
+        const arc = cls === ' big' && k === 'speed' ? ARC_SVG : '';
+        return `<div class="rv-tv${cls}" data-k="${escapeHtml(k)}">${arc}${lbl}<span class="rv-tv-v"></span>${BAR_KEYS.has(k) ? '<span class="rv-tv-bar"><i></i></span>' : ''}</div>`;
       }).join('');
-      s.els = [...this.el.tele.querySelectorAll('.rv-tv')].map((el) => ({ el, v: el.querySelector('.rv-tv-v'), bar: el.querySelector('.rv-tv-bar i'), last: null }));
+      s.els = [...this.el.tele.querySelectorAll('.rv-tv')].map((el) => ({ el, v: el.querySelector('.rv-tv-v'), bar: el.querySelector('.rv-tv-bar i'), arc: el.querySelector('.rv-arc .val'), tick: el.querySelector('.rv-arc .tick'), last: null, frac: -1 }));
     }
+    const pulse = !!obj.drive;
+    if (pulse !== s.pulse) { s.pulse = pulse; this.el.tele.classList.toggle('pulse', pulse); }
     const vals = Object.values(obj);
     let tgtName = null;
     s.els?.forEach((e, i) => {
@@ -248,6 +262,17 @@ export class UI {
         if (e.bar) e.bar.style.width = `${(v * 100).toFixed(1)}%`;
       } else html = fmtTele(v);
       if (html !== e.last) { e.v.innerHTML = html; e.last = html; }
+      if (e.arc) {
+        // thin arc gauge over the main readout: soft-saturating scale per unit (km/h, m/s, km/s …)
+        const f = Math.round(gaugeFrac(v) * 200) / 200;
+        if (f !== e.frac) {
+          e.frac = f;
+          e.arc.setAttribute('stroke-dasharray', `${(f * 100).toFixed(1)} 100`);
+          const ph = (210 + 120 * f) * Math.PI / 180;
+          e.tick.setAttribute('cx', (50 + 50 * Math.cos(ph)).toFixed(1));
+          e.tick.setAttribute('cy', (58 + 50 * Math.sin(ph)).toFixed(1));
+        }
+      }
     });
     if (this.world) this.world.targetName = tgtName;
   }
@@ -433,7 +458,7 @@ export class UI {
       this.root.classList.toggle('rv-touchmode', dev === 'touch');
       for (const [, p] of this._prompts) if (!p.dying) { p.el.innerHTML = promptHTML(input, p.text, p.action, dev); p.dev = dev; }
       this.obS.key = '';
-      if (this.hintS.text) this.el.hint.innerHTML = hintHTML(this._adaptHint(this.hintS.text));
+      if (this.hintS.text) this._renderHint();
       if (this.menu?.open) this.menu.render();
     }
 
@@ -458,11 +483,12 @@ export class UI {
     this.idle = active ? 0 : this.idle + dt;
     if (active && !input.mouse?.locked && input.mouse && (input.mouse.dx || input.mouse.dy) && input.pointer.y < 90 && input.pointer.x < 420) this.crumbT = Math.min(this.crumbT, 2);
     const hidden = this.photo || !!(this.map?.open) || !!(this.menu?.open);
-    const idleHide = this.idle > 24 && !this.engine.shot;
+    const idleHide = this.idle > 36 && !this.engine.shot;
     this.hudA = approach(this.hudA, idleHide ? 0 : 1, idleHide ? 0.8 : 6, dt);
     const ctx = this._ctx;
     ctx.hidden = hidden; ctx.hudAlpha = this.hudA; ctx.safeL = this._safe.l; ctx.safeB = this._safe.b;
     ctx.titleBusy = !!this.titleS;
+    ctx.titleShown = !!this.titleS && this.titleS.t > 0;
     ctx.hintVisible = this.hintS.a > 0.08;
     const w = this.engine.director.current?.world;
     ctx.playerState = w?.player && w.controller === w.player ? w.player.state : null;
@@ -478,12 +504,23 @@ export class UI {
     op(this.el.hud, hidden ? '0' : this.hudA);
     const vis = hidden ? 'hidden' : '';
     if (this.el.hud._rvVis !== vis) { this.el.hud._rvVis = vis; this.el.hud.style.visibility = vis; }
-    op(this.el.topbtns, 0.35 + 0.65 * this.hudA);
+    // top-right buttons: always (dimmed) on touch; on desktop they appear with pointer movement / Esc
+    const ms = input.mouse;
+    if ((ms && !ms.locked && (ms.dx || ms.dy) && !input.pointer.dragging) || input.down('menu') || panelOpen) this._ptrT = 3.5;
+    this._ptrT = Math.max(0, (this._ptrT || 0) - dt);
+    const tbA = dev === 'touch' ? 0.45 + 0.55 * this.hudA : dev === 'gamepad' ? 0 : ease(this._ptrT / 0.6);
+    this.topA = approach(this.topA ?? tbA, tbA, tbA > (this.topA ?? 0) ? 10 : 3, dt);
+    op(this.el.topbtns, this.topA);
 
+    this._updateShade(dt, hidden, w);
+    // flight reticle (ship): a small centre mark so steering has a reference point
+    this.retA = approach(this.retA || 0, this.scheme === 'flight' && !hidden ? this.hudA : 0, 5, dt);
+    op(this.el.reticle, this.retA < 0.01 ? 0 : this.retA);
     this._updateCrumbs(dt);
     this._updateTitle(dt);
     this._updateToasts(dt);
     this._updatePrompts(dt);
+    this._anchorPrompts(dt, w, hidden);
     this._updateHint(dt);
     this._updateTele(dt);
     this._updateOnboard(dt);
@@ -593,45 +630,53 @@ export class UI {
       }
       if (hold) { s.wait += dt; return; }
     }
+    const el = this.el;
+    if (s.t === 0) {
+      // the opening (cosmic) card is the hero: centred, large, glowing. Every other arrival card is a compact
+      // lower-third caption that holds ~2.5 s and gets out of the way of the view it introduces.
+      s.hero = this.engine.director.currentName === 'cosmic';
+      el.title.classList.toggle('hero', s.hero);
+      el.title.classList.toggle('lower', !s.hero);
+      if (!s.hero) s.dur = Math.min(s.dur, 4.4);
+    }
     s.t += dt;
     const t = s.t, D = s.dur;
-    const a = ease(t / 1.0) * Math.min(1, Math.max(0, (D - t) / 1.4));
-    const el = this.el;
+    const a = ease(t / (s.hero ? 1.0 : 0.8)) * Math.min(1, Math.max(0, (D - t) / (s.hero ? 1.4 : 1.1)));
     el.title.style.opacity = a.toFixed(3);
-    const k = ease(t / 2.2);
-    const ls = 0.46 + (1 - k) * 0.22;
+    const k = ease(t / 2.0);
+    const ls = s.hero ? 0.36 + (1 - k) * 0.14 : 0.3 + (1 - k) * 0.12;
     el.titleMain.style.letterSpacing = `${ls.toFixed(3)}em`;
     el.titleMain.style.textIndent = `${ls.toFixed(3)}em`;
     const blur = (1 - ease(t / 1.1)) * 8;
     el.titleMain.style.filter = blur > 0.05 ? `blur(${blur.toFixed(2)}px)` : 'none';
-    el.titleRule.style.width = `${(ease((t - 0.35) / 1.4) * 140).toFixed(1)}px`;
+    el.titleRule.style.width = `${(ease((t - 0.35) / 1.4) * (s.hero ? 150 : 84)).toFixed(1)}px`;
     el.titleSub.style.opacity = ease((t - 0.6) / 1.0).toFixed(3);
     if (t >= D) { this.titleS = null; el.title.style.display = 'none'; }
   }
 
   _updateToasts(dt) {
-    const side = this._toastSide === 'left' ? -1 : 1;
-    for (let i = this.toasts.length - 1; i >= 0; i--) {
-      const o = this.toasts[i];
-      o.t += dt;
-      const inA = ease(o.t / 0.55), outA = Math.min(1, Math.max(0, (o.dur - o.t) / 0.7));
-      o.el.style.opacity = (inA * outA).toFixed(3);
-      o.el.style.transform = `translate3d(${(side * ((1 - inA) * 18 + (1 - outA) * 8)).toFixed(2)}px,0,0)`;
-      if (!o.w) o.w = o.el.offsetWidth || 220;
-      const sh = -80 + ease((o.t - 0.25) / 1.3) * (o.w + 160);
-      o.el.style.setProperty('--sh', `${sh.toFixed(1)}px`);
-      if (o.t >= o.dur) { o.el.remove(); this.toasts.splice(i, 1); this._layoutDirty = true; }
+    this._toastGap = Math.max(0, (this._toastGap || 0) - dt);
+    const o = this.toasts[0];
+    if (!o) return;
+    if (o.t < 0) {
+      if (this._toastGap > 0) return;
+      o.t = 0; o.el.style.display = ''; this._layoutDirty = true;
     }
+    // something is waiting: the visible toast gives way after ~2.6 s
+    if (this.toasts.length > 1 && !o.yielded) { o.yielded = true; o.dur = Math.min(o.dur, Math.max(2.6, o.t + 0.55)); }
+    o.t += dt;
+    const inA = ease(o.t / 0.5), outA = Math.min(1, Math.max(0, (o.dur - o.t) / 0.55));
+    const a = inA * outA;
+    op(o.el, a);
+    const y = (1 - inA) * -8 + (1 - outA) * -5;
+    const tr = `translate3d(0,${y.toFixed(2)}px,0) scale(${(0.97 + 0.03 * inA).toFixed(4)})`;
+    if (o._tr !== tr) { o._tr = tr; o.el.style.transform = tr; }
+    if (!o.w) o.w = o.el.offsetWidth || 220;
+    const sh = -80 + ease((o.t - 0.2) / 1.2) * (o.w + 160);
+    o.el.style.setProperty('--sh', `${sh.toFixed(1)}px`);
+    if (o.t >= o.dur) { o.el.remove(); this.toasts.shift(); this._toastGap = 0.45; }
   }
 
-  /**
-   * Collision-free placement of the toast stack. The HUD has several fixed anchors (telemetry, touch
-   * cluster, compass, top buttons, stick …) whose free space depends on the viewport, safe areas and
-   * input scheme, so fixed CSS offsets cannot guarantee separation (e.g. iPhone landscape: 390 px tall).
-   * Every 0.25 s while toasts exist (or when something moved) we scan the right column, then the left
-   * column under the breadcrumb, for the first vertical gap tall enough; if neither fits every toast, the
-   * side with more room wins and the oldest toasts retire early. Never overlaps, never per-frame layout.
-   */
   /**
    * Hint vs instruments: the free-text hint is centred at the bottom; when telemetry sits bottom-right
    * (desktop vehicles) and the two would overlap, the hint becomes a left-aligned footnote that wraps
@@ -656,74 +701,84 @@ export class UI {
     h.style.maxWidth = maxW;
   }
 
+  /**
+   * Toast anchor: top-centre, just under whatever occupies the top-centre band (compass on planets, the
+   * telemetry block in phone portrait). Measured only when a toast appears or the layout changed.
+   */
   _layoutToasts(dt) {
     this._layoutT = (this._layoutT ?? 0) - dt;
     if (this.hintS.a > 0.01 || this.teleS.a > 0.01) this._layoutHint();
     if (!this.toasts.length) { this._layoutDirty = false; return; }
     if (!this._layoutDirty && this._layoutT > 0) return;
-    this._layoutT = 0.25; this._layoutDirty = false;
-    const root = this.root, W = root.clientWidth || window.innerWidth, H = root.clientHeight || window.innerHeight;
-    if (!W || !H) return;
-    const sf = this._safe, gut = W <= 760 || H <= 460 ? 14 : 18;
-    let th = 0, tw = 0;
-    for (const o of this.toasts) { th = Math.max(th, o.el.offsetHeight || 0); tw = Math.max(tw, o.w || o.el.offsetWidth || 0); }
-    th = th || 44; tw = Math.min(tw || 220, W - 2 * gut);
-    const GAP = 8, n = this.toasts.length;
-    const need = (k) => k * (th + GAP) - GAP;
-    // obstacles (viewport rects of visible HUD blocks)
-    const obs = this._obs || (this._obs = []);
-    obs.length = 0;
-    const add = (el) => {
-      if (!el || !el.isConnected) return;
-      const cs = el.style;
-      if (cs.display === 'none' || cs.visibility === 'hidden' || el.classList.contains('rv-hide')) return;
-      const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.height > 0) obs.push(r);
-    };
-    if (this.teleS.data) add(this.el.tele);
-    add(this.el.topbtns); add(this.el.crumbRow);
-    if (this.el.onboard.style.display !== 'none') add(this.el.onboard);
-    if (this.world?.compassA > 0.05) add(this.world.compassEl);
-    if (this._prompts.size) add(this.el.prompts);
-    if (this.touch?.visible) {
-      add(this.touch.stickEl);
-      for (const b of this.touch.buttons) if (b.shown) add(b.el);
+    this._layoutT = 0.5; this._layoutDirty = false;
+    const H = this.root.clientHeight || window.innerHeight, W = this.root.clientWidth || window.innerWidth;
+    let top = this._safe.t + (H <= 460 ? 10 : 16);
+    const below = (el) => { if (!el || el.style.display === 'none') return; const r = el.getBoundingClientRect(); if (r.height > 0 && r.left < W * 0.62 && r.right > W * 0.38 && r.top < H * 0.4) top = Math.max(top, r.bottom + 6); };
+    if (this.world?.compassA > 0.05) below(this.world.compassEl);
+    if (this.teleS.data) below(this.el.tele);
+    const T = this.el.toasts, px = `${Math.round(top)}px`;
+    if (T.style.top !== px) T.style.top = px;
+  }
+
+  /**
+   * Contrast protection. Thin light HUD type needs a dark ground over sunlit terrain, snow and sky: a soft
+   * top gradient (behind breadcrumb + compass) and a bottom one (legend, hint, instruments, touch controls)
+   * whose strength follows the light at the camera (G.uNight from the atmosphere) — barely there at night,
+   * in space and in the black cosmic/galaxy modes, ~55 % at the top edge in full daylight.
+   */
+  _updateShade(dt, hidden, w) {
+    let top = 0, bot = 0;
+    if (w?.camera && w.body && !hidden) {
+      const R = w.body.radius, alt = w.camera.position.length() - R;
+      const onPlanet = 1 - Math.min(1, Math.max(0, (alt - R * 0.04) / (R * 0.1)));
+      const day = 1 - Math.min(1, Math.max(0, G.uNight?.value ?? 0));
+      const k = onPlanet * (0.3 + 0.7 * day);
+      top = k;
+      const bottomUsed = this.obS.a > 0.05 || this.teleS.a > 0.05 || this.hintS.a > 0.05 || this.device === 'touch';
+      bot = bottomUsed ? k * 0.9 : 0;
     }
-    const crumbBottom = (this.el.crumbs.getBoundingClientRect().bottom || 50);
-    const scan = (x0, x1, top) => {
-      const iv = obs.filter((r) => r.right > x0 - 4 && r.left < x1 + 4 && r.bottom > top).sort((a, b) => a.top - b.top);
-      let start = top, best = { top, cap: 0 };
-      const bottomLimit = H - sf.b - 12;
-      const consider = (end) => {
-        const cap = Math.max(0, Math.floor((end - start + GAP) / (th + GAP)));
-        if (cap >= n && best.cap < n) best = { top: start, cap };
-        else if (cap > best.cap && best.cap < n) best = { top: start, cap };
-      };
-      for (const r of iv) {
-        if (r.top > start) consider(Math.min(r.top - GAP, bottomLimit));
-        if (best.cap >= n) return best;
-        start = Math.max(start, r.bottom + GAP);
+    this.shadeA = approach(this.shadeA ?? top, top * this.hudA, 2.5, dt);
+    this.shadeB = approach(this.shadeB ?? bot, bot * this.hudA, 2.5, dt);
+    op(this.el.shadeTop, this.shadeA);
+    op(this.el.shadeBot, this.shadeB);
+  }
+
+  /**
+   * BotW-style prompts: on foot in third person, the action pill sits beside the character (projected
+   * from the player's hip), so it is read where the eye already is. Otherwise (first person, vehicles,
+   * galaxy/cosmic) it falls back to the bottom-centre anchor.
+   */
+  _anchorPrompts(dt, w, hidden) {
+    const P = this.el.prompts;
+    let ok = false, x = 0, y = 0;
+    const pl = w?.player;
+    if (!hidden && this._prompts.size && pl?.pos && w.controller === pl && pl.view === 'surface' && w.camera) {
+      const v = this._pv || (this._pv = new THREE.Vector3()), u = this._pu || (this._pu = new THREE.Vector3());
+      u.copy(pl.pos).normalize();
+      v.copy(pl.pos).addScaledVector(u, 0.95);
+      if (w.toScene) w.toScene(v, v); else v.sub(w.origin);
+      w.camera.updateMatrixWorld();
+      v.project(w.camera);
+      const W = this.engine.width, H = this.engine.height;
+      if (v.z > -1 && v.z < 1 && Math.abs(v.x) < 0.8 && Math.abs(v.y) < 0.9) {
+        ok = true;
+        const pw = this._promptW || 160;
+        x = Math.min(W - pw - 24 - this._safe.r, (v.x * 0.5 + 0.5) * W + Math.max(34, W * 0.035));
+        y = Math.max(90, Math.min(H - 150, (-v.y * 0.5 + 0.5) * H));
       }
-      consider(bottomLimit);
-      return best;
-    };
-    const rX1 = W - sf.r - gut, rTop = Math.max(sf.t + 50, (this.el.topbtns.getBoundingClientRect().bottom || 48) + 6);
-    const right = scan(rX1 - tw, rX1, rTop);
-    let pick = right, side = 'right';
-    if (right.cap < n) {
-      const lX0 = sf.l + gut;
-      // the breadcrumb subtitle fades after ~9 s; keep clear of it anyway (it is short)
-      const left = scan(lX0, lX0 + tw, crumbBottom + 10);
-      if (left.cap > right.cap) { pick = left; side = 'left'; }
     }
-    // keep the stack readable in the upper half when there is room (don't drift to mid-screen)
-    const T = this.el.toasts;
-    if (this._toastSide !== side) { this._toastSide = side; T.classList.toggle('left', side === 'left'); }
-    const top = `${Math.round(pick.top)}px`;
-    if (T.style.top !== top) T.style.top = top;
-    // retire the oldest toasts that cannot fit
-    const cap = Math.max(1, pick.cap);
-    for (let i = 0; i < n - cap; i++) { const o = this.toasts[i]; o.dur = Math.min(o.dur, o.t + 0.3); }
+    if (ok !== this._pAnch) {
+      this._pAnch = ok;
+      P.classList.toggle('anch', ok);
+      if (!ok) { P.style.transform = ''; this._pX = undefined; }
+    }
+    if (!ok) return;
+    const wk = [...this._prompts.values()].map((p) => p.text).join('|');
+    if (wk !== this._promptWKey) { this._promptWKey = wk; this._promptW = P.offsetWidth || 160; }
+    if (this._pX === undefined) { this._pX = x; this._pY = y; }
+    this._pX = approach(this._pX, x, 14, dt); this._pY = approach(this._pY, y, 14, dt);
+    const tr = `translate3d(${this._pX.toFixed(1)}px,${this._pY.toFixed(1)}px,0) translateY(-50%)`;
+    if (this._pTr !== tr) { this._pTr = tr; P.style.transform = tr; }
   }
 
   _updatePrompts(dt) {
@@ -736,6 +791,13 @@ export class UI {
       op(p.el, p._settled ? 1 : p.a);
       p.el.style.transform = p._settled ? 'none' : `translate3d(0,${((1 - p.a) * 6).toFixed(2)}px,0) scale(${(0.96 + 0.04 * p.a).toFixed(4)})`;
     }
+  }
+
+  _renderHint() {
+    const h = this.el.hint;
+    h.innerHTML = hintHTML(this._adaptHint(String(this.hintS.text || '')), this.device);
+    this._hintChips = [...h.querySelectorAll('.rv-hc')];
+    this._hintKey = '';
   }
 
   /** Drop keyboard-only phrases from free-text hints when the touch layer is active. */
@@ -754,6 +816,15 @@ export class UI {
     const early = h.t > 3.5 && this.idle === 0 && h.ms !== Infinity ? 0.35 : 1;
     h.a = approach(h.a, want * early, want ? 3 : 1.6, dt);
     op(this.el.hint, h.a);
+    // chips arrive one after another (only during the first second of a new hint)
+    const C = this._hintChips;
+    if (C && C.length && h.t < C.length * 0.14 + 0.8) {
+      for (let i = 0; i < C.length; i++) {
+        const k = ease((h.t - i * 0.14) / 0.55);
+        op(C[i], k);
+        C[i].style.transform = k < 1 ? `translate3d(0,${((1 - k) * 5).toFixed(2)}px,0)` : '';
+      }
+    }
   }
 
   _updateTele(dt) {
@@ -789,8 +860,12 @@ export class UI {
       }
     }
     s.t += dt;
-    if (this.input.axis('move').lengthSq() > 0.05) s.moved += dt;
-    const show = want && !s.retired && s.t > 1.2 && s.t < 22 && !(s.moved > 3 && s.t > 7);
+    if (this.idle === 0 && s.t > 1.2) s.moved += dt;
+    // legend: visible until ~8 s of actual play (or 40 s), then gone; comes back only if the player stands
+    // idle for 20 s early in the session (a "how do I…?" moment), never during cinematic idle later on.
+    const early = s.moved < 8 && s.t < 40;
+    const recall = this.idle > 20 && s.moved < 45 && this.idle < 34;
+    const show = want && !s.retired && s.t > 1.2 && (early || recall);
     s.a = approach(s.a, show ? 0.9 : 0, show ? 2.5 : 1.2, dt);
     if (s.a < 0.01) { if (this.el.onboard.style.display !== 'none') this.el.onboard.style.display = 'none'; return; }
     if (this.el.onboard.style.display === 'none') this.el.onboard.style.display = '';
@@ -808,9 +883,51 @@ export class UI {
   }
 }
 
-/** Hint text → segments that never break internally (a wrapped hint breaks only at ' · '). */
-function hintHTML(t) {
-  return String(t).split(/\s·\s/).map((x) => `<span class="rv-hseg">${escapeHtml(x)}</span>`).join('<span class="rv-hdot"> · </span>');
+// Hint segments → chips. "W/S throttle" → [W][S] throttle · "drag to orbit" → (mouse) orbit · "Mouse steer" …
+const KEY_RE = /^((?:[A-Z]\/[A-Z])|WASD|Shift|Space|Ctrl|Esc|Tab|Mouse|LS|RS|LT|RT|LB|RB|[A-Z])\s+(?:to\s+)?(.+)$/;
+const VERB_RE = /^(drag|scroll or pinch|scroll|pinch|double-tap|double-click|tap|click)\s+(?:to\s+)?(.+)$/i;
+const PAD_TOKENS = new Set(['LS', 'RS', 'LT', 'RT', 'LB', 'RB']);
+const FACE = { A: 'a', B: 'b', X: 'x', Y: 'y' };
+const kc = (l) => `<span class="rv-g rv-g-key${l.length > 1 ? ' wide' : ''}">${escapeHtml(l)}</span>`;
+const mouseG = (cls = '') => `<span class="rv-g rv-g-mouse${cls}"><i></i></span>`;
+function hintChip(seg, dev) {
+  let g = '', label = seg;
+  let m = seg.match(VERB_RE);
+  if (m) {
+    const v = m[1].toLowerCase();
+    label = m[2];
+    if (dev === 'touch') g = `<span class="rv-g rv-g-touch">${icon(v === 'drag' ? 'drag' : /pinch|scroll/.test(v) ? 'pinch' : 'tap')}</span>`;
+    else if (dev === 'gamepad') g = v === 'drag' ? '<span class="rv-g rv-g-pad rv-g-shoulder">RS</span>' : /pinch|scroll/.test(v) ? '<span class="rv-g rv-g-pad rv-g-shoulder">LT·RT</span>' : '<span class="rv-g rv-g-pad rv-g-face rv-g-a">A</span>';
+    else g = v === 'drag' ? mouseG(' drag') : /pinch|scroll/.test(v) ? mouseG(' w') : mouseG();
+    if (/^double/.test(v)) g = `<span class="rv-g-x2">2×</span>${g}`;
+  } else if ((m = seg.match(KEY_RE))) {
+    const k = m[1];
+    label = m[2];
+    if (k === 'Mouse') g = mouseG(' drag');
+    else if (k === 'WASD') g = `<span class="rv-keys">${'WASD'.split('').map(kc).join('')}</span>`;
+    else if (PAD_TOKENS.has(k)) g = `<span class="rv-g rv-g-pad rv-g-shoulder">${k}</span>`;
+    else if (dev === 'gamepad' && FACE[k]) g = `<span class="rv-g rv-g-pad rv-g-face rv-g-${FACE[k]}">${k}</span>`;
+    else if (k.includes('/')) g = `<span class="rv-keys">${k.split('/').map(kc).join('')}</span>`;
+    else g = kc(k);
+  }
+  return `<span class="rv-hc">${g}<span class="rv-hl">${escapeHtml(label)}</span></span>`;
+}
+function hintHTML(t, dev) {
+  return String(t).split(/\s·\s/).filter(Boolean).map((x) => hintChip(x.trim(), dev)).join('');
+}
+
+const ARC_SVG = '<svg class="rv-arc" viewBox="0 0 100 36" aria-hidden="true"><path class="trk" d="M6.7 33A50 50 0 0 1 93.3 33"/><path class="val" pathLength="100" stroke-dasharray="0 100" d="M6.7 33A50 50 0 0 1 93.3 33"/><circle class="tick" r="2.4" cx="6.7" cy="33"/></svg>';
+const GAUGE_REF = { 'km/h': 140, 'm/s': 45, 'km/s': 260, 'mph': 90, 'kn': 80 };
+function gaugeFrac(v) {
+  let n = typeof v === 'number' ? v : NaN, unit = 'm/s';
+  if (typeof v === 'string') {
+    const m = v.replace(/,/g, '').match(/^\s*([-+]?[\d.]+)\s*(.*)$/);
+    if (m) { n = parseFloat(m[1]); unit = (m[2] || '').trim().toLowerCase(); }
+    if (/^mm\/s|^c\b|au/.test(unit)) return 1;
+  }
+  if (!Number.isFinite(n)) return 0;
+  const ref = GAUGE_REF[unit] ?? 100;
+  return 1 - Math.exp(-Math.abs(n) / ref);
 }
 
 function fmtTele(v) {

@@ -256,6 +256,14 @@ export function frameSite(civ, s, preset) {
     if (!best || sc > best.sc) best = { sc, x, z, altAbs, gh };
   }
   const r = res(best.x, best.z, 0, 0, hC + 10, best.altAbs, { view: 'fly', alt: Math.round(best.altAbs - best.gh) });
+  // keep the skyline anchors (megatowers / landmark) whole: tilt up until the tallest top is inside the frame
+  let top = 0, tx = 0, tz = 0;
+  for (const l of L.lots) { const h = l.mega || (l === land ? estimateH(civ, s, l) : 0); if (h > top) { top = h; tx = l.x; tz = l.z; } }
+  if (top > 0) {
+    const dd = Math.max(50, Math.hypot(tx - best.x, tz - best.z));
+    const topAng = Math.atan2(hC + top - best.altAbs, dd) * 180 / Math.PI;
+    r.pitch = Math.max(r.pitch, topAng - 58 / 2 + 5);
+  }
   return r;
 }
 
