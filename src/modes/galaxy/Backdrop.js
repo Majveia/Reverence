@@ -78,9 +78,9 @@ varying float vFlux, vHalf, vAng;
 void main(){
   vec3 d = normalize(aDir.xyz);
   vec4 c = projectionMatrix * vec4(mat3(viewMatrix) * d, 1.0);
-  float F = aDir.w * uFade;
+  float F = aDir.w * uFade * 20.0;
   // sprite half-size (px): the spikes of bright stars reach further
-  float hs = clamp(3.0 + 26.0 * sqrt(F), 3.0, 64.0);
+  float hs = clamp(3.0 + 18.0 * sqrt(F), 3.0, 72.0);
   vec2 off = position.xy * hs / (0.5 * uRes);
   c.xy += off * c.w;
   c.z = c.w * 0.99999;
@@ -104,7 +104,7 @@ void main(){
   float core = exp(-r2 / (2.0 * 0.55 * 0.55)) / (6.2831853 * 0.3025);
   float halo = 0.06 / (3.14159265 * 4.0 * (1.0 + r2 / 4.0) * (1.0 + r2 / 4.0));
   vec2 a = abs(q);
-  float len = 2.0 + 30.0 * sqrt(vFlux);
+  float len = 1.5 + 9.0 * sqrt(vFlux);
   float spike = (exp(-a.y * a.y * 2.2) * exp(-a.x / len) + exp(-a.x * a.x * 2.2) * exp(-a.y / len)) * 0.045 * smoothstep(0.02, 0.4, vFlux);
   float edge = 1.0 - smoothstep(0.75, 1.0, length(vQ) / vHalf);
   gl_FragColor = vec4(vCol * vFlux * (core + halo + spike) * edge, 1.0);
@@ -159,7 +159,7 @@ export class Backdrop {
     this.engine = engine;
 
     // foreground stars
-    const nFg = q.tier === 'low' ? 260 : q.tier === 'med' ? 420 : 640;
+    const nFg = q.tier === 'low' ? 1500 : q.tier === 'med' ? 2500 : 4000;
     const fd = new Float32Array(nFg * 4), fc = new Float32Array(nFg * 4);
     const bb = (T) => {           // blackbody → linear rgb (normalized), Planck-ish fit
       const t = T / 100;
@@ -172,7 +172,7 @@ export class Backdrop {
     for (let i = 0; i < nFg; i++) {
       const z = r.range(-1, 1), a = r.range(0, Math.PI * 2), s2 = Math.sqrt(1 - z * z);
       // Euclidean counts: F = Fmin u^(-2/3), a handful of bright stars, hundreds of faint ones
-      const F = Math.min(3.2, 0.012 * Math.pow(Math.max(1e-6, r.next()), -2 / 3));
+      const F = Math.min(12, 0.06 * Math.pow(Math.max(1e-6, r.next()), -2 / 3));
       fd.set([s2 * Math.cos(a), z, s2 * Math.sin(a), F], i * 4);
       const u = r.next();
       const T = u < 0.55 ? r.range(3600, 5600) : u < 0.85 ? r.range(5600, 7500) : r.range(7500, 16000);

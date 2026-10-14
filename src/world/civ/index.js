@@ -566,7 +566,7 @@ class Civ {
         const vi = rg.vert(_v.x * (s.R + h) - s.pos.x, _v.y * (s.R + h) - s.pos.y, _v.z * (s.R + h) - s.pos.z, _v.x, _v.y, _v.z, u, v, Mc);
         rg.X.a[vi * 2] = Math.max(Math.abs(i / nu - 0.5), Math.abs(j / nv - 0.5)) * 2;
       }
-      for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) { const a0 = base + j * (nu + 1) + i; rg.quadIdx(a0, a0 + nu + 1, a0 + nu + 2, a0 + 1); }
+      for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) { const a0 = base + j * (nu + 1) + i; rg.quadIdx(a0, a0 + 1, a0 + nu + 2, a0 + nu + 1); } // CCW seen from above (u east-ish, v north-ish)
       // ---- hedgerow / dry-stone wall segments along the border (gaps for gates)
       const edges = [[[-1, -1], [1, -1]], [[1, -1], [1, 1]], [[1, 1], [-1, 1]], [[-1, 1], [-1, -1]]];
       for (const [[u0, v0], [u1, v1]] of edges) {
