@@ -80,6 +80,7 @@ uniform vec4 uRvS;   // strata, snow bias, volcanic glow, crystal sheen
 uniform vec4 uRvS2;  // lushness, forest darkening, global wetness, global snow
 uniform float uRvTime;
 uniform float uRvDebug;
+uniform int uRvOff;   // debug A/B (URL tfoff=<bits>): 1 no 8 m rock layer, 2 no 32 m, 4 no macro, 8 no detail-height occlusion, 16 no near layers
 uniform float uRvLite; // 1 = software-GL budget: no micro layer, single-fetch tiling
 uniform vec4 uRvF;   // detail fade distances: mid start/end, far start/end (scaled by quality)
 varying vec3 vRvW;
@@ -140,10 +141,10 @@ vec4 rvFetchS( float layer, vec2 uv, vec2 dx, vec2 dy, float k, float rot ) {
 vec2 rvH22( vec2 c ) { return fract( sin( vec2( dot( c, vec2( 127.1, 311.7 ) ), dot( c, vec2( 269.5, 183.3 ) ) ) ) * 43758.5453 ); }
 void rvJoint( float hcm, float altm, float W, out vec4 blk, out vec4 e ) {
   float N = 4096.0 / W, Hr = W * 1.8;
-  float x = hcm / W + 0.16 * sin( altm / ( W * 1.9 ) ) + 0.07 * sin( altm / ( W * 0.61 ) + 1.3 );
+  float x = hcm / W + 0.07 * sin( altm / ( W * 1.9 ) ) + 0.02 * sin( altm / ( W * 0.61 ) + 1.3 );
   float ci = floor( x ), fx = x - ci;
   float cim = mod( ci, N );
-  float y = altm / Hr + 0.3 * sin( 6.2832 * hcm / ( W * 8.0 ) ) + 0.12 * sin( 6.2832 * hcm / ( W * 2.0 ) + 0.7 );
+  float y = altm / Hr + 0.12 * sin( 6.2832 * hcm / ( W * 8.0 ) ) + 0.03 * sin( 6.2832 * hcm / ( W * 2.0 ) + 0.7 );
   float ri = floor( y ), fy = y - ri;
   vec2 hb = rvH22( vec2( cim + 0.5, ri + 0.5 ) );
   blk = vec4( hb * 2.0 - 1.0, fract( hb.x * 7.31 + hb.y * 3.17 ), rvH22( vec2( floor( cim / 4.0 ), floor( ri / 3.0 ) ) + 9.7 ).x );
@@ -274,6 +275,7 @@ void rvTerrain( inout vec3 albedo ) {
     vec4 accM = vec4( 0.0 ), accA = vec4( 0.0 ), accN = vec4( 0.0 ), accB = vec4( 0.0 ), accU = vec4( 0.0 );
     vec3 gM = vec3( 0.0 ), gA = vec3( 0.0 ), gN = vec3( 0.0 ), gB = vec3( 0.0 ), gU = vec3( 0.0 ); float ws = 0.0;
     bool doRU = dist < 16.0;   // 0.5 m grain / chips when the player is at the rock
+    float kMag2 = smoothstep( 70.0, 320.0, dist );
     for ( int a = 0; a < 3; a++ ) {
       float wa = rvWa( a, wg );
       if ( wa <= 0.0 ) continue;
@@ -286,7 +288,12 @@ void rvTerrain( inout vec3 albedo ) {
       float fa = float( a );
       float rotA = a == 1 ? 1.0 : 2.0;
       vec4 t = rvTexO( 5.0, uv * ( 1.0 / 512.0 ), gx * ( 1.0 / 512.0 ), gy * ( 1.0 / 512.0 ), 11.0 + fa, rotA );
-      vec4 t2 = rvTexO( 0.0, uv * ( 1.0 / 256.0 ) + ( mA.rb - 0.5 ) * 1.4, gx * ( 1.0 / 256.0 ), gy * ( 1.0 / 256.0 ), 23.0 + fa * 3.0, rotA );
+      // (warp kept small: 1.4 tiles of warp varying over ~500 m compressed the 256 m tile up to ~3x in
+      //  one direction — its fine grain became the "fur" / brush strokes on slopes seen at an angle)
+      vec4 t2 = rvTexO( 0.0, uv * ( 1.0 / 256.0 ) + ( mA.rb - 0.5 ) * 0.22, gx * ( 1.0 / 256.0 ), gy * ( 1.0 / 256.0 ), 23.0 + fa * 3.0, rotA );
+      // (the 256 m tile is MAGNIFIED within ~200 m (1 m texels): its texel-scale grain then turned into
+      //  "fur" on slopes at a grazing sun — fade it there, the 32 m / 8 m layers carry the detail)
+      t2 = mix( vec4( 0.5 ), t2, kMag2 );
       t = vec4( 0.5 + ( t.rg - 0.5 ) * 1.0 + ( t2.rg - 0.5 ) * 0.6, t.b * 0.5 + t2.b * 0.5, t.a * 0.4 + t2.a * 0.6 );
       accM += wa * t; gM += wa * rvGw( a, t.rg * 2.0 - 1.0 );
       // 32 m blocks: the scale between the macro crags and the 8 m detail (walls 50-500 m away
@@ -310,6 +317,10 @@ void rvTerrain( inout vec3 albedo ) {
     }
     float iw = 1.0 / ws;
     accM *= iw; accA *= iw; accN *= iw; accB *= iw; accU *= iw;
+    if ( ( uRvOff & 1 ) != 0 ) { accA = vec4( 0.5 ); gA = vec3( 0.0 ); }
+    if ( ( uRvOff & 2 ) != 0 ) { accB = vec4( 0.5 ); gB = vec3( 0.0 ); }
+    if ( ( uRvOff & 4 ) != 0 ) { accM = vec4( 0.5 ); gM = vec3( 0.0 ); }
+    if ( ( uRvOff & 16 ) != 0 ) { accN = vec4( 0.5 ); gN = vec3( 0.0 ); accU = vec4( 0.5 ); gU = vec3( 0.0 ); }
     float fRU = doRU ? ( 1.0 - smoothstep( 7.0, 16.0, dist ) ) * fNear : 0.0;
     float fB = 1.0 - smoothstep( 900.0, 1800.0, dist );
     // relief strength: full on real faces, gentler where "rock" is only a generator hint on a mild
@@ -321,7 +332,8 @@ void rvTerrain( inout vec3 albedo ) {
     // (grazing views: fine detail normals on gently sloping rock alias into "fur" — fade them by the
     //  view angle; the walls the eye looks at head-on keep full relief)
     float kGr = 0.35 + 0.65 * smoothstep( 0.06, 0.4, abs( dot( normalize( cameraPosition - W ), Ng ) ) );
-    gradT += ( gM * iw * fFar * 0.75 + gB * iw * fB * 0.55 + ( gA * iw * fMid * 0.6 * kGr + gN * iw * fNear * 0.6 * kGr + gU * iw * fRU * 0.5 ) * kL0 ) * wRock * kRel;
+    float kWr = 1.0 + 0.5 * smoothstep( 0.35, 0.65, slope ) * rockS;   // stronger crags / blocks on real walls (crevice shadows from km away)
+    gradT += ( gM * iw * fFar * 0.75 * kWr + gB * iw * fB * 0.55 * kWr + ( gA * iw * fMid * 0.6 * kGr + gN * iw * fNear * 0.6 * kGr + gU * iw * fRU * 0.5 ) * kL0 ) * wRock * kRel;
     hRock = mix( 0.5, accM.b, fFar );
     hRock = mix( hRock, hRock * 0.6 + accB.b * 0.4, fB );
     hRock = mix( hRock, hRock * 0.4 + accA.b * 0.6, fMid );
@@ -416,7 +428,7 @@ void rvTerrain( inout vec3 albedo ) {
     if ( wz > 0.02 ) mz = textureGrad( uRvDetail, vec3( ( L.x + warpM ) / 2048.0 + 0.13, alt / 2048.0 + 0.47, 7.0 ), vec2( dLx.x, dLx.y ) / 2048.0, vec2( dLy.x, dLy.y ) / 2048.0 );
     // (sharpened: mip-filtered at kilometres the raw stain density spread into broad soft dark bands —
     //  the "draped fabric folds" on the W1 spires; real varnish streaks are narrow and crisp)
-    streakM = smoothstep( 0.3, 0.7, mx.b * wx + mz.b * wz ) * 0.75 * smoothstep( 0.3, 0.6, slope ) * smoothstep( 0.15, 0.5, mA.a + 0.3 * n2 )
+    streakM = smoothstep( 0.4, 0.75, mx.b * wx + mz.b * wz ) * 0.6 * smoothstep( 0.3, 0.6, slope ) * smoothstep( 0.15, 0.5, mA.a + 0.3 * n2 )
             * ( 1.0 - smoothstep( 20000.0, 40000.0, dist ) );
     // wall-scale staining: light / dark tone bodies (runoff, lichen, exfoliation scars; ~120-450 m
     // wide, ~1.6x taller — 3x elongation read as draped fabric folds from kilometres) — big faces are never one flat tone
@@ -485,7 +497,7 @@ void rvTerrain( inout vec3 albedo ) {
   //      on massive-rock worlds discontinuous sheeting ledges (lit tread, shadowed riser) whose
   //      spacing and phase change per block: horizontal structure that breaks the vertical
   //      "draped fabric" read of big walls. Footprint-faded (no sub-pixel joints → no shimmer).
-  float blkTone = 0.0, blkHue = 0.0, blkCrack = 0.0, ledgeLit = 0.0, ledgeSh = 0.0;
+  float blkTone = 0.0, blkHue = 0.0, blkCrack = 0.0, ledgeLit = 0.0, ledgeSh = 0.0, plate = 0.0;
   if ( rockS > 0.08 && sideW > 0.05 && slope > 0.22 && dist < 12000.0 && q > 0.7 && uRvDebug < 15.5 ) {   // (off on the low tier: ~50 hashes per wall fragment)
     float kW = smoothstep( 0.22, 0.45, slope ) * smoothstep( 0.08, 0.5, rockS ) * ( 1.0 - smoothstep( 8000.0, 12000.0, dist ) );
     float kMass = 1.0 - smoothstep( 0.55, 0.9, uRvS.x );   // granite-like (no sedimentary strata)
@@ -497,14 +509,18 @@ void rvTerrain( inout vec3 albedo ) {
       float fwM = max( length( a == 0 ? vec2( dLx.z, dLy.z ) : vec2( dLx.x, dLy.x ) ), length( vec2( dLx.y, dLy.y ) ) );
       // (1) big polygonal facets, 128 m wide x 280 m tall: planes catching the light differently
       {
-        float fade = ( 1.0 - smoothstep( 0.06, 0.18, fwM / 128.0 ) ) * smoothstep( 350.0, 900.0, dist ) * wa;
-        if ( fade > 0.0 ) {
+        float fadeT = ( 1.0 - smoothstep( 0.06, 0.18, fwM / 128.0 ) ) * wa;
+        float fade = fadeT * smoothstep( 350.0, 900.0, dist );
+        if ( fadeT > 0.0 ) {
           vec4 f = rvFacet( vec2( hc / 128.0 + float( a ) * 0.37, alt / 282.0 ), 32.0 );
+          // rock plates: crisp-edged polygonal tone (pale fresh exfoliation scars, dark weathered /
+          // seeping plates) — replaces most of the soft noise blotches that read as camouflage
+          plate += ( smoothstep( 0.8, 0.9, f.w ) - smoothstep( 0.14, 0.06, f.w ) * 0.8 ) * smoothstep( 0.0, 0.06, f.z ) * fadeT;
           // (stronger with distance: aerial perspective flattens far walls)
           float kd = mix( 1.0, 1.5, smoothstep( 1200.0, 4000.0, dist ) );
           // (seams eased over ~12 % of a cell: crisp-but-not-razor facet edges, no low-poly look)
           float soft = 0.35 + 0.65 * smoothstep( 0.0, 0.12, f.z );
-          gF += rvGw( a, vec2( f.x * 0.24, f.y * 0.14 ) ) * fade * kd * soft;
+          gF += rvGw( a, vec2( f.x * 0.17, f.y * 0.1 ) ) * fade * kd * soft;
           blkTone += ( f.w - 0.5 ) * 0.12 * fade * kd;
           blkHue += ( fract( f.w * 13.7 ) - 0.5 ) * fade;
         }
@@ -554,7 +570,7 @@ void rvTerrain( inout vec3 albedo ) {
       }
     }
     gradT += gF * kW;
-    blkTone *= kW; blkHue *= kW; blkCrack *= kW; ledgeLit *= kW; ledgeSh *= kW;
+    blkTone *= kW; blkHue *= kW; blkCrack *= kW; ledgeLit *= kW; ledgeSh *= kW; plate = clamp( plate * kW, -1.0, 1.0 );
   }
   // wind-drift relief on snowfields (64 m noise-relief slopes): shading on otherwise flat white
   gradT += vec3( mC.r - 0.5, 0.0, mC.g - 0.5 ) * 0.9 * snowPot * ( 1.0 - wRock ) * fFar;
@@ -615,7 +631,9 @@ void rvTerrain( inout vec3 albedo ) {
   // rock bodies (tens to hundreds of metres): warm iron/ochre vs cool dark vs pale granite —
   // ±20 % value, ±8 % hue, so big faces are never one flat grey
   float bodyA = smoothstep( 0.28, 0.72, mA.g + 0.35 * n3 ), bodyB = smoothstep( 0.32, 0.68, mC.g + 0.3 * n2 );
-  rockC *= mix( vec3( 0.74, 0.79, 0.86 ), vec3( 1.16, 1.06, 0.9 ), bodyA * 0.6 + bodyB * 0.4 );
+  // (on big walls the plates below carry most of the tone variation: soft blotches → camouflage)
+  float kWallT = smoothstep( 0.3, 0.6, slope ) * smoothstep( 0.3, 0.8, rockS ) * step( 0.7, q ) * ( 1.0 - smoothstep( 8000.0, 12000.0, dist ) );
+  rockC *= mix( vec3( 1.0 ), mix( vec3( 0.74, 0.79, 0.86 ), vec3( 1.16, 1.06, 0.9 ), bodyA * 0.6 + bodyB * 0.4 ) / vec3( 0.95, 0.925, 0.88 ), 1.0 - 0.35 * kWallT ) * vec3( 0.95, 0.925, 0.88 );
   rockC = mix( rockC, vec3( rvLum( rockC ) ) * 1.3 + 0.025, smoothstep( 0.6, 0.85, mC.a * 0.5 + mA.r * 0.5 + 0.25 * n4 ) * 0.38 );
   // detail albedo: ±12 % from the macro/block layers (at kilometres the 64 m facets read as fish
   // scales), up to ±30 % from the 8 m / 2 m layers up close, sharpened (cavities darker)
@@ -626,15 +644,16 @@ void rvTerrain( inout vec3 albedo ) {
   float iron = smoothstep( 0.55, 0.85, mC.r * 0.6 + mA.b * 0.4 + 0.25 * n3 ) * smoothstep( 0.25, 0.5, slope ) * ( 0.5 + 0.5 * clamp( curv * 2.0, 0.0, 1.0 ) );
   rockC = mix( rockC, rvLum( rockC ) * vec3( 1.35, 0.95, 0.68 ), iron * 0.6 );
   // wall tone bodies: pale (fresh exfoliation scars) vs dark cool (seeps, lichen) — ±30 % value
-  rockC *= mix( vec3( 1.0 ), wallTone > 0.0 ? vec3( 1.32, 1.26, 1.18 ) : vec3( 0.62, 0.66, 0.72 ), clamp( abs( wallTone ) * 6.0 - 0.1, 0.0, 1.0 ) );
-  rockC *= 1.0 - 0.35 * clamp( streakM * 1.6, 0.0, 1.0 );
+  rockC *= mix( vec3( 1.0 ), wallTone > 0.0 ? vec3( 1.32, 1.26, 1.18 ) : vec3( 0.62, 0.66, 0.72 ), clamp( abs( wallTone ) * 6.0 - 0.1, 0.0, 1.0 ) * ( 1.0 - 0.35 * kWallT ) );
+  rockC *= 1.0 - 0.25 * clamp( streakM * 1.6, 0.0, 1.0 );
   // jointed blocks: per-block value / hue (warm oxidised vs cool fresh), dark joints, sheeting ledges
   rockC *= 1.0 + blkTone;
+  rockC *= plate > 0.0 ? mix( vec3( 1.0 ), vec3( 1.2, 1.17, 1.12 ), plate ) : mix( vec3( 1.0 ), vec3( 0.8, 0.82, 0.86 ), -plate );
   rockC *= mix( vec3( 1.0 ), blkHue > 0.0 ? vec3( 1.1, 1.0, 0.86 ) : vec3( 0.9, 0.97, 1.06 ), min( abs( blkHue ) * 0.9, 1.0 ) );
-  rockC *= 1.0 - 0.42 * blkCrack;
+  rockC *= 1.0 - 0.16 * blkCrack;
   rockC *= ( 1.0 - 0.35 * ledgeSh ) * ( 1.0 + 0.22 * ledgeLit );
   // drainage streaks: dark varnish (slightly warm) and rarer pale mineral streaks
-  rockC = mix( rockC, rockC * vec3( 0.6, 0.56, 0.52 ), clamp( streakD * ( 0.35 + 0.4 * sk ), 0.0, 0.6 ) );
+  rockC = mix( rockC, rockC * vec3( 0.66, 0.62, 0.58 ), clamp( streakD * ( 0.25 + 0.4 * sk ), 0.0, 0.5 ) );
   rockC = mix( rockC, rockC * 1.12 + vec3( 0.02 ), clamp( streakL * 0.3, 0.0, 0.25 ) );
   rockC *= 0.9 + 0.2 * mA.g;
   rockC *= mix( vec3( 1.07, 1.0, 0.9 ), vec3( 0.9, 0.97, 1.08 ), smoothstep( 0.25, 0.75, mA.b + 0.3 * n4 ) );
@@ -679,7 +698,8 @@ void rvTerrain( inout vec3 albedo ) {
   // (sky-ambient occlusion kept moderate: shadowed faces at low sun must still read their relief
   //  in sky light — atmosphere-track request; the floor keeps cavity + detail AO from going black)
   rvAO = clamp( ( 1.0 - 0.3 * cav ) * mix( mix( 0.74, 0.64, bRock ), 1.05, hD ), 0.55, 1.0 );
-  rvAO *= 1.0 - ( 0.3 * ledgeSh + 0.25 * blkCrack ) * bRock * ( 1.0 - bSnow );
+  rvAO *= 1.0 - ( 0.3 * ledgeSh + 0.08 * blkCrack ) * bRock * ( 1.0 - bSnow );
+  if ( ( uRvOff & 8 ) != 0 ) hD = 0.5;
   float occ = mix( 1.0, 0.7 + 0.5 * hD * hD + 0.15 * hD, bRock ) * ( 1.0 - 0.2 * cav * ( 1.0 - bSnow ) );
   col *= max( occ, 0.6 );
   col *= 1.0 + ( 0.1 + 0.16 * bRock ) * clamp( -curv, 0.0, 1.0 ) * ( 1.0 - 0.5 * bSnow );
@@ -781,6 +801,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
     uRvPlanetC: G.uPlanetCenter,
     uRvTime: G.uTime,
     uRvDebug: { value: (() => { try { return +(new URLSearchParams(globalThis.location?.search || '').get('tdebug') || 0); } catch (_) { return 0; } })() },
+    uRvOff: { value: (() => { try { return (+(new URLSearchParams(globalThis.location?.search || '').get('tfoff') || 0)) | 0; } catch (_) { return 0; } })() },
     uRvBlade: { value: blade },
     uRvGrass: { value: grass }, uRvGrass2: { value: grass2 }, uRvRock: { value: rock }, uRvRock2: { value: rock2 },
     uRvSand: { value: sand }, uRvSnow: { value: col(p.snow, '#f4f6fa') }, uRvForest: { value: forest },
@@ -821,7 +842,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v30' + (opts.lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-v38' + (opts.lite ? 'L' : '');
   return mat;
 }
 

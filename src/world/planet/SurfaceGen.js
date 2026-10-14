@@ -503,6 +503,7 @@ export class SurfaceGen {
     const ix = Math.floor(qx), iy = Math.floor(qy), iz = Math.floor(qz);
     const fx = qx - ix, fy = qy - iy, fz = qz - iz;
     const P = this.nG.perm, J = this.nG.jit;
+    const cut = Math.exp(-sharp * 1.21);
     let sw = 0, sv = 0;
     for (let k = -1; k <= 1; k++) {
       const pk = P[(iz + k + 300) & 1023];
@@ -512,8 +513,11 @@ export class SurfaceGen {
           const hsh = P[(pj + ix + i + 300) & 1023], h = hsh << 2, h2 = P[(hsh + 77) & 1023] << 2;
           const dx = fx - i - 0.1 - 0.8 * J[h], dy = fy - j - 0.1 - 0.8 * J[h + 1], dz = fz - k - 0.1 - 0.8 * J[h + 2];
           const d2 = dx * dx + dy * dy + dz * dz;
-          if (d2 > 2.6) continue;
-          const w = Math.exp(-sharp * d2);
+          // (kernel shifted to reach exactly 0 at d² = 1.21: every cell point outside the 3×3×3
+          //  neighbourhood is ≥ 1.1 away on some axis, so the truncated sum is now continuous — the
+          //  plain Gaussian left ~1 % weight jumps → 0.15 m steps on big walls)
+          if (d2 >= 1.21) continue;
+          const w = Math.exp(-sharp * d2) - cut;
           sw += w;
           sv += w * (J[h + 3] - 0.5 + 1.3 * ((J[h2] - 0.5) * dx + (J[h2 + 1] - 0.5) * dy + (J[h2 + 2] - 0.5) * dz));
         }
@@ -748,6 +752,11 @@ export class SurfaceGen {
     }
 
     const steepM = steep;   // mountain-face part of the steep hint (see the 3D wall relief)
+    // wall height = steep-weighted MEAN of the contributing walls (mountain face, plateau / mesa /
+    // canyon cliffs). Switching wallH to whichever hint was largest made h discontinuous (wallH
+    // scales the buttress relief): 0.4 m zero-width steps → zig-zag banks on the rendered mesh.
+    let wHw = steep + 1e-3, wHs = wallH * wHw;
+    let steepNM = 0;   // non-mountain part (plateau / mesa / canyon walls), continuous
     // ---- plateaus (large tablelands) and mesas (isolated buttes), with strata terraces
     if ((st.plateaus > 0 || st.mesas > 0) && c > -0.02) {
       const inland = sstep(0.02, 0.12, c);
@@ -772,7 +781,8 @@ export class SurfaceGen {
         // where the noise gradient is small the "cliff" band is a broad 30-45° slope, and terracing it
         // drew contour stripes (dark wavy strokes on W3 badlands)
         const clW = cl * sstep(0.9, 1.7, st.plateauH * reg * inland * 0.65 * dpn / 0.065);
-        if (clW * 0.9 > steep) { steep = clW * 0.9; wallH = Math.max(wallH, st.plateauH); }
+        wHs += clW * st.plateauH; wHw += clW;
+        if (clW * 0.9 > steep) steep = clW * 0.9; if (clW * 0.9 > steepNM) steepNM = clW * 0.9;
         if (clW > cliff) cliff = clW;
         if (cl > rock) rock = cl;
         // caprock rim: the hard bed that holds the table up shows as a bare rock band along the edge
@@ -795,7 +805,8 @@ export class SurfaceGen {
         const ta = SurfaceGen.band(v, -3.1, -2.6, -0.95, -0.7) * reg * inland;
         if (ta > talus) talus = ta;
         const clW = cl * sstep(0.9, 1.7, mh * reg * inland * 0.65 * dmn / 0.05);
-        if (clW * 0.9 > steep) { steep = clW * 0.9; wallH = Math.max(wallH, mh); }
+        wHs += clW * mh; wHw += clW;
+        if (clW * 0.9 > steep) steep = clW * 0.9; if (clW * 0.9 > steepNM) steepNM = clW * 0.9;
         if (clW > cliff) cliff = clW;
         if (cl > rock) rock = cl;
         const cap = SurfaceGen.band(v, -0.05, 0.02, 0.15, 0.4) * 0.65 * sstep(0.3, 0.75, reg * inland);
@@ -833,7 +844,8 @@ export class SurfaceGen {
         // shallow canyons (faded regions, half-strength styles) have gentle terraced flanks that the
         // old reg-proportional hint painted as broad rock strips across meadows
         const wall = SurfaceGen.band(v, 0.1, 0.2, 0.85, 1.0) * sstep(0.45, 0.9, st.canyonDepth * reg / (0.05 * st.canyonWl));
-        if (wall * 0.8 > steep) { steep = wall * 0.8; wallH = Math.max(wallH, st.canyonDepth); }
+        wHs += wall * st.canyonDepth; wHw += wall;
+        if (wall * 0.8 > steep) steep = wall * 0.8; if (wall * 0.8 > steepNM) steepNM = wall * 0.8;
         if (wall > rock) rock = wall;
         if (wall * 0.8 > cliff) cliff = wall * 0.8;
         sand = Math.max(sand, 0.6 * reg * (1 - sstep(0.12, 0.22, v)));
@@ -852,8 +864,12 @@ export class SurfaceGen {
 
     // ---- karst towers (Guilin / Ha Long): steep limestone towers with rounded tops
     if (st.karst > 0 && c > -0.03) {
-      const reg = sstep(-0.1, 0.35, nF.n3(px * 3.1 + 5, py * 3.1 + 55, pz * 3.1)) * st.karst;
-      if (reg > 0.01) {
+      // (every feature is faded in by its region / continent value instead of hard `c > …` / `reg > 0.01`
+      //  gates: those cut a step of 1 % of the feature height — or, at the coast gate, the whole
+      //  feature — into the height field: zero-width cliffs up to 20 m tall)
+      let reg = sstep(-0.1, 0.35, nF.n3(px * 3.1 + 5, py * 3.1 + 55, pz * 3.1)) * st.karst * sstep(-0.03, -0.015, c);
+      reg *= sstep(0.004, 0.03, reg);
+      if (reg > 0.004) {
         const f = R / st.karstWl, J = this.nG.jit;
         const kh = st.karstH;
         const t = this._cells(x * f, y * f, z * f, f, 0.75, (d, hh) => {
@@ -876,8 +892,9 @@ export class SurfaceGen {
 
     // ---- spires / crystal needles / hoodoos
     if (st.spires > 0 && c > 0) {
-      const reg = sstep(0.0, 0.4, nF.n3(px * 2.6 + 44, py * 2.6 + 3, pz * 2.6 + 19)) * st.spires;
-      if (reg > 0.01) {
+      let reg = sstep(0.0, 0.4, nF.n3(px * 2.6 + 44, py * 2.6 + 3, pz * 2.6 + 19)) * st.spires * sstep(0.0, 0.008, c);
+      reg *= sstep(0.004, 0.03, reg);
+      if (reg > 0.004) {
         const f = R / st.spireWl, J = this.nG.jit;
         const t = this._cells(x * f + 3.3, y * f, z * f + 1.1, f, 0.8, (d, hh) => {
           if (J[(hh + 7) & 4095] > 0.55) return 0;
@@ -895,8 +912,9 @@ export class SurfaceGen {
     // ---- kopjes: granite boulder hills on savanna plains
     if (st.kopjes > 0 && c > 0.02) {
       const f = R / 900, J = this.nG.jit;
-      const reg = sstep(0.1, 0.5, nF.n3(px * 4 + 8, py * 4, pz * 4 + 33)) * st.kopjes;
-      if (reg > 0.01) {
+      let reg = sstep(0.1, 0.5, nF.n3(px * 4 + 8, py * 4, pz * 4 + 33)) * st.kopjes * sstep(0.02, 0.035, c);
+      reg *= sstep(0.004, 0.03, reg);
+      if (reg > 0.004) {
         const t = this._cells(x * f + 7.7, y * f, z * f, f, 0.7, (d, hh) => {
           if (J[(hh + 9) & 4095] > 0.4) return 0;
           const q = d / (0.18 + 0.12 * J[hh + 3]);
@@ -926,7 +944,7 @@ export class SurfaceGen {
         const phase2 = (x * D[2] - y * D[0] + z * D[1]) * f * 3.1 + warpA * 2;
         const s2 = phase2 - Math.floor(phase2);
         const prof2 = s2 < 0.7 ? s2 / 0.7 : (1 - s2) / 0.3;
-        h += dh + reg * 2.2 * prof2 * prof2;
+        h += dh + reg * 2.2 * prof2 * prof2 * sstep(0.005, 0.05, c);
         dune = reg;
         sand = Math.max(sand, reg);
       }
@@ -971,8 +989,9 @@ export class SurfaceGen {
       if (st.seastacks > 0 && c > -0.05 && c < 0.012) {
         const f = R / 380, J = this.nG.jit;
         const zone = sstep(-0.05, -0.012, c) * (1 - sstep(0.004, 0.012, c));
-        const reg = sstep(-0.2, 0.3, nF.n3(px * 7 + 3, py * 7, pz * 7 + 1)) * st.seastacks * zone * (1 - sstep(4, 30, h));
-        if (reg > 0.01) {
+        let reg = sstep(-0.2, 0.3, nF.n3(px * 7 + 3, py * 7, pz * 7 + 1)) * st.seastacks * zone * (1 - sstep(4, 30, h));
+        reg *= sstep(0.004, 0.03, reg);
+        if (reg > 0.004) {
           const t = this._cells(x * f, y * f + 7, z * f, f, 0.8, (d, hh) => {
             if (J[(hh + 13) & 4095] > 0.5) return 0;
             const q = d / (0.13 + 0.1 * J[hh + 3]);
@@ -1005,7 +1024,7 @@ export class SurfaceGen {
       if (t > 0) {
         const bump = 2.2 + 3 * nF.n3(x * R / 300, y * R / 300, z * R / 300);
         const target = -6 - 10 * (1 - t) + (bump + 6 + 10 * (1 - t)) * sstep(0.2, 0.32, t);
-        h = Math.max(h, h + (target - h) * sstep(0.0, 0.3, t) * st.atolls);
+        h = Math.max(h, h + (target - h) * sstep(0.0, 0.3, t) * st.atolls * sstep(-0.22, -0.19, c) * (1 - sstep(-0.02, 0.0, c)));
         sand = Math.max(sand, sstep(0.2, 0.35, t));
       }
     }
@@ -1015,7 +1034,7 @@ export class SurfaceGen {
       const f = R / st.riverWl;
       const wv = nF.n3(px * f * 0.45 + 2, py * f * 0.45 + 6, pz * f * 0.45 + 9);
       const rn = nF.n3(px * f + wv * 1.1, py * f + 30 + wv * 0.4, pz * f + 12) + 0.18 * nF.n3(px * f * 3.3 + 1, py * f * 3.3, pz * f * 3.3 + 4);
-      const reg = sstep(-0.3, 0.2, nF.n3(px * 1.5 + 200, py * 1.5, pz * 1.5 + 7)) * Math.max(st.rivers, st.fjords);
+      const reg = sstep(-0.3, 0.2, nF.n3(px * 1.5 + 200, py * 1.5, pz * 1.5 + 7)) * Math.max(st.rivers, st.fjords) * sstep(-0.01, 0.0, c);
       const av = Math.abs(rn);
       if (reg > 0 && av < 0.16) {
         const valley = 1 - sstep(0.0, 0.16, av);
@@ -1030,7 +1049,13 @@ export class SurfaceGen {
             const k = chan * low * reg;
             h = h + (bed - h) * k;
             river = k;
-            if (st.fjords > 0) { const k = sstep(0.1, 0.3, mtn) * mtn * (1 - chan) * low; if (k > cliff) cliff = k; }
+          }
+          // fjord walls: cliff hint on the valley sides, tapering out across the valley (it used to be
+          // set only inside the channel test → cut to 0 at its edge: a jump in the wall-relief weight,
+          // i.e. zero-width steps of up to ~30 m in h)
+          if (st.fjords > 0 && low > 0) {
+            const k = sstep(0.1, 0.3, mtn) * mtn * (1 - chan) * low * (1 - sstep(0.03, 0.07, av)) * sstep(0.0, 0.2, reg);
+            if (k > cliff) cliff = k;
           }
         } else {
           const chan = 1 - sstep(0.01, 0.028, av);
@@ -1042,8 +1067,9 @@ export class SurfaceGen {
     }
     if (st.lakes > 0 && this.hasOcean && c > 0.01) {
       const f = R / (5200 * Math.max(0.5, R / 70000)), J = this.nG.jit;
-      const reg = st.lakes * sstep(-0.1, 0.3, nF.n3(px * 2.7 + 300, py * 2.7, pz * 2.7 + 1));
-      if (reg > 0.02 && h < 220) {
+      let reg = st.lakes * sstep(-0.1, 0.3, nF.n3(px * 2.7 + 300, py * 2.7, pz * 2.7 + 1)) * sstep(0.01, 0.02, c);
+      reg *= sstep(0.004, 0.03, reg);
+      if (reg > 0.004 && h < 220) {
         const warpL = 0.12 * nF.n3(px * R / 900, py * R / 900, pz * R / 900);
         const t = this._cells(px * f, py * f + 5, pz * f + 11, f, 0.7, (d, hh) => {
           if (J[(hh + 17) & 4095] > 0.55) return 0;
@@ -1064,8 +1090,9 @@ export class SurfaceGen {
     // ---- sinkholes / cenotes
     if (st.sinkholes > 0 && c > 0.02) {
       const f = R / 1100, J = this.nG.jit;
-      const reg = sstep(0.0, 0.4, nF.n3(px * 3.3 + 2, py * 3.3 + 400, pz * 3.3)) * st.sinkholes;
-      if (reg > 0.02) {
+      let reg = sstep(0.0, 0.4, nF.n3(px * 3.3 + 2, py * 3.3 + 400, pz * 3.3)) * st.sinkholes * sstep(0.02, 0.035, c);
+      reg *= sstep(0.004, 0.03, reg);
+      if (reg > 0.004) {
         const t = this._cells(x * f + 1, y * f + 2, z * f + 3, f, 0.8, (d, hh) => {
           if (J[(hh + 19) & 4095] > 0.35) return 0;
           const q = d / (0.08 + 0.07 * J[hh + 3]);
@@ -1087,7 +1114,7 @@ export class SurfaceGen {
     if (st.outcrops > 0 && c > 0.02 && lod < 60) {
       const f = R / 70;
       const on = this.nH.n3(x * f + 7, y * f + 3, z * f + 5) * 0.7 + this.nH.n3(x * f * 2.3, y * f * 2.3, z * f * 2.3) * 0.3;
-      const reg = sstep(-0.2, 0.5, this.nH.n3(x * R / 900 + 4, y * R / 900, z * R / 900 + 8)) * st.outcrops;
+      const reg = sstep(-0.2, 0.5, this.nH.n3(x * R / 900 + 4, y * R / 900, z * R / 900 + 8)) * st.outcrops * sstep(0.02, 0.035, c);
       const t = sstep(0.42, 0.62, on) * reg * (1 - dune) * (1 - river);
       if (t > 0) { h += t * (2.2 + 3.5 * reg) * lodW(28, lod); rock = Math.max(rock, sstep(0.1, 0.5, t)); }
     }
@@ -1107,12 +1134,18 @@ export class SurfaceGen {
 
     // ---- buttresses & chutes on big walls (mountain faces, mesa / plateau / canyon cliffs): relief
     //      proportional to the wall (≈9 % of each wavelength, first wavelength ~0.9 × wall height)
+    wallH = wHs / wHw;
     if (this.cfg.dbg & 1) steep = 0;
     // (the wavelength is a per-world constant: a frequency that follows wallH — which tracks the
     //  range mask — rescales absolute noise coordinates of ~10³ units by a spatially varying factor,
     //  decorrelating the noise within metres: needle fins and combs where ranges ramp up)
-    if (steep > 0.01 && wallH > 60 && !(this.cfg.dbg & 16)) {
-      h += steep * this._buttress(x, y, z, lod, st.buttWl) * Math.min(1, wallH / 1500 + 0.25);
+    // (faded in with wallH: a hard `wallH > 60` gate made the height function DISCONTINUOUS — 0.4 m
+    //  cliffs of zero width that rendered as zig-zag banks across meadows at the foot of ranges)
+    const wHk = sstep(30, 110, wallH);
+    // (also eased in from steep 0.004 → 0.03: the old `steep > 0.01` gate cut a buttress offset of
+    //  0.01 × ~40 m off in one step)
+    if (steep > 0.004 && wHk > 0 && !(this.cfg.dbg & 16)) {
+      h += steep * sstep(0.004, 0.03, steep) * wHk * this._buttress(x, y, z, lod, st.buttWl) * Math.min(1, wallH / 1500 + 0.25);
     }
 
     // ---- 3D wall relief (blocks, joints, ledges). A heightfield wall is the region between two
@@ -1128,14 +1161,21 @@ export class SurfaceGen {
     // (mountain "steep" is the LARGE-SCALE slope of the range, which starts at ~27°: on its own it
     //  terraced 30-45° meadow flanks at the foot of ranges into rice-paddy steps. Mountain walls only
     //  count from ~48° (full at ~63°) of that slope; mesa / plateau / canyon walls keep their hints.)
-    const steepO = steep > steepM ? steep : 0;
+    // (was `steep > steepM ? steep : 0`: it jumped from steepM to 0 where a cliff hint fell below the
+    //  mountain hint — an 8 m discontinuity in h through the wall relief)
+    const steepO = this.cfg.dbg & 1 ? 0 : steepNM;
     const wM = steepM * sstep(1.1, 2.0, wallS);
     let wr = wM > steepO ? wM : steepO;
     if (cliff * 0.85 > wr) wr = cliff * 0.85;
     const wS = sstep(1.6, 3.2, wallS);
     if (wS > wr) wr = wS;
     if (this.cfg.dbg & 2) wr = 0;
-    const sTrue = wallS > 0 ? (wallS < 10 ? wallS : 10) : 2.2;
+    // (true wall slope: wallS is only measured on mountain ranges; non-mountain cliffs (mesa, plateau,
+    //  canyon, coast) assume ~2.2. Was `wallS > 0 ? wallS : 2.2` — a jump wherever the mountain block
+    //  switched off, i.e. a metre-scale step in h.)
+    const sNM = 2.2 * sstep(0.0, 0.3, steepNM > cliff ? steepNM : cliff);
+    const sW = wallS < 10 ? wallS : 10;
+    const sTrue = sW > sNM ? sW : sNM > 0 ? sNM : 1e-3;
     const sEff = sTrue < 1.1 ? 1.1 : sTrue > 2.8 ? 2.8 : sTrue;
     if (wr > 0.02) {
       const rr = R + h;
@@ -1160,7 +1200,7 @@ export class SurfaceGen {
         lam *= 0.4;
       }
       // (slope factor capped at 3.6: beyond that the displaced wall would fold over in the heightfield)
-      h += wr * (sTrue < 3.6 ? sEff > sTrue ? sEff : sTrue : 3.6) * sum * st.wallBlocks;
+      h += wr * sstep(0.02, 0.07, wr) * (sTrue < 3.6 ? sEff > sTrue ? sEff : sTrue : 3.6) * sum * st.wallBlocks;
       // ledges (bedding planes / sheeting joints): terrace the wall in altitude. Terracing h is
       // monotonic (never folds) and turns every band into a riser + a narrow shelf. Ledge strength
       // and phase wander along the wall so they come and go like real strata.
@@ -1168,13 +1208,14 @@ export class SurfaceGen {
         const lf = R / 260;
         const ln = nW.n3(x * lf + 5.5, y * lf + 8.1, z * lf + 1.9);
         const k = wr * st.wallLedges * sstep(-0.35, 0.35, ln) * lodW(st.ledgeStep * 0.6, lod);
-        if (k > 0.01) {
+        if (k > 0.005) {
+          const kk = k * sstep(0.005, 0.03, k);
           const step = st.ledgeStep * (0.8 + 0.4 * (0.5 + 0.5 * nW.n3(x * lf * 0.5 + 9, y * lf * 0.5, z * lf * 0.5 + 4)));
           // (phase wanders slowly: strata are near-horizontal over hundreds of metres, not swirls)
           const ph = 0.3 * nW.n3(x * lf * 0.6 + 3, y * lf * 0.6 + 1, z * lf * 0.6 + 7);
           const t = (h / step + ph);
           const tt = SurfaceGen.terrace(t, 1, 0.55);
-          h += (tt - t) * step * k * 0.85;
+          h += (tt - t) * step * kk * 0.85;
         }
       }
     }

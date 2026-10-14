@@ -118,9 +118,13 @@ export function bakeDetail(size = DETAIL_SIZE) {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const u = x / S, v = y / S;
       const wu = u + 0.04 * pfbm(h2, u, v, 3, 3), wv = v + 0.04 * pfbm(h2, u + 0.5, v + 0.3, 3, 3);
-      // big angular blocks (planes, soft seams)
-      facets(wu, wv, 4, h1, 11);
-      const big = res[0], bid = res[2];
+      // big angular blocks: tilted planes with crisp (not razor) seams
+      facets(wu, wv, 4, h1, 24);
+      const big = res[0], bid = res[2], bid2 = res[3], bseam = res[1];
+      // blocks sit at slightly different depths: a step across each seam (eased over a narrow
+      // bevel) → chipped, blocky rock with lit / shadowed edges instead of a smooth skin
+      const kStep = sst(0.0, 0.07, bseam);
+      const blockOff = (bid - 0.5) * (0.5 + 0.5 * kStep) + (bid2 - 0.5) * 0.5 * (1 - kStep);
       // stepped ledges: near-parallel bedding / sheeting planes (a planar coordinate with a gentle
       // fbm dip), so the risers are long straight-ish lines. (Terracing an fbm drew its CONTOURS:
       // curly dark riser lines that read as wrinkled skin / worms on cliffs.)
@@ -130,22 +134,24 @@ export function bakeDetail(size = DETAIL_SIZE) {
       // ramp — periodic (the ramp itself is not) and continuous across steps
       const step = 0.75 * (sst(0.6, 0.95, bf) - bf);
       const bk = ((bi % 5) + 5) % 5;
-      // joints: a sparse subset of the facet seams of a second, finer block field (straight polygon
-      // edges by construction), with varying width — angular cracks, never worm-like loops
-      facets(wu + 0.37, wv + 0.11, 7, h4, 9);
-      const seam = res[1], pr = h1(Math.floor(res[2] * 997) + Math.floor(res[3] * 997), 5);
-      const crack = pr < 0.38 ? (1 - sst(0.0, 0.06 + 0.1 * pr, seam)) : 0;
+      // open joints: the seams between blocks whose depths differ most (a connected but partial
+      // polygon net that matches the step relief). The old sparse seams of a second, finer field were
+      // isolated short polylines → read as scribbles / worms on walls 50-300 m away.
+      const jOpen = sst(0.25, 0.55, Math.abs(bid - bid2));
+      const crack = jOpen * (1 - sst(0.0, 0.03, bseam));
       const weath = pfbm(h2, u + 0.17, v + 0.61, 8, 4, 0.5);
-      let rid = 0, amp = 0.5, pp = 32;
-      for (let o = 0; o < 3; o++) { rid += amp * (1 - Math.abs(pnoise(h1, u + o * 0.17, v + o * 0.31, pp))); amp *= 0.5; pp *= 2; }
-      const pits = sst(0.52, 0.8, pfbm(h1, u + 0.21, v + 0.63, 20, 3)) * 0.06;
-      const hgt = 0.2 * step + 0.42 * big + 0.08 * weath + 0.03 * rid - 0.07 * crack - pits;
+      let rid = 0, amp = 0.5, pp = 16;
+      for (let o = 0; o < 2; o++) { rid += amp * (1 - Math.abs(pnoise(h1, u + o * 0.17, v + o * 0.31, pp))); amp *= 0.5; pp *= 2; }
+      const pits = sst(0.52, 0.8, pfbm(h1, u + 0.21, v + 0.63, 20, 3)) * 0.05;
+      const hgt = 0.18 * step + 0.4 * big + 0.1 * blockOff + 0.07 * weath + 0.012 * rid - 0.06 * crack - pits;
       H[y * S + x] = hgt;
       const lich = sst(0.35, 0.6, pfbm(h3, u, v, 6, 4)) * sst(0.45, 0.75, pnoise(h1, u, v, 28) * 0.5 + 0.5);
       const speck = pnoise(h4, u, v, 96) * 0.5 + pnoise(h4, u + 0.3, v + 0.8, 160) * 0.5;
       const riser = sst(0.6, 0.78, bf) * (1 - sst(0.88, 0.99, bf));
-      A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.2 * (bid - 0.5) + 0.08 * ((bk * 0.618) % 1 - 0.5) + 0.12 * weath + 0.06 * speck
-        - 0.07 * riser - 0.14 * crack - 0.8 * pits + 0.1 * lich));
+      // fresh chipped edges are paler (block rims catch the light, weathered faces are darker)
+      const rim = (1 - kStep) * (1 - jOpen) * 0.5;
+      A[y * S + x] = Math.max(0, Math.min(1, 0.5 + 0.22 * (bid - 0.5) + 0.08 * ((bk * 0.618) % 1 - 0.5) + 0.12 * weath + 0.06 * speck
+        - 0.07 * riser - 0.2 * crack + 0.06 * rim - 0.8 * pits + 0.1 * lich));
     }
     norm(); put(0, 0.10);
   }

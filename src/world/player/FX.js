@@ -12,24 +12,35 @@ import { G } from '../../core/Uniforms.js';
 import { clamp, FastRand } from './util.js';
 
 const PVERT = /* glsl */ `
-attribute vec3 iPos; attribute vec3 iVel; attribute vec4 iCol; attribute vec3 iMisc; // size, kind, rot
-varying vec4 vCol; varying vec2 vUv; varying float vKind; varying vec3 vWorldN;
+attribute vec3 iPos; attribute vec3 iVel; attribute vec4 iCol; attribute vec4 iMisc; // size, kind (+ seed * 0.4), rot, age 0..1
+varying vec4 vCol; varying vec2 vUv; varying float vKind; varying vec3 vWorldN; varying vec2 vSeedAge; varying vec2 vRot;
 void main(){
-  vCol = iCol; vUv = position.xy + 0.5; vKind = iMisc.y;
+  vCol = iCol; vUv = position.xy + 0.5; vKind = floor(iMisc.y + 0.001);
+  vSeedAge = vec2(fract(iMisc.y + 0.001) * 2.5, iMisc.w);
   vec4 mv = modelViewMatrix * vec4(iPos, 1.0);
   float size = iMisc.x;
   vec2 q = position.xy;
   float c = cos(iMisc.z), s = sin(iMisc.z);
+  vRot = vec2(c, s);
   q = mat2(c, -s, s, c) * q;
   vec3 off = vec3(q * size, 0.0);
-  if (iMisc.y > 0.5 && iMisc.y < 1.5) {
-    // stretched droplet along screen-space velocity
+  if (vKind > 0.5 && vKind < 1.5) {
+    // stretched droplet / sand grain along screen-space velocity
     vec3 vv = (modelViewMatrix * vec4(iVel, 0.0)).xyz;
     vec2 d = vv.xy; float l = length(d);
     vec2 dir = l > 1e-4 ? d / l : vec2(0.0, 1.0);
     vec2 nrm = vec2(-dir.y, dir.x);
     float stretch = 1.0 + min(l * 0.05, 5.0);
     off = vec3(dir * position.y * size * stretch + nrm * position.x * size * 0.6, 0.0);
+  } else if (vKind < 0.5) {
+    // dust: slightly flattened along the screen-space motion so a fast plume reads as a sheet, not a ball
+    vec3 vv = (modelViewMatrix * vec4(iVel, 0.0)).xyz;
+    float l = length(vv.xy);
+    vec2 dir = l > 1e-3 ? vv.xy / l : vec2(1.0, 0.0);
+    vec2 nrm = vec2(-dir.y, dir.x);
+    float st = 1.0 + min(l * 0.06, 0.9);
+    vec2 qq = q * size;
+    off = vec3(dir * dot(qq, dir) * st + nrm * dot(qq, nrm) / sqrt(st), 0.0);
   }
   mv.xyz += off;
   vWorldN = normalize((inverse(viewMatrix) * vec4(normalize(vec3(position.xy, 0.7)), 0.0)).xyz);
@@ -38,21 +49,35 @@ void main(){
 const PFRAG = /* glsl */ `
 #include <rv_common>
 uniform vec3 uSunDir; uniform vec3 uSunColor; uniform vec3 uAmbientSky;
-varying vec4 vCol; varying vec2 vUv; varying float vKind; varying vec3 vWorldN;
+varying vec4 vCol; varying vec2 vUv; varying float vKind; varying vec3 vWorldN; varying vec2 vSeedAge; varying vec2 vRot;
+float rvVN(vec2 g) {
+  vec2 gi = floor(g), gf = fract(g); gf = gf * gf * (3.0 - 2.0 * gf);
+  return mix(mix(rv_hash12(gi), rv_hash12(gi + vec2(1.0, 0.0)), gf.x), mix(rv_hash12(gi + vec2(0.0, 1.0)), rv_hash12(gi + vec2(1.0, 1.0)), gf.x), gf.y);
+}
 void main(){
   vec2 p = vUv * 2.0 - 1.0;
   float r = length(p);
   float a;
   vec3 col = vCol.rgb;
   if (vKind < 0.5) {
-    // soft puff with a little noisy breakup and fake volume lighting
-    // soft gaussian core with smooth value-noise breakup (wispy edges, no hard disc)
-    vec2 g = vUv * 3.0 + vec2(vCol.a * 17.0, vCol.a * 5.0);
-    vec2 gi = floor(g), gf = fract(g); gf = gf * gf * (3.0 - 2.0 * gf);
-    float n = mix(mix(rv_hash12(gi), rv_hash12(gi + vec2(1.0, 0.0)), gf.x), mix(rv_hash12(gi + vec2(0.0, 1.0)), rv_hash12(gi + vec2(1.0, 1.0)), gf.x), gf.y);
-    a = min(1.0, exp(-r * r * 2.2) * smoothstep(1.0, 0.5, r) * (0.75 + 0.8 * n) * 1.25);
-    float lit = 0.55 + 0.45 * clamp(dot(vWorldN, uSunDir), 0.0, 1.0);
-    col = col * (uSunColor * 0.5 * lit + uAmbientSky * 0.9 + 0.02);
+    // billowing dust: fbm density (3 octaves, per-particle seed, domain-warped), eroded with age so a puff
+    // tears into wisps as it thins instead of shrinking as a soft disc; self-shadowed core, sun-lit rim
+    float age = vSeedAge.y;
+    vec2 sd = vec2(vSeedAge.x * 31.7, vSeedAge.x * 17.3);
+    vec2 g = p * 1.7 + sd + age * vec2(0.6, -0.9);
+    float w = rvVN(g * 0.7 + 7.0);
+    g += (w - 0.5) * 1.2;
+    float n = rvVN(g) * 0.55 + rvVN(g * 2.13 + 3.1) * 0.3 + rvVN(g * 4.7 + 9.4) * 0.15;
+    float gauss = exp(-r * r * 3.2) * smoothstep(1.0, 0.7, r);
+    float n2 = smoothstep(0.28, 0.82, n);
+    float dens = gauss * (0.2 + 1.15 * n2) - age * 0.3;
+    a = clamp(dens * 1.35, 0.0, 1.0);
+    a *= a * (3.0 - 2.0 * a);
+    // lighting: a pseudo-sphere normal bent by the noise, sun wrap + sky; denser cores are darker
+    vec3 nW = normalize(vWorldN + 0.0);
+    float lit = clamp(dot(nW, uSunDir) * 0.6 + 0.4, 0.0, 1.0);
+    float self = mix(1.0, 0.86, smoothstep(0.3, 0.9, dens));
+    col = col * (uSunColor * 0.55 * lit + uAmbientSky * 0.85 + 0.02) * self;
   } else if (vKind < 1.5) {
     a = smoothstep(1.0, 0.1, r);
     col = col * (uSunColor * 0.35 + uAmbientSky * 1.1) + pow(max(0.0, 1.0 - r), 3.0) * uSunColor * 0.15;
@@ -79,7 +104,7 @@ export class FX {
     const n = this.max;
     this.P = { pos: new Float64Array(n * 3), vel: new Float32Array(n * 3), age: new Float32Array(n), life: new Float32Array(n),
       s0: new Float32Array(n), s1: new Float32Array(n), col: new Float32Array(n * 3), a0: new Float32Array(n), drag: new Float32Array(n),
-      grav: new Float32Array(n), kind: new Uint8Array(n), rot: new Float32Array(n), spin: new Float32Array(n), alive: 0 };
+      grav: new Float32Array(n), kind: new Uint8Array(n), seed: new Float32Array(n), rot: new Float32Array(n), spin: new Float32Array(n), alive: 0 };
     const quad = new THREE.PlaneGeometry(1, 1);
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = quad.index;
@@ -87,7 +112,7 @@ export class FX {
     this.iPos = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage);
     this.iVel = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage);
     this.iCol = new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4).setUsage(THREE.DynamicDrawUsage);
-    this.iMisc = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this.iMisc = new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4).setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('iPos', this.iPos); geo.setAttribute('iVel', this.iVel); geo.setAttribute('iCol', this.iCol); geo.setAttribute('iMisc', this.iMisc);
     geo.instanceCount = 0;
     this.pMat = new THREE.ShaderMaterial({
@@ -131,7 +156,9 @@ export class FX {
           // two thin concentric crests with a darker trough inside each (reads as a wave, not a disc)
           float c1 = exp(-pow((d - 0.94) / 0.025, 2.0)), c2 = exp(-pow((d - 0.72) / 0.02, 2.0)) * 0.55;
           float tr = exp(-pow((d - 0.88) / 0.035, 2.0)) * 0.5;
-          float a = (c1 + c2) * vM.y * vM.y;
+          float ang = atan(vP.y, vP.x);
+          float brk = 0.45 + 0.55 * (0.5 + 0.5 * sin(ang * 7.0 + vM.x * 3.1) * sin(ang * 3.0 - vM.x * 1.7));
+          float a = (c1 + c2) * vM.y * vM.y * brk;
           float ad = tr * vM.y * vM.y;
           if (a + ad < 0.004) discard;
           vec3 hi = uSunColor * 0.25 + uAmbientSky * 1.1 + 0.05;
@@ -273,15 +300,17 @@ export class FX {
             // Kelvin arms (19.5 deg) from the head
             float yb = p.y + 0.15;
             float arm = abs(abs(p.x) - max(yb, 0.0) * 0.36);
-            float aw = 0.03 + max(yb, 0.0) * 0.03;
-            float armA = smoothstep(aw, 0.0, arm) * smoothstep(0.0, 0.5, yb) * exp(-max(yb, 0.0) * 0.55) * (0.35 + 0.8 * n1);
+            float aw = 0.02 + max(yb, 0.0) * 0.018;
+            // foam speckle: the arms break into streaks of bubbles instead of a smoky band
+            float sp = smoothstep(0.42, 0.78, vn(vec2(arm * 22.0, yb * 3.0 - t * 0.4) + vec2(sign(p.x) * 13.0, 0.0)));
+            float armA = smoothstep(aw, 0.0, arm) * smoothstep(0.0, 0.5, yb) * exp(-max(yb, 0.0) * 0.8) * (0.25 + 0.75 * n1) * (0.3 + 0.9 * sp);
             // transverse chevrons between the arms
             float inside = smoothstep(0.08, -0.08, abs(p.x) - max(yb, 0.0) * 0.36) * step(0.0, yb);
             float tr = pow(0.5 + 0.5 * sin((yb + abs(p.x) * 0.4) * 10.0 - t * 7.0), 3.0) * inside * exp(-max(yb, 0.0) * 0.55);
             // churned kick foam behind the feet
             float kick = smoothstep(0.3, 0.0, abs(p.x) + (n1 - 0.5) * 0.25) * smoothstep(1.1, 1.7, yb) * exp(-max(yb - 1.7, 0.0) * 1.1) * n1 * n1;
-            float a = collar * 0.42 + (armA * 0.2 + tr * 0.06 + kick * 0.3) * mv;
-            a *= uAlpha * smoothstep(3.4, 2.6, abs(p.x)) * smoothstep(7.2, 5.5, p.y) * smoothstep(-1.6, -1.2, p.y);
+            float a = collar * 0.42 + (armA * 0.16 + tr * 0.04 + kick * 0.26) * mv;
+            a *= uAlpha * smoothstep(3.4, 2.6, abs(p.x)) * smoothstep(5.5, 3.5, p.y) * smoothstep(-1.6, -1.2, p.y);
             if (a < 0.004) discard;
             gl_FragColor = vec4(uSunColor * 0.06 + uAmbientSky * 0.7 + 0.02, min(a, 0.6));
           }`,
@@ -355,7 +384,7 @@ export class FX {
     P.age[i] = 0; P.life[i] = life; P.s0[i] = size; P.s1[i] = size1 ?? size * 2.2;
     P.col[i * 3] = color.r; P.col[i * 3 + 1] = color.g; P.col[i * 3 + 2] = color.b;
     P.a0[i] = alpha; P.drag[i] = drag; P.grav[i] = grav; P.kind[i] = kind;
-    P.rot[i] = this.rand.next() * 6.283; P.spin[i] = spin * (this.rand.next() - 0.5);
+    P.rot[i] = this.rand.next() * 6.283; P.spin[i] = spin * (this.rand.next() - 0.5); P.seed[i] = this.rand.next() * 0.39;
   }
 
   /** Dust puff burst on ground contact. */
@@ -448,9 +477,10 @@ export class FX {
       const ow = w * 3;
       ip[ow] = P.pos[ow]; ip[ow + 1] = P.pos[ow + 1]; ip[ow + 2] = P.pos[ow + 2];
       iv[ow] = P.vel[ow]; iv[ow + 1] = P.vel[ow + 1]; iv[ow + 2] = P.vel[ow + 2];
-      const fade = P.kind[w] === 2 ? Math.sin(Math.PI * Math.min(1, t)) : (1 - t) * (1 - t) * Math.min(1, t * 8 + 0.2);
+      const fade = P.kind[w] === 2 ? Math.sin(Math.PI * Math.min(1, t)) : P.kind[w] === 0 ? (1 - t) * Math.min(1, t * 6 + 0.3) : (1 - t) * (1 - t) * Math.min(1, t * 8 + 0.2);
       ic[w * 4] = P.col[ow]; ic[w * 4 + 1] = P.col[ow + 1]; ic[w * 4 + 2] = P.col[ow + 2]; ic[w * 4 + 3] = P.a0[w] * fade;
-      im[ow] = P.s0[w] + (P.s1[w] - P.s0[w]) * t; im[ow + 1] = P.kind[w]; im[ow + 2] = P.rot[w];
+      const o4 = w * 4;
+      im[o4] = P.s0[w] + (P.s1[w] - P.s0[w]) * t; im[o4 + 1] = P.kind[w] + P.seed[w]; im[o4 + 2] = P.rot[w]; im[o4 + 3] = t;
       w++;
     }
     P.alive = w;
@@ -599,7 +629,7 @@ export class FX {
     const P = this.P;
     for (let k = 0; k < 3; k++) { P.pos[w * 3 + k] = P.pos[i * 3 + k]; P.vel[w * 3 + k] = P.vel[i * 3 + k]; P.col[w * 3 + k] = P.col[i * 3 + k]; }
     P.age[w] = P.age[i]; P.life[w] = P.life[i]; P.s0[w] = P.s0[i]; P.s1[w] = P.s1[i]; P.a0[w] = P.a0[i];
-    P.drag[w] = P.drag[i]; P.grav[w] = P.grav[i]; P.kind[w] = P.kind[i]; P.rot[w] = P.rot[i]; P.spin[w] = P.spin[i];
+    P.drag[w] = P.drag[i]; P.grav[w] = P.grav[i]; P.kind[w] = P.kind[i]; P.seed[w] = P.seed[i]; P.rot[w] = P.rot[i]; P.spin[w] = P.spin[i];
   }
 
   dispose() {

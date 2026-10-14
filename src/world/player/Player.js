@@ -1250,27 +1250,29 @@ export class Player {
         // lateral kick toward the outside of the carve
         _c.crossVectors(up, this.forward).multiplyScalar(-this.slideS.carve * 0.6);
         _a.add(_c).normalize();
-        this._slideAcc = (this._slideAcc || 0) + dt * (soft ? 64 : 26) * (0.35 + k);
-        this._grainAcc = (this._grainAcc || 0) + dt * (soft ? 90 : 30) * k;
+        this._slideAcc = (this._slideAcc || 0) + dt * (soft ? 70 : 28) * (0.35 + k);
+        this._grainAcc = (this._grainAcc || 0) + dt * (soft ? 170 : 50) * k;
         const src = an ? an.footWorld.R : this.pos;
-        _col.copy(this.groundColor).lerp(WHITE, this.surfaceKind === 'snow' ? 0.75 : 0.3);
-        // the spray is thrown out sideways off the board edge and carried along with the rider (a chase
-        // camera would otherwise leave it behind the lens within a few frames)
+        _col.copy(this.groundColor).lerp(WHITE, this.surfaceKind === 'snow' ? 0.7 : 0.22);
+        // a low billowing dust plume rolls off the board edge and drifts back (half the rider's speed: the chase
+        // camera sees it trail behind and beside the rider, hugging the slope), while a curtain of stretched
+        // grains (the rooster tail) is flung sideways and up and falls back ballistically.
         const side = _c.crossVectors(up, this.forward).normalize(); // left of the body (board is sideways)
         const rnd = fx.rand;
         while (this._slideAcc >= 1) {
           this._slideAcc -= 1;
-          const s = (rnd.next() < 0.5 ? 1 : -1) * (0.6 + rnd.next() * 0.8) - this.slideS.carve * 0.8;
-          _b.copy(this.vel).multiplyScalar(0.68 + rnd.next() * 0.22).addScaledVector(side, s * (1.4 + this.speed * 0.14))
-            .addScaledVector(up, 0.8 + rnd.next() * (0.9 + this.speed * 0.08));
-          _e.copy(src).addScaledVector(side, s * 0.15);
-          fx.emit(_e, _b, { kind: 0, size: (soft ? 0.3 : 0.2) * (0.6 + rnd.next() * 0.8), size1: soft ? 1.25 : 0.75, life: 0.6 + rnd.next() * 0.8, color: _col, alpha: soft ? 0.62 : 0.4, drag: 1.3, grav: 0.16, spin: (rnd.next() - 0.5) * 2 });
+          const s = (rnd.next() < 0.5 ? 1 : -1) * (0.5 + rnd.next() * 0.9) - this.slideS.carve * 0.8;
+          _b.copy(this.vel).multiplyScalar(0.42 + rnd.next() * 0.2).addScaledVector(side, s * (1.1 + this.speed * 0.1))
+            .addScaledVector(up, 0.25 + rnd.next() * (0.5 + this.speed * 0.03));
+          _e.copy(src).addScaledVector(side, s * 0.18).addScaledVector(up, 0.05);
+          fx.emit(_e, _b, { kind: 0, size: (soft ? 0.32 : 0.22) * (0.7 + rnd.next() * 0.6), size1: (soft ? 1.15 : 0.7) * (0.8 + rnd.next() * 0.5), life: 0.8 + rnd.next() * 0.9, color: _col, alpha: soft ? 0.42 : 0.26, drag: 1.7, grav: 0.03, spin: (rnd.next() - 0.5) * 1.2 });
         }
         while (this._grainAcc >= 1) {
           this._grainAcc -= 1;
           const s = (rnd.next() < 0.5 ? 1 : -1) * (0.5 + rnd.next()) - this.slideS.carve;
-          _b.copy(this.vel).multiplyScalar(0.7).addScaledVector(side, s * (1.5 + this.speed * 0.15)).addScaledVector(up, 1.8 + rnd.next() * 2.5);
-          fx.emit(src, _b, { kind: 1, size: 0.02, size1: 0.016, life: 0.45 + rnd.next() * 0.4, color: _col, alpha: 0.9, drag: 0.4, grav: 1 });
+          _b.copy(this.vel).multiplyScalar(0.55 + rnd.next() * 0.3).addScaledVector(side, s * (1.4 + this.speed * 0.16)).addScaledVector(up, 1.2 + rnd.next() * (1.6 + this.speed * 0.1));
+          _e.copy(src).addScaledVector(side, s * 0.12);
+          fx.emit(_e, _b, { kind: 1, size: 0.018 + rnd.next() * 0.022, size1: 0.014, life: 0.4 + rnd.next() * 0.45, color: _col, alpha: 0.85, drag: 0.5, grav: 1 });
         }
         // carved groove (ribbon conformed to the ground, fades over ~3 s) on soft ground
         if (soft && an) {
@@ -1301,7 +1303,7 @@ export class Player {
               if (hs[side] > 0.02 && h <= 0.02 && this.speed > 0.5) {
                 _a.setLength(seaR);
                 fx.spray(_a, this.forward, up, _col.setRGB(0.82, 0.9, 0.94), 5, 1.1, 1, 0.045, 0.8);
-                fx.dust(_a, up, _col, 2, 0.4, 0.22, 0.3);
+                fx.dust(_a, up, _col, 2, 0.3, 0.1, 0.2);
                 fx.ripple(_a, up, 0.06, 0.55, 0.9);
               }
               hs[side] = h;

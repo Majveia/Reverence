@@ -234,16 +234,22 @@ function patchVisor(mat, P) {
           float Lh = dot(skyH, vec3(0.3333));
           vec3 gHue = uVGround / max(dot(uVGround, vec3(0.3333)), 1e-3);
           gHue = mix(vec3(1.0), clamp(gHue, 0.0, 2.0), 0.55);
-          vec3 grd = gHue * Lh * mix(0.46, 0.2, smoothstep(0.0, -0.75, h));
-          vec3 env = mix(grd, sky, smoothstep(-0.09, 0.05, h));
-          env += (uVSky * 0.8 + uVSun * 0.06) * exp(-abs(h + 0.01) * 16.0); // hazy horizon glow
+          vec3 grd = gHue * Lh * mix(0.6, 0.3, smoothstep(0.0, -0.8, h));
+          // soft horizon: a broad gradient (a crisp line across the small dome read as lips)
+          vec3 env = mix(grd, sky, smoothstep(-0.3, 0.12, h));
+          env += (uVSky * 0.5 + uVSun * 0.04) * exp(-abs(h + 0.02) * 9.0); // hazy horizon glow
           float sd = max(dot(Rw, normalize(uVSunDir)), 0.0);
           vec3 spec = uVSun * (pow(sd, 1600.0) * 60.0 + pow(sd, 90.0) * 0.8 + pow(sd, 8.0) * 0.05);
-          outgoingLight = outgoingLight * 0.14 + env * fres * uVTint * 0.95 + spec * mix(uVTint, vec3(1.0), 0.5);
+          outgoingLight = outgoingLight * 0.05 + env * fres * uVTint * 0.95 + spec * mix(uVTint, vec3(1.0), 0.5);
           // soft studio-window glint (reads as a curved glass dome at any distance)
           vec3 Rvn = normalize(Rv);
           float win = smoothstep(0.45, 0.8, Rvn.y) * smoothstep(0.5, 0.12, abs(Rvn.x + 0.3));
           outgoingLight += uVTint * (uVSky * 1.6 + uVSun * 0.05) * win * 0.85;
+          // crisp curved highlight on the upper dome (the bright sky reflected by a tight curvature): the one cue
+          // that makes a small visor read as glass rather than a painted surface
+          float gl = dot(normal, normalize(vec3(-0.42, 0.55, 0.72)));
+          float streak = smoothstep(0.87, 0.935, gl) * 0.75;
+          outgoingLight += mix(uVTint, vec3(1.0), 0.7) * (uVSky * 4.0 + uVSun * 0.12 + 0.12) * streak;
           // warm gold interference band near the rim of the dome
           float rimG = pow(1.0 - ndv, 5.0);
           outgoingLight += vec3(1.0, 0.6, 0.18) * rimG * (uVSky * 1.2 + uVSun * 0.1);

@@ -57,6 +57,15 @@ looks up the route; Space+up = lunge (animated), camera swings to a ¾ view of t
 Round 3: relaxed **contrapposto idle** (weight on the right leg, pelvis shifted/tilted, free foot forward
 and turned out, soft elbows); run arms no longer "chicken-wing" (elbow pole back/down instead of out);
 scarf tails flutter and twist at speed instead of streaming as a rigid plank.
+Round 4 (critic round 2 fixes): **dust is now volumetric-looking wisps**, not soft discs: every dust
+particle carries a seed + age; the fragment shader builds a domain-warped 3-octave value-noise density,
+weights it by a gaussian and erodes it with age, so a puff tears into wisps as it thins (the old gaussian
+discs read as camera bokeh). Dust billboards stretch slightly along their screen-space motion. Slide FX:
+a low plume of overlapping dust drifts back beside the board at ~half the rider's speed and hugs the slope,
+plus a curtain of ~170 stretched sand grains / s (rooster tail) that falls back ballistically. Visor: a soft
+horizon gradient (the crisp brown horizon line across the dome read as lips / a mouth), env reflection
+reduced to a faint layer, and a crisp curved glass highlight on the upper dome. Swim camera: longer arm and
+steeper pitch, so the boots no longer fill the foreground and the stroke reads.
 Swim: front crawl rides at the surface; **hold C to dive** (streamlined underwater glide, profile
 camera under water, Space / release to surface); ice and lava seas are walkable (`water.solid`).
 

@@ -201,7 +201,7 @@ export class Scarf {
           // travelling flutter wave down the tail (faster & tighter in strong airflow) + turbulence
           const fq = 3 + Math.min(this._air || 0, 25) * 0.45;
           const ci = pi - j * s.cols; // column: edges flap out of phase → the ribbon twists instead of planking
-          const fl = Math.sin(this.t * fq - j * 1.15 + k * 2.1 + (ci - 1) * 0.55) * 0.75 + noise1(this.t * 2.3 + j * 0.9 + k * 5.1, 7 + k) * 0.6;
+          const fl = (Math.sin(this.t * fq - j * 1.15 + k * 2.1 + (ci - 1) * 0.55) * 0.75 + noise1(this.t * 2.3 + j * 0.9 + k * 5.1, 7 + k) * 0.6) * (0.45 + 1.1 * j / (s.rows - 1)); // flag-like: the wave grows toward the free end
           let rx = wind.x - vx, ry = wind.y - vy, rz = wind.z - vz;
           const rl = Math.sqrt(rx * rx + ry * ry + rz * rz);
           // pressure along the normal + tangential drag (ribbons stream downwind), flutter

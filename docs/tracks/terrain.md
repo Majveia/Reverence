@@ -313,6 +313,38 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
 * **Low tier**: the wall-structure block (about 50 hashes per wall fragment) is skipped on `low`.
 * **Strata contrast**: bed albedo contrast raised from ±8 % to ±~20 % (critic item 5).
 
+### Round 7 changes (critic round 2 follow-up after the interrupted pass)
+* **Height-field discontinuities found and removed (root cause of zig-zag banks, "stretched" risers and
+  part of the cliff streaking).** A scanner (scratch tool: random 40 m transects on 8 showcase worlds,
+  bisection down to 10 µm, A/B with the `tgen` bits) found zero-width steps in `height()` — cliffs that
+  the mesh can only render as sawtooth triangles across one vertex column:
+  * buttresses gated by `steep > 0.01` and `wallH > 60` (0.4 m steps on W1 meadows at the foot of
+    ranges — the orange zig-zag bank in the meadow capture);
+  * `wallH` switched to whichever wall hint was largest (now a steep-weighted mean);
+  * the non-mountain wall weight `steep > steepM ? steep : 0` (8 m steps; now its own continuous
+    `steepNM` term);
+  * the wall-slope estimate `wallS > 0 ? wallS : 2.2` (metre steps wherever a mountain mask ended);
+  * the fjord cliff hint set only inside the channel test (up to ~30 m steps on W12);
+  * hard `c > …` coast gates and `reg > 0.01` region gates on karst towers (20 m step on W5), spires,
+    kopjes, sinkholes, sea stacks, lakes, outcrops, atolls, river valleys and secondary dunes (all now
+    faded in with `sstep`);
+  * the 3D Voronoi facet kernel (`_facets3`) truncated at the 3×3×3 neighbourhood: the Gaussian is now
+    shifted to reach exactly 0 at the neighbourhood radius (0.15 m steps on big walls).
+  After the fixes 20 000 transects (8 worlds) show no step > 5 cm over 2 cm. `height()` cost unchanged
+  (~10.6 µs). Landforms are otherwise unchanged (same layout and statistics).
+* **Rock detail layer 0 rebaked**: the "cracks" were a sparse subset of the seams of a second, finer cell
+  field, i.e. isolated short polylines that read as scribbles / worms on walls 50–300 m away. Blocks
+  now sit at slightly different depths (a step across each seam, eased over a narrow bevel → chipped,
+  blocky rock with lit and shadowed edges), and open joints are the seams between the blocks whose
+  depths differ most (a partial polygon net that matches the relief). Sharper facet planes, weaker
+  fine ridged noise.
+* **Wall shader**: the analytic joint sets are straighter (the sine wander drew wavy dark lines across
+  faces) and their albedo darkening is much lower (−42 % → −16 %): they were the dark squiggles on the
+  W1 meadow backdrop wall and the wavy lines on the W1 face. Rare crisp-edged **rock plates** (pale
+  exfoliation scars / dark weathered plates, 128 × 282 m cells) take over part of the soft noise
+  blotches on big walls (blotches −35 % there). Vertical drainage stains are sparser and lighter
+  (macro −35 % → −25 %, fine −60 % → −50 % max), so walls read less "combed".
+
 ## Capture URLs (verified this round, 1280×720)
 Use `view=fly` for terrain-only framing (no player body). Side light reads relief best: pick `tod` so the
 sun is ~60–120° off the view direction (sun ≈ east at tod 0.3, ≈ west at 0.68 on these worlds).

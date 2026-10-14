@@ -111,12 +111,12 @@ export class CameraRig {
       const target = clamp(-0.13 + Math.atan2(vyC, sp) * 0.75 - (st === 'slide' ? 0.16 : 0), -0.95, 0.25);
       this.pitch = damp(this.pitch, target, 1.6 * smoothstep(2.5, 9, sp), dt);
     } else if (this.idleLook > 2.2) {
-      const target = st === 'glide' ? -0.1 : st === 'swim' ? -0.24 : st === 'slide' ? -0.2 : sp > 7 ? -0.16 : -0.12;
+      const target = st === 'glide' ? -0.1 : st === 'swim' ? -0.32 : st === 'slide' ? -0.2 : sp > 7 ? -0.16 : -0.12;
       this.pitch = damp(this.pitch, target, 0.5, dt);
     }
     // ---- arm length by state
     const glideK = st === 'glide' ? 1 : 0;
-    let arm = 3.7 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (0.75 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? -0.4 : 0) + (st === 'climb' ? 0.5 + 1.2 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
+    let arm = 3.7 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (0.75 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? 0.35 : st === 'slide' ? -0.45 : 0) + (st === 'climb' ? 0.2 + 0.7 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
     // looking up from low: shorten the arm so the camera does not dig into the ground (BotW)
     arm *= 1 - 0.35 * smoothstep(0.05, 0.9, this.pitch);
     arm *= this.zoom;
@@ -207,7 +207,7 @@ export class CameraRig {
     if (this.roll || rollJ) { _q.setFromAxisAngle(_u.set(0, 0, 1), this.roll + rollJ); this.cam.quaternion.multiply(_q); }
     // ---- FOV kick
     const fovT = this.fovBase + 5 * smoothstep(6.5, 11, sp) * (st === 'ground' || st === 'slide' ? 1 : 0.4)
-      + (st === 'glide' ? 6 + 8 * smoothstep(10, 24, sp) : 0) + (st === 'slide' ? 4 * smoothstep(6, 18, sp) : 0)
+      + (st === 'glide' ? 6 + 8 * smoothstep(10, 24, sp) : 0) + (st === 'slide' ? 1.5 * smoothstep(6, 18, sp) : 0)
       + (st === 'air' ? 5 * smoothstep(12, 30, sp) : 0) + ctx.boost * 5;
     this._setFov(this.fov.update(fovT, dt));
     this.hideBody = this.dist < 0.75;
