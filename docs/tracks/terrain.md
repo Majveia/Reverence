@@ -304,6 +304,13 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
   pulled toward ≈ −0.6 m by a monotonic remap (it never folds). This makes a 7–15 m rock shelf at
   the foot of 55–70° sea cliffs, patchy along the coast and broken into rocks by the fractal detail.
   Style knob `st.shelf`; it adds no rng draw, so all other style values are unchanged.
+* **Inbox (atmosphere)**: (1) *orbit LOD facets near the terminator*: beyond ~25 km the shading normal is
+  eased toward the sphere normal (up to 50 % at 160 km), so coarse orbit chunks no longer shade as
+  angular white cut-outs at a grazing sun. Slope and biome masks still use the true normal. (2)
+  *golden-hour rim/wrap on grass*: with a low sun (elevation < ~23°), meadow ground gets a soft wrap
+  term and a back-lit translucency rim, tinted by `G.uSunColor` (emissive, meadows only, no rock or
+  snow).
+* **Low tier**: the wall-structure block (about 50 hashes per wall fragment) is skipped on `low`.
 * **Strata contrast**: bed albedo contrast raised from ±8 % to ±~20 % (critic item 5).
 
 ## Capture URLs (verified this round, 1280×720)

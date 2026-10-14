@@ -500,6 +500,7 @@ export class Player {
     this._prevFacing.copy(this.forward);
 
     this._syncBody(dt);
+    if (this.params?.camlock) this.cam.idleLook = 0; // photo mode: the lens keeps its URL heading (no auto-recenter)
     this._camera(dt);
     this._feedback(dt, I);
   }
@@ -1260,10 +1261,10 @@ export class Player {
         while (this._slideAcc >= 1) {
           this._slideAcc -= 1;
           const s = (rnd.next() < 0.5 ? 1 : -1) * (0.6 + rnd.next() * 0.8) - this.slideS.carve * 0.8;
-          _b.copy(this.vel).multiplyScalar(0.45 + rnd.next() * 0.25).addScaledVector(side, s * (1.4 + this.speed * 0.14))
+          _b.copy(this.vel).multiplyScalar(0.68 + rnd.next() * 0.22).addScaledVector(side, s * (1.4 + this.speed * 0.14))
             .addScaledVector(up, 0.8 + rnd.next() * (0.9 + this.speed * 0.08));
           _e.copy(src).addScaledVector(side, s * 0.15);
-          fx.emit(_e, _b, { kind: 0, size: (soft ? 0.38 : 0.22) * (0.6 + rnd.next() * 0.8), size1: soft ? 1.5 : 0.8, life: 0.7 + rnd.next() * 0.9, color: _col, alpha: soft ? 0.55 : 0.36, drag: 1.3, grav: 0.16, spin: (rnd.next() - 0.5) * 2 });
+          fx.emit(_e, _b, { kind: 0, size: (soft ? 0.3 : 0.2) * (0.6 + rnd.next() * 0.8), size1: soft ? 1.25 : 0.75, life: 0.6 + rnd.next() * 0.8, color: _col, alpha: soft ? 0.62 : 0.4, drag: 1.3, grav: 0.16, spin: (rnd.next() - 0.5) * 2 });
         }
         while (this._grainAcc >= 1) {
           this._grainAcc -= 1;

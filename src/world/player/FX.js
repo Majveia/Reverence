@@ -46,8 +46,11 @@ void main(){
   vec3 col = vCol.rgb;
   if (vKind < 0.5) {
     // soft puff with a little noisy breakup and fake volume lighting
-    float n = rv_hash12(floor(vUv * 9.0) + vCol.a * 13.0) * 0.18;
-    a = smoothstep(1.0, 0.25 + n, r);
+    // soft gaussian core with smooth value-noise breakup (wispy edges, no hard disc)
+    vec2 g = vUv * 3.0 + vec2(vCol.a * 17.0, vCol.a * 5.0);
+    vec2 gi = floor(g), gf = fract(g); gf = gf * gf * (3.0 - 2.0 * gf);
+    float n = mix(mix(rv_hash12(gi), rv_hash12(gi + vec2(1.0, 0.0)), gf.x), mix(rv_hash12(gi + vec2(0.0, 1.0)), rv_hash12(gi + vec2(1.0, 1.0)), gf.x), gf.y);
+    a = min(1.0, exp(-r * r * 2.2) * smoothstep(1.0, 0.5, r) * (0.75 + 0.8 * n) * 1.25);
     float lit = 0.55 + 0.45 * clamp(dot(vWorldN, uSunDir), 0.0, 1.0);
     col = col * (uSunColor * 0.5 * lit + uAmbientSky * 0.9 + 0.02);
   } else if (vKind < 1.5) {
@@ -271,16 +274,16 @@ export class FX {
             float yb = p.y + 0.15;
             float arm = abs(abs(p.x) - max(yb, 0.0) * 0.36);
             float aw = 0.03 + max(yb, 0.0) * 0.03;
-            float armA = smoothstep(aw, 0.0, arm) * smoothstep(0.0, 0.5, yb) * exp(-max(yb, 0.0) * 0.32) * (0.5 + 0.6 * n1);
+            float armA = smoothstep(aw, 0.0, arm) * smoothstep(0.0, 0.5, yb) * exp(-max(yb, 0.0) * 0.55) * (0.35 + 0.8 * n1);
             // transverse chevrons between the arms
             float inside = smoothstep(0.08, -0.08, abs(p.x) - max(yb, 0.0) * 0.36) * step(0.0, yb);
             float tr = pow(0.5 + 0.5 * sin((yb + abs(p.x) * 0.4) * 10.0 - t * 7.0), 3.0) * inside * exp(-max(yb, 0.0) * 0.55);
             // churned kick foam behind the feet
-            float kick = smoothstep(0.4, 0.0, abs(p.x) + (n1 - 0.5) * 0.25) * smoothstep(1.0, 1.7, yb) * exp(-max(yb - 1.7, 0.0) * 0.6) * n1;
-            float a = collar * 0.42 + (armA * 0.26 + tr * 0.08 + kick * 0.28) * mv;
+            float kick = smoothstep(0.3, 0.0, abs(p.x) + (n1 - 0.5) * 0.25) * smoothstep(1.1, 1.7, yb) * exp(-max(yb - 1.7, 0.0) * 1.1) * n1 * n1;
+            float a = collar * 0.42 + (armA * 0.2 + tr * 0.06 + kick * 0.3) * mv;
             a *= uAlpha * smoothstep(3.4, 2.6, abs(p.x)) * smoothstep(7.2, 5.5, p.y) * smoothstep(-1.6, -1.2, p.y);
             if (a < 0.004) discard;
-            gl_FragColor = vec4(uSunColor * 0.12 + uAmbientSky * 0.8 + 0.03, min(a, 0.7));
+            gl_FragColor = vec4(uSunColor * 0.06 + uAmbientSky * 0.7 + 0.02, min(a, 0.6));
           }`,
       });
       this.wake = new THREE.Mesh(wg, this.wakeMat);
@@ -313,7 +316,7 @@ export class FX {
             float streak = 0.75 + 0.25 * h(floor(x * 9.0) + 3.0);
             vec3 lit = uCol * (uSunColor * 0.35 + uAmbientSky * 0.6);
             vec3 c = mix(vec3(0.0), lit, lip / max(lip + groove * 0.7, 1e-3));
-            float a = (groove * 0.32 * streak + lip * 0.4) * vA;
+            float a = (groove * 0.2 * streak + lip * 0.22) * vA;
             if (a < 0.004) discard;
             gl_FragColor = vec4(c, a);
           }`,

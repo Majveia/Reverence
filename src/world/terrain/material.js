@@ -72,6 +72,7 @@ uniform sampler2DArray uRvDetail;
 uniform vec3 uRvOriginMod;
 uniform vec3 uRvPlanetCenter;
 uniform vec3 uRvSun;
+uniform vec3 uRvSunCol;
 uniform vec3 uRvBlade;
 uniform vec3 uRvGrass, uRvGrass2, uRvRock, uRvRock2, uRvSand, uRvSnow, uRvForest, uRvSoil, uRvAccent, uRvDry, uRvSeabed;
 uniform vec4 uRvP;   // radius, seaLevel, amp, detail quality (0..1)
@@ -317,7 +318,10 @@ void rvTerrain( inout vec3 albedo ) {
     // (on bedded faces of layered-rock worlds the strata layers below take over the fine relief:
     //  the faceted/fractured layer-0 detail there read as crumpled paper)
     float kL0 = 1.0 - 0.6 * smoothstep( 0.4, 0.9, uRvS.x ) * rockS * smoothstep( 0.3, 0.6, slope );
-    gradT += ( gM * iw * fFar * 0.75 + gB * iw * fB * 0.55 + ( gA * iw * fMid * 0.6 + gN * iw * fNear * 0.6 + gU * iw * fRU * 0.5 ) * kL0 ) * wRock * kRel;
+    // (grazing views: fine detail normals on gently sloping rock alias into "fur" — fade them by the
+    //  view angle; the walls the eye looks at head-on keep full relief)
+    float kGr = 0.35 + 0.65 * smoothstep( 0.06, 0.4, abs( dot( normalize( cameraPosition - W ), Ng ) ) );
+    gradT += ( gM * iw * fFar * 0.75 + gB * iw * fB * 0.55 + ( gA * iw * fMid * 0.6 * kGr + gN * iw * fNear * 0.6 * kGr + gU * iw * fRU * 0.5 ) * kL0 ) * wRock * kRel;
     hRock = mix( 0.5, accM.b, fFar );
     hRock = mix( hRock, hRock * 0.6 + accB.b * 0.4, fB );
     hRock = mix( hRock, hRock * 0.4 + accA.b * 0.6, fMid );
@@ -559,6 +563,10 @@ void rvTerrain( inout vec3 albedo ) {
   gradT = Tu * gradT.x + up * gradT.y + Tv * gradT.z;
   gradT -= Ng * dot( gradT, Ng );
   rvN = normalize( Ng - gradT * 1.1 );
+  // orbit LODs (atmosphere request): coarse chunks span kilometres per quad, so heightfield normals
+  // exaggerate relief near the terminator (angular white cut-out facets). Ease the shading normal
+  // toward the sphere normal from ~25 km to ~160 km.
+  rvN = normalize( mix( rvN, up, smoothstep( 25000.0, 160000.0, dist ) * 0.5 ) );
   float ndu = dot( rvN, up );
 
   // ---- final blend weights (snow on up-facing micro facets, rock peeks through)
@@ -678,6 +686,19 @@ void rvTerrain( inout vec3 albedo ) {
 
   // ---- emissive extras
   rvEmis = vec3( 0.0 );
+  // golden hour on meadows (atmosphere request): low sun → a soft wrap term and a back-lit translucency
+  // rim on grassy ground, tinted by the sun colour, so slopes facing away still glow warm at dusk
+  {
+    float sunEl = dot( up, uRvSun );
+    float golden = smoothstep( 0.4, 0.08, sunEl ) * smoothstep( -0.04, 0.06, sunEl );
+    float gk = golden * meadow * ( 1.0 - bRock ) * ( 1.0 - bSnow );
+    if ( gk > 0.01 ) {
+      vec3 Vv = normalize( cameraPosition - W );
+      float wrapL = max( dot( rvN, uRvSun ) * 0.5 + 0.5, 0.0 );
+      float rim = pow( 1.0 - max( dot( rvN, Vv ), 0.0 ), 3.0 ) * max( dot( -Vv, uRvSun ), 0.0 );
+      rvEmis += clamp( col, 0.0, 1.0 ) * uRvSunCol * ( 0.05 * wrapL + 0.16 * rim ) * gk;
+    }
+  }
   if ( bSnow > 0.05 && dist < 60.0 ) {   // snow glitter
     vec3 cell = floor( C * 22.0 );
     float sp = step( 0.985, fract( sin( dot( cell, vec3( 12.9898, 78.233, 37.719 ) ) ) * 43758.5453 ) );
@@ -755,6 +776,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
     uRvOriginMod: { value: new THREE.Vector3() },
     uRvPlanetCenter: G.uPlanetCenter,
     uRvSun: G.uSunDir,
+    uRvSunCol: G.uSunColor,
     uRvCam: G.uCameraPos,
     uRvPlanetC: G.uPlanetCenter,
     uRvTime: G.uTime,
@@ -799,7 +821,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v28' + (opts.lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-v30' + (opts.lite ? 'L' : '');
   return mat;
 }
 
