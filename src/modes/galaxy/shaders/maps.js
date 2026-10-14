@@ -109,7 +109,7 @@ void main(){
     float st1 = rv_ridged(vec3(al * 20.0 + 0.6 * wv, ac * 140.0 + 1.2 * wv, kSeed + 31.0), 4);
     float st2 = rv_ridged(vec3(al * 46.0 + 0.4 * wv, ac * 320.0 + 2.0 * wv, kSeed + 41.0), 3);
     float strand = smoothstep(0.32, 0.8, st1) * 0.9 + smoothstep(0.42, 0.85, st2) * 0.55;
-    float laneWin = smoothstep(gR0 * 0.04, gR0 * 0.4, r) * (1.0 - smoothstep(gArmEnd[a.k] * 0.8, gArmEnd[a.k] * 1.1, r)) * mix(1.0, gArmAmp[a.k], 0.6);
+    float laneWin = (gType == 1 ? smoothstep(0.85 * gR0, 1.05 * gR0, r) : smoothstep(gR0 * 0.04, gR0 * 0.4, r)) * (1.0 - smoothstep(gArmEnd[a.k] * 0.8, gArmEnd[a.k] * 1.1, r)) * mix(1.0, gArmAmp[a.k], 0.6);
     // the lane breaks into segments and re-forms; thick and dark inside, thinner and wispier outside
     float seg = smoothstep(-0.35, 0.25, nAl2 + 0.5 * nAl + 0.2);
     float lane = bundle * (0.42 + 0.95 * strand) * (0.35 + 0.65 * seg) * laneWin * (1.25 - 0.6 * rN);
@@ -129,11 +129,11 @@ void main(){
     // inner-disk "fingerprint": many fine, tightly wound dust filaments (sheared by differential rotation)
     float psiF = thF - lrF / (gTanP * 0.8) + 0.6 * n1 + 0.25 * n2;
     float fp = rv_ridged(vec3(cos(psiF) * 45.0, sin(psiF) * 45.0, lrF * 7.0 + 61.0 + uSeedF), 4);
-    float fpEnv = smoothstep(gR0 * 0.05, gR0 * 0.45, r) * (1.0 - smoothstep(0.22 * R, 0.55 * R, r));
+    float fpEnv = (gType == 1 ? smoothstep(0.9 * gR0, 1.2 * gR0, r) : smoothstep(gR0 * 0.05, gR0 * 0.45, r)) * (1.0 - smoothstep(0.22 * R, 0.55 * R, r));
     float fpDust = smoothstep(0.45, 0.85, fp) * fpEnv * smoothstep(-0.2, 0.5, n2 + 0.5 * n3 + 0.15);
     // moderate optical depth (τ_B ≈ 1.5 in the lane body, 4–6 in its strands): brown, filamentary lanes
     // where reddened starlight leaks through, not opaque black ribbons
-    dust += lane * 0.5 + feath * 0.42 * uSpur + inArm * 0.22 + fpDust * 0.4;
+    dust += lane * 1.0 + feath * 0.6 * uSpur + inArm * 0.3 + fpDust * 0.55;
     // feathers of young stars between the spurs (blue spur fragments downstream of the arm)
     float spY = smoothstep(0.5, 0.9, rv_ridged(vec3(cos(psiS) * 20.0, sin(psiS) * 20.0, lrF * 2.0 + 71.0 + uSeedF), 3));
     young += uSpur * 0.35 * spY * smoothstep(-4.0, -1.5, x) * (1.0 - smoothstep(-1.2, 0.0, x)) * win * smoothstep(-0.1, 0.5, n2 + 0.3 * n3);
@@ -189,10 +189,12 @@ void main(){
     float ca = cos(-gPhi0), sa = sin(-gPhi0);
     vec2 b = vec2(p.x * ca - p.y * sa, p.x * sa + p.y * ca);
     float ax = abs(b.x) / uBar.x;
-    float off = -sign(b.x) * uBar.y * (0.15 + 0.6 * ax * ax);
-    float dl = (b.y - off + uBar.y * 0.25 * (n2 - 0.0)) / (uBar.x * 0.03 * (0.7 + 0.9 * ax));
-    float barLane = exp(-0.5 * dl * dl) * smoothstep(0.06, 0.25, ax) * (1.0 - smoothstep(0.85, 1.15, ax));
-    dust += 1.5 * barLane * (0.45 + 0.8 * smoothstep(0.1, 0.7, rid));
+    // two lanes offset to opposite (leading) sides, converging on the nuclear ring, fading at the bar ends
+    float off = -sign(b.x) * uBar.y * (0.38 + 0.4 * ax * ax);
+    float dl = (b.y - off + uBar.y * 0.18 * n2) / (uBar.x * 0.026 * (0.7 + 0.9 * ax));
+    float barStr = rv_ridged(vec3(b.x / uBar.x * 9.0, (b.y - off) / uBar.x * 70.0, 19.0 + uSeedF), 3);
+    float barLane = exp(-0.5 * dl * dl) * smoothstep(0.07, 0.2, ax) * (1.0 - smoothstep(0.8, 1.08, ax));
+    dust += 1.4 * barLane * (0.35 + 0.9 * smoothstep(0.3, 0.8, barStr));
     // star-formation desert swept by the bar: the disk inside the bar radius is dimmer
     float me = (b.x * b.x) / (uBar.x * uBar.x) + (b.y * b.y) / (uBar.y * uBar.y * 2.5);
     old *= 1.0 - 0.8 * (1.0 - smoothstep(0.85, 1.2, r / uBar.x)) * smoothstep(0.5, 1.3, me);

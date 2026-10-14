@@ -240,7 +240,34 @@ export class GalaxyVolume {
     renderer.setRenderTarget(prev);
   }
 
+  /** Debug (&gxdebug=map): the disk map drawn face-on to the screen (old/young light, dust, HII). */
+  renderDebugMap(renderer) {
+    if (!this.built) return;
+    if (!this._dbgMat) {
+      this._dbgMat = fsMaterial(/* glsl */ `
+        precision highp float;
+        uniform sampler2D tMap;
+        uniform vec2 uAspect;
+        varying vec2 vUv;
+        void main(){
+          vec2 uv = (vUv - 0.5) * uAspect + 0.5;
+          if (uv.x < 0.0 || uv.x > 1.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+          vec4 M = texture2D(tMap, uv);
+          vec3 c = (vec3(1.0, 0.8, 0.6) * M.r * 3.0 + vec3(0.3, 0.5, 1.0) * M.g * 1.2) * exp(-vec3(0.6, 0.8, 1.0) * M.b * 2.5) + vec3(1.0, 0.1, 0.3) * M.a * 0.4;
+          gl_FragColor = vec4(pow(c / (1.0 + c), vec3(0.4545)), 1.0);
+        }`, { tMap: { value: this.mapRT.texture }, uAspect: { value: new THREE.Vector2(1, 1) } });
+    }
+    const s = renderer.getSize(this._v2 || (this._v2 = new THREE.Vector2()));
+    this._dbgMat.uniforms.uAspect.value.set(s.x / Math.max(1, s.y), 1);
+    const prevMat = this.quad.material;
+    this.quad.material = this._dbgMat;
+    renderer.setRenderTarget(null);
+    renderer.render(this.quadScene, this.quadCam);
+    this.quad.material = prevMat;
+  }
+
   dispose() {
+    this._dbgMat?.dispose();
     this.mapRT?.dispose(); this.noiseRT?.dispose(); this.rt.dispose();
     this.volumeMat.dispose(); this.compositeMat.dispose();
     this.quad.geometry.dispose(); this.composite.geometry.dispose();

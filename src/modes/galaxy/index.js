@@ -577,6 +577,7 @@ export default class GalaxyMode extends Mode {
 
   render(pipeline) {
     const r = this.engine.renderer;
+    if (this.params?.gxdebug === 'map') { this.volume.renderDebugMap(r); return; }
     this.volume.render(r);
     this.nebulae?.render(r, this.camera);
     this._effects.length = 0;
