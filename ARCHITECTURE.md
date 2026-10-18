@@ -171,6 +171,9 @@ feature (a city, a vehicle, a creature herd), make it easy to frame: e.g. docume
 
 ## 5. Quality bar
 
+**Read [docs/VISION.md](docs/VISION.md) first:** from 18 Oct 2026 the target is the creator's own curated
+reference library (by category) and the eleven art-direction rules there. The notes below still hold.
+
 We are compared **blind, side by side** against screenshots of No Man's Sky, Starfield, Outer
 Wilds, Pacific Drive and Breath of the Wild (and, for cosmic scales, Space Engine / scientific
 visualizations). What separates AAA from "tech demo":
@@ -438,3 +441,18 @@ visualizations). What separates AAA from "tech demo":
   the card above the prompt row, or let it give way. (3) Answer to the saturated `colors.arms` request:
   `GalaxyModel.galaxyDisplayColors(galaxy)` returns the display palette galaxy mode renders (core / arms / hii / dust,
   linear RGB, max channel 1); Warp.js can use it for portraits and map cards.
+
+### Season 2 (creator's references, from 18 Oct) — cross-track plan
+* **terrain → flora, civ, atmosphere** — define per-world landmark sites deterministically and expose them, e.g.
+  `world.get('terrain').landmarks = { mountain: {lat, lon}, sacred: [{lat, lon, kind}] }`: one great mountain
+  visible from everywhere, and sacred sites (where flora grows a World Tree of light, civ builds a sacred building,
+  and land may float free).
+* **fauna → player, vehicles** — a small glowing companion that follows the player and sits when they sit
+  (`world.get('fauna').companion`), and a tall long-legged gentle creature that can be ridden by two (a mount API
+  with seat sockets). Creatures steer around `world.player.pos`.
+* **player → ui, audio** — a rest pose (sit, look up): signal it (e.g. `world.player.resting`) so the UI fades the
+  HUD and audio can swell; first-person hands holding a small lamp.
+* **space → atmosphere, post** — eclipses as events: expose `world.get('space').eclipse` (0..1) so sky light and
+  grading can follow; neighbour worlds and rings large in the sky.
+* **ui** — photo mode (HUD hidden, free camera, looks: two-tone, black and white, poster) and a small ring reticle
+  that closes on things you can interact with.
