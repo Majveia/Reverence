@@ -10,22 +10,30 @@ repository). It is sorted into the categories below; critics and blind judges co
 those frames, category by category. Your prompt lists the reference files and the checklist for your
 categories.
 
-| Category | What it covers |
+| Category (the creator's folder names) | What it covers |
 | --- | --- |
-| Your own universe | The creator's earlier renders: black holes, galaxies from outside, nebulae, a star with an orbit line |
-| Deep space | Nebulae, starfields and ships against true black |
-| Planets from space | Whole worlds, limbs, rings and stations from orbit |
-| Alien skies | Planets, rings, moons and the galaxy seen from the ground |
-| Landscapes | Landforms and biomes |
-| Light and weather | Haze, fog, low sun, storms and calm |
-| Cities and megastructures | Skylines, towers, stations, monuments |
+| 00 Your own universe | The creator's earlier renders: black holes, galaxies from outside, nebulae, a star with an orbit line |
+| Cosmos & Deep Space | Nebulae, starfields and ships against true black |
+| Planets, Moons & Rings | Whole worlds, limbs, rings, moons and stations from orbit |
+| Alien skies (Sky, Weather & Light) | Planets, rings, moons and the galaxy seen from the ground |
+| Worlds & Landscapes | Landforms and biomes |
+| Light and weather (Atmosphere & Light) | Haze, fog, low sun, storms and calm |
+| Civilization & Cities (Architecture & Cities) | Skylines, towers, megastructures, monuments, sacred architecture |
 | Towns and interiors | Lived-in streets, lit windows, rooms with a purpose |
+| Interiors | A sanctuary lit by one shaft of light, a warm room seen through an open door, a glasshouse, a cave open to the sky |
 | Ruins and relics | What a world's history leaves behind |
-| Life | Creatures, megafauna, flora |
-| Ships, vehicles and mounts | Getting around, in motion |
-| Third person / First person | The explorer in frame; seeing through the explorer's eyes |
-| Wonders | Portals, eclipses, impossible objects: the one thing per world you came for |
-| Art direction | Painterly, graphic and surreal looks |
+| Life: Creatures & Flora | Creatures, megafauna, flora |
+| Creatures & Bosses | Colossi made of the world (wood, roots, stone), gentle giants, great sky and sea creatures |
+| Characters | The explorer and the people met: silhouette, posture, tender contact, clothes that carry the journey |
+| Travel: Ships, Vehicles & Mounts | Getting around, in motion |
+| Explorer: Third person / First person | The explorer in frame; seeing through the explorer's eyes |
+| Phenomena & Portals / Wonders | Portals, eclipses, impossible objects: the one thing per world you came for |
+| Cosmic & Otherworldly | Rings of light in pale skies, black orbs with blazing edges, pillars of light, the world coming gently apart |
+| Art Direction: Painterly & Surreal | Painterly, graphic and surreal looks |
+
+**The cosmic web is final.** The creator asked to leave the opening cosmic web exactly as it is: no track changes
+`src/modes/cosmic/**`, and global changes (post-processing, UI, engine, shared shaders) must leave the cosmic view
+unchanged.
 
 ## Art direction rules (apply everywhere)
 
