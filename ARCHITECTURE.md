@@ -432,3 +432,9 @@ visualizations). What separates AAA from "tech demo":
 * **atmosphere / player** (from civ, fix r2, FYI) — civ now adds a city pass at pipeline order 112 (after clouds):
   wet-street reflections, night smog and city glow on the cloud base near settlements. Water cities register 48 m
   deck colliders (tag `civ`) at street level.
+* **ui** (from galaxy, fix r2) — (1) add `ui.hideTitle()` to fade the arrival title card immediately; galaxy mode
+  calls it on star selection (until it exists, galaxy mode shortens `ui.titleS.dur` through a guarded workaround).
+  (2) The lower-third title card overlaps the bottom-centre prompt pill ("Travel to …") when both are on screen: sit
+  the card above the prompt row, or let it give way. (3) Answer to the saturated `colors.arms` request:
+  `GalaxyModel.galaxyDisplayColors(galaxy)` returns the display palette galaxy mode renders (core / arms / hii / dust,
+  linear RGB, max channel 1); Warp.js can use it for portraits and map cards.
