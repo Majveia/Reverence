@@ -100,10 +100,45 @@ void main(){
   gl_FragColor = vec4(uColor * a, a);
 }`;
 
+// Copy of the frame + the RAINBOW (after rain, sun behind the viewer): primary bow 40.6–42.4° from the
+// antisolar point (violet inside, red outside), brighter sky inside it, Alexander's dark band, a faint
+// reversed secondary bow at 50.5–53.5°. It hangs in the falling rain in front of the distant land and
+// clouds (the effect runs after the clouds pass), not on nearby geometry.
 const COPY_FRAG = /* glsl */`
+#include <rv_common>
+#include <rv_atmo_view>
 uniform sampler2D tColor;
+uniform sampler2D tDepth;
+uniform vec3 uAnti;        // antisolar direction (scene = planet-local axes)
+uniform vec4 uBow;         // x strength (0 = off), y secondary share
+uniform vec3 uBowCol;      // sunlight reflected by the drops
 varying vec2 vUv;
-void main(){ gl_FragColor = vec4(texture2D(tColor, vUv).rgb, 1.0); }`;
+vec3 bowSpec(float t){     // t: 0 violet (inner edge) → 1 red (outer edge)
+  vec3 c = vec3(smoothstep(0.38, 0.8, t) + 0.3 * (1.0 - smoothstep(0.0, 0.2, t)),
+                exp(-pow((t - 0.56) / 0.21, 2.0)),
+                exp(-pow((t - 0.18) / 0.2, 2.0)));
+  return c * smoothstep(-0.08, 0.1, t) * (1.0 - smoothstep(0.92, 1.12, t));
+}
+void main(){
+  vec3 c = texture2D(tColor, vUv).rgb;
+  if (uBow.x > 0.0){
+    float depth = texture2D(tDepth, vUv).r;
+    vec3 vd = atmo_viewDir(vUv);
+    vec3 dir = normalize(mat3(uCamWorld) * vd);
+    float th = degrees(acos(clamp(dot(dir, uAnti), -1.0, 1.0)));
+    // the shower hangs a few km away: no bow on the nearby slopes, full over the far land and the sky
+    float w = atmo_isFar(depth) ? 1.0 : 1.0 - exp(-max(atmo_depthToDist(depth, vd) - 600.0, 0.0) / 2500.0);
+    vec3 bow = bowSpec((th - 40.5) / 2.0);
+    bow += bowSpec(1.0 - (th - 50.4) / 3.2) * uBow.y;
+    // purer spectral colours (the overlapping lobes read pastel)
+    bow = max(bow * 1.4 - vec3(dot(bow, vec3(0.3333))) * 0.45, 0.0);
+    // supernumerary-ish glow inside the primary, a slightly darker band between the bows
+    float inner = th < 40.6 ? exp(-(40.6 - th) / 7.0) * 0.16 : 0.0;
+    float dark = smoothstep(42.6, 44.0, th) * (1.0 - smoothstep(49.0, 50.5, th));
+    c = c * (1.0 - 0.07 * dark * w * uBow.x) + uBowCol * (bow + vec3(inner)) * w * uBow.x;
+  }
+  gl_FragColor = vec4(c, 1.0);
+}`;
 
 export class Weather {
   constructor(atmo) {
@@ -215,7 +250,15 @@ export class Weather {
     this._nextStrike = 4 + this.seed * 6;
 
     this.quad = new FSQuad();
-    this.copyMat = fsMaterial(COPY_FRAG, { tColor: { value: null } });
+    this.bowU = {
+      tColor: { value: null }, tDepth: { value: null },
+      uCamWorld: { value: new THREE.Matrix4() }, uProjParams: { value: new THREE.Vector4(1, 1, 0, 0) },
+      uNear: { value: 0.05 }, uFar: { value: 2e10 },
+      uAnti: { value: new THREE.Vector3(0, -1, 0) }, uBow: { value: new THREE.Vector4(0, 0.3, 0, 0) },
+      uBowCol: { value: new THREE.Vector3() },
+    };
+    this.copyMat = fsMaterial(COPY_FRAG, this.bowU);
+    this.state.rainbow = 0;
     this._envI = 1;
   }
 
@@ -240,6 +283,7 @@ export class Weather {
       case 'dust': dust = 1; rain = snow = storm = 0; break;
       case 'fog': fog = 1; rain = storm = dust = 0; break;
       case 'aurora': aurora = 1; rain = snow = dust = storm = 0; fog *= 0.3; break;
+      case 'rainbow': rain = this.cold ? 0 : 0.16; snow = dust = storm = 0; fog *= 0.5; break;
       default: break;
     }
     if (storm > 0) rain = Math.max(rain, this.cold ? 0 : storm * 0.9), snow = this.cold ? Math.max(snow, storm) : snow;
@@ -261,7 +305,7 @@ export class Weather {
     st.aurora = tg.aurora;
     const precip = Math.max(st.rain, st.snow);
     // clear / aurora overrides break the deck up (aurora nights need clear air)
-    const clearing = this.override === 'clear' ? 0.3 : this.override === 'aurora' ? 0.4 : 0;
+    const clearing = this.override === 'clear' ? 0.3 : this.override === 'aurora' ? 0.4 : this.override === 'rainbow' ? 0.3 : 0;
     st.coverBoost = 0.55 * precip + 0.35 * st.storm + 0.15 * st.dust - clearing;
     // rain falls from a closed deck: the direct sun is mostly blocked (soft, shadowless light under it)
     st.sunDim = Math.max(0.04, 1 - 1.55 * precip - 0.4 * st.storm - 0.45 * st.dust);
@@ -271,8 +315,11 @@ export class Weather {
       this.wet = st.rain > this.wet ? this.wet + (st.rain - this.wet) * (1 - Math.exp(-dt / 40)) : this.wet - dt / 400;
       this.snowCover = st.snow > 0.05 ? Math.min(1, this.snowCover + st.snow * dt / 180) : Math.max(this.cold ? 0.5 : 0, this.snowCover - dt / 900);
     }
+    if (this.override === 'rainbow') this.wet = Math.max(this.wet, 0.85);
     this.wet = clamp(this.wet, 0, 1);
     G.uWetness.value = this.present ? this.wet : 0;
+    // rainbow: a reward after rain — wet air, the shower thinning out, the sun out and below ~40°
+    st.rainbow = this.present && !this.cold ? smooth(this.wet, 0.3, 0.65) * (1 - smooth(st.rain, 0.3, 0.6)) * smooth(st.sunDim, 0.45, 0.75) * (1 - smooth(st.storm, 0.1, 0.4)) : 0;
     G.uSnow.value = this.snowCover;
     // wind: base + gusts + storm/dust
     const gust = 0.5 + 0.5 * Math.sin(t * 0.13) * Math.sin(t * 0.071 + 1.3);
@@ -376,6 +423,31 @@ export class Weather {
     if (cl?.u?.uFlash) cl.u.uFlash.value.set(this._boltLocal.x, this._boltLocal.y, this._boltLocal.z, 1);
   }
 
+  /** Rainbow uniforms for the copy pass; returns true when a bow is drawn this frame. */
+  _updateBow(io, camR) {
+    const b = this.bowU, st = this.state;
+    const L = this.atmo.lighting;
+    const sun = this.atmo.shared.uSunDir.value;
+    const up = _v1.setFromMatrixPosition(io.camera.matrixWorld).add(this.world.origin).normalize();
+    const el = up.dot(sun);
+    const m = this.atmo.model;
+    // the sun must be up and below ~40°, the camera under the cloud base, the key light the sun
+    const below = this.atmo.clouds?.present ? 1 - smooth(camR, this.atmo.clouds.Rc0, this.atmo.clouds.Rc0 + 400) : 1 - smooth(camR, m.Rb + m.height * 0.3, m.Rb + m.height * 0.4);
+    const k = (st.rainbow || 0) * smooth(el, -0.01, 0.05) * (1 - smooth(el, 0.55, 0.7)) * below * (L.keyIsMoon ? 0 : 1);
+    b.uBow.value.x = k > 0.01 ? k : 0;
+    b.tColor.value = io.input.texture;
+    if (!(k > 0.01)) return false;
+    b.tDepth.value = io.depth;
+    const cam = io.camera, p = cam.projectionMatrix.elements;
+    b.uCamWorld.value.copy(cam.matrixWorld);
+    b.uProjParams.value.set(p[0], p[5], p[8], p[9]);
+    b.uNear.value = cam.near; b.uFar.value = cam.far;
+    b.uAnti.value.copy(sun).negate();
+    const sc = L.sunColor, sd = Math.max(0.2, st.sunDim ?? 1);
+    b.uBowCol.value.set(sc.r, sc.g, sc.b).multiplyScalar(0.035 / Math.sqrt(sd));
+    return true;
+  }
+
   onOriginShift() { this._boltT = -1; this.bolt.visible = false; }
 
   // ---------------------------------------------------------------- pipeline effect
@@ -390,10 +462,12 @@ export class Weather {
       : (this.atmo.clouds?.present ? this.atmo.clouds.Rc0 + (this.atmo.clouds.Rc1 - this.atmo.clouds.Rc0) * 0.3 : m.Rb + m.height * 0.35);
     amount *= 1 - smooth(camR, ceil - 150, ceil + 150);
     const hasBolt = this.bolt.visible;
-    if ((amount < 0.02 || !this.present) && !hasBolt) { io.skip = true; return; }
+    const bow = this._updateBow(io, camR);
+    if ((amount < 0.02 || !this.present) && !hasBolt && !bow) { io.skip = true; return; }
     const u = this.pu, cam = io.camera;
     this.copyMat.uniforms.tColor.value = io.input.texture;
     this.quad.render(renderer, this.copyMat, io.output);
+    if ((amount < 0.02 || !this.present) && !hasBolt) return;
     u.uCam.value.setFromMatrixPosition(cam.matrixWorld);
     u.tDepth.value = io.depth;
     u.uRes.value.set(io.output.width, io.output.height);

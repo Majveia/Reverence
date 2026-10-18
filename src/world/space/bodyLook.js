@@ -116,6 +116,10 @@ export function gasLook(b) {
   const zoneA = lightC[r.int(0, lightC.length - 1)], zoneB = lightC[r.int(0, lightC.length - 1)];
   const beltA = darkC[r.int(0, darkC.length - 1)], beltB = darkC[r.int(0, darkC.length - 1)];
   const accentBelt = fam === 'exotic' ? pal[r.int(0, pal.length - 1)] : null;
+  // a second hue (the creator's frames are two-hue: warm cream against a cool blue / teal, or rose):
+  // some belts and the polar hoods drift toward it
+  const hue2 = lin(fam === 'ice' ? r.pick(['#d9c7a8', '#e8d2c6', '#c9d7e6']) : r.pick(['#7f9fb8', '#6fa4a8', '#9b8fb8', '#b88c8c']));
+  const hue2Amt = fam === 'ice' ? 0.3 : r.range(0.4, 0.6);
   const bandCols = [];
   for (let i = 0; i < edges.length; i++) {
     const zone = i % 2 === 0;
@@ -124,6 +128,7 @@ export function gasLook(b) {
     // zones: bright, creamy (high ammonia clouds); belts: darker, warmer (deeper, coloured layers)
     base.multiplyScalar(zone ? r.range(1.0, 1.1) : r.range(0.62, 0.86));
     if (!zone && fam !== 'ice') base.lerp(new THREE.Color(base.r * 1.08, base.g * 0.88, base.b * 0.72), 0.4);
+    if (r.chance(zone ? 0.22 : 0.6)) { const l0 = base.r * 0.2126 + base.g * 0.7152 + base.b * 0.0722; const h = hue2.clone(); const lh = h.r * 0.2126 + h.g * 0.7152 + h.b * 0.0722; base.lerp(h.multiplyScalar(l0 / Math.max(lh, 1e-3)), Math.min(0.85, hue2Amt * r.range(0.9, 1.5))); }
     base.lerp(tint, fam === 'exotic' ? 0.1 : 0.04);
     // photographic (slightly desaturated) colour: real giants are pastel, not candy-striped
     const lb = base.r * 0.2126 + base.g * 0.7152 + base.b * 0.0722;
@@ -139,7 +144,7 @@ export function gasLook(b) {
   const polCol = new THREE.Color();
   for (const bc of bandCols) polCol.add(bc);
   polCol.multiplyScalar(0.78 / bandCols.length);
-  { const lp = polCol.r * 0.2126 + polCol.g * 0.7152 + polCol.b * 0.0722; polCol.lerp(new THREE.Color(lp * 0.92, lp * 0.97, lp * 1.08), 0.55); }
+  { const lp = polCol.r * 0.2126 + polCol.g * 0.7152 + polCol.b * 0.0722; polCol.lerp(new THREE.Color(lp * 0.92, lp * 0.97, lp * 1.08), 0.55); const lh = hue2.r * 0.2126 + hue2.g * 0.7152 + hue2.b * 0.0722; polCol.lerp(hue2.clone().multiplyScalar(lp / Math.max(lh, 1e-3)), 0.45); }
   for (let i = 0; i < N; i++) {
     const t = i / (N - 1);
     // symmetric-ish about the equator (real giants roughly are)

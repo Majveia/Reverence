@@ -21,6 +21,7 @@ import { Sky } from './sky.js';
 import { Star } from './star.js';
 import { Bodies } from './bodies.js';
 import { SmallBodies } from './smallBodies.js';
+import { Wonder, pickWonder } from './wonder.js';
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -46,10 +47,15 @@ class Space {
     if (this.star) this.group.add(this.star.mesh);
     if (this.bodiesSys) this.group.add(this.bodiesSys.group);
     if (this.small) this.group.add(this.small.group);
+    // Cosmic & Otherworldly: a ring of light / a black orb with a pillar of light, on a few worlds
+    const wk = tryMake('wonder pick', () => pickWonder(world.body, world.params));
+    this.wonder = wk ? tryMake('wonder', () => new Wonder(world, wk)) : null;
     this.sun = {
       dir: new THREE.Vector3(0, 1, 0), angularRadius: 0.005, color: this.star ? this.star.color.clone() : new THREE.Color(1, 1, 1),
       visibility: 1, screen: new THREE.Vector2(), onScreen: false,
     };
+    this.eclipse = 0;            // 0..1 fraction of the star disc hidden by bodies (not the horizon) — for atmosphere / post
+    this.eclipseBody = null;
     this.ctx = {
       camLocal: new THREE.Vector3(), pixAng: 0.001, pixelRatio: 1, inAtmo: 0, renderer: this.engine.renderer,
       sunIll: new THREE.Vector3(6, 6, 6),
@@ -94,6 +100,7 @@ class Space {
     if (this.star) this._safe('star', () => this.star.update(dt, t, ctx));
     if (this.bodiesSys) this._safe('bodies', () => this.bodiesSys.update(dt, t, ctx));
     if (this.small) this._safe('small', () => this.small.update(dt, t, ctx));
+    if (this.wonder) this._safe('wonder', () => this.wonder.update(dt, t, ctx));
     this._safe('sun', () => this._updateSun(ctx));
   }
 
@@ -110,6 +117,7 @@ class Space {
     let vis = THREE.MathUtils.smoothstep(elev, -s.angularRadius, s.angularRadius);
     if (this.bodiesSys) vis *= this.bodiesSys.sunVisibility(ctx.camLocal, cel);
     s.visibility = vis;
+    this._updateEclipse(ctx, camR, R);
     // screen position (NDC)
     const cam = w.camera;
     _v2.copy(s.dir).applyQuaternion(_q.copy(cam.quaternion).invert());
@@ -118,6 +126,56 @@ class Space {
       const f = 1 / Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
       s.screen.set((_v2.x / -_v2.z) * f / cam.aspect, (_v2.y / -_v2.z) * f);
       s.onScreen = Math.abs(s.screen.x) < 1.2 && Math.abs(s.screen.y) < 1.2;
+    }
+  }
+
+  /** Eclipse as an event: which body covers the star as seen from the camera, how much (this.eclipse 0..1,
+   *  the fraction of the star disc hidden by bodies — not by the horizon), and the eclipse ring around it. */
+  _updateEclipse(ctx, camR, R) {
+    const es = this._es || (this._es = { vis: 1, bestS: 0, best: { dir: new THREE.Vector3(), ang: 0, sep: 0, tint: new THREE.Color(), strength: 0, id: null } });
+    es.vis = 1; es.bestS = 0;
+    for (const e of this.bodies) {
+      if (e.isCurrent) continue;
+      if (e.mesh && !e.mesh.visible) continue;
+      this._eclConsider(ctx, e.app || e.local, e.visR || e.b.radius, !!e.b.atmosphere?.present, !!e.b.isGas, e.b.id);
+    }
+    // the current planet itself, seen from above its air (orbit / ship): its night disc eclipses the star
+    const b = this.world.body;
+    const inside = Math.max(ctx.inAtmo, 1 - THREE.MathUtils.smoothstep(camR - b.radius, b.radius * 0.03, b.radius * 0.12));
+    if (inside < 0.5) {
+      const top = R + (b.atmosphere?.present ? (b.atmosphere.height || 0) * 0.25 : 0);
+      const v0 = es.vis;
+      this._eclConsider(ctx, _v2.set(0, 0, 0), top, !!b.atmosphere?.present, !!b.isGas, b.id);
+      es.vis = v0 + (es.vis - v0) * (1 - inside * 2);
+    }
+    this.eclipse = THREE.MathUtils.clamp(1 - es.vis, 0, 1);
+    const on = es.bestS > 0.002;
+    es.best.strength = es.bestS;
+    this.eclipseBody = on ? es.best.id : null;
+    this.star?.setEclipse(on ? es.best : null, ctx);
+  }
+
+  _eclConsider(ctx, centre, r, atm, gas, id) {
+    const es = this._es, L = this.world.celestial.sunDir, rs = Math.max(this.sun.angularRadius, 1e-6);
+    _v.copy(centre).sub(ctx.camLocal);
+    const d = _v.length();
+    if (d < r * 1.0001) return;
+    const along = _v.dot(L);
+    if (along <= 0) return;
+    const sep = Math.acos(THREE.MathUtils.clamp(along / d, -1, 1));
+    const ro = Math.asin(Math.min(1, r / d));
+    if (sep > ro + rs * 4 + ctx.pixAng * 6) return;
+    let x = THREE.MathUtils.clamp((sep - Math.abs(ro - rs)) / Math.max(ro + rs - Math.abs(ro - rs), 1e-9), 0, 1);
+    x = x * x * (3 - 2 * x);
+    const full = ro >= rs ? 0 : 1 - (ro * ro) / (rs * rs);
+    es.vis *= full + (1 - full) * x;
+    // the ring needs a disc larger than the star; it grows as the star slips behind the limb
+    const st = (1 - THREE.MathUtils.smoothstep(sep, ro - rs * 0.5, ro + rs * 2.5 + ctx.pixAng * 4)) * THREE.MathUtils.smoothstep(ro / rs, 1.0, 1.6);
+    if (st > es.bestS) {
+      es.bestS = st;
+      const best = es.best;
+      best.dir.copy(_v).divideScalar(d); best.ang = ro; best.sep = sep; best.id = id;
+      if (atm) best.tint.setRGB(1.0, gas ? 0.62 : 0.5, gas ? 0.32 : 0.24); else best.tint.setRGB(1.0, 0.93, 0.86);
     }
   }
 
@@ -141,6 +199,11 @@ class Space {
       const p = this.world.star.position;
       target = _v2.set(-p.x, -p.y, -p.z).normalize().applyMatrix3(this.sky.uG2L.value).multiplyScalar(1e12);
     }
+    if (ref === 'wonder' && this.wonder) target = this.wonder.target(_v2);
+    if ((ref === 'pulsar' || ref === 'nebula' || ref === 'nebula1') && this.sky) {
+      const g = ref === 'pulsar' ? this.sky.pulsarDir : this.sky.heroNebulae?.[ref === 'nebula1' ? 1 : 0]?.dir;
+      if (g) target = _v2.copy(g).applyMatrix3(this.sky.uG2L.value).multiplyScalar(1e12);
+    }
     if (!target) return null;
     const d = _v.copy(target).sub(fromLocal).normalize();
     const up = fromLocal.clone().normalize();
@@ -160,7 +223,7 @@ class Space {
     let best = null, bestA = -1;
     for (const e of this.bodies) {
       if (e.isCurrent || (ref === 'moon' && !e.b.isMoon)) continue;
-      const d = Math.max(_v.copy(e.local).sub(this.ctx.camLocal).length(), 1);
+      const d = Math.max(_v.copy(e.app || e.local).sub(this.ctx.camLocal).length(), 1);
       const a = (e.b.rings ? e.b.rings.outer * 0.6 : e.b.radius) / d;
       if (a > bestA) { bestA = a; best = e.b.id; }
     }
@@ -173,8 +236,8 @@ class Space {
     const e = this.bodies.find((x) => x.b.id === id);
     const a = this.aim(id);
     if (!a || !e) return a;
-    const d = Math.max(_v.copy(e.local).sub(this.ctx.camLocal).length(), 1);
-    return { ...a, id, angDeg: +(Math.atan(e.b.radius / d) * 180 / Math.PI).toFixed(2), ringDeg: e.b.rings ? +(Math.atan(e.b.rings.outer / d) * 180 / Math.PI).toFixed(2) : 0 };
+    const d = Math.max(_v.copy(e.app || e.local).sub(this.ctx.camLocal).length(), 1);
+    return { ...a, id, mag: +(e.mag || 1).toFixed(2), angDeg: +(Math.atan(e.b.radius / d) * 180 / Math.PI).toFixed(2), ringDeg: e.b.rings ? +(Math.atan(e.b.rings.outer / d) * 180 / Math.PI).toFixed(2) : 0 };
   }
 
   /** Capture helper (view=fp/surface): turn the player camera toward a sky object ('0-2-2', 'sun',
@@ -216,6 +279,66 @@ class Space {
     return { yaw: +yaw.toFixed(1), pitch: +pitch.toFixed(1), a, b };
   }
 
+  /** Capture helper (view=surface/fp): stand on dry land `dist` metres from the wonder (bearing `bearDeg` from
+   *  the site, 0 = north) and look at it. Steps: {"eval":"__rv.world.space.wonderShot(9000)"},{"advance":1.5},
+   *  {"eval":"__rv.world.space.look('wonder',0,-8)"} */
+  wonderShot(dist = 9000, bearDeg = 200) {
+    const w = this.world, W = this.wonder, pl = w.player, surf = w.surface;
+    if (!W || !pl?.teleport || !surf) return null;
+    const R = w.body.radius, up = W.up;
+    const north = new THREE.Vector3(0, 1, 0).addScaledVector(up, -up.y).normalize();
+    const east = new THREE.Vector3().crossVectors(north, up);
+    const sea = Number.isFinite(surf.seaLevel) ? surf.seaLevel : -Infinity;
+    const d = new THREE.Vector3(), eye = new THREE.Vector3(), p = new THREE.Vector3();
+    const target = W.target(new THREE.Vector3());
+    let fallback = null;
+    // nearest bearing first, a few distances: dry land with a clear line of sight to the wonder
+    for (let k = 0; k < 48; k++) {
+      const b = (bearDeg + Math.ceil(k / 2) * 15 * (k % 2 ? 1 : -1)) * Math.PI / 180;
+      for (const f of [1, 0.75, 1.3, 0.55]) {
+        const a = (dist * f) / R;
+        d.copy(up).multiplyScalar(Math.cos(a)).addScaledVector(north, Math.sin(a) * Math.cos(b)).addScaledVector(east, Math.sin(a) * Math.sin(b)).normalize();
+        const h = surf.height(d.x, d.y, d.z);
+        if (!(h > sea + 3)) continue;
+        try { if (surf.normal(d, p, 6).dot(d) < 0.975) continue; } catch (_) { /* optional */ }   // flat footing
+        eye.copy(d).multiplyScalar(R + h + 2);
+        if (!fallback) fallback = { pos: d.clone().multiplyScalar(R + h + 1.5), b, h };
+        let clear = true;
+        for (let i = 1; i < 40 && clear; i++) {
+          p.lerpVectors(eye, target, i / 40);
+          const rr = p.length();
+          p.divideScalar(rr);
+          if (surf.height(p.x, p.y, p.z) + R > rr - 5) clear = false;
+        }
+        if (clear) {
+          pl.teleport(d.clone().multiplyScalar(R + h + 1.5));
+          return { ok: true, bearing: +(b * 180 / Math.PI).toFixed(1), dist: Math.round(dist * f), h: Math.round(h) };
+        }
+      }
+    }
+    if (fallback) { pl.teleport(fallback.pos); return { ok: false, bearing: +(fallback.b * 180 / Math.PI).toFixed(1), h: Math.round(fallback.h) }; }
+    return null;
+  }
+
+  /** Capture helper: find dry land near (lat, lon) within `spanDeg` and teleport the player there. */
+  dryLand(lat, lon, spanDeg = 8) {
+    const w = this.world, pl = w.player, surf = w.surface;
+    if (!pl?.teleport || !surf) return null;
+    const sea = Number.isFinite(surf.seaLevel) ? surf.seaLevel : -Infinity;
+    const R = w.body.radius, d = new THREE.Vector3();
+    for (let k = 0; k < 400; k++) {
+      const rr = spanDeg * Math.sqrt(k / 400), a = k * 2.39996;
+      const la = lat + rr * Math.cos(a), lo = lon + rr * Math.sin(a) / Math.max(0.2, Math.cos(la * Math.PI / 180));
+      const cl = Math.cos(la * Math.PI / 180);
+      d.set(cl * Math.sin(lo * Math.PI / 180), Math.sin(la * Math.PI / 180), cl * Math.cos(lo * Math.PI / 180));
+      const h = surf.height(d.x, d.y, d.z);
+      let flat = true;
+      try { flat = surf.normal(d, new THREE.Vector3(), 6).dot(d) > 0.97; } catch (_) { /* optional */ }
+      if (h > sea + 4 && flat) { pl.teleport(d.clone().multiplyScalar(R + h + 1.5)); return { lat: +la.toFixed(2), lon: +lo.toFixed(2), h: Math.round(h) }; }
+    }
+    return null;
+  }
+
   /** Capture helper (view=orbit): put the orbit camera so the star sits `deg` degrees from the planet
    *  centre, behind it (deg < planet angular radius → eclipse / backlit rim; a bit more → sun at the limb).
    *  Usage in shoot steps: {"eval":"__rv.world.space.orbitSunShot(21, 10)"}, then {"advance":0.5}. */
@@ -252,11 +375,13 @@ class Space {
       bodies: this.bodies.filter((e) => e.mesh?.visible || e.ring?.visible).map((e) => e.b.id),
       sunVis: +this.sun.visibility.toFixed(3),
       sunAng: +(this.sun.angularRadius * 180 / Math.PI).toFixed(3),
+      eclipse: +(this.eclipse || 0).toFixed(3), eclipseBody: this.eclipseBody || null,
+      wonder: this.wonder ? this.wonder.state() : null,
     };
   }
 
   dispose() {
-    this.sky?.dispose(); this.star?.dispose(); this.bodiesSys?.dispose(); this.small?.dispose();
+    this.sky?.dispose(); this.star?.dispose(); this.bodiesSys?.dispose(); this.small?.dispose(); this.wonder?.dispose();
     this.group.removeFromParent();
     if (this.world.space === this) this.world.space = null;
   }

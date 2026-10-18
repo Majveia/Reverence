@@ -194,7 +194,13 @@ uniform sampler2D tClouds;
 uniform float uHasClouds;
 uniform vec3 uLightDir;
 uniform float uKeyLum;     // luminance of the key light illuminance (cloud radiance reference)
+uniform vec3 uFanC;        // landscape fan: sun position in uv (may be off-screen), aspect
 varying vec2 vUv;
+float fanNoise(float x){
+  float i = floor(x), f = fract(x);
+  float a = rv_hash11(i), b = rv_hash11(i + 1.0);
+  return mix(a, b, f * f * (3.0 - 2.0 * f));
+}
 // Occlusion-based light-scattering source (GPU Gems 3, ch. 13): open sky near the key light AND the
 // bright silver-lined cloud edges emit; terrain and dense cloud bodies block. The radial blur toward
 // the light turns every gap / ridge / cloud edge into a streak.
@@ -215,7 +221,18 @@ void main(){
   float glow = pow(c, 64.0) + pow(c, 16.0) * 0.25;
   // G: the same glow without any occluder (reference): the composite keeps the contrast (shafts, gaps)
   // and drops most of the uniform glow an open sky would give (the bloom / Mie aureole already have it)
-  gl_FragColor = vec4(src * glow, glow, 0.0, 1.0);
+  // B: landscape-scale fan source — open sky seen through the gaps of the deck (no angular weight: the fan
+  // crosses the whole frame and converges on the sun even when it is off-screen), broken into ~14 rays per
+  // half turn by a low-frequency angular noise so the shafts have breaks
+  float fan = 0.0;
+  if (uFanC.z > 0.0 && atmo_isFar(d)){
+    fan = uHasClouds > 0.5 ? texture(tClouds, vUv).a : 1.0;   // cloud transmittance: 1 = open sky
+    vec2 tv = (vUv - uFanC.xy) * vec2(uFanC.z, 1.0);
+    float ang = atan(tv.y, tv.x) * (14.0 / 3.14159265);
+    // (a gentle modulation only: the shafts themselves must come from real gaps, not from the noise)
+    fan *= 0.82 + 0.18 * fanNoise(ang + 17.0) * (0.6 + 0.4 * fanNoise(ang * 2.7 + 3.0));
+  }
+  gl_FragColor = vec4(src * glow, glow, fan, 1.0);
 }`;
 
 const BLUR_FRAG = /* glsl */`
@@ -225,6 +242,7 @@ uniform vec2 uCenter;      // light position in uv
 uniform float uLen;        // fraction of the vector to the light covered
 uniform float uAspect;     // width / height (isotropic screen distances)
 uniform float uDecay;      // per-tap decay (from the pixel toward the light)
+uniform float uFan;        // > 0: also blur the fan channel (B) over the FULL distance to the light
 varying vec2 vUv;
 // Radial blur toward the light (GPU Gems 3 ch. 13): a weighted sum along the line to the light, the
 // weights decaying toward the light, normalized by the weight sum (energy preserving across passes).
@@ -245,7 +263,20 @@ void main(){
     w *= uDecay;
     uv += dv;
   }
-  gl_FragColor = vec4(acc / wsum, 0.0, 1.0);
+  float fan = 0.0;
+  if (uFan > 0.0){
+    // landscape fan: the whole line to the (possibly off-screen) light, no decay → averaged open fraction
+    vec2 dvF = toL * uLen / 24.0;
+    vec2 uvF = vUv + dvF * j;
+    float n = 0.0;
+    for (int i = 0; i < 24; i++){
+      // off-screen part of the line: unknown → the mean of what was seen (no dark wedge at the edge)
+      if (uvF.x >= 0.0 && uvF.x <= 1.0 && uvF.y >= 0.0 && uvF.y <= 1.0){ fan += texture(tSrc, uvF).b; n += 1.0; }
+      uvF += dvF;
+    }
+    fan = n > 0.0 ? fan / n : texture(tSrc, vUv).b;
+  }
+  gl_FragColor = vec4(acc / wsum, fan, 1.0);
 }`;
 
 const COMP_FRAG = /* glsl */`
@@ -260,6 +291,9 @@ uniform vec2 uLowRes;
 uniform vec3 uColor;
 uniform float uHasRays;
 uniform vec3 uRayDir;
+uniform vec4 uFanP;        // landscape fan: x strength, y mean-glow share, z angular width (rad), -
+uniform vec2 uFanSun;      // sun position (uv, may be off-screen)
+uniform vec3 uFanCol;
 uniform float uHasVol;
 uniform float uDebug;
 varying vec2 vUv;
@@ -313,6 +347,34 @@ void main(){
     float open = clamp(rg.x / max(rg.y, 1e-5), 0.0, 1.0);
     float r = rg.x * (1.0 - 0.75 * open * open * open);
     c += uColor * r * fa * air;
+    if (uFanP.x > 0.0){
+      // landscape-scale god rays: the averaged open fraction along each line to the sun, contrast-stretched
+      // (a shaft is a line through a gap, the rest of the fan stays dark), wide angular falloff, over the
+      // geometry as far as there is air in front of it
+      float fb = 0.25 * (texture(tRays, vUv + px * vec2(-0.5, -0.5)).b + texture(tRays, vUv + px * vec2(0.5, -0.5)).b
+                       + texture(tRays, vUv + px * vec2(-0.5, 0.5)).b + texture(tRays, vUv + px * vec2(0.5, 0.5)).b);
+      // contrast across the fan: this line vs its neighbours a few degrees to either side (a shaft is a line
+      // brighter than the lines next to it; an open sky or a closed deck gives no shafts, only its mean)
+      vec2 toS = (uFanSun - vUv) * vec2(uLowRes.x / uLowRes.y, 1.0);
+      vec2 pp = normalize(vec2(-toS.y, toS.x) + 1e-6) * vec2(uLowRes.y / uLowRes.x, 1.0);
+      float nb = 0.0;
+      for (int q = 1; q <= 3; q++){
+        vec2 o = pp * (0.018 * float(q));
+        nb += texture(tRays, vUv + o).b + texture(tRays, vUv - o).b;
+      }
+      nb /= 6.0;
+      float con = fb - nb;
+      float fw = exp(-ang * ang / (2.0 * uFanP.z * uFanP.z));
+      float airF = dg > 1e8 ? 1.0 : 1.0 - exp(-dg / 2500.0);
+      float kf = fw * airF * uFanP.x;
+      // bright shafts through the gaps, dimmer air in the shadows between them, a little of the mean glow
+      // relative to what the shaft crosses (the sky near a low sun is many times brighter than the zenith):
+      // lines through gaps are brightened in the key light's hue, the shadowed lines between them dimmed
+      float gain = max(con, 0.0) * 7.0 + fb * uFanP.y;
+      c += min(c, vec3(4.0)) * uFanCol * gain * kf;
+      c *= 1.0 - clamp(-con * 3.0 * kf, 0.0, 0.4);
+      if (uDebug > 5.5) c = vec3(fb, max(con, 0.0) * 4.0, max(-con, 0.0) * 4.0);
+    }
   }
   gl_FragColor = vec4(c, 1.0);
 }`;
@@ -336,6 +398,7 @@ export class LightShafts {
       uLightDir: { value: new THREE.Vector3() }, uKeyLum: { value: 1 },
       uCamWorld: { value: new THREE.Matrix4() }, uProjParams: { value: new THREE.Vector4(1, 1, 0, 0) },
       uNear: { value: 0.05 }, uFar: { value: 2e10 },
+      uFanC: { value: new THREE.Vector3(0.5, 0.5, 0) },
     };
     this.vu = {
       ...(cl ? cl.u : {}),
@@ -372,11 +435,13 @@ export class LightShafts {
     this.vu.uFrameJ = { value: 0 };
     this.volMat = fsMaterial(VOL_FRAG, this.vu, { defines, glslVersion: THREE.GLSL3 });
     this.maskMat = fsMaterial(MASK_FRAG, this.u);
-    this.blurMat = fsMaterial(BLUR_FRAG, { tSrc: { value: null }, uCenter: { value: new THREE.Vector2() }, uLen: { value: 1 }, uAspect: { value: 16 / 9 }, uDecay: { value: 0.965 } });
+    this.blurMat = fsMaterial(BLUR_FRAG, { tSrc: { value: null }, uCenter: { value: new THREE.Vector2() }, uLen: { value: 1 }, uAspect: { value: 16 / 9 }, uDecay: { value: 0.965 }, uFan: { value: 0 } });
+    this.fanK = Params.num?.('fan') ?? -1;   // &fan=0..2 overrides the landscape god-ray fan strength
     this.cu = {
       tColor: { value: null }, tDepth: this.u.tDepth, tRays: { value: null }, tVol: { value: null }, tVolSub: { value: null },
       uLowRes: { value: new THREE.Vector2(1, 1) }, uColor: { value: new THREE.Vector3() }, uRayDir: { value: new THREE.Vector3(0, 1, 0) },
-      uHasRays: { value: 0 }, uHasVol: { value: 0 }, uDebug: { value: +(Params.num?.('atmoDebug') ?? 0) },
+      uHasRays: { value: 0 }, uHasVol: { value: 0 },
+      uFanP: { value: new THREE.Vector4(0, 0.1, 0.8, 0) }, uFanCol: { value: new THREE.Vector3() }, uFanSun: { value: new THREE.Vector2(0.5, 0.5) }, uDebug: { value: +(Params.num?.('atmoDebug') ?? 0) },
       uCamWorld: this.u.uCamWorld, uProjParams: this.u.uProjParams, uNear: this.u.uNear, uFar: this.u.uFar,
     };
     this.compMat = fsMaterial(COMP_FRAG, this.cu);
@@ -485,7 +550,7 @@ export class LightShafts {
     let hasRays = false;
     const v = this._v.set(keyDir.x, keyDir.y, keyDir.z, 0);
     v.applyMatrix4(cam.matrixWorldInverse).applyMatrix4(cam.projectionMatrix);
-    let sx = 0.5, sy = 0.5, strength = 0;
+    let sx = 0.5, sy = 0.5, strength = 0, fan = 0;
     const kc = L.uniforms.uKeyColor.value;
     if (v.w > 1e-4) {
       sx = v.x / v.w * 0.5 + 0.5; sy = v.y / v.w * 0.5 + 0.5;
@@ -497,7 +562,17 @@ export class LightShafts {
       this._elev = elev;
       const lowSun = 0.55 + 0.9 * (1 - THREE.MathUtils.smoothstep(elev, 0.05, 0.6));
       strength = onScreen * this.haze * lowSun * (1 + (W.fog || 0) * 0.8 + (W.dust || 0)) * THREE.MathUtils.smoothstep(elev, -0.06, 0.03) * (L.keyIsMoon ? 0.35 : 1);
-      hasRays = strength >= 0.01 && kc.r + kc.g + kc.b > 1e-4;
+      // landscape fan: partial cloud (shafts need gaps AND shadow), sun low to mid, up to ~a screen off-frame
+      const cl0 = atmo.clouds?.present ? atmo.clouds : null;
+      const cover = cl0 ? THREE.MathUtils.clamp(cl0.meanCover + (W.coverBoost || 0), 0, 1) : 0;
+      const gate = this.fanK >= 0 ? this.fanK : THREE.MathUtils.smoothstep(cover, 0.22, 0.5) * (1 - THREE.MathUtils.smoothstep(cover, 0.9, 1.0));
+      const fanOn = 1 - THREE.MathUtils.smoothstep(off, 0.45, 1.4);
+      fan = L.keyIsMoon ? 0 : gate * fanOn * this.haze * THREE.MathUtils.smoothstep(elev, -0.03, 0.05) * (1 - 0.6 * THREE.MathUtils.smoothstep(elev, 0.45, 0.85)) * Math.max(0.15, W.sunDim ?? 1) * (1 + 0.5 * (W.fog || 0));
+      // the deck must be overhead: above a sea of clouds the sky is clear (no fan)
+      if (cl0) fan *= 1 - THREE.MathUtils.smoothstep(_up.setFromMatrixPosition(cam.matrixWorld).add(atmo.world.origin).length(), cl0.Rc0, cl0.Rc1);
+      if (fan < 0.02) fan = 0;
+      this.dbg = { fan: +fan.toFixed(3), gate: +gate.toFixed(2), cover: +cover.toFixed(2), off: +off.toFixed(2), elev: +elev.toFixed(3), haze: +this.haze.toFixed(2) };
+      hasRays = (strength >= 0.01 || fan > 0) && kc.r + kc.g + kc.b > 1e-4;
     }
     if (hasRays) {
       u.uLightDir.value.copy(keyDir);
@@ -506,9 +581,11 @@ export class LightShafts {
       const hasCl = cl?.present && cl.lowRT;
       u.uHasClouds.value = hasCl ? 1 : 0;
       u.tClouds.value = hasCl ? cl.lowRT.texture : null;
+      u.uFanC.value.set(sx, sy, fan > 0 ? this.a.width / Math.max(1, this.a.height) : 0);
       this.quad.render(renderer, this.maskMat, this.a);
       const bm = this.blurMat.uniforms;
       bm.uCenter.value.set(sx, sy);
+      bm.uFan.value = fan > 0 ? 1 : 0;
       // three radial passes (32 taps each → ~32k effective samples): long streaks without banding
       bm.uAspect.value = this.a.width / Math.max(1, this.a.height);
       bm.tSrc.value = this.a.texture; bm.uLen.value = 1.0; bm.uDecay.value = 0.965;
@@ -530,6 +607,13 @@ export class LightShafts {
     // high sun: subtle streaks only (a bright veil would wash out the contrast)
     const gold = 1 - THREE.MathUtils.smoothstep(this._elev ?? 1, 0.02, 0.3);
     cu.uColor.value.set(kc.r, kc.g, kc.b).multiplyScalar(strength * (0.12 + 0.22 * gold));
+    // fan: tinted by the key light (warm at golden hour), relative to the sky the shafts cross
+    cu.uFanP.value.set(fan, 0.1, 0.75 + 0.35 * gold, 0);
+    cu.uFanSun.value.set(sx, sy);
+    // shafts are scaled to the sky they cross (a reddened low sun is dim in absolute terms but the shafts
+    // must still read against its sky): hue of the key light, brightness ∝ sky radiance
+    const kl = Math.max(1e-5, kc.r * 0.2126 + kc.g * 0.7152 + kc.b * 0.0722);
+    cu.uFanCol.value.set(Math.min(2, kc.r / kl), Math.min(2, kc.g / kl), Math.min(2, kc.b / kl)).multiplyScalar(0.8 + 0.5 * gold);
     cu.uRayDir.value.copy(keyDir);
     this.quad.render(renderer, this.compMat, io.output);
   }

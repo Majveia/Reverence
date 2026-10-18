@@ -2,7 +2,7 @@
 // chromosphere, prominences, streamer corona and a soft glare halo. OWNED BY THE SPACE TRACK.
 // Rendered as a far-plane billboard (background) so planets and terrain occlude it (eclipses).
 import * as THREE from 'three';
-import { FAR_DIR_POS } from './shaders.js';
+import { FAR_DIR_POS, FULLSCREEN_BG_VERT } from './shaders.js';
 
 const VERT = /* glsl */ `
 ${FAR_DIR_POS}
@@ -30,6 +30,8 @@ uniform float uActivity;    // 0..1 (spots, prominences)
 uniform float uTime;
 uniform float uSeed;
 uniform float uPixAng;
+uniform float uWide;        // wide tinted halo (space only)
+uniform float uExtent;
 varying vec3 vDir;
 void main(){
   vec3 d = normalize(vDir);
@@ -95,7 +97,53 @@ void main(){
   }
   // ---------------- glare halo (the eye/lens spreads the light a little)
   col += mix(uColor, vec3(1.0), 0.3) * uGlare * (0.9 * exp(-ang / (uAng * 1.6)) + 0.12 * uAng * uAng / (ang * ang + uAng * uAng * 0.8));
+  // ---------------- in space: a soft disc with a wide halo that tints the space around the star
+  col += uColor * uWide * (exp(-ang / 0.035) * 0.55 + exp(-ang / 0.14) * 0.45) * smoothstep(uExtent, uExtent * 0.6, ang);
   gl_FragColor = vec4(col, 1.0);
+}`;
+
+
+// Eclipse ring: when a body (a moon, the parent giant, or the current planet seen from orbit) covers the
+// star, the black disc keeps a thin, blazing, coloured edge (sunlight refracted / forward-scattered through
+// its limb) and a soft aureole, brightest on the side where the star hides. Far-plane, behind the bodies.
+const HALO_FRAG = /* glsl */ `
+#include <rv_common>
+#include <rv_noise>
+uniform vec3 uODir;         // unit direction to the occluder centre
+uniform float uOAng;        // its angular radius (rad)
+uniform vec3 uSunDir;
+uniform float uSunAng;
+uniform vec3 uLine;         // thin edge colour × intensity (HDR)
+uniform vec3 uGlow;         // aureole colour × intensity
+uniform float uPixAng;
+uniform float uDepth;       // 0 = star centred behind the disc, 1 = at the limb
+varying vec3 vDir;
+void main(){
+  vec3 d = normalize(vDir);
+  float r = acos(clamp(dot(d, uODir), -1.0, 1.0));
+  float x = r - uOAng;
+  float xMax = uOAng * 0.7 + uPixAng * 40.0;
+  if (x < -uPixAng * 2.0 || x > xMax) discard;
+  float fadeOut = 1.0 - smoothstep(xMax * 0.35, xMax, x);
+  // azimuth relative to the star's direction around the occluder
+  vec3 pd = d - uODir * dot(d, uODir);
+  vec3 ps = uSunDir - uODir * dot(uSunDir, uODir);
+  float cphi = dot(pd, ps) / max(length(pd) * length(ps), 1e-9);
+  cphi = length(ps) < 1e-6 ? 1.0 : cphi;
+  float lobe = pow(0.5 + 0.5 * cphi, 5.0);
+  float around = mix(1.0, 0.18 + 1.6 * lobe, uDepth);
+  float w = max(uPixAng * 1.6, uOAng * 0.004);
+  float xo = max(x, 0.0);
+  float line = exp(-xo / w) * smoothstep(-uPixAng * 1.5, uPixAng * 0.5, x);
+  float glow = exp(-xo / (uOAng * 0.02 + uPixAng * 5.0)) * 0.6 + exp(-xo / (uOAng * 0.12 + uPixAng * 24.0)) * 0.1;
+  vec3 c = (uLine * line + uGlow * glow) * around;
+  // streamers (faint corona-like rays), strongest in the lobe
+  vec3 ax1 = normalize(cross(uODir, abs(uODir.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+  float ang = atan(dot(pd, cross(uODir, ax1)), dot(pd, ax1));
+  float rays = rv_snoise(vec3(cos(ang) * 6.0, sin(ang) * 6.0, 0.37)) * 0.5 + 0.5;
+  rays = rays * rays * (0.6 + 0.4 * (rv_snoise(vec3(cos(ang) * 19.0, sin(ang) * 19.0, 2.1)) * 0.5 + 0.5));
+  c += uGlow * 0.3 * rays * mix(0.35, 1.0, lobe) * exp(-xo / (uOAng * 0.12 + uPixAng * 20.0));
+  gl_FragColor = vec4(max(c * fadeOut, 0.0), 1.0);
 }`;
 
 export class Star {
@@ -119,6 +167,7 @@ export class Star {
       uTime: { value: 0 },
       uSeed: { value: ((star.seed >>> 0) % 1000) * 0.0731 },
       uPixAng: { value: 0.001 },
+      uWide: { value: 0 },
     };
     const g = new THREE.PlaneGeometry(2, 2);
     this.mat = new THREE.ShaderMaterial({
@@ -132,6 +181,42 @@ export class Star {
     this.mesh.name = 'space-star';
     this.mesh.userData.noCSM = true;
     this.angularRadius = 0.005;
+    // eclipse ring (fullscreen far-plane pass, only while something covers the star)
+    this.hu = {
+      uODir: { value: new THREE.Vector3(0, 1, 0) }, uOAng: { value: 0.1 }, uSunDir: this.u.uDir, uSunAng: this.u.uAng,
+      uLine: { value: new THREE.Vector3() }, uGlow: { value: new THREE.Vector3() }, uPixAng: this.u.uPixAng, uDepth: { value: 0 },
+    };
+    const hg = new THREE.BufferGeometry();
+    hg.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
+    this.haloMat = new THREE.ShaderMaterial({
+      uniforms: this.hu, vertexShader: FULLSCREEN_BG_VERT, fragmentShader: HALO_FRAG,
+      depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    this.haloMat.userData.noCSM = true;
+    this.halo = new THREE.Mesh(hg, this.haloMat);
+    this.halo.frustumCulled = false;
+    this.halo.renderOrder = -989;
+    this.halo.visible = false;
+    this.halo.name = 'space-eclipse-ring';
+    this.halo.userData.noCSM = true;
+    this.mesh.add(this.halo);
+  }
+
+  /** Eclipse ring around an occluder. o = { dir (unit, local), ang (rad), sep (rad, star–occluder centre),
+   *  tint (THREE.Color: limb colour, e.g. reddened by the occluder's air), strength 0..1 } or null. */
+  setEclipse(o, ctx) {
+    if (!o || !(o.strength > 0.002)) { this.halo.visible = false; return; }
+    const hu = this.hu, c = this.color, rs = this.angularRadius;
+    hu.uODir.value.copy(o.dir);
+    hu.uOAng.value = o.ang;
+    hu.uDepth.value = THREE.MathUtils.clamp(o.sep / Math.max(o.ang, 1e-6), 0, 1);
+    const k = o.strength * (1 - 0.6 * ctx.inAtmo);
+    const t = o.tint;
+    // the thin edge is the reddened, refracted light; the aureole is whiter star light
+    const L = 9 * k, G = 0.75 * k;
+    hu.uLine.value.set(c.r * t.r * L, c.g * t.g * L, c.b * t.b * L);
+    hu.uGlow.value.set(c.r * (0.5 + 0.5 * t.r) * G, c.g * (0.5 + 0.5 * t.g) * G, c.b * (0.5 + 0.5 * t.b) * G);
+    this.halo.visible = rs > 0;
   }
 
   update(dt, t, ctx) {
@@ -143,7 +228,9 @@ export class Star {
     u.uAng.value = ang;
     u.uPixAng.value = ctx.pixAng;
     // corona + glare extent: grows in space, the halo stays ~constant on screen
-    const ext = Math.min(1.2, Math.max(ang * 14, ctx.pixAng * 160));
+    const space = 1 - ctx.inAtmo;
+    const ext = Math.min(1.2, Math.max(ang * 14, ctx.pixAng * 160, 0.55 * space));
+    u.uWide.value = 0.09 * space * space;
     u.uExtent.value = ext;
     // HDR disk radiance: bright enough to bloom, not a white-out (the post track owns glare);
     // tiny disks (distant, sub-pixel) keep their flux by brightening, clamped.
@@ -155,5 +242,5 @@ export class Star {
     u.uTime.value = t;
   }
 
-  dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); }
+  dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); this.halo.geometry.dispose(); this.haloMat.dispose(); }
 }

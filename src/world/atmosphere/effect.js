@@ -48,6 +48,7 @@ uniform vec3 uFogAlbedo;
 uniform vec3 uFogAmb;         // ambient radiance for the fog
 uniform vec3 uFogSun;         // sun illuminance at the camera
 uniform vec2 uFogWind;
+uniform vec4 uFogMono;       // dust storm: one-hue haze (rgb hue, amount)
 uniform vec4 uLavaGlow;       // lava-lit haze: emitted radiance (rgb), 1 / glow height (m) above the fog base
 uniform float uPixAng;        // angular size of a pixel (rad)
 uniform float uGeoGain;       // in-scatter gain over geometry (the sky gain relaxes from altitude/space)
@@ -59,6 +60,13 @@ uniform float uCityGround;    // ground emission seen from altitude / orbit (nea
 uniform float uCitySky;       // light-pollution sky glow seen from the ground at night
 uniform vec2 uRural;          // sparse rural / road lights over land (civ level), sea-level radius (m)
 uniform float uOrbitLit;      // 0..1: the key light is the unattenuated star (high altitude / orbit views)
+uniform vec4 uTwi;            // blue hour: x strength, y last-light line strength, z sun elevation (sin), w eclipse
+uniform vec3 uTwiZen;         // blue-hour zenith radiance (deep saturated navy)
+uniform vec3 uTwiHor;         // last-light radiance on the horizon under the sun (warm orange)
+uniform vec4 uLimb;           // orbit limb line: x strength, y radius of the emitting shell, z half width, w night airglow share
+uniform vec3 uLimbDay;        // limb line colour on the sunlit side (teal-white)
+uniform vec3 uLimbWarm;       // limb line colour at the terminator (warm)
+uniform vec3 uLimbNight;      // limb line colour on the night side (green airglow)
 varying vec2 vUv;
 
 // Night lights of settlements seen from altitude / orbit: cores + sprawl along noise "roads", only where
@@ -160,6 +168,45 @@ float shellChord(vec3 ro, vec3 rd, float r0, float r1, float tMax){
   return max(len, 0.0);
 }
 
+// Blue hour (art-directed, on top of the physical twilight): the sky keeps its colour while the land goes
+// dark — a deep saturated navy dome, a teal band low toward the sun, a rose glow above a thin last-light
+// orange line hugging the horizon under the (set) sun, and the belt of Venus opposite.
+vec3 twilightSky(vec3 dir, vec3 up){
+  float el = dot(dir, up);
+  vec3 sH = uSunDir - up * dot(uSunDir, up);
+  vec3 vH = dir - up * el;
+  float ls = length(sH), lv = length(vH);
+  float caz = (ls > 1e-5 && lv > 1e-5) ? dot(sH, vH) / (ls * lv) : 0.0;
+  // eclipse: last light all around the horizon (360° sunset)
+  float toward = mix(0.5 + 0.5 * caz, 0.82, uTwi.w);
+  float e = max(el, 0.0);
+  vec3 L = uTwiZen * (0.75 + 0.7 * exp(-e * 3.5));
+  // teal → rose → orange toward the horizon under the sun
+  float t2 = toward * toward;
+  L += vec3(0.10, 0.36, 0.42) * (length(uTwiZen) * 1.6) * exp(-e / 0.30) * t2 * (1.0 - exp(-e / 0.05));
+  L += vec3(0.85, 0.30, 0.48) * (length(uTwiHor) * 0.22) * exp(-e / 0.10) * t2 * toward;
+  L += uTwiHor * uTwi.y * exp(-e / 0.022) * pow(toward, 5.0);
+  // belt of Venus: a faint rose band above the earth's blue shadow, opposite the sun
+  float away = 1.0 - toward;
+  L += vec3(0.55, 0.30, 0.45) * (length(uTwiZen) * 0.55) * away * away * smoothstep(0.02, 0.09, e) * exp(-e / 0.16);
+  return L * uTwi.x;
+}
+
+// Orbit limb: a thin emitting shell seen edge-on → a hard 1–2 px line just above the planet's edge
+// (chord through the shell / its thickness = limb brightening ×20–30), teal-white on the day side,
+// warm at the terminator, a faint green airglow line on the night side.
+vec3 limbLine(vec3 ro, vec3 dir, float tMax){
+  float ch = shellChord(ro, dir, uLimb.y - uLimb.z, uLimb.y + uLimb.z, tMax);
+  if (ch <= 0.0) return vec3(0.0);
+  float tc = max(-dot(ro, dir), 0.0);
+  vec3 pc = ro + dir * min(tc, tMax);
+  float mu = dot(normalize(pc), uSunDir);
+  float lit = smoothstep(-0.16, 0.35, mu);
+  vec3 c = mix(uLimbWarm, uLimbDay, smoothstep(0.02, 0.32, mu));
+  vec3 col = c * lit + uLimbNight * uLimb.w * (1.0 - lit);
+  return col * (ch / (2.0 * uLimb.z)) * uLimb.x;
+}
+
 // Aurora curtains: folded emissive sheets in a high shell, brighter toward the poles.
 vec3 auroraMarch(vec3 ro, vec3 rd, float tMax, float jitter){
   float H = uAtmoRt - uAtmoRb;
@@ -221,6 +268,8 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 dir, float d, vec3 up, float nu){
   L *= uFogAlbedo;
   // lava worlds: the low haze glows with the light of the lava below it
   if (uLavaGlow.w > 0.0) L += uLavaGlow.rgb * exp(-max(0.5 * (hc + he), 0.0) * uLavaGlow.w);
+  // dust storm: the haze is one hue (brightness kept, chroma replaced)
+  if (uFogMono.w > 0.0) L = mix(L, uFogMono.rgb * (rv_luma(L) / max(rv_luma(uFogMono.rgb), 1e-3)), uFogMono.w);
   return col * T + L * (1.0 - T);
 }
 
@@ -264,6 +313,9 @@ void main(){
       vec3 Tz = max(atmo_transmittance(max(rh, uAtmoRb + 1.0), 1.0), vec3(1e-3));
       vec3 Tsh = min(atmo_sunTransmittance(rh, muH) / Tz, vec3(1.0));
       col *= mix(vec3(1.0), Tsh, uOrbitLit * smoothstep(-0.1, 0.0, muH));
+      // soft terminator: the coarse orbit relief lights sun-facing facets past the terminator (jagged white
+      // chips) — fade the lit ground with the sphere's own N·L (wrap), so the day side ends in a graded band
+      col *= mix(1.0, smoothstep(-0.07, 0.16, muH), uOrbitLit);
     }
     outc = col * a.T + L;
     if (uCityGround > 0.0){ vec3 ph = ro + dir * tHit; outc += cityGround(normalize(ph), length(ph)) * a.T; }
@@ -316,11 +368,14 @@ void main(){
         // aerosol aureole: a soft white halo hugging the moon disc (seats it in the sky)
         ms += vec3(dot(uMoonSky, vec3(0.3333))) * 0.25 * min(atmo_phaseHG(mnu, 0.9), 20.0) * (0.6 + 0.4 * uAPScale / 0.5);
         L += (ns + ms) * inside;
+        if (uTwi.x > 0.0) L += twilightSky(dir, up) * inside;
         if (uCitySky > 0.0) L += citySky(dir, up, camR) * inside;
       }
       // airglow emission layer (limb brightening; visible at night and from space)
       float ch = shellChord(ro, dir, uAirglowR - uAirglowW, uAirglowR + uAirglowW, hitGround ? bot.x : 1e30);
       L += uAirglow * ch / (2.0 * uAirglowW) * mix(vec3(1.0), T, 0.5);
+      // orbit: thin hard limb line just above the planet's edge
+      if (uLimb.x > 0.0) L += limbLine(ro, dir, hitGround ? bot.x : 1e30);
       // aurora
       if (uAurora > 0.0) L += auroraMarch(ro, dir, hitGround ? bot.x : top.y, jitter) * mix(vec3(1.0), T, 0.3);
     }
@@ -392,6 +447,7 @@ export class AtmosphereEffect {
       uFogSun: { value: new THREE.Vector3() },
       uFogWind: { value: new THREE.Vector2() },
       uLavaGlow: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uFogMono: { value: new THREE.Vector4(1, 1, 1, 0) },
       uPixAng: { value: 0.001 },
       uGeoGain: { value: 1 },
       uCities: { value: Array.from({ length: 12 }, () => new THREE.Vector4(0, 1, 0, 0.01)) },
@@ -402,6 +458,13 @@ export class AtmosphereEffect {
       uCitySky: { value: 0 },
       uRural: { value: new THREE.Vector2(0, 0) },
       uOrbitLit: { value: 0 },
+      uTwi: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uTwiZen: { value: new THREE.Vector3() },
+      uTwiHor: { value: new THREE.Vector3() },
+      uLimb: { value: new THREE.Vector4(0, atmo.model.Rb + atmo.model.height * 0.1, atmo.model.height * 0.018, 0.07) },
+      uLimbDay: { value: new THREE.Vector3(0.55, 0.85, 1.0) },
+      uLimbWarm: { value: new THREE.Vector3(1.0, 0.5, 0.24) },
+      uLimbNight: { value: new THREE.Vector3(0.12, 0.62, 0.30) },
       ...atmo.atmoUniforms,
     };
     this.mat = fsMaterial(FRAG, this.u);

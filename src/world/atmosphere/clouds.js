@@ -174,7 +174,7 @@ uniform float uCoverBoost; // weather state (rain/storm) coverage boost
 uniform vec4 uShape4;      // lumpiness (base/top height noise), bottom density factor, orbit LOD start, LOD end (m)
 uniform vec4 uShape5;      // key-light gain, column-shadow strength, far-field noise scale (1/m), dome (rounded tops)
 uniform vec4 uShape6;      // far-field extinction factor, detail fade start (m), end (m), edge sharpness
-uniform vec4 uShape7;      // billow (cauliflower lumps: coverage threshold follows the Worley cells), -, -, -
+uniform vec4 uShape7;      // billow (cauliflower lumps: coverage threshold follows the Worley cells), orbit veil, -, -
 
 // distance LOD: far away (orbit) the tileable noise averages out and the weather map carries the shape
 float cl_lod = 0.0;
@@ -239,6 +239,9 @@ float cl_base(vec3 p, float h, vec4 wx, out float prof){
   float lin = max(cl_remap(xb, thr, 1.0, 0.0, 1.0), 0.0);
   float soft = cl_lod > 0.0 ? smoothstep(thr - 0.3, thr + 0.22, xb) * max(cl_remap(xb, thr - 0.3, 1.0, 0.0, 1.0), 0.0) : 0.0;
   base = mix(lin, soft, cl_lod) * cover;
+  // from orbit: thin translucent veils join the cloud fields (milky stratiform sheets between the bright
+  // cores, the ocean shows through) instead of isolated white streaks over a clean ocean
+  if (cl_lod > 0.0) base += cl_lod * uShape7.y * smoothstep(0.12, 0.55, cover) * smoothstep(0.0, 0.25, h) * (1.0 - smoothstep(0.45, 0.8, h));
   // thin coverage gives no confetti of tiny puffs (noise peaks barely above the threshold) near the camera:
   // clear sky between real cloud clusters, BotW-style
   base *= mix(smoothstep(0.14, 0.34, cover), 1.0, cl_lod);
@@ -713,7 +716,7 @@ export class Clouds {
       uShape5: { value: new THREE.Vector4(P.sunGain ?? 4.5, P.tupK ?? 0.06, 1 / (14000 * sizeK), P.dome ?? 0) },
       // far extinction factor · detail band-limit start/end (m) · edge sharpness (density ramp width)
       uShape6: { value: new THREE.Vector4(P.farSig ?? 0.24, 5000 * sizeK, 24000 * sizeK, P.edge ?? 0.12) },
-      uShape7: { value: new THREE.Vector4(P.billow ?? 0, 0, 0, 0) },
+      uShape7: { value: new THREE.Vector4(P.billow ?? 0, Params.num?.('veil') ?? 0.015, 0, 0) },
       uAmbNight: { value: new THREE.Vector3() },
       uCirrus: { value: new THREE.Vector4(0, 0, 1 / (10000 * sizeK), 0.4) },
       uWindA: { value: this.windA.clone() }, uWindB: { value: this.windB.clone() },

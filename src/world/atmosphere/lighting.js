@@ -411,6 +411,15 @@ export class Lighting {
       }
     }
 
+    // blue hour: expose for the sky — the land's sky ambient is held back while the twilight dome keeps its
+    // colour (the atmosphere pass adds the art twilight to the sky only), so the land falls to silhouette
+    const blue = (this.atmo.twBlue || 0) * (1 - altK);
+    if (blue > 0) {
+      const bd = 1 - 0.56 * blue;
+      for (let c = 0; c < 3; c++) { sky[c] *= bd; gr[c] *= bd; }
+      this.envScale *= bd;
+    }
+
     // --- night: moon / starlight
     const moon = this._updateMoon(camLocal, up);
     const dayness = THREE.MathUtils.smoothstep(sunI / E, 0.004, 0.12);

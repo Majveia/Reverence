@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { RNG, hashCombine } from '../../core/rng.js';
 import { FULLSCREEN_BG_VERT, FAR_DIR_POS } from './shaders.js';
 import { LAT_A, LAT_B } from './skyBake.js';
+import { galaxyDisplayColors } from '../../universe/GalaxyModel.js';
 
 const _m3 = new THREE.Matrix3();
 const _m4 = new THREE.Matrix4();
@@ -17,9 +18,11 @@ const _q = new THREE.Quaternion();
 const BAKE_FRAG = /* glsl */ `
 #include <rv_space>
 uniform sampler2D uBand;
-uniform float uFloor, uGain, uSat, uContrast, uSyn, uCubeRes;
+uniform float uFloor, uGain, uSat, uContrast, uSyn, uCubeRes, uPalMix;
+uniform vec3 uCoreCol, uArmCol, uDustCol;   // display palette, each normalised to luma 1
 uniform vec3 uNebDir[10];
 uniform vec4 uNebP[10];      // x: angular radius (rad), y: kind, z: seed, w: palette (0 natural, 1 hubble)
+uniform float uNebB[10];     // brightness (hero nebulae > 1)
 uniform int uNebN;
 uniform float uSeed;
 varying vec3 vDir;
@@ -146,11 +149,19 @@ void main(){
   e *= mix(vec3(0.88, 0.95, 1.14), vec3(1.05, 1.0, 0.93), smoothstep(0.05, 0.5, lb));
   float l = rv_luma(e);
   e = mix(vec3(l), e, uSat * smoothstep(0.0, 0.35, l));   // dim haze is neutral, bright star clouds keep colour
+  // the host galaxy's own palette (GalaxyModel.galaxyDisplayColors): warm gold dust-light in the bright star
+  // clouds and the core, cool blue in the faint arms and outskirts, umber where dust reddens the light
+  {
+    float lg2 = rv_luma(e);
+    vec3 tint = mix(uArmCol, uCoreCol, smoothstep(0.06, 0.55, lg2));
+    tint = mix(tint, uDustCol, smoothstep(0.2, 1.4, D) * smoothstep(0.02, 0.2, lg2) * 0.55);
+    e = mix(e, lg2 * tint, uPalMix);
+  }
   e *= uGain;
   // nebulae (emission / pillars / planetary / remnant)
   for (int i = 0; i < 10; i++){
     if (i >= uNebN) break;
-    e += nebula(d, uNebDir[i], uNebP[i]) * (0.05 + 0.06 * smoothstep(0.3, 2.5, tau)) * uGain;
+    e += nebula(d, uNebDir[i], uNebP[i]) * (0.05 + 0.06 * smoothstep(0.3, 2.5, tau)) * uGain * uNebB[i];
   }
   // faint high-latitude diffuse glow (integrated starlight / cirrus): keeps the sky from looking empty
   float cir = smoothstep(0.55, 0.95, rv_fbm(P * 3.0 + w + 40.0, 5) * 0.5 + 0.5);
@@ -166,6 +177,7 @@ uniform float uGain;
 uniform float uPano;
 uniform float uPanoGain;
 uniform vec2 uRes;
+uniform float uLift, uKnee, uCap;
 varying vec3 vDir;
 void main(){
   vec3 d = uL2G * normalize(vDir);
@@ -175,6 +187,12 @@ void main(){
     d = vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
   }
   vec3 c = textureCube(uCube, d).rgb * uGain * (uPano > 0.5 ? uPanoGain : 1.0);
+  // night lift under an atmosphere: faint band light is raised above the air's star-hiding threshold, the
+  // bright core is not (compressive: gain → 1 above the knee), then a soft luminance cap (no white slab)
+  float lc = rv_luma(c);
+  c *= 1.0 + uLift / (1.0 + lc / uKnee);
+  lc = rv_luma(c);
+  c *= uCap * tanh(lc / uCap) / max(lc, 1e-6);
   c += (rv_ign(gl_FragCoord.xy) - 0.5) * 0.0006 * step(1e-5, c.g);   // de-band dim gradients
   gl_FragColor = vec4(max(c, 0.0), 1.0);
 }`;
@@ -264,6 +282,32 @@ void main(){
   gl_FragColor = vec4(vCol * I * edge, 1.0);
 }`;
 
+// a pulsar: the cosmic lighthouse — a blue-white point that beats, with two faint beams sweeping slowly
+const PSR_VERT = /* glsl */ `
+${FAR_DIR_POS}
+uniform mat3 uG2L;
+uniform float uPR, uFade;
+void main(){
+  gl_Position = sp_farClip(uG2L * position);
+  gl_PointSize = 96.0 * uPR;
+  if (uFade < 0.01) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}`;
+const PSR_FRAG = /* glsl */ `
+uniform float uTime, uFade, uI;
+uniform vec3 uCol;
+void main(){
+  vec2 p = (gl_PointCoord - 0.5) * 96.0;       // pixels
+  float r = length(p);
+  float beat = 0.3 + 0.7 * pow(0.5 + 0.5 * sin(uTime * 6.2831853 * 0.9), 10.0);
+  float th = uTime * 0.21;
+  vec2 ax = vec2(cos(th), sin(th));
+  float along = abs(dot(p, ax)), across = abs(dot(p, vec2(-ax.y, ax.x)));
+  float beam = exp(-across * across / (2.0 + along * 0.08)) * exp(-along / 30.0) * (0.25 + 0.75 * beat);
+  float core = exp(-r * r * 0.35) * 1.6 + exp(-r * 0.32) * 0.18 * beat;
+  float edge = 1.0 - smoothstep(40.0, 48.0, r);
+  gl_FragColor = vec4(uCol * uI * uFade * (core * (0.55 + 0.45 * beat) + beam * 0.12) * edge, 1.0);
+}`;
+
 export class Sky {
   constructor(world, space) {
     this.world = world;
@@ -281,6 +325,7 @@ export class Sky {
     this.uStarGain = { value: 0.075 };
     this.uFade = { value: 1 };
     this.uBandGain = { value: 1 };
+    this.uLift = { value: 0 };
     this.uTwinkle = { value: 0 };
     this.uPixAng = { value: 0.001 };
     this.uPR = { value: 1 };
@@ -306,8 +351,10 @@ export class Sky {
       localRadius: big ? 1200 : 900,
       globalSample: big ? 120000 : 40000,
     };
+    this.pal = skyPalette(world.universe.galaxy(world.galaxyIndex));
     this._buildBackground();
     this._buildGalaxies(r);
+    this._buildPulsar(new RNG(hashCombine(star.seed >>> 0, 0x9575)));
     this._startBake();
   }
 
@@ -361,13 +408,22 @@ export class Sky {
     const rt = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType, generateMipmaps: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
     const nebDir = [], nebP = [];
     const kinds = { emission: 0, pillars: 1, planetary: 2, remnant: 3 };
+    // art direction: the two nearest big emission nebulae become sky landmarks (2–6°, bright, H-alpha pink /
+    // OIII teal) so a deep-sky object reads from the ground, like the creator's frames
+    const heroes = this.nebulae.map((n, i) => ({ n, i })).filter((o) => o.n.kind === 'emission' || o.n.kind === 'pillars')
+      .sort((a, b) => b.n.ang - a.n.ang).slice(0, 2).map((o) => o.i);
+    const nebB = [];
     for (let i = 0; i < 10; i++) {
       const n = this.nebulae[i];
       if (n) {
+        const h = heroes.indexOf(i);
+        const ang = h >= 0 ? THREE.MathUtils.clamp(n.ang * 3, h === 0 ? 0.055 : 0.035, 0.1) : Math.min(Math.max(n.ang, 0.004), 0.5);
         nebDir.push(new THREE.Vector3(...n.dir));
-        nebP.push(new THREE.Vector4(Math.min(Math.max(n.ang, 0.004), 0.5), kinds[n.kind] ?? 0, (n.seed % 997), n.palette === 'hubble' ? 1 : 0));
-      } else { nebDir.push(new THREE.Vector3(0, 1, 0)); nebP.push(new THREE.Vector4()); }
+        nebP.push(new THREE.Vector4(ang, kinds[n.kind] ?? 0, (n.seed % 997), h === 0 ? 0 : n.palette === 'hubble' ? 1 : 0));
+        nebB.push(h >= 0 ? (h === 0 ? 5 : 3.2) : 1);
+      } else { nebDir.push(new THREE.Vector3(0, 1, 0)); nebP.push(new THREE.Vector4()); nebB.push(0); }
     }
+    this.heroNebulae = heroes.map((i) => ({ dir: nebDir[i].clone(), ang: nebP[i].x }));
     const mat = new THREE.ShaderMaterial({
       uniforms: {
         uBand: { value: this.bandTex },
@@ -377,8 +433,10 @@ export class Sky {
         uContrast: { value: 1.7 },
         uCubeRes: { value: size * 0.64 },
         uSyn: { value: 0.32 },
-        uNebDir: { value: nebDir }, uNebP: { value: nebP }, uNebN: { value: Math.min(10, this.nebulae.length) },
+        uNebDir: { value: nebDir }, uNebP: { value: nebP }, uNebB: { value: nebB }, uNebN: { value: Math.min(10, this.nebulae.length) },
         uSeed: { value: (this.world.star.seed % 1000) * 0.137 },
+        uPalMix: { value: 0.55 },
+        uCoreCol: { value: this.pal.core }, uArmCol: { value: this.pal.arms }, uDustCol: { value: this.pal.dust },
       },
       vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
       fragmentShader: BAKE_FRAG,
@@ -412,7 +470,8 @@ export class Sky {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
     this.bgMat = new THREE.ShaderMaterial({
-      uniforms: { uCube: { value: null }, uL2G: this.uL2G, uGain: this.uBandGain, uPano: { value: this.world.params?.skypano === '1' ? 1 : 0 }, uPanoGain: { value: +(this.world.params?.skygain || 1) }, uRes: { value: new THREE.Vector2(1, 1) } },
+      uniforms: { uCube: { value: null }, uL2G: this.uL2G, uGain: this.uBandGain, uPano: { value: this.world.params?.skypano === '1' ? 1 : 0 }, uPanoGain: { value: +(this.world.params?.skygain || 1) }, uRes: { value: new THREE.Vector2(1, 1) },
+        uLift: this.uLift, uKnee: { value: +(this.world.params?.bandknee || 0.006) }, uCap: { value: 0.35 } },
       vertexShader: FULLSCREEN_BG_VERT, fragmentShader: BG_FRAG,
       depthTest: false, depthWrite: false,
     });
@@ -484,8 +543,24 @@ export class Sky {
     this.group.add(this.galaxies);
   }
 
+  _buildPulsar(r) {
+    const lon = r.range(0, Math.PI * 2), lat = r.range(-0.12, 0.12);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute([Math.cos(lat) * Math.sin(lon), Math.sin(lat), Math.cos(lat) * Math.cos(lon)], 3));
+    this.psrU = { uG2L: this.uG2L, uPR: this.uPR, uFade: this.uFade, uTime: { value: 0 }, uI: { value: 1.2 }, uCol: { value: new THREE.Vector3(0.62, 0.8, 1.0) } };
+    const mat = new THREE.ShaderMaterial({ uniforms: this.psrU, vertexShader: PSR_VERT, fragmentShader: PSR_FRAG, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending });
+    mat.userData.noCSM = true;
+    this.pulsar = new THREE.Points(g, mat);
+    this.pulsar.frustumCulled = false;
+    this.pulsar.renderOrder = -997;
+    this.pulsar.name = 'space-pulsar';
+    this.pulsarDir = new THREE.Vector3(Math.cos(lat) * Math.sin(lon), Math.sin(lat), Math.cos(lat) * Math.cos(lon));
+    this.group.add(this.pulsar);
+  }
+
   update(dt, t, ctx) {
     const cel = this.world.celestial;
+    if (this.psrU) this.psrU.uTime.value = t;
     // local → galaxy = qGal · q(local → inertial)
     _q.copy(this.qGal).multiply(cel.q);
     _m4.makeRotationFromQuaternion(_q);
@@ -504,7 +579,8 @@ export class Sky {
     // (once the atmosphere lowers its threshold at night it sets `atmosphere.starVisNight` and the lift drops)
     const pb = this.world.params?.bandboost;
     const boost = pb !== undefined ? +pb : this.world.atmosphere?.starVisNight ? 0.5 : 6;
-    this.uBandGain.value = this.uFade.value * (1 + boost * ctx.inAtmo * night);
+    this.uBandGain.value = this.uFade.value;
+    this.uLift.value = boost * ctx.inAtmo * night;
     if (this.starMat) this.starMat.uniforms.uTime.value = t;
     if (this.pendingCube && ctx.renderer) {
       try { this._bakeCube(ctx.renderer); } catch (e) { console.error('[space] sky cube bake failed', e); this.failed = true; }
@@ -522,6 +598,7 @@ export class Sky {
     this.bg.geometry.dispose(); this.bgMat.dispose();
     this.stars?.geometry.dispose(); this.starMat?.dispose();
     this.galaxies?.geometry.dispose(); this.galaxies?.material.dispose();
+    this.pulsar?.geometry.dispose(); this.pulsar?.material.dispose();
     this.cubeRT?.dispose(); this.bandTex?.dispose();
   }
 }
@@ -534,4 +611,18 @@ function plainGalaxy(g) {
     else if (k !== 'colors' && v && typeof v === 'object' && !v.isColor) o[k] = JSON.parse(JSON.stringify(v));
   }
   return o;
+}
+
+/** Sky palette from the galaxy's display colours, desaturated toward photographic pastels, luma 1. */
+function skyPalette(g) {
+  let c = null;
+  try { c = galaxyDisplayColors(g); } catch (_) { /* optional */ }
+  c = c || { core: [1, 0.72, 0.45], arms: [0.35, 0.55, 1], dust: [0.45, 0.24, 0.1] };
+  const toV = (a, sat) => {
+    const l = 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
+    const v = new THREE.Vector3(...a.map((x) => l + (x - l) * sat));
+    const l2 = 0.2126 * v.x + 0.7152 * v.y + 0.0722 * v.z;
+    return v.multiplyScalar(1 / Math.max(l2, 1e-3));
+  };
+  return { core: toV(c.core, 0.75), arms: toV(c.arms, 0.45), dust: toV(c.dust, 0.6) };
 }

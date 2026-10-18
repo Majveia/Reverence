@@ -13,6 +13,7 @@ const _v2 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _inert = new THREE.Vector3();
+const _nOpen = new THREE.Vector3();
 
 const DOT_VERT = /* glsl */ `
 attribute vec3 aCol;
@@ -94,7 +95,7 @@ export class Bodies {
   }
 
   _makeEntry(b, isCurrent) {
-    const e = { b, isCurrent, pivot: new THREE.Group(), spin: new THREE.Group(), local: new THREE.Vector3(), scene: new THREE.Vector3() };
+    const e = { b, isCurrent, pivot: new THREE.Group(), spin: new THREE.Group(), local: new THREE.Vector3(), scene: new THREE.Vector3(), app: new THREE.Vector3(), off: new THREE.Vector3(), mag: 1 };
     e.pivot.name = 'space-body-' + b.id;
     e.pivot.add(e.spin);
     this.group.add(e.pivot);
@@ -104,7 +105,10 @@ export class Bodies {
     // the ring plane and would only ever see them edge-on)
     const cur = this.world.body;
     const fromMoon = b.rings && !isCurrent && cur.isMoon && !b.isMoon && b.index === cur.parent;
-    const ringTilt = b.rings && !isCurrent ? (b.rings.tilt || 0) + (fromMoon ? Math.sign(b.rings.tilt || 1) * 0.42 : 0) : 0;
+    const ringTilt = b.rings && !isCurrent ? (b.rings.tilt || 0) : 0;
+    // (from a moon the rings are opened toward the viewer every frame instead, see update(): real moons orbit
+    // in the ring plane and would only ever see them edge-on)
+    e.openRings = !!fromMoon;
     e.tiltQ = new THREE.Quaternion().setFromAxisAngle(X, (b.axialTilt || 0) + ringTilt);
     const U = this._commonUniforms(b);
     e.u = U;
@@ -233,6 +237,15 @@ export class Bodies {
     const pixAng = ctx.pixAng;
     // positions first (occluders need them)
     const focus = w.params?.spacefocus;
+    // ---- sky magnification (art direction: "a neighbouring world can fill half the sky"). From the ground
+    // the parent giant of a moon is drawn closer along its true direction (same direction, same lighting,
+    // translated so its shadows/rings/occluders keep their true relative geometry) until it spans ~`giant`°
+    // of angular radius; moons get a minimum disc so their phases read. Fades out with altitude (orbit = true).
+    const camR = camLocal.length();
+    const alt = camR - cur.radius;
+    const ground = 1 - THREE.MathUtils.smoothstep(alt, cur.radius * 0.08, cur.radius * 1.2);
+    const magOn = w.params?.skymag !== '0';
+    const giantDeg = THREE.MathUtils.clamp(+(w.params?.giant || 16), 2, 40);
     for (const e of this.entries) {
       if (e.isCurrent) e.local.set(0, 0, 0);
       else cel.bodyLocal(e.b, e.local);
@@ -241,7 +254,26 @@ export class Bodies {
         w.camera.getWorldDirection(_v2);
         e.local.copy(camLocal).addScaledVector(_v2, e.b.radius * (+w.params.focusdist || 3));
       }
-      e.scene.copy(e.local).sub(origin);
+      let k = 1;
+      if (magOn && !e.isCurrent && ground > 0) {
+        const d = Math.max(_v.copy(e.local).sub(camLocal).length(), 1);
+        const ang = e.b.radius / d;
+        const b = e.b;
+        const isParent = cur.isMoon && !b.isMoon && b.index === cur.parent;
+        const isNeighbourMoon = b.isMoon && ((cur.isMoon && b.parent === cur.parent) || (!cur.isMoon && b.parent === cur.index));
+        let kt = 1;
+        if (isParent) kt = THREE.MathUtils.clamp(Math.tan(giantDeg * Math.PI / 180) / Math.max(ang, 1e-6), 1, 4.5);
+        else if (isNeighbourMoon) kt = THREE.MathUtils.clamp(0.028 / Math.max(ang, 1e-6), 1, 7);
+        // never pull a body inside a few of its radii (or its rings) of the camera
+        const minD = (b.rings ? b.rings.outer * 1.15 : b.radius * 2.2);
+        kt = Math.min(kt, Math.max(1, d / minD));
+        k = 1 + (kt - 1) * ground;
+      }
+      e.mag = k;
+      if (k > 1.0001) e.app.copy(camLocal).add(_v.copy(e.local).sub(camLocal).divideScalar(k));
+      else e.app.copy(e.local);
+      e.off.copy(e.app).sub(e.local);
+      e.scene.copy(e.app).sub(origin);
     }
     for (const e of this.entries) {
       const b = e.b;
@@ -250,10 +282,25 @@ export class Bodies {
       if (e.isCurrent) { e.pivot.quaternion.identity(); e.spin.quaternion.identity(); }
       else {
         e.pivot.quaternion.copy(cel.qInv).multiply(e.tiltQ);
+        if (e.openRings) {
+          // open the ring plane toward the viewer to at least ~22° (a moon in the ring plane sees them edge-on)
+          _v2.copy(e.app).sub(camLocal).normalize();                   // view direction
+          const n = _v.set(0, 1, 0).applyQuaternion(e.pivot.quaternion);
+          const sB = n.dot(_v2);
+          const Bmin = Math.sin(25 * Math.PI / 180);
+          if (Math.abs(sB) < Bmin) {
+            const sg = sB < 0 ? -1 : 1;
+            _nOpen.copy(n).addScaledVector(_v2, -sB);
+            if (_nOpen.lengthSq() < 1e-8) _nOpen.set(1, 0, 0);
+            _nOpen.normalize().multiplyScalar(Math.cos(Math.asin(Bmin))).addScaledVector(_v2, sg * Bmin).normalize();
+            _q2.setFromUnitVectors(n, _nOpen);
+            e.pivot.quaternion.premultiply(_q2);
+          }
+        }
         const ang = (b.rotationPhase0 || 0) + (Math.PI * 2 * t) / (b.dayLength || 1800);
         e.spin.quaternion.setFromAxisAngle(Y, ang);
       }
-      e.pivot.position.copy(e.local);
+      e.pivot.position.copy(e.app);
       // star direction & illuminance at the body
       let dStar;
       if (e.isCurrent) { U.uSunDir.value.copy(cel.sunDir); dStar = dCur; }
@@ -269,7 +316,7 @@ export class Bodies {
       U.uTime.value = t;
       U.uRingN.value.set(0, 1, 0).applyQuaternion(e.pivot.quaternion);
       // screen size → LOD / dot
-      const dist = Math.max(_v.copy(e.local).sub(camLocal).length(), 1);
+      const dist = Math.max(_v.copy(e.app).sub(camLocal).length(), 1);
       const outerR = b.rings ? b.rings.outer : b.radius;
       const px = (b.radius / dist) / pixAng;
       const pxOuter = (outerR / dist) / pixAng;
@@ -286,23 +333,24 @@ export class Bodies {
           const ob = o.b;
           const related = (ob.isMoon && (ob.parent === b.index && !b.isMoon)) || (b.isMoon && (!ob.isMoon ? ob.index === b.parent : ob.parent === b.parent));
           if (!related) continue;
-          U.uOcc.value[n++].set(o.scene.x, o.scene.y, o.scene.z, ob.radius);
+          // occluder in this body's (translated) frame: true geometry relative to the body
+          U.uOcc.value[n++].set(o.local.x + e.off.x - origin.x, o.local.y + e.off.y - origin.y, o.local.z + e.off.z - origin.z, ob.radius);
         }
         // the camera's own body shadows its parent / moons (current body is not in entries unless gas)
         if (n < 4 && !this.entries.some((o) => o.isCurrent)) {
           const related = (cur.isMoon && !b.isMoon && b.index === cur.parent) || (!cur.isMoon && b.isMoon && b.parent === cur.index) || (cur.isMoon && b.isMoon && b.parent === cur.parent);
-          if (related) U.uOcc.value[n++].set(-origin.x, -origin.y, -origin.z, cur.radius);
+          if (related) U.uOcc.value[n++].set(e.off.x - origin.x, e.off.y - origin.y, e.off.z - origin.z, cur.radius);
         }
       } else if (e.isCurrent) {
         for (const o of this.entries) {
           if (o === e || n >= 4) continue;
-          if (o.b.isMoon && o.b.parent === b.index) U.uOcc.value[n++].set(o.scene.x, o.scene.y, o.scene.z, o.b.radius);
+          if (o.b.isMoon && o.b.parent === b.index) U.uOcc.value[n++].set(o.local.x - origin.x, o.local.y - origin.y, o.local.z - origin.z, o.b.radius);
         }
       }
       U.uOccN.value = n;
       // far body → dot (a "wandering star"): flux of a lit disk spread over one pixel
       if (!showMesh || (px < 1.5 && !e.isCurrent)) {
-        _v2.copy(e.local).sub(camLocal).normalize();                                 // view direction
+        _v2.copy(e.app).sub(camLocal).normalize();                                   // view direction
         const phase = 0.5 + 0.5 * (-_v2.dot(U.uSunDir.value));                        // 1 = full
         const alb = e.look?.albedo ?? 0.3;
         const rad = alb / Math.PI * phase * phase;
@@ -331,7 +379,7 @@ export class Bodies {
     const ang = (this.world.star.radius || 7e5) / Math.max(cel.sunDistance, 1);
     for (const e of this.entries) {
       if (e.isCurrent) continue;
-      _v.copy(e.local).sub(localPos);
+      _v.copy(e.app).sub(localPos);
       const d = _v.length();
       const along = _v.dot(L);
       if (along <= 0) continue;

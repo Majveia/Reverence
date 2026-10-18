@@ -44,8 +44,8 @@ float sunVisibility(vec3 w){
         vec3 hp = w + uSunDir * t - uCenter;
         float rr = length(hp);
         float tt = (rr - uRingP.x) / (uRingP.y - uRingP.x);
-        if (tt > 0.0 && tt < 1.0){
-          float op = textureLod(uRingTex, vec2(tt, 0.5), 2.0).a * uRingP.w;
+        if (tt > -0.02 && tt < 1.02){
+          float op = textureLod(uRingTex, vec2(clamp(tt, 0.0, 1.0), 0.5), 2.5).a * uRingP.w * smoothstep(-0.02, 0.02, tt) * smoothstep(1.02, 0.98, tt);
           float tau = -log(max(1.0 - op, 0.02));
           v *= exp(-tau / max(abs(dn), 0.05));
         }
@@ -335,8 +335,8 @@ void main(){
   float NV = max(dot(N, V), 0.0);
   // Minnaert limb darkening; the terminator is soft: sunlight grazes a deep, hazy cloud deck
   float k = 0.8;
-  float NLw = (NL + 0.1) / 1.1;
-  float diff = pow(max(NLw, 0.0), k) * pow(max(NV, 0.02), k - 1.0) * smoothstep(-0.1, 0.28, NL);
+  float NLw = (NL + 0.16) / 1.16;
+  float diff = pow(max(NLw, 0.0), k) * pow(max(NV, 0.02), k - 1.0) * smoothstep(-0.16, 0.34, NL);
   diff = min(diff, 1.6);
   float vis = sunVisibility(vW);
   vec3 col = albedo / RV_PI * uSunIll * vis * diff;
@@ -346,8 +346,8 @@ void main(){
   // night side: ring-shine (sunlit rings light the dark hemisphere) + a whisper of moon/star light, so the
   // unlit disk reads as a dark silhouette rather than a hole
   float nightW = smoothstep(0.1, -0.25, NL);
-  if (uRingP.z > 0.5) col += albedo * uSunIll * 0.006 * nightW * (0.35 + 0.65 * abs(dot(uRingN, L))) * (0.6 + 0.4 * abs(dot(N, uRingN)));
-  col += albedo * uSunIll * 0.0012 * nightW * (0.6 + 0.4 * NV);
+  if (uRingP.z > 0.5) col += albedo * vec3(1.0, 0.86, 0.66) * uSunIll * 0.02 * nightW * (0.35 + 0.65 * abs(dot(uRingN, L))) * (0.45 + 0.55 * abs(dot(N, uRingN)));
+  col += albedo * uSunIll * 0.0018 * nightW * (0.6 + 0.4 * NV);
   gl_FragColor = vec4(max(col, 0.0), 1.0);
 }`;
 
@@ -480,8 +480,10 @@ void main(){
   // multiple scattering fill on the lit face
   if (litSide) Lr += alb * alb * uSunIll * 0.05 * a;
   else Lr += alb * alb * uSunIll * 0.07 * (1.0 - exp(-tau / mu0)) * exp(-tau * 0.6);   // diffuse transmission
-  // planet shadow on the rings
-  float sh = sp_occlude(vW, L, uSunAng, uCenter, uPR);
+  // forward-scattering glow: backlit dusty ringlets light up against the night (sun behind the rings)
+  if (!litSide) Lr *= 1.0 + 3.5 * pow(max(cfw, 0.0), 6.0) * dustF;
+  // planet shadow on the rings (a minimum penumbra: the edge reads as a soft shadow, not a cut-out wedge)
+  float sh = sp_occlude(vW, L, max(uSunAng, 0.012), uCenter, uPR);
   Lr *= sh;
   gl_FragColor = vec4(Lr, a);
 }`;
