@@ -10,7 +10,11 @@
 export const COMPOSITE_FRAG = /* glsl */ `
 precision highp sampler3D;
 #include <rv_common>
-uniform sampler2D tColor, tBloom, tBloomWide, tAdapt, tSunVis, tDirt;
+#include <rv_post>
+uniform sampler2D tColor, tBloom, tBloomWide, tAdapt, tSunVis, tDirt, tDepth, tSky;
+uniform float uHasDepth, uNear, uFar, uHaze, uHazeDist, uTwilight, uNightLift, uEclipse, uDuskDesat;
+uniform float uLookId, uLookLand, uLookAccent, uLookInk, uLookBands, uPLSat, uInkWidth;
+uniform vec3 uToneA, uToneB, uToneC, uToneD;
 uniform sampler3D tLUT;
 uniform float uHasBloom, uBloomMode, uBloomStrength, uBloomScatter, uClarity;
 uniform float uExposure, uAuto, uAEKey, uAEMin, uAEMax, uAEStrength;
@@ -101,9 +105,89 @@ vec3 sunFlare(vec2 uv, float vis){
   return f * vis;
 }
 
+// ---- photo looks (season 2) ---------------------------------------------------------------
+float invDepth(vec2 uv){
+  float d = texture2D(tDepth, uv).r;
+  return rvp_isSky(d) ? 0.0 : 1.0 / max(rvp_linDepth(d, uNear, uFar), 1e-3);
+}
+// silhouette / crease ink from the Laplacian of inverse depth (planes are linear in 1/z → no false edges
+// on grazing ground), normalised by the nearest depth so it is scale-free
+float inkEdge(vec2 uv){
+  vec2 px = uInkWidth / uRes;
+  float c = invDepth(uv);
+  float n = invDepth(uv + vec2(0.0, px.y)), s = invDepth(uv - vec2(0.0, px.y));
+  float e = invDepth(uv + vec2(px.x, 0.0)), w = invDepth(uv - vec2(px.x, 0.0));
+  float mx = max(max(max(n, s), max(e, w)), c);
+  if (mx <= 0.0) return 0.0;
+  float lap = abs(n + s + e + w - 4.0 * c) / mx;
+  return smoothstep(0.12, 0.32, lap);
+}
+float accentMask(vec3 e){
+  float I = 0.596 * e.r - 0.274 * e.g - 0.322 * e.b, Q = 0.211 * e.r - 0.523 * e.g + 0.312 * e.b;
+  float C = length(vec2(I, Q));
+  float d = abs(atan(Q, I) - 0.33);
+  d = min(d, 6.2831853 - d);
+  return (1.0 - smoothstep(0.2, 0.46, d)) * smoothstep(0.06, 0.16, C);
+}
+vec3 gradMap3(float g, vec3 a, vec3 b, vec3 c){
+  return g < 0.62 ? mix(a, b, smoothstep(0.0, 1.0, g / 0.62)) : mix(b, c, smoothstep(0.0, 1.0, (g - 0.62) / 0.38));
+}
+// soft (anti-aliased) quantisation of x into n bands, 0..1
+float bands(float x, float n){
+  float f = x * n;
+  float w = max(fwidth(f), 1e-3) * 0.75;
+  float q = floor(f) + smoothstep(1.0 - w, 1.0, fract(f));
+  return clamp(q / max(n - 1.0, 1.0), 0.0, 1.0);
+}
+vec3 palette4(float q, vec3 a, vec3 b, vec3 c, vec3 d){
+  return q < 0.3334 ? mix(a, b, q * 3.0) : q < 0.6667 ? mix(b, c, q * 3.0 - 1.0) : mix(c, d, q * 3.0 - 2.0);
+}
+vec3 photoLook(vec3 e, vec2 uv, bool sky, vec3 bloomW){
+  float L = dot(e, vec3(0.2126, 0.7152, 0.0722));
+  float acc = uLookAccent > 0.0 ? accentMask(e) * uLookAccent : 0.0;
+  vec3 eSat = clamp(vec3(L) + (e - vec3(L)) * 1.35, 0.0, 1.0);
+  float id = uLookId;
+  vec3 o = e;
+  if (id < 1.5) {                       // two-tone: black → hue → pale, the land in silhouette
+    float g = smoothstep(0.03, 0.92, L * (sky ? 1.0 : uLookLand));
+    o = gradMap3(g, uToneA, uToneB, uToneC);
+  } else if (id < 2.5) {                // high-key black and white with halation
+    float h = 1.0 - exp(-rv_luma(bloomW) * 0.6);
+    float g = clamp((L - 0.025) * 1.32 + h * 0.18, 0.0, 1.0);
+    g = pow(g, 0.72);
+    g = mix(g, g * g * (3.0 - 2.0 * g), 0.55);
+    o = vec3(g);
+  } else if (id < 3.5) {                // flat poster: n value bands → 4-colour palette + ink
+    float q = bands(pow(L, 0.8), uLookBands);
+    o = palette4(q, uToneA, uToneB, uToneC, uToneD);
+  } else if (id < 4.5) {                // candy sky over a near-black land
+    if (sky) { o = clamp(vec3(L) + (e - vec3(L)) * uPLSat, 0.0, 1.0); o = pow(o, vec3(0.9)); }
+    else o = mix(uToneA, e, uLookLand);
+  } else {                              // woodcut: stepped two-colour sky, engraved land
+    if (sky) {
+      float q = bands(L, uLookBands);
+      o = mix(uToneB, uToneC, q);
+    } else {
+      float dk = 1.0 - smoothstep(0.03, 0.55, L);
+      float sp = max(3.0, uRes.y / 180.0);
+      vec2 fc = gl_FragCoord.xy;
+      float s1 = abs(fract((fc.x - fc.y) / sp) - 0.5) * 2.0;
+      float s2 = abs(fract((fc.x + fc.y) / sp) - 0.5) * 2.0;
+      float t = smoothstep(dk - 0.18, dk + 0.18, s1);
+      if (dk > 0.62) t *= smoothstep(dk - 0.62 - 0.12, dk - 0.62 + 0.12, s2 * 0.6);
+      o = mix(uToneA, uToneD, t);
+    }
+  }
+  if (uLookInk > 0.0 && uHasDepth > 0.5) o = mix(o, uToneA, inkEdge(uv) * uLookInk);
+  return mix(o, eSat, acc);
+}
+
 void main(){
   vec2 uv = vUv;
   vec2 dc = uv - 0.5;
+  float dRaw = uHasDepth > 0.5 ? texture2D(tDepth, uv).r : 0.0;
+  bool sky = uHasDepth > 0.5 ? rvp_isSky(dRaw) : true;
+  float dist = sky ? 1e12 : rvp_linDepth(dRaw, uNear, uFar);
   vec3 col;
   if (uChromatic > 0.0) {
     // lateral CA grows with field height: nearly none in the centre, ramping in over the outer ~25 %
@@ -128,6 +212,21 @@ void main(){
     if (uBloomMode < 0.5) col += b * uBloomStrength;
     else col = mix(col, b, uBloomScatter);                     // energy-conserving scatter
     bloomW = texture2D(tBloomWide, uv).rgb;
+  }
+
+  // depth-layered aerial perspective (rule 4): each layer back drifts toward the colour of the sky near
+  // the horizon (metered from the frame), paler and a touch cooler; the sky itself is untouched
+  vec3 hz = vec3(0.0); float hzOk = 0.0;
+  if (uHaze > 0.0 || uDuskDesat > 0.0) {
+    vec4 sm = texture2D(tSky, vec2(0.5));
+    hzOk = smoothstep(0.002, 0.03, sm.a);
+    hz = sm.rgb / max(sm.a, 1e-5);
+    float hl = rv_luma(hz);
+    hz = mix(hz, vec3(hl) * vec3(0.93, 0.98, 1.08), 0.22);
+  }
+  if (uHaze > 0.0 && !sky && hzOk > 0.0) {
+    float h = uHaze * hzOk * (1.0 - exp(-dist / uHazeDist));
+    col = mix(col, hz, h);
   }
 
   // exposure: manual × eye adaptation
@@ -160,12 +259,30 @@ void main(){
     if (uHasDirt > 0.5) col += max(bloomW - 0.8, 0.0) * texture2D(tDirt, uv).r * uDirt;
   }
 
-  // Purkinje shift: in scotopic adaptation dim tones drift toward blue and lose saturation
+  // Purkinje shift: in scotopic adaptation dim tones drift toward indigo (never grey or green) and lose
+  // saturation; the land's dim tones are lifted multiplicatively (black stays 0) so nights stay readable
   if (uPurkinje > 0.0 && uAuto > 0.5) {
-    float night = 1.0 - smoothstep(0.004, 0.05, adaptL);
+    float night = max(1.0 - smoothstep(0.004, 0.05, adaptL), uNightLift);
     float l = rv_luma(col);
     float dim = 1.0 - smoothstep(0.02, 0.6, l);
-    col = mix(col, vec3(l) * vec3(0.72, 0.92, 1.3), night * dim * uPurkinje);
+    col = mix(col, vec3(l) * vec3(0.6, 0.76, 1.62), night * dim * uPurkinje);
+  }
+  if (uNightLift > 0.0 && !sky) {
+    float l = rv_luma(col);
+    col *= 1.0 + uNightLift * (1.0 - smoothstep(0.0, 0.1, l));
+  }
+  // blue hour / dusk: the sky keeps its colour, the land loses it (desaturated toward the sky's hue)
+  if (uDuskDesat > 0.0 && !sky) {
+    float l = rv_luma(col);
+    vec3 skyHue = hzOk > 0.0 ? hz / max(rv_luma(hz), 1e-5) : vec3(0.8, 0.9, 1.2);
+    skyHue = clamp(skyHue, 0.0, 2.5);
+    col = mix(col, l * skyHue, uDuskDesat);
+  }
+  // eclipse: darker, cooler, harder
+  if (uEclipse > 0.0) {
+    float l = rv_luma(col);
+    col = mix(col, l * vec3(0.78, 0.9, 1.28), 0.35 * uEclipse);
+    col *= pow(max(l, 1e-6) / 0.18, 0.22 * uEclipse);
   }
 
   if (uTonemap == 0) col = agx(col);
@@ -183,6 +300,7 @@ void main(){
     vec3 lc = enc * ((uLutSize - 1.0) / uLutSize) + 0.5 / uLutSize;
     enc = texture(tLUT, lc).rgb;
   }
+  if (uLookId > 0.5) enc = photoLook(enc, uv, sky, bloomW);
   gl_FragColor = vec4(enc, 1.0);
 }`;
 

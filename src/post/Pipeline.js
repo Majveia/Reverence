@@ -33,8 +33,9 @@ import { buildLUT, gradeSignature, LUT_SIZE } from './grade.js';
 import { COMPOSITE_FRAG, FINAL_FRAG } from './composite.js';
 import { LegacyPipeline } from './legacy.js';
 import { SMAA } from './smaa.js';
+import { SkyMeter, harmonyFromArt, resolvePhotoLook, PHOTO_LOOKS, PHOTO_LOOK_NAMES } from './looks.js';
 
-export { makeFullscreenMaterial, FullscreenQuad };
+export { makeFullscreenMaterial, FullscreenQuad, PHOTO_LOOKS, PHOTO_LOOK_NAMES };
 
 export const DEFAULT_POST = {
   exposure: 1.0,
@@ -65,6 +66,15 @@ export const DEFAULT_POST = {
   purkinje: 0.35,
   motionBlur: { enabled: 'auto', strength: 0.3 },
   dof: { enabled: false, focus: 0, aperture: 1.0, maxCoc: 28, bokeh: 3 },  // enabled: true | false | 'photo'; maxCoc px @1080p
+  // --- season 2 art direction (system mode only unless set explicitly)
+  harmony: 'auto',         // 'auto' (two hues from body.art.palette + red accent) | false | { hueA, hueB, strength, ... }
+  harmonyStrength: 0.42,   // hue pull toward the nearer anchor for 'auto'
+  haze: { enabled: 'auto', strength: 0.34, distance: 'auto' },  // depth-layered aerial perspective (m; auto = 0.5 × atmosphere height)
+  night: { lift: 0.9 },    // multiplicative lift of the land's dim tones at night (black stays 0) + indigo Purkinje
+  dusk: { desat: 0.5, keyDrop: 0.42 },   // blue hour: land loses colour toward the sky hue; exposure meters for the sky
+  eclipse: 'auto',         // 'auto' = world.space.eclipse | 0..1
+  photoLook: 'none',       // 'none' | 'twotone' | 'bw' | 'poster' | 'candy' | 'woodcut'  (see setPhotoLook)
+  photoLookOpts: null,     // overrides: { toneA, toneB, toneC, toneD (css colours), land, accent, ink, bands, sat, grain }
 };
 
 // Mode-dependent defaults for 'auto' settings.
@@ -116,6 +126,10 @@ export class Pipeline {
     this.taa = null; this.ssao = null;            // created lazily (tier/mode dependent)
     this.ae = new AutoExposure();
     this.lens = new Lens();
+    this.skyMeter = new SkyMeter();
+    this._harm = null; this._harmArt = undefined; this._harmKey = '';
+    this._look = {}; this._lookKey = '';
+    try { this._urlLook = new URL(window.location.href).searchParams.get('look') || null; } catch (_) { this._urlLook = null; }
     this.cam = new CameraFX();
     this._buildBloom();
     this._buildComposite();
@@ -145,6 +159,14 @@ export class Pipeline {
         pipeline: this,
         get stats() { return this.pipeline.stats; },
         meter: () => this.ae.read(this.renderer),
+        G,
+        skyColor: () => {
+          const px = new Uint16Array(4);
+          try { this.renderer.readRenderTargetPixels(this.skyMeter.m1, 0, 0, 1, 1, px); } catch (e) { return String(e); }
+          const f = (i) => THREE.DataUtils.fromHalfFloat(px[i]);
+          const w = Math.max(f(3), 1e-6);
+          return { rgb: [f(0) / w, f(1) / w, f(2) / w].map((x) => +x.toFixed(4)), cov: +f(3).toFixed(4), ambient: G.uAmbientSky.value.toArray().map((x) => +x.toFixed(4)) };
+        },
         sun: () => {
           const px = new Uint16Array(4);
           try { this.renderer.readRenderTargetPixels(this.lens.visB, 0, 0, 1, 1, px); } catch (e) { return String(e); }
@@ -174,7 +196,29 @@ export class Pipeline {
       else s[k] = Array.isArray(v) ? [...v] : v;
     }
   }
-  resetLook() { this.settings = structuredClone(DEFAULT_POST); }
+  resetLook() {
+    // the photo look is the player's choice: it survives mode changes
+    const pl = this.settings?.photoLook, po = this.settings?.photoLookOpts;
+    this.settings = structuredClone(DEFAULT_POST);
+    if (pl) { this.settings.photoLook = pl; this.settings.photoLookOpts = po ?? null; }
+  }
+
+  /**
+   * Photo-mode look (UI): 'none' | 'twotone' | 'bw' | 'poster' | 'candy' | 'woodcut'.
+   * opts overrides tones (css colours) and parameters, e.g. setPhotoLook('twotone', { toneB: '#ff2a8a' }).
+   * Also selectable by URL: &look=poster
+   */
+  setPhotoLook(name = 'none', opts = null) {
+    this.settings.photoLook = PHOTO_LOOKS[name] ? name : 'none';
+    this.settings.photoLookOpts = opts || null;
+    return this.settings.photoLook;
+  }
+  /** Next look in PHOTO_LOOK_NAMES (for a single UI button / key). Returns the new name. */
+  cyclePhotoLook(dir = 1) {
+    const n = PHOTO_LOOK_NAMES, i = Math.max(0, n.indexOf(this.settings.photoLook || 'none'));
+    return this.setPhotoLook(n[(i + n.length + dir) % n.length]);
+  }
+  get photoLooks() { return PHOTO_LOOK_NAMES; }
 
   setSize(w, h) {
     this.width = w; this.height = h;
@@ -312,6 +356,10 @@ export class Pipeline {
       uGhosts: { value: 1 }, uStarburst: { value: 1 }, uStreak: { value: 0.3 }, uHalo: { value: 1 }, uDirt: { value: 0.5 },
       uSSGhost: { value: 0 }, uHasDirt: { value: this.lens.dirt ? 1 : 0 }, uFlareRot: { value: 0.2 },
       uPurkinje: { value: 0 }, uTonemapHue: { value: 0.6 },
+      tDepth: { value: this.depthTexture }, tSky: { value: this.skyMeter.texture }, uHasDepth: { value: 0 }, uNear: { value: 0.1 }, uFar: { value: 1e9 },
+      uHaze: { value: 0 }, uHazeDist: { value: 5000 }, uTwilight: { value: 0 }, uNightLift: { value: 0 }, uEclipse: { value: 0 }, uDuskDesat: { value: 0 },
+      uLookId: { value: 0 }, uLookLand: { value: 1 }, uLookAccent: { value: 0 }, uLookInk: { value: 0 }, uLookBands: { value: 4 }, uPLSat: { value: 1 }, uInkWidth: { value: 1.5 },
+      uToneA: { value: new THREE.Vector3() }, uToneB: { value: new THREE.Vector3(1, 0, 0.5) }, uToneC: { value: new THREE.Vector3(1, 1, 1) }, uToneD: { value: new THREE.Vector3(1, 1, 1) },
     });
     this.finalMat = makeFullscreenMaterial(FINAL_FRAG, {
       tSrc: { value: this.ldrRT.texture }, uInvRes: { value: new THREE.Vector2(1 / this.width, 1 / this.height) },
@@ -551,7 +599,20 @@ export class Pipeline {
     const night = modeName === 'system' ? THREE.MathUtils.clamp(G.uNight.value || 0, 0, 1) : 0;
     // (moderate drop: the deep-blue night sky and moonlit ground must stay readable; OLED black
     //  stays black because exposure is multiplicative and the meter ignores black pixels)
-    const aeKey = this._resolve(aes.key, prof.key) * (1 - (aes.nightDrop ?? 0.32) * night);
+    // season 2 world state (all optional neighbours)
+    const world = modeName === 'system' ? eng.director?.current?.world : null;
+    const atm = world ? (world.get?.('atmosphere') || world.atmosphere || null) : null;
+    const space = world ? (world.get?.('space') || world.space || null) : null;
+    const water = world ? (world.get?.('water') || null) : null;
+    const spaceK0 = this._spaceK(modeName);
+    const twilight = atm ? THREE.MathUtils.clamp(+atm.twilight || 0, 0, 1) * (1 - spaceK0) : 0;
+    const ecl = THREE.MathUtils.clamp(s.eclipse === 'auto' || s.eclipse == null ? (+space?.eclipse || 0) : +s.eclipse || 0, 0, 1) * (1 - spaceK0);
+    const wth = atm?.weather;
+    const overcast = THREE.MathUtils.clamp((+wth?.overcast || 0) * (+wth?.storm || 0), 0, 1);
+    const dusk = s.dusk || {};
+    const aeKey = this._resolve(aes.key, prof.key) * (1 - (aes.nightDrop ?? 0.32) * night)
+      * (1 - (dusk.keyDrop ?? 0.42) * twilight)     // blue hour: meter for the sky, the land goes dark
+      * (1 - 0.35 * overcast) * (1 - 0.4 * ecl);
     if (aeOn) {
       const o = this._aeOpts || (this._aeOpts = {});
       Object.assign(o, aes); o.key = aeKey;
@@ -570,8 +631,16 @@ export class Pipeline {
     }
 
     // ---- grade LUT (rebuilt only when the grade changes)
-    const sig = gradeSignature(s);
-    if (sig !== this._lutSig) { this._lutSig = sig; try { buildLUT(s, this.lut); } catch (e) { console.error('[pipeline] LUT build failed', e); } }
+    const harm = this._harmony(modeName, world);
+    const sig = gradeSignature(s, harm);
+    if (sig !== this._lutSig) { this._lutSig = sig; try { buildLUT(s, this.lut, harm); } catch (e) { console.error('[pipeline] LUT build failed', e); } }
+
+    // ---- sky colour meter (haze colour for aerial perspective and the dusk land tint)
+    const hz = s.haze || {};
+    const under = !!water?.under;
+    const hazeOn = !!this._resolve(hz.enabled, modeName === 'system') && persp && !under && spaceK0 < 0.999;
+    const duskDesat = (dusk.desat ?? 0.5) * twilight * (under ? 0 : 1);
+    if (hazeOn || duskDesat > 0) { try { this.skyMeter.update(r, this.quad, hdr.texture, this.depthTexture); } catch (e) { /* optional */ } }
 
     // ---- composite
     const u = this.compositeMat.uniforms;
@@ -608,6 +677,18 @@ export class Pipeline {
     u.uStreak.value = f.streak ?? 0.3; u.uDirt.value = flareOn ? (f.dirt ?? 0.3) : 0;
     u.uSSGhost.value = flareOn ? (f.ssGhosts ?? 0.012) : 0;
     u.uPurkinje.value = aeOn ? (s.purkinje ?? 0) : 0;
+    // season 2: depth-aware grade
+    u.tDepth.value = this.depthTexture; u.tSky.value = this.skyMeter.texture;
+    u.uHasDepth.value = persp ? 1 : 0;
+    u.uNear.value = this.motion.near; u.uFar.value = this.motion.far;
+    const atmH = Math.max(500, G.uAtmosphereRadius.value - G.uPlanetRadius.value);
+    u.uHaze.value = hazeOn ? (hz.strength ?? 0.34) * (1 - spaceK0) * (1 - 0.75 * night) : 0;
+    u.uHazeDist.value = typeof hz.distance === 'number' ? Math.max(1, hz.distance) : atmH * 0.5;
+    u.uTwilight.value = twilight; u.uDuskDesat.value = duskDesat;
+    u.uNightLift.value = aeOn && modeName === 'system' && !under ? (s.night?.lift ?? 0.9) * night * (1 - spaceK0) : 0;
+    u.uEclipse.value = ecl;
+    this._applyPhotoLook(u, world);
+    st.harmony = !!harm; st.haze = hazeOn; st.look = this._look.name || 'none';
     this.quad.draw(r, this.compositeMat, this.ldrRT);
 
     // ---- spatial AA (display-encoded): SMAA 1x on low/med; on TAA tiers SMAA cleans up a young
@@ -634,12 +715,48 @@ export class Pipeline {
     const fu = this.finalMat.uniforms;
     fu.uMode.value = mode;
     fu.uSharpen.value = s.taa?.sharpen ?? 0.35;
-    fu.uGrain.value = s.grain ?? 0;
+    fu.uGrain.value = this._look.id > 0 && this._look.grain != null ? this._look.grain : (s.grain ?? 0);
     fu.tSrc.value = ldr.texture;
     this.quad.draw(r, this.finalMat, null);
 
     st.taa = useTAA; st.ssao = this._ssaoOn; st.ae = aeOn; st.flare = +flareVis.toFixed(3); st.samples = samples;
     st.dof = dofOn; st.aa = aa; st.mode = modeName; st.ms = +(performance.now() - t0).toFixed(1);
+  }
+
+  /** Two-hue harmony for the grade LUT: 'auto' derives it from the current body's art palette (system mode). */
+  _harmony(modeName, world) {
+    const h = this.settings.harmony;
+    if (!h) return null;
+    if (typeof h === 'object') return h;
+    if (modeName !== 'system') return null;
+    const art = world?.body?.art || null;
+    const k = this.settings.harmonyStrength ?? 0.42;
+    if (art !== this._harmArt || k !== this._harmK) {
+      this._harmArt = art; this._harmK = k;
+      this._harm = art ? harmonyFromArt(art, k) : null;
+    }
+    return this._harm;
+  }
+
+  _applyPhotoLook(u, world) {
+    const s = this.settings;
+    let name = s.photoLook && s.photoLook !== 'none' ? s.photoLook : (this._urlLook || 'none');
+    if (!PHOTO_LOOKS[name]) name = 'none';
+    const art = world?.body?.art || null;
+    const opts = s.photoLookOpts;
+    const key = name + '|' + (art?.key || '') + '|' + (opts ? JSON.stringify(opts) : '');
+    if (key !== this._lookKey) {
+      this._lookKey = key;
+      this._look = resolvePhotoLook(name, opts || {}, art, {});
+      this._look.name = name;
+      const L = this._look;
+      u.uToneA.value.fromArray(L.toneA); u.uToneB.value.fromArray(L.toneB);
+      u.uToneC.value.fromArray(L.toneC); u.uToneD.value.fromArray(L.toneD);
+      u.uLookLand.value = L.land; u.uLookAccent.value = L.accent; u.uLookInk.value = L.ink;
+      u.uLookBands.value = Math.max(2, L.bands); u.uPLSat.value = L.sat;
+    }
+    u.uLookId.value = this._look.id || 0;
+    u.uInkWidth.value = (this._look.inkWidth ?? 1.5) * Math.max(0.75, this.height / 720);
   }
 
   /** 0 on the ground / inside the atmosphere … 1 in space above the current body (system mode). */
@@ -671,6 +788,7 @@ export class Pipeline {
     this.sceneRT.dispose(); this.pingRT.dispose(); this.pongRT.dispose(); this.ldrRT.dispose(); this.postA.dispose();
     for (const rt of this.bloomMips) rt.dispose();
     for (const e of this.effects) e.dispose?.();
+    this.skyMeter?.dispose();
     this.taa?.dispose(); this.ssao?.dispose(); this.smaa?.dispose(); this.ldrB?.dispose(); this.ae.dispose(); this.lens.dispose(); this.cam.dispose();
     this.lut?.dispose();
     this.compositeMat.dispose(); this.finalMat.dispose(); this.bloomPrefilter.dispose(); this.bloomDown.dispose(); this.bloomUp.dispose();
