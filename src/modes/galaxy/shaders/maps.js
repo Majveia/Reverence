@@ -202,7 +202,7 @@ void main(){
     float dl = (b.y - off + uBar.y * 0.18 * n2) / (uBar.x * 0.026 * (0.7 + 0.9 * ax));
     float barStr = rv_ridged(vec3(b.x / uBar.x * 9.0, (b.y - off) / uBar.x * 70.0, 19.0 + uSeedF), 3);
     float barLane = exp(-0.5 * dl * dl) * smoothstep(0.07, 0.2, ax) * (1.0 - smoothstep(0.8, 1.08, ax));
-    dust += 1.4 * barLane * (0.35 + 0.9 * smoothstep(0.3, 0.8, barStr));
+    dust += 0.9 * barLane * (0.35 + 0.9 * smoothstep(0.3, 0.8, barStr));
     // star-formation desert swept by the bar: the disk inside the bar radius is dimmer
     float me = (b.x * b.x) / (uBar.x * uBar.x) + (b.y * b.y) / (uBar.y * uBar.y * 2.5);
     old *= 1.0 - 0.8 * (1.0 - smoothstep(0.85, 1.2, r / uBar.x)) * smoothstep(0.5, 1.3, me);

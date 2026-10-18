@@ -64,7 +64,7 @@ void main(){
 }`;
 
 // Foreground stars (our own galaxy's field stars between us and the target, as in every Hubble / JWST
-// frame): thousands of sharp point sources with a power-law count N(>F) ∝ F^-1.25, blackbody
+// frame): thousands of sharp point sources with a power-law count N(>F) ∝ F^-1.4, blackbody
 // colours, and analytic diffraction spikes (Hubble-like 4-point cross) whose length grows with flux.
 // Drawn after the galaxy (they are in front of it). Fades out when the camera dives into a galaxy.
 const FG_VERT = /* glsl */ `
@@ -105,7 +105,7 @@ void main(){
   float halo = 0.18 / (3.14159265 * 6.0 * (1.0 + r2 / 6.0) * (1.0 + r2 / 6.0));
   vec2 a = abs(q);
   float len = 1.0 + 3.2 * sqrt(vFlux);
-  float spike = (exp(-a.y * a.y * 2.2) * exp(-a.x / len) + exp(-a.x * a.x * 2.2) * exp(-a.y / len)) * 0.012 * smoothstep(3.0, 20.0, vFlux);
+  float spike = (exp(-a.y * a.y * 2.2) * exp(-a.x / len) + exp(-a.x * a.x * 2.2) * exp(-a.y / len)) * 0.01 * smoothstep(5.0, 30.0, vFlux);
   float edge = 1.0 - smoothstep(0.75, 1.0, length(vQ) / vHalf);
   gl_FragColor = vec4(vCol * vFlux * (core + halo + spike) * edge, 1.0);
 }`;
@@ -171,8 +171,8 @@ export class Backdrop {
     };
     for (let i = 0; i < nFg; i++) {
       const z = r.range(-1, 1), a = r.range(0, Math.PI * 2), s2 = Math.sqrt(1 - z * z);
-      // power-law counts N(>F) ∝ F^-1.25: a handful of bright stars with spikes, hundreds of faint ones
-      const F = Math.min(140, 0.6 * Math.pow(Math.max(1e-6, r.next()), -0.8));
+      // power-law counts N(>F) ∝ F^-1.4: a handful of bright stars with spikes, hundreds of faint ones
+      const F = Math.min(50, 0.6 * Math.pow(Math.max(1e-6, r.next()), -0.72));
       fd.set([s2 * Math.cos(a), z, s2 * Math.sin(a), F], i * 4);
       const u = r.next();
       const T = u < 0.55 ? r.range(3600, 5600) : u < 0.85 ? r.range(5600, 7500) : r.range(7500, 16000);

@@ -99,9 +99,9 @@ float rvPattern(vec3 P, float u, float dors, float part){
     m = smoothstep(th * 0.25, th * 0.25 + 0.06, wv.y - wv.x);
     m *= smoothstep(-0.95, -0.4, dors);
   } else if (type < 4.5) {    // dorsal saddle + flank band
-    float band = smoothstep(0.35, 0.55, dors + (rvFbm(P * sc) - 0.5) * 0.4);
-    float flank = smoothstep(0.07, 0.0, abs(dors + 0.1 + (rvVN(P * sc * 2.0) - 0.5) * 0.15) - 0.05);
-    m = max(band, flank * 0.75);
+    float band = smoothstep(0.3, 0.62, dors + (rvFbm(P * sc) - 0.5) * 0.45);
+    float flank = smoothstep(0.13, 0.0, abs(dors + 0.1 + (rvFbm(P * sc * 1.6) - 0.5) * 0.22) - 0.03);
+    m = max(band, flank * 0.7) * (0.8 + 0.2 * rvVN(P * sc * 3.0));
   } else if (type < 5.5) {    // dapples (fawn spots)
     vec2 wv = rvWor(P * sc * 1.6);
     m = (1.0 - smoothstep(0.16, 0.24, wv.x)) * smoothstep(0.0, 0.5, dors) ;
@@ -231,13 +231,15 @@ const FRAG_NORMAL = /* glsl */`
 #include <normal_fragment_maps>
 if (rvBumpAmt > 0.001) {
   // fur strands / skin pores / scales, faded by pixel footprint to avoid shimmer
-  vec3 bp = vRest * vec3(90.0, 90.0, 30.0) * (0.6 + pSurf.w);
+  vec3 bp = vRest * vec3(110.0, 110.0, 26.0) * (0.6 + pSurf.w);
   float fw = length(fwidth(bp));
   float fade = 1.0 - smoothstep(0.18, 0.55, fw);
   if (fade > 0.001) {
     float h = rvVN(bp) * 0.6 + (rvVN(bp * 2.3) - 0.5) * 0.4 * (1.0 - smoothstep(0.08, 0.24, fw)) + 0.2;
     if (rvMat > 3.5 && rvMat < 4.5) h = rvWor(vRest * 24.0).x;
-    normal = normalize(mix(normal, rvBump(-vViewPosition, normal, h * rvBumpAmt * 0.012), fade));
+    // fur: finer, gentler strands (a strong bump reads as bark / stucco); scales & carapace keep it
+    float bk = mix(1.0, 0.45, clamp(pSurf.w, 0.0, 1.0) * (rvMat < 0.5 ? 1.0 : 0.0));
+    normal = normalize(mix(normal, rvBump(-vViewPosition, normal, h * rvBumpAmt * 0.012 * bk), fade));
   }
 }
 `;
@@ -279,6 +281,15 @@ const FRAG_LIGHT = /* glsl */`
   float rim = pow(1.0 - ndv, 3.0);
   reflectedLight.indirectDiffuse += diffuseColor.rgb * amb * rim * rvSheen * 1.6 * ao;
   reflectedLight.directDiffuse += diffuseColor.rgb * rvSunColor * rim * rvSheen * 0.35 * clamp(dot(N, Lv) + 0.5, 0.0, 1.0);
+  // fur / soft skin: light scattered in the coat wraps past the terminator (no hard plastic edge)
+  // and the coat is a poor specular reflector except at grazing angles (handled by the sheen)
+  {
+    float furK = clamp(pSurf.w, 0.0, 1.0) * (rvMat < 0.5 ? 1.0 : 0.0);
+    float nl = dot(N, Lv);
+    float wrapD = clamp((nl + 0.5) / 1.5, 0.0, 1.0) - clamp(nl, 0.0, 1.0);
+    reflectedLight.directDiffuse += diffuseColor.rgb * rvSunColor * wrapD * 0.42 * furK * ao;
+    reflectedLight.directSpecular *= 1.0 - 0.55 * furK;
+  }
   // translucency: sun shining through thin parts (ears, membranes, fins, jelly)
   float back = pow(clamp(dot(-V, Lv), 0.0, 1.0), 3.0);
   float wrap = clamp(-dot(N, Lv) * 0.6 + 0.4, 0.0, 1.0);

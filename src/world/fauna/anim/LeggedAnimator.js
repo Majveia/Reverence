@@ -73,20 +73,29 @@ export class LeggedAnimator {
 
   /** Find neck/head pitch so the muzzle reaches the ground when grazing (FK on rest skeleton). */
   _calibrateGraze() {
+    // Grazing pose = neck base swings down (a), mid-neck curls a little more (0.2a), and the head
+    // un-bends so it ends up pointing ~95° down (muzzle in the grass, forehead forward) whatever the
+    // neck angle: a rigidly attached head would otherwise rotate past vertical and point backwards.
     const rig = this.rig;
-    const hp = rig.headP, nb = rig.neckBase, nm = rig.neckMid;
+    const hp = rig.headP, nb = rig.neckPivot || rig.neckBase, nm = rig.neckMid, hip = rig.hipP;
     const tip = [hp[0] + rig.headDir[0] * rig.Lh, hp[1] + rig.headDir[1] * rig.Lh, hp[2] + rig.headDir[2] * rig.Lh];
+    const headPitch0 = (rig.g.headPitch || 30) * Math.PI / 180;
+    this.grazeHeadTotal = (this.kind === 'giant' ? 70 : 95) * Math.PI / 180 - headPitch0;
+    this.grazeBody = this.kind === 'giant' ? 0.03 : 0.09;          // nose-down body pitch (front legs flex)
+    const rot = (p, c, ang) => { const y = p[1] - c[1], z = p[2] - c[2]; const cs = Math.cos(ang), sn = Math.sin(ang); return [p[0], c[1] + y * cs - z * sn, c[2] + y * sn + z * cs]; };
+    // the bend is shared by the neck base and mid-neck: the neck arcs down (swan curve) and the
+    // withers barely move (a single hinge at the base leaves a ledge over the shoulders)
+    const K1 = this.grazeK1 = 0.62, K2 = this.grazeK2 = 0.5;
     const muzzleY = (a) => {
-      // neck1 pitch a*0.55 about nb, neck2 a*0.25 about nm, head a*0.35 about hp (pitch = rotation about X)
-      const rot = (p, c, ang) => { const y = p[1] - c[1], z = p[2] - c[2]; const cs = Math.cos(ang), sn = Math.sin(ang); return [p[0], c[1] + y * cs - z * sn, c[2] + y * sn + z * cs]; };
-      let t = rot(tip, hp, a * 0.4), h = hp, m = nm;
-      t = rot(t, m, a * 0.18); h = rot(h, m, a * 0.18);
-      t = rot(t, nb, a * 0.55); h = rot(h, nb, a * 0.55); m = rot(m, nb, a * 0.55);
-      return t[1] - rig.hhAbs * 0.4;
+      let t = rot(tip, hp, this.grazeHeadTotal - a * (K1 + K2)), h = hp, m = nm, n0 = nb;
+      t = rot(t, m, a * K2); h = rot(h, m, a * K2);
+      t = rot(t, n0, a * K1); h = rot(h, n0, a * K1); m = rot(m, n0, a * K1);
+      t = rot(t, hip, this.grazeBody);
+      return t[1] - rig.hhAbs * 0.3;
     };
-    let lo = 0, hi = 2.4;
-    for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2; if (muzzleY(mid) > rig.S * 0.02) lo = mid; else hi = mid; }
-    this.grazeA = Math.min(lo, 1.9);
+    let lo = 0, hi = 3.4;
+    for (let i = 0; i < 26; i++) { const mid = (lo + hi) / 2; if (muzzleY(mid) > rig.S * 0.02) lo = mid; else hi = mid; }
+    this.grazeA = lo;
     if (this.kind === 'giant') this.grazeA *= 0.62;   // giants browse bushes / low trees
   }
 
@@ -232,7 +241,7 @@ export class LeggedAnimator {
     // pelvis local translation (root-local up)
     c.rear = (c.rear || 0) + ((c.rearTarget || 0) - (c.rear || 0)) * damp((c.rearTarget || 0) > (c.rear || 0) ? 4 : 6, dt);
     const rear = c.rear * c.rear * (3 - 2 * c.rear);
-    qeuler(lq, B.PELVIS * 4, sway * 0.6 - c.turn * 0.05, c.bodyPitch + gallopRock + (c.lean || 0) + c.graze * 0.05 - rear * 1.2, sway * 0.5 + c.bodyRoll);
+    qeuler(lq, B.PELVIS * 4, sway * 0.6 - c.turn * 0.05, c.bodyPitch + gallopRock + (c.lean || 0) + c.graze * this.grazeBody - rear * 1.2, sway * 0.5 + c.bodyRoll);
     qeuler(lq, B.SPINE * 4, -c.turn * 0.12 - sway * 0.5, -gallopRock * 0.3 + breathe * 0.4, 0);
     qeuler(lq, B.CHEST * 4, -c.turn * 0.12 - sway * 0.4, -gallopRock * 0.4 - breathe, -sway * 0.3);
     // -------------------------------------------------- neck & head (graze + look + idle)
@@ -261,9 +270,10 @@ export class LeggedAnimator {
     const runNeck = gw[2] * 0.3 * (moving ? 1 : 0);
     // graze: the (slim) neck swings down from the withers almost straight (base 55 %, mid 18 %) and
     // the head tips toward vertical (40 %): neck, throat and jaw read as separate masses, not one tube
-    qeuler(lq, B.NECK1 * 4, c.hy * 0.3, g * 0.55 + c.hp * 0.3 + walkNod * 0.5 + runNeck + rear * 0.55, 0);
-    qeuler(lq, B.NECK2 * 4, c.hy * 0.3, g * 0.18 + c.hp * 0.3 + walkNod * 0.3 + rear * 0.3, 0);
-    qeuler(lq, B.HEAD * 4, c.hy * 0.4, g * 0.4 + c.hp * 0.4 - walkNod * 0.6 + chew - runNeck * 0.8 + rear * 0.3, -c.hy * 0.15);
+    const gHead = c.graze * this.grazeHeadTotal - g * (this.grazeK1 + this.grazeK2);
+    qeuler(lq, B.NECK1 * 4, c.hy * 0.3, g * this.grazeK1 + c.hp * 0.3 + walkNod * 0.5 + runNeck + rear * 0.55, 0);
+    qeuler(lq, B.NECK2 * 4, c.hy * 0.3, g * this.grazeK2 + c.hp * 0.3 + walkNod * 0.3 + rear * 0.3, 0);
+    qeuler(lq, B.HEAD * 4, c.hy * 0.4, gHead + c.hp * 0.4 - walkNod * 0.6 + chew - runNeck * 0.8 + rear * 0.3, -c.hy * 0.15);
     // ears
     c.earT += dt;
     const flick = Math.max(0, Math.sin(c.earT * 0.9 + c.seed * 9) - 0.93) * 12;

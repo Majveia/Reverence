@@ -824,5 +824,25 @@ export function galaxyNebulae(galaxy) {
   return list;
 }
 
+/**
+ * Display palette of a galaxy as the galaxy mode renders it (linear RGB, max channel = 1): saturated
+ * population colours (gold bulge, OB-blue arms, Hα-magenta HII, umber dust) tinted by the Universe record.
+ * For UI portraits / map cards / sky renderers that want to match the galaxy view. Pure, cheap.
+ */
+export function galaxyDisplayColors(galaxy) {
+  const S = galaxyStructure(galaxy);
+  const c = S.colors || { core: [1, 0.7, 0.4], arms: [0.5, 0.65, 1], hii: [1, 0.3, 0.5], dust: [0.3, 0.2, 0.1] };
+  const mix = (a, b, t) => a.map((v, i) => v * (1 - t) + b[i] * t);
+  const sat = (a, k) => { const l = 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]; return a.map((v) => Math.max(0, l + (v - l) * k)); };
+  const nrm = (a) => { const m = Math.max(a[0], a[1], a[2], 1e-6); return a.map((v) => v / m); };
+  const early = S.type === 'lenticular' || S.type === 'elliptical';
+  return {
+    core: nrm(mix(early ? [1.0, 0.82, 0.62] : [1.0, 0.7, 0.44], c.core, 0.2)),
+    arms: nrm(sat(mix([0.16, 0.4, 1.0], c.arms, 0.25), 1.35)),
+    hii: nrm(sat(mix([1.0, 0.12, 0.34], c.hii, 0.2), 1.2)),
+    dust: nrm(mix([0.45, 0.24, 0.1], c.dust, 0.3)),
+  };
+}
+
 /** Globular clusters (ly, galaxy frame; halo — almost static). */
 export function globularClusters(galaxy) { return galaxyStructure(galaxy).gc; }

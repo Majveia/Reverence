@@ -311,7 +311,7 @@ export class School {
     const P = env.player;
     // leaping
     this.jumpT -= dt;
-    if (this.jumpT <= 0) {
+    if (this.jumpT <= 0 && !o.noLeap) {
       this.jumpT = this.showy ? this.rng.range(0.25, 0.55) : this.rng.range(2.5, 8);
       for (let q = this.showy ? 2 : 1; q > 0; q--) {
       const j = M[Math.floor(this.rng.next() * n)];

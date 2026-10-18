@@ -103,7 +103,7 @@ class Space {
     s.angularRadius = this.star ? this.star.angularRadius : 0.005;
     // horizon occlusion by the current body (sea-level sphere) + eclipses by other bodies
     const camR = ctx.camLocal.length();
-    const R = w.body.radius;
+    const R = this._visRadius();
     const up = _v.copy(ctx.camLocal).divideScalar(Math.max(camR, 1));
     const sinDip = Math.sqrt(Math.max(0, 1 - (R * R) / Math.max(camR * camR, R * R)));
     const elev = up.dot(s.dir) + sinDip;      // > 0 : above the geometric horizon
@@ -119,6 +119,12 @@ class Space {
       s.screen.set((_v2.x / -_v2.z) * f / cam.aspect, (_v2.y / -_v2.z) * f);
       s.onScreen = Math.abs(s.screen.x) < 1.2 && Math.abs(s.screen.y) < 1.2;
     }
+  }
+
+  /** Radius of the current body's visible disk (a gas giant's drawn cloud deck sits above body.radius). */
+  _visRadius() {
+    if (this._curEntry === undefined) this._curEntry = this.bodies.find((e) => e.isCurrent && e.visR) || null;
+    return this._curEntry ? this._curEntry.visR : this.world.body.radius;
   }
 
   /** Fraction of the star disk visible from a planet-local point (eclipses by moons/planets). */
@@ -231,7 +237,7 @@ class Space {
   orbitLimbShot(offDeg = 0.3, rollDeg = 0) {
     const o = this.world.player?.cam?.orbit;
     if (!o) return false;
-    const R = this.world.body.radius;
+    const R = this._visRadius();
     const d = Math.max(this.ctx.camLocal.length(), R * 1.001);
     const limb = Math.asin(Math.min(1, R / d)) * 180 / Math.PI;
     return this.orbitSunShot(limb + offDeg, rollDeg);

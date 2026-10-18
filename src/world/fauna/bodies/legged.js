@@ -21,12 +21,14 @@ export function leggedGenome(rng, kind, style = {}) {
     g.bodyLen = r2(rng, 0.78, 1.12);
     g.depthK = r2(rng, 0.9, 1.05);
     g.widthK = r2(rng, 0.36, 0.5);
-    g.neckLen = r2(rng, 0.5, 0.78);
-    g.neckAng = r2(rng, 44, 64);
-    g.neckW = r2(rng, 0.18, 0.25);
-    g.headLen = r2(rng, 0.3, 0.4);
-    g.headW = r2(rng, 0.13, 0.17);
-    g.headH = r2(rng, 0.16, 0.21);
+    // proportions after antelope / deer anatomy: the head is only ~1.3x the throat depth (a bigger
+    // head reads as a bobble-head toy), the neck is a deep wedge rising from the brisket & withers
+    g.neckLen = r2(rng, 0.46, 0.66);
+    g.neckAng = r2(rng, 46, 62);
+    g.neckW = r2(rng, 0.23, 0.3);
+    g.headLen = r2(rng, 0.28, 0.35);
+    g.headW = r2(rng, 0.095, 0.12);
+    g.headH = r2(rng, 0.115, 0.145);
     g.headPitch = r2(rng, 30, 48);
     g.snout = r2(rng, 0.45, 0.75);
     g.tailLen = rng.pick([r2(rng, 0.12, 0.25), r2(rng, 0.3, 0.6), r2(rng, 0.55, 0.9)]);
@@ -219,7 +221,10 @@ export function leggedRig(g) {
   bone('pelvis', 0, hipP);
   bone('spine', 1, midP);
   bone('chest', 2, shP);
-  bone('neck1', 3, neckBase);
+  // grazers swing the neck about a pivot on the TOP line at the withers: the skin there (inner side
+  // of the bend when the head goes down) barely moves, so no ledge / pinch forms over the shoulders
+  const neckPivot = g.kind === 'grazer' ? add(add(neckBase, V(0, 1, 0), D * g.neckW * 1.5), bodyAxis, -D * 0.12) : neckBase;
+  bone('neck1', 3, neckPivot);
   bone('neck2', 4, neckMid);
   bone('head', 5, headP);
   // ears / antennae attach at the top-back of the head (head frame: headDir forward, headUp up)
@@ -311,7 +316,7 @@ export function leggedRig(g) {
   const pivots = new Float32Array(bones.length * 3);
   bones.forEach((b, i) => { pivots[i * 3] = b.pivot[0]; pivots[i * 3 + 1] = b.pivot[1]; pivots[i * 3 + 2] = b.pivot[2]; });
   return {
-    g, S, D, W, BL, yB, hipP, shP, midP, bodyAxis, neckBase, neckMid, neckDir, headP, headDir, headUp, hwAbs, hhAbs, Lh, Ln, tailPts, Lt,
+    g, S, D, W, BL, yB, hipP, shP, midP, bodyAxis, neckBase, neckPivot, neckMid, neckDir, headP, headDir, headUp, hwAbs, hhAbs, Lh, Ln, tailPts, Lt,
     bones, pivots, legs, arms, nb: bones.length,
     height: Math.max(S, headP[1] + S * g.headH * 0.5),
     length: len(sub(headP, tailPts[3])) + Lh,
@@ -352,20 +357,35 @@ export function leggedGeometry(rig, lod = 0) {
     C(add(add(hipP, ax, -D * 0.5), up, D * 0.04), W * 0.62, D * 0.36, D * 0.34);
     C(add(add(hipP, ax, -D * 0.28), up, D * 0.02), W * 0.84, D * 0.46, D * 0.42);
     C(add(hipP, ax, -D * 0.02), W * 0.95, D * 0.5, D * 0.46);
-    C(add(lerp3(hipP, shP, 0.42), up, -D * 0.03), W * 0.88, D * 0.46, D * 0.44 * (1 + belly));
-    C(add(lerp3(hipP, shP, 0.68), up, -D * 0.06), W * 0.98, D * 0.47, D * 0.54 * (1 + belly));
+    C(add(lerp3(hipP, shP, 0.4), up, -D * 0.0), W * 0.86, D * 0.45, D * 0.4 * (1 + belly * 1.6));     // flank / tuck-up
+    C(add(lerp3(hipP, shP, 0.68), up, -D * 0.07), W * 0.98, D * 0.47, D * 0.57 * (1 + belly));         // deep rib cage
     C(add(add(shP, ax, -D * 0.2), up, hump * D * 0.12), W * 1.0, D * (0.52 + hump * 0.3), D * 0.5);
     C(add(add(shP, ax, D * 0.18), up, D * 0.08 + hump * D * 0.08), W * 0.78, D * (0.46 + hump * 0.15), D * 0.44);
   }
   // neck
   const nb = rig.neckBase, nd = rig.neckDir, Ln = rig.Ln;
   const thin = giant ? 1 : hexa ? 1.1 : 0.82;       // grazers: slim necks that read against the torso
-  const tk = giant ? 1 : hexa ? 1.1 : 0.84;         // neck depth factor (grazers: clearly thinner than the chest)
-  C(add(nb, nd, -D * 0.02), nW * 1.3 * thin, nW * 1.55 * tk, nW * 1.7 * tk);
-  C(add(nb, nd, Ln * 0.28), nW * 0.95 * thin, nW * 1.1 * tk, nW * 1.2 * tk);
-  C(add(nb, nd, Ln * 0.62), nW * 0.78 * thin, nW * 0.9 * tk, nW * 0.95 * tk);
-  C(add(nb, nd, Ln * 0.95), nW * 0.68 * thin, nW * 0.8 * tk, nW * 0.78 * tk);
-  C(add(add(nb, nd, Ln), rig.headDir, rig.Lh * 0.1), nW * 0.6 * thin, nW * 0.7 * tk, nW * 0.66 * tk);
+  const tk = giant ? 1 : hexa ? 1.1 : g.kind === 'grazer' ? 0.84 : 1;   // neck depth factor
+  if (g.kind === 'hopper' || g.kind === 'critter') {
+    C(add(nb, nd, -D * 0.02), nW * 1.45, nW * 1.7, nW * 1.6);
+    C(add(nb, nd, Ln * 0.3), nW * 1.12, nW * 1.35, nW * 1.25);
+    C(add(nb, nd, Ln * 0.65), nW * 0.98, nW * 1.18, nW * 1.1);
+    C(add(nb, nd, Ln * 0.98), nW * 0.9, nW * 1.08, nW * 1.02);
+    C(add(add(nb, nd, Ln), rig.headDir, rig.Lh * 0.1), nW * 0.72, nW * 0.85, nW * 0.8);
+  } else if (g.kind !== 'grazer') {
+    C(add(nb, nd, -D * 0.02), nW * 1.3 * thin, nW * 1.55 * tk, nW * 1.7 * tk);
+    C(add(nb, nd, Ln * 0.28), nW * 0.95 * thin, nW * 1.1 * tk, nW * 1.2 * tk);
+    C(add(nb, nd, Ln * 0.62), nW * 0.78 * thin, nW * 0.9 * tk, nW * 0.95 * tk);
+    C(add(nb, nd, Ln * 0.95), nW * 0.68 * thin, nW * 0.8 * tk, nW * 0.78 * tk);
+    C(add(add(nb, nd, Ln), rig.headDir, rig.Lh * 0.1), nW * 0.6 * thin, nW * 0.7 * tk, nW * 0.66 * tk);
+  } else {
+    // deep wedge: broad base sunk into brisket & withers, tapering to a slim throat latch
+    C(add(add(nb, nd, -D * 0.06), up, -D * 0.04), nW * 1.45 * thin, nW * 1.75, nW * 2.05);
+    C(add(nb, nd, Ln * 0.22), nW * 1.08 * thin, nW * 1.22, nW * 1.42);
+    C(add(nb, nd, Ln * 0.55), nW * 0.84 * thin, nW * 0.92, nW * 1.04);
+    C(add(nb, nd, Ln * 0.9), nW * 0.7 * thin, nW * 0.78, nW * 0.84);
+    C(add(add(nb, nd, Ln), rig.headDir, rig.Lh * 0.08), nW * 0.62 * thin, nW * 0.72, nW * 0.74);
+  }
 
   const nMain = hi ? (giant ? 110 : 84) : 22;
   const sp = spline(ctrl, nMain, ['w', 'ht', 'hb']);
@@ -375,11 +395,11 @@ export function leggedGeometry(rig, lod = 0) {
   const jTail1 = 0;
   const joints = [jSpine, jChest, jNeck1, jNeck2, jHead];
   const owners = [B.PELVIS, B.SPINE, B.CHEST, B.NECK1, B.NECK2, B.HEAD];
-  const blends = [D * 0.4, D * 0.4, nW * 1.6, nW * 1.4, nW * 0.7];
+  const blends = [D * 0.4, D * 0.45, nW * (g.kind === 'grazer' ? 3.0 : 1.6), nW * 1.6, nW * 0.7];   // wide neck-base blend: no crease at the withers when grazing
   const segMain = hi ? 22 : 9;
   const carapace = hexa;
   mb.loft({
-    pts: sp.pts, w: sp.w, ht: sp.ht, hb: sp.hb, segs: segMain, power: hexa ? 2.3 : 2.15, up: [0, 1, 0],
+    pts: sp.pts, w: sp.w, ht: sp.ht, hb: sp.hb, segs: segMain, power: hexa ? 2.3 : 2.0, up: [0, 1, 0],
     skin: (i, t, out) => chainSkin(sp.s[i], joints, owners, blends, out),
     info: (i, t, s, out) => {
       const ao = 0.5 + 0.5 * Math.min(1, Math.max(0, (s + 1) / 1.3));
@@ -492,7 +512,7 @@ export function leggedGeometry(rig, lod = 0) {
       const lc = add(c, eb[2], eyeR * 0.3);
       mb.ellipsoid(lc, eyeR * 1.32, eyeR * 1.12, eyeR * 0.5, 14, 6,
         (t, o) => { o[0] = B.HEAD; o[1] = B.HEAD; o[2] = 1; },
-        (t, s, o) => { o[0] = code(P.HEAD, M.SKIN); o[1] = 0.55; o[2] = 0.2 + 0.4 * s; o[3] = 0.45 + 0.4 * (1 - t); },
+        (t, s, o) => { o[0] = code(P.HEAD, M.SKIN); o[1] = 0.55; o[2] = 0.2 + 0.4 * s; o[3] = 0.72 + 0.2 * (1 - t); },
         eb);
     }
   }
@@ -599,11 +619,17 @@ function legGeometry(mb, rig, L, hi, code) {
   else if (hop) { rTop = D * 0.34 * th; rKnee = D * 0.16 * th; rShin = D * 0.1 * th; rAnkle = D * 0.07 * th; rFoot = D * 0.06 * th; }
   else if (kind === 'critter') { rTop = D * (L.hind ? 0.3 : 0.24) * th; rKnee = D * 0.13 * th; rShin = D * 0.1 * th; rAnkle = D * 0.075 * th; rFoot = D * 0.1 * th; }
   else { rTop = D * (L.hind ? 0.34 : 0.26) * th; rKnee = D * (L.hind ? 0.13 : 0.12) * th; rShin = D * 0.075 * th; rAnkle = D * 0.06 * th; rFoot = D * 0.065 * th; }
-  const top = add(L.root, norm(sub(L.root, L.knee)), rTop * 0.9);
+  // the leg loft starts INSIDE the torso: straight up from the hip / shoulder joint and toward the
+  // midline (along the femur it would exit through the rump or withers as a flap)
+  const top = hexa ? add(L.root, norm(sub(L.root, L.knee)), rTop * 0.9) : [L.root[0] * 0.55, L.root[1] + rTop * 0.75, L.root[2]];
+  // thigh / shoulder are laterally flat muscle masses that stay flush with the flank (a round
+  // upper leg wider than the body reads as a disc glued on the side)
+  const latMax = hexa ? rTop : Math.max(rTop * 0.42, rig.W * 0.98 - Math.abs(L.root[0]));
+  const lw = (k) => Math.min(rTop * k, latMax * (0.9 + 0.1 * k));
   const ctrl = [
-    { p: top, w: rTop * 0.85, ht: rTop * 0.9 },
-    { p: L.root, w: rTop * 0.95, ht: rTop * 1.1 },
-    { p: lerp3(L.root, L.knee, 0.5), w: rTop * 0.75, ht: rTop * 0.95 },
+    { p: top, w: lw(0.85), ht: rTop * (hexa ? 0.9 : 1.05) },
+    { p: L.root, w: lw(0.95), ht: rTop * (hexa ? 1.1 : 1.22) },
+    { p: lerp3(L.root, L.knee, 0.5), w: Math.min(rTop * 0.75, latMax * 1.05), ht: rTop * (hexa ? 0.95 : 1.02) },
     { p: L.knee, w: rKnee, ht: rKnee * 1.1 },
     { p: lerp3(L.knee, L.ankle, 0.35), w: rShin * 1.15, ht: rShin * 1.35 },
     { p: lerp3(L.knee, L.ankle, 0.8), w: rShin * 0.9, ht: rShin },
@@ -673,7 +699,7 @@ function hornsGeometry(mb, rig, g, hi, headSurf, hUp, hw, hh, code) {
   const segs = hi ? 8 : 4, n = hi ? 14 : 5;
   const skinHead = (i, t, o) => { o[0] = B.HEAD; o[1] = B.HEAD; o[2] = 1; };
   const info = (i, t, s, o) => { o[0] = code(P.HORN, M.KERATIN); o[1] = t; o[2] = s; o[3] = 1; };
-  const L = hh * 3.2 * horns.len;
+  const L = hh * (g.kind === 'grazer' ? 4.2 : 3.2) * horns.len;
   const back = [-hd[0], -hd[1], -hd[2]];
   const tube = (pts, r0, r1, keratinInfo = info) => {
     const w = pts.map((_, i) => r0 + (r1 - r0) * Math.pow(i / (pts.length - 1), 0.8));

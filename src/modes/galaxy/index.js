@@ -364,7 +364,9 @@ export default class GalaxyMode extends Mode {
       const gm = this.stars.globalMat.uniforms;
       gm.uLodCenter.value.copy(lod.center);
       gm.uLodRadius.value = lod.radius * k;
-      this.volume.uniforms.uResolvedR.value = lod.radius * 0.85 * k;
+      // (beyond the LOD sphere too: the diffuse disk light of the nearest ~kly is, in a real sky, individual
+      // stars spread over the whole sphere — the band itself is the light of the distant disk)
+      this.volume.uniforms.uResolvedR.value = Math.max(lod.radius * 0.85, 1.6) * k;
     }
   }
 
@@ -412,12 +414,22 @@ export default class GalaxyMode extends Mode {
       const n = this.stars.filled;
       const gain = this.stars.globalMat.uniforms.uGain.value, le = this.stars.globalMat.uniforms.uLumExp.value;
       const v = this._v;
+      // (same visibility as the shader: global tracers fade out inside the local LOD sphere)
+      const lodR = gm.uLodRadius.value, lc = gm.uLodCenter.value;
+      const cp = Math.cos(-this.pat), sp = Math.sin(-this.pat);
       for (let i = 0; i < n; i++) {
         const f = C[i * 4 + 3];
         const follow = (f >> 4) & 3;
         this._starWorld(P[i * 3], P[i * 3 + 1], P[i * 3 + 2], follow, v);
+        let g = gain;
+        if (lodR > 0) {
+          const qx = v.x * cp - v.z * sp - lc.x, qy = v.y - lc.y, qz = v.x * sp + v.z * cp - lc.z;
+          const fade = smoothstep(0.5, 1.0, Math.sqrt(qx * qx + qy * qy + qz * qz) / lodR);
+          if (fade < 0.02) continue;
+          g *= fade;
+        }
         const idx = i;
-        test(v.x, v.y, v.z, Lm[i], le, gain, () => ({ index: idx, pos: new THREE.Vector3(P[idx * 3], P[idx * 3 + 1], P[idx * 3 + 2]), follow: (C[idx * 4 + 3] >> 4) & 3 }), true);
+        test(v.x, v.y, v.z, Lm[i], le, g, () => ({ index: idx, pos: new THREE.Vector3(P[idx * 3], P[idx * 3 + 1], P[idx * 3 + 2]), follow: (C[idx * 4 + 3] >> 4) & 3 }), true);
       }
     }
     // local stars (pattern frame, follow the pattern)
@@ -425,10 +437,14 @@ export default class GalaxyMode extends Mode {
       const P = this.stars.localPos, Lm = this.stars.localLum, I = this.stars.localIndex;
       const gain = this.stars.localMat.uniforms.uGain.value * 50, le = this.stars.localMat.uniforms.uLumExp.value;
       const c = Math.cos(this.pat), s = Math.sin(this.pat);
+      const lmu = this.stars.localMat.uniforms, lc2 = lmu.uLodCenter.value, lr2 = lmu.uLodRadius.value, lw = lmu.uWeight.value;
       for (let i = 0; i < this.stars.localCount; i++) {
         const px = P[i * 3], py = P[i * 3 + 1], pz = P[i * 3 + 2];
+        // (as drawn: local stars fade out toward the edge of the LOD sphere)
+        const fade = lw * (1 - smoothstep(0.72 * lr2, lr2, Math.hypot(px - lc2.x, py - lc2.y, pz - lc2.z)));
+        if (fade < 0.02) continue;
         const k = i;
-        test(px * c - pz * s, py, px * s + pz * c, Lm[i], le, gain, () => ({ index: I[k], pos: new THREE.Vector3(P[k * 3], P[k * 3 + 1], P[k * 3 + 2]), follow: 1 }));
+        test(px * c - pz * s, py, px * s + pz * c, Lm[i], le, gain * fade, () => ({ index: I[k], pos: new THREE.Vector3(P[k * 3], P[k * 3 + 1], P[k * 3 + 2]), follow: 1 }));
       }
     }
     return best;

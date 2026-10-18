@@ -68,7 +68,8 @@ export function makeLook(rng, art, archetype, st, glowing) {
     const L = { golden: [0.34, 0.44], tan: [0.26, 0.38], rufous: [0.2, 0.32], grey: [0.2, 0.34], dark: [0.07, 0.14], cream: [0.46, 0.58], olive: [0.18, 0.28] }[fam];
     const s = Math.min(0.9, rng.range(S[0], S[1]) * sat), l = rng.range(L[0], L[1]);
     back = col(h, s, l);
-    belly = col(h + 0.01, s * 0.5, Math.min(0.72, l + rng.range(0.14, 0.3)));
+    // pale belly / inner legs / throat (strong countershading reads as volume at any distance)
+    belly = col(h + 0.015, s * 0.38, Math.min(0.8, l + rng.range(0.24, 0.4)));
     pattern = rng.chance(0.6) ? col(h - 0.01, s * 0.85, l * rng.range(0.25, 0.5)) : col(h + 0.01, s * 0.35, Math.min(0.8, l + rng.range(0.25, 0.4)));
     accent = accentC.clone().lerp(back, 0.5);
     keratin = col(rng.range(0.07, 0.11), rng.range(0.1, 0.35), rng.range(0.55, 0.8));

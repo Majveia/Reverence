@@ -76,8 +76,46 @@ export function moveGround(c, dt, env, sampleEvery = 1) {
   c.vel[0] = f[0] * c.speed; c.vel[1] = f[1] * c.speed; c.vel[2] = f[2] * c.speed;
 }
 
+// ------------------------------------------------------------------------------------------ clearings
+/**
+ * Settlement clearings (civ track): env.clearings = [[dx, dy, dz, cosR, keep], …] (unit dirs).
+ * Herds keep out of them (plus a margin): returns the outward push (0 = outside) and writes the
+ * tangent direction away from the clearing centre into out.
+ */
+const _clOut = new Float64Array(3);
+export function clearingPush(env, x, y, z, margin = 12, out = _clOut) {
+  const C = env.clearings;
+  if (!C || !C.length) return 0;
+  if (env._clSrc !== C || env._clN !== C.length) {
+    // cache the outer (margin-widened) cosine per clearing; recomputed when civ replaces the array
+    env._clSrc = C; env._clN = C.length;
+    env._clCos = C.map((c) => Math.cos(Math.acos(Math.min(1, Math.max(-1, c[3]))) + margin / env.R));
+  }
+  const l = Math.hypot(x, y, z) || 1;
+  const ux = x / l, uy = y / l, uz = z / l;
+  let best = 0;
+  for (let i = 0; i < C.length; i++) {
+    const c = C[i];
+    const d = ux * c[0] + uy * c[1] + uz * c[2];
+    const co = env._clCos[i];
+    if (d <= co) continue;
+    const k = Math.min(1, (d - co) / Math.max(1e-9, 1 - co) * 3 + 0.2);
+    if (k > best) {
+      best = k;
+      // away from the centre, in the tangent plane
+      let ox = ux - c[0] * d, oy = uy - c[1] * d, oz = uz - c[2] * d;
+      const ol = Math.hypot(ox, oy, oz);
+      if (ol < 1e-9) { ox = c[1]; oy = -c[0]; oz = 0; }
+      const L = Math.hypot(ox, oy, oz) || 1;
+      out[0] = ox / L; out[1] = oy / L; out[2] = oz / L;
+    }
+  }
+  return best;
+}
+
 // ------------------------------------------------------------------------------------------ herd
 const GRAZE = 0, WANDER = 1, ALERT = 2, FLEE = 3;
+const _push = new Float64Array(3);
 
 export class Herd {
   /**
@@ -137,7 +175,7 @@ export class Herd {
       if (hd > this.range) { const k2 = (hd - this.range * 0.6) / hd; x += hx * k2; y += hy * k2; z += hz * k2; }
       const L = Math.hypot(x, y, z);
       const h = env.height(x / L, y / L, z / L);
-      if (h > env.sea + 1.5) { const r2 = env.R + h; this.target[0] = x / L * r2; this.target[1] = y / L * r2; this.target[2] = z / L * r2; return true; }
+      if (h > env.sea + 1.5 && !clearingPush(env, x, y, z, 20)) { const r2 = env.R + h; this.target[0] = x / L * r2; this.target[1] = y / L * r2; this.target[2] = z / L * r2; return true; }
     }
     this.target.set(this.home);
     return false;
@@ -265,6 +303,32 @@ export class Herd {
         wx = wx / wl + sx * 1.5; wy = wy / wl + sy * 1.5; wz = wz / wl + sz * 1.5;
         if (wantSpeed < walk * 0.3 * s) wantSpeed = walk * 0.3 * s;
         graze = Math.min(graze, 0.3);
+      }
+      // personal space: never walk through the player (≥ 3 m from the body surface); the player
+      // stays an obstacle even for tame / curious herds
+      const bodyR = (g.S * (g.bodyLen || 1) * 0.6 + 0.3) * s;
+      const pr = 3 + bodyR;
+      const Pp = env.player;
+      if (m.dPlayer < pr * 1.6 && env.playerOnGround) {
+        const ax = m.pos[0] - Pp[0], ay = m.pos[1] - Pp[1], az = m.pos[2] - Pp[2];
+        const al = Math.hypot(ax, ay, az) || 1;
+        const k = Math.min(3, (pr * 1.6 - m.dPlayer) / pr) * 2.5;
+        const wl = Math.hypot(wx, wy, wz);
+        const dot = wl > 1e-6 ? (wx * ax + wy * ay + wz * az) / (wl * al) : 0;
+        if (wl > 1e-6) { wx /= wl; wy /= wl; wz /= wl; }
+        // heading toward the player → steer around (tangent), then away
+        wx += ax / al * k; wy += ay / al * k; wz += az / al * k;
+        if (dot < -0.3) { const tx = ay * m.up[2] - az * m.up[1], ty = az * m.up[0] - ax * m.up[2], tz = ax * m.up[1] - ay * m.up[0]; wx += tx / al * k * 0.6; wy += ty / al * k * 0.6; wz += tz / al * k * 0.6; }
+        if (m.dPlayer < pr) { wantSpeed = Math.max(wantSpeed, walk * 0.7 * s); graze = 0; }
+      }
+      // settlement clearings (civ): herds keep out of towns and plazas
+      const cp = clearingPush(env, m.pos[0], m.pos[1], m.pos[2], 12, _push);
+      if (cp > 0) {
+        const wl = Math.hypot(wx, wy, wz);
+        if (wl > 1e-6) { wx /= wl; wy /= wl; wz /= wl; }
+        wx += _push[0] * cp * 3; wy += _push[1] * cp * 3; wz += _push[2] * cp * 3;
+        wantSpeed = Math.max(wantSpeed, walk * (0.4 + 0.5 * cp) * s);
+        graze = Math.min(graze, 0.2);
       }
       // blocked by water / cliffs: turn around
       if ((m.blocked || 0) > 0.6) {

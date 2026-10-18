@@ -66,6 +66,7 @@ export class MeshBuilder {
     const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
     let X = cross(Y, T[0]);
     const rings = [];
+    const frames = [];
     const cosT = new Float64Array(segs), sinT = new Float64Array(segs), cxs = new Float64Array(segs), cys = new Float64Array(segs);
     for (let k = 0; k < segs; k++) {
       const th = (k / segs) * Math.PI * 2 + (o.phase ?? 0);
@@ -93,6 +94,7 @@ export class MeshBuilder {
         }
       }
       const t = sArr[i] / total;
+      frames.push([X, Y]);
       o.skin(i, t, _skin);
       const ring = new Int32Array(segs);
       const w = o.w[i], ht = o.ht ? o.ht[i] : w, hb = o.hb ? o.hb[i] : (o.ht ? o.ht[i] : w);
@@ -115,17 +117,42 @@ export class MeshBuilder {
         this.tri(r0[k1], r1[k1], r1[k]);
       }
     }
+    // rounded caps: a few shrinking rings on a quarter-ellipse profile before the pole, so ends
+    // read as domes (rumps, muzzles, tail tips) instead of faceted cones
     const cap = (i, dir) => {
       const P = pts[i], Tt = T[i];
       const len = (o.w[i] + (o.ht ? o.ht[i] : o.w[i])) * 0.5 * (dir < 0 ? (o.capStart === true ? 0.6 : o.capStart) : (o.capEnd === true ? 0.6 : o.capEnd));
       const t = i === 0 ? 0 : 1;
       o.skin(i, t, _skin);
+      const [Xf, Yf] = frames[i];
+      const w = o.w[i], ht = o.ht ? o.ht[i] : w, hb = o.hb ? o.hb[i] : (o.ht ? o.ht[i] : w);
+      const nr = segs >= 10 ? 3 : segs >= 6 ? 1 : 0;
+      let prev = rings[i];
+      for (let r = 1; r <= nr; r++) {
+        const a = (r / (nr + 1)) * Math.PI * 0.5;
+        const sc = Math.cos(a), off = Math.sin(a) * len * dir;
+        const ring = new Int32Array(segs);
+        for (let k = 0; k < segs; k++) {
+          const sn = sinT[k];
+          let rx = w * cxs[k] * sc, ry = (sn >= 0 ? ht : hb) * cys[k] * sc;
+          if (o.bulge) { const m = o.bulge(i, t, cosT[k], sn); rx *= m; ry *= m; }
+          const x = P[0] + Xf[0] * rx + Yf[0] * ry + Tt[0] * off, y = P[1] + Xf[1] * rx + Yf[1] * ry + Tt[1] * off, z = P[2] + Xf[2] * rx + Yf[2] * ry + Tt[2] * off;
+          o.info(i, t, sn * sc, _info, cosT[k]);
+          ring[k] = this.v(x, y, z, _skin[0], _skin[1], _skin[2], _info[0], _info[1], _info[2], _info[3]);
+        }
+        for (let k = 0; k < segs; k++) {
+          const k1 = (k + 1) % segs;
+          if (dir < 0) { this.tri(ring[k], prev[k1], prev[k]); this.tri(ring[k], ring[k1], prev[k1]); }
+          else { this.tri(prev[k], prev[k1], ring[k]); this.tri(prev[k1], ring[k1], ring[k]); }
+        }
+        prev = ring;
+      }
       o.info(i, t, 0, _info, 1);
       const pole = this.v(P[0] + Tt[0] * len * dir, P[1] + Tt[1] * len * dir, P[2] + Tt[2] * len * dir, _skin[0], _skin[1], _skin[2], _info[0], _info[1], _info[2], _info[3]);
-      const r = rings[i];
+      const r0 = prev;
       for (let k = 0; k < segs; k++) {
         const k1 = (k + 1) % segs;
-        if (dir < 0) this.tri(pole, r[k1], r[k]); else this.tri(pole, r[k], r[k1]);
+        if (dir < 0) this.tri(pole, r0[k1], r0[k]); else this.tri(pole, r0[k], r0[k1]);
       }
     };
     if (o.capStart) cap(0, -1);

@@ -25,7 +25,7 @@ import { chainRig, chainGeometry } from './bodies/chain.js';
 import { LeggedAnimator } from './anim/LeggedAnimator.js';
 import { ChainAnimator } from './anim/ChainAnimator.js';
 import { Crowd } from './Crowd.js';
-import { moveGround, Herd, tangentBasis } from './behavior/ground.js';
+import { moveGround, Herd, tangentBasis, clearingPush } from './behavior/ground.js';
 import { Flock, Pod, Swarm, School } from './behavior/air.js';
 import { cellsPerFace, cellsAround, cellDir } from './cells.js';
 import { Motes, Splashes } from './particles.js';
@@ -295,11 +295,14 @@ class Fauna {
         members.push(c);
       }
       grp = new Swarm(sp, members, home, rng.fork('swarm'), this.env, { drift: rng.range(0.3, 0.9), range: 60 });
-    } else if (A === 'fish') {
+    } else if (A === 'fish' || opts.school) {
+      // fish schools — and, underwater, mantas (sky rays swim the same way: School boids in a depth band)
       const l = Math.hypot(home[0], home[1], home[2]);
+      const Lb = g.L ?? g.span ?? 1;
+      const spd = opts.speed ?? g.speed;
       for (let i = 0; i < n; i++) {
-        const a = i * 2.39996, r = g.L * 1.6 * Math.sqrt(i + 0.5);
-        const depthT = Math.min(rng.range(0.5, 1.8), Math.max(0.25, opts.maxDepth ?? 9));
+        const a = i * 2.39996, r = Lb * (opts.spread ?? 1.6) * Math.sqrt(i + 0.5);
+        const depthT = opts.depth ? rng.range(opts.depth[0], opts.depth[1]) : Math.min(rng.range(0.5, 1.8), Math.max(0.25, opts.maxDepth ?? 9));
         P[0] = home[0] + (_e[0] * Math.cos(a) + _n[0] * Math.sin(a)) * r; P[1] = home[1] + (_e[1] * Math.cos(a) + _n[1] * Math.sin(a)) * r; P[2] = home[2] + (_e[2] * Math.cos(a) + _n[2] * Math.sin(a)) * r;
         const pl = Math.hypot(P[0], P[1], P[2]);
         const rr = this.R + this.sea - depthT;
@@ -307,11 +310,12 @@ class Fauna {
         const c = this._makeFlyer(sp, rt, P, [fx, fy, fz], rng.range(0.75, 1.25) * (opts.scale ?? 1), rng);
         c.index = i; c.depthT = depthT;
         c.off[0] = (_e[0] * Math.cos(a) + _n[0] * Math.sin(a)) * r * 0.5; c.off[1] = (_e[1] * Math.cos(a) + _n[1] * Math.sin(a)) * r * 0.5; c.off[2] = (_e[2] * Math.cos(a) + _n[2] * Math.sin(a)) * r * 0.5;
-        c.vel[0] = fx * g.speed; c.vel[1] = fy * g.speed; c.vel[2] = fz * g.speed;
+        c.vel[0] = fx * spd; c.vel[1] = fy * spd; c.vel[2] = fz * spd;
+        if (A !== 'fish') c.flap = 0.6;
         members.push(c);
       }
       void l;
-      grp = new School(sp, members, home, rng.fork('school'), this.env, { speed: g.speed, range: opts.range ?? 22, seek: 2.5, sep: g.L * 1.1 * (opts.scale ?? 1), minDepth: opts.minDepth });
+      grp = new School(sp, members, home, rng.fork('school'), this.env, { speed: spd, range: opts.range ?? 22, seek: opts.seek ?? 2.5, sep: Lb * (A === 'fish' ? 1.1 : 1.4) * (opts.scale ?? 1), minDepth: opts.minDepth, noLeap: !!opts.noLeap });
     }
     if (!grp) return null;
     for (const m of members) { m.group = grp; this.creatures.push(m); }
@@ -368,6 +372,7 @@ class Fauna {
   }
 
   _streamCells() {
+    this._syncClearings();
     const P = this.playerPos;
     const l = Math.hypot(P[0], P[1], P[2]);
     const ux = P[0] / l, uy = P[1] / l, uz = P[2] / l;
@@ -390,6 +395,7 @@ class Fauna {
           const h = this.surface.height(_d[0], _d[1], _d[2]);
           layerNow = 'ground';
           if (h < this.sea + 2 || !room()) continue;
+          if (clearingPush(this.env, _d[0], _d[1], _d[2], 40)) continue;   // no herds in towns
           const sp = this._pickGround(rng, _d, h);
           if (!sp) continue;
           const r = this.R + h;
@@ -449,6 +455,13 @@ class Fauna {
     }
   }
 
+  /** settlement clearings from the civ track (may appear after fauna is created) */
+  _syncClearings() {
+    let C = null;
+    try { C = this.world.civ?.clearings || this.world.get?.('civ')?.clearings || null; } catch (_) { C = null; }
+    this.env.clearings = Array.isArray(C) && C.length ? C : null;
+  }
+
   // ------------------------------------------------------------------------------ welcome / showcase
   /** is planet-local point p visible from the camera (terrain + big colliders)? */
   _clearView(cam, px, py, pz, lift) {
@@ -473,6 +486,7 @@ class Fauna {
   }
 
   _welcome() {
+    this._syncClearings();
     if (this.showcase === 'none') return;
     const cam = this.world.camera;
     const C = cam.position;           // planet-local (camera is a child of world.root)
@@ -509,6 +523,7 @@ class Fauna {
             const p = at(dirAt(ang), base * k);
             const h = this.env.ground(p[0], p[1], p[2], _d, 0);
             if (h < this.sea + 2) continue;
+            if (clearingPush(this.env, _d[0], _d[1], _d[2], 15)) continue;   // not on plazas / streets
             if (!fallback) fallback = Float64Array.from(_d);
             if (!this._clearView(C, _d[0], _d[1], _d[2], g.S * 1.1)) continue;
             if (!sp) sp = this._pickGround(rng, [ux, uy, uz], h, (x) => x.archetype !== 'critter' && x.archetype !== 'serpent') || probe;
@@ -593,17 +608,17 @@ class Fauna {
       const sp = pick('fish');
       if (sp) {
         // nearest water in front of the camera
-        for (let dist = 6; dist < 400; dist *= 1.1) {
+        for (let dist = 9 * this.showDist; dist < 400; dist *= 1.1) {
           let done = false;
           for (const ang of [0.3, -0.3, 0.55, -0.55, 0, 0.9, -0.9]) {
             const p = at(dirAt(ang), dist);
             const pl = Math.hypot(...p);
             const h = this.surface.height(p[0] / pl, p[1] / pl, p[2] / pl);
-            if (h < this.sea - 0.7) {
+            if (h < this.sea - 1.1) {
               const r = this.R + this.sea;
               // showcase fish are big leapers (≥ ~1.3 m, salmon/tarpon scale) so a breach reads at 15–30 m
-              const big = Math.max(1, 1.35 / sp.genome.L);
-              const g = mark(this._spawnAir(sp, [p[0] / pl * r, p[1] / pl * r, p[2] / pl * r], rng.fork('wf'), 22, { range: 7, minDepth: 0.55, maxDepth: (this.sea - h) * 0.55, scale: big }));
+              const big = Math.max(1, 1.75 / sp.genome.L);
+              const g = mark(this._spawnAir(sp, [p[0] / pl * r, p[1] / pl * r, p[2] / pl * r], rng.fork('wf'), 22, { range: 5, minDepth: 0.55, maxDepth: (this.sea - h) * 0.55, scale: big }));
               if (g) { g.showy = true; g.jumpT = 0.2; }   // showcase school: frequent leaps so it reads above the surface
               this.showcaseInfo = { fish: Math.round(dist) };
               done = true; break;
@@ -614,6 +629,83 @@ class Fauna {
       }
     }
     this._nearCol = null;
+  }
+
+  // ------------------------------------------------------------------------------ underwater life
+  /** When the camera dives, populate the water column around it: schools at the camera's depth (one
+   *  framed in front of the lens), plus mantas gliding further out when the roster has rays. */
+  _underwater(dt) {
+    const cam = this.world.camera;
+    const C = cam.position;
+    const l = Math.hypot(C.x, C.y, C.z);
+    const camD = this.R + this.sea - l;                 // camera depth below sea level (m)
+    const ux = C.x / l, uy = C.y / l, uz = C.z / l;
+    const uw = this._uw || (this._uw = { groups: [], at: null, above: 0, t: 0 });
+    uw.t -= dt;
+    if (camD < 0.6) {
+      uw.above += dt;
+      if (uw.groups.length && uw.above > 8) { for (const g of uw.groups) this._removeGroup(g); uw.groups.length = 0; uw.at = null; }
+      return;
+    }
+    uw.above = 0;
+    if (uw.t > 0) return;
+    uw.t = 0.5;
+    if (uw.at && Math.hypot(C.x - uw.at[0], C.y - uw.at[1], C.z - uw.at[2]) < 90) return;
+    for (const g of uw.groups) this._removeGroup(g);
+    uw.groups.length = 0;
+    uw.at = [C.x, C.y, C.z];
+    const fish = this.roster.find((x) => x.archetype === 'fish');
+    const ray = this.roster.find((x) => x.archetype === 'ray');
+    if (!fish && !ray) return;
+    cam.getWorldDirection(_v3);
+    let fx = _v3.x, fy = _v3.y, fz = _v3.z;
+    const d0 = fx * ux + fy * uy + fz * uz;
+    fx -= ux * d0; fy -= uy * d0; fz -= uz * d0;
+    const fl = Math.hypot(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
+    const rx = fy * uz - fz * uy, ry = fz * ux - fx * uz, rz = fx * uy - fy * ux;
+    const rng = new RNG(hashCombine(this.body.seed, 0x0f15, Math.round(C.x / 50), Math.round(C.z / 50)));
+    const seaR = this.R + this.sea;
+    /** sea-level point at (forward, right) metres from the camera, with the local water depth */
+    const spot = (fwd, side) => {
+      const px = C.x + fx * fwd + rx * side, py = C.y + fy * fwd + ry * side, pz = C.z + fz * fwd + rz * side;
+      const pl = Math.hypot(px, py, pz);
+      const depth = this.sea - this.surface.height(px / pl, py / pl, pz / pl);
+      return { p: new Float64Array([px / pl * seaR, py / pl * seaR, pz / pl * seaR]), depth };
+    };
+    const across = (home, k = 0) => {
+      const hl = Math.hypot(home[0], home[1], home[2]);
+      tangentBasis(home[0] / hl, home[1] / hl, home[2] / hl, _e, _n);
+      return Math.atan2(rx * _n[0] + ry * _n[1] + rz * _n[2], rx * _e[0] + ry * _e[1] + rz * _e[2]) + Math.PI + k;
+    };
+    const add = (g) => { if (g) { g.welcome = true; g.underwater = true; uw.groups.push(g); } };
+    if (fish) {
+      // a dense bait ball of small fish straight ahead at eye level, adults cruising deeper beside it,
+      // a third school further out for depth layering
+      const plan = [[14, 0, 56, 0, 0.55, 0.9], [20, 8, 18, 1.2, 1.1, 1.3], [30, -14, 24, -0.6, 0.8, 1.1]];
+      for (const [fw, sd, n, dz, sc, spread] of plan) {
+        const { p, depth } = spot(fw, sd);
+        if (depth < 1.6) continue;
+        const dc = Math.min(Math.max(0.8, camD + dz), depth - 0.7);
+        add(this._spawnAir(fish, p, rng.fork('uwf' + fw), Math.round(n * Math.max(0.6, this.tierK)), {
+          depth: [Math.max(0.6, dc - 1.0), Math.min(depth - 0.5, dc + 1.0)], range: 4 + fw * 0.12, minDepth: 0.6, noLeap: true,
+          heading: across(p, rng.range(-0.3, 0.3)), spread, scale: sc,
+        }));
+      }
+    }
+    if (ray) {
+      // mantas: wide wings gliding past (sky rays are at home in the sea too)
+      for (const [fw, sd] of [[22, -5], [26, 10]]) {
+        const { p, depth } = spot(fw, sd);
+        if (depth < ray.genome.span * 0.4 + 2) continue;
+        const dc = Math.min(Math.max(1.5, camD + 0.8), depth - ray.genome.span * 0.2 - 0.8);
+        add(this._spawnAir(ray, p, rng.fork('uwr' + fw), rng.int(1, 2), {
+          school: true, depth: [dc - 0.5, dc + 0.6], range: 14, minDepth: 1.2, noLeap: true, speed: 2.2, seek: 0.8, spread: 1.0,
+          heading: across(p, -0.3),
+        }));
+        break;
+      }
+    }
+    this.showcaseInfo = { ...(this.showcaseInfo || {}), underwater: { depth: +camD.toFixed(1), groups: uw.groups.length, n: uw.groups.reduce((a, g) => a + g.members.length, 0) } };
   }
 
   // ------------------------------------------------------------------------------ frame
@@ -668,6 +760,7 @@ class Fauna {
         this._streamT = 2.0;
       }
     }
+    if (this.hasOcean) { try { this._underwater(dt); } catch (e) { if (!this._uwErr) { this._uwErr = true; console.warn('[fauna] underwater life failed', e); } } }
     if (dt <= 0) { this._animateAll(0); return; }
     for (const g of this.groups) {
       try { g.update(dt, this.env); } catch (e) { if (!g._err) { g._err = true; console.warn('[fauna] group update failed', e); } }
@@ -778,6 +871,25 @@ class Fauna {
       if (d < bd) { bd = d; best = c; }
     }
     return best;
+  }
+
+  /**
+   * Creatures whose body sphere intersects the sphere (pos, r) — for vehicle chase cameras / bumps.
+   * pos: planet-local {x,y,z} or Float64Array(3). Returns [{ creature, pos: Float64Array(3) body centre,
+   * radius, archetype, name }] (reuses `out` when given). Cheap: linear scan over ≤ maxCreatures.
+   */
+  near(pos, r = 20, out = []) {
+    out.length = 0;
+    const px = pos.x ?? pos[0], py = pos.y ?? pos[1], pz = pos.z ?? pos[2];
+    for (const c of this.creatures) {
+      const s = c.scale, rt = c.rt;
+      const k = rt.centerUp * s;
+      const cx = c.pos[0] + c.up[0] * k, cy = c.pos[1] + c.up[1] * k, cz = c.pos[2] + c.up[2] * k;
+      const rad = rt.radius * s;
+      const d = Math.hypot(cx - px, cy - py, cz - pz);
+      if (d < r + rad) out.push({ creature: c, pos: new Float64Array([cx, cy, cz]), radius: rad, dist: d, archetype: c.species.archetype, name: c.species.name });
+    }
+    return out;
   }
 
   isReady() { return this.ready; }

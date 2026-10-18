@@ -85,43 +85,52 @@ void main(){
   vec3 P = vec3(d.x, d.y * an, d.z);
   vec3 q = P * 6.0 + uSeed;
   vec3 w = vec3(rv_fbm(q * 0.5, 4), rv_fbm(q * 0.5 + 7.3, 4), rv_fbm(q * 0.5 + 13.1, 4));
-  vec3 qw = q + w * 1.4;
+  vec3 qw = q + w * 0.45;
   // ---- star clouds: soft clumpy regions of unresolved stars (Sagittarius / Scutum clouds)
-  float c1 = rv_fbm(qw * 0.8, 6) * 0.5 + 0.5;
-  float c2 = rv_fbm(qw * 2.6 + 5.0, 5) * 0.5 + 0.5;
-  float clouds = smoothstep(0.3, 0.75, c1 * 0.75 + c2 * 0.25);
+  float c1 = rv_fbm(qw * 0.8, 4) * 0.5 + 0.5;
+  float c2 = rv_fbm(qw * 2.6 + 5.0, 4) * 0.5 + 0.5;
+  float clouds = smoothstep(0.3, 0.75, c1 * 0.82 + c2 * 0.18);
   float grain = rv_fbm(P * 120.0 + uSeed, 3) * 0.5 + 0.5;      // unresolved-star granularity
-  // ---- dust: optical depth = baked column × soft filamentary structure
-  float lanes = pow(rv_ridged(qw * 1.2, 5), 2.2);                       // branching dark filaments
-  float lanes2 = pow(rv_ridged(qw * 3.4 + w * 2.0, 4), 3.0);             // finer wisps
-  float globs = smoothstep(0.5, 0.85, rv_fbm(qw * 1.6 + 11.0, 5) * 0.5 + 0.5);  // dark clouds (Coalsack)
+  // ---- dust: optical depth = baked column × soft filamentary structure. Real dust lanes are a few broad,
+  // soft-edged dark clouds plus sparse thin tendrils (ridge crests only) — not a crinkled texture everywhere
+  float big = rv_fbm(qw * 0.7 + 3.0, 5);                                   // [-1, 1] large dark-cloud field
+  float clouds2 = smoothstep(0.05, 0.45, big);                             // broad dark clouds (Coalsack-like)
+  // filaments: ridge crests of a SMOOTH (3-octave) field → long, sparse lanes; present only in some regions
+  float rid = 1.0 - abs(rv_fbm(qw * 1.1 + w * 0.5 + 21.0, 3));
+  float lmask = smoothstep(-0.1, 0.35, rv_fbm(q * 0.45 + 31.0, 3));
+  float lanes = pow(rid, 14.0) * lmask;
+  float rid2 = 1.0 - abs(rv_fbm(qw * 2.8 + w * 0.9 + 7.0, 3));
+  float lanes2 = pow(rid2, 20.0) * smoothstep(0.0, 0.4, big) * lmask;      // finer wisps near the dark clouds
+  float globs = smoothstep(0.62, 0.9, rv_fbm(qw * 1.6 + 11.0, 4) * 0.5 + 0.5);  // a few small dark globules
   float tauN = clamp(tau / 4.0, 0.0, 1.5);
   float wig = rv_fbm(vec3(d.x, d.z, 0.5) * 2.2 + uSeed, 4) * 0.06 + rv_fbm(vec3(d.x, d.z, 2.5) * 9.0 + uSeed, 3) * 0.015;
   // the great rift: a ragged dark lane splitting the band along the mid-plane, broad toward the core
-  float riftW = 0.022 + 0.04 * smoothstep(0.3, 1.2, tauN);
-  float rift = exp(-pow((glat - wig) / riftW, 2.0)) * smoothstep(0.2, 0.75, c1 * 0.7 + lanes * 0.5 + c2 * 0.3);
-  float D = tauN * (lanes * 0.9 + lanes2 * 0.45 + globs * 0.8) + rift * (0.4 + 0.8 * tauN);
-  D *= smoothstep(0.55, 0.05, abs(glat));
+  float riftW = 0.02 + 0.035 * smoothstep(0.3, 1.2, tauN);
+  float rift = exp(-pow((glat - wig) / riftW, 2.0)) * smoothstep(0.15, 0.6, c1 * 0.6 + clouds2 * 0.5 + c2 * 0.2);
+  float D = tauN * (clouds2 * 1.1 + lanes * 1.3 + lanes2 * 0.7 + globs * 0.5) + rift * (0.5 + 0.9 * tauN);
+  D *= smoothstep(0.4, 0.04, abs(glat));
   // ---- emission modulation
-  float bandL = rv_luma(e);
-  float det = smoothstep(0.1, 0.9, bandL);                  // structure only where there is band light
-  e *= mix(1.0, mix(0.55, 1.4, clouds) * mix(0.88, 1.12, grain), det);
-  // ragged band edges: bright tongues and dark bays
-  e *= mix(1.0, 0.3 + 0.7 * smoothstep(0.15, 0.8, c1), smoothstep(0.03, 0.3, abs(glat)) * det * 0.6);
-  // reddened, brownish dust edges (extinction ∝ λ^-1)
-  e *= exp(-D * 0.75 * vec3(0.86, 0.96, 1.1));
-  // contrast / black floor (true black between the band and the stars)
+  // black floor FIRST, on the smooth baked light; structure is applied to what is left. (Modulating before
+  // the floor subtraction amplified the mottling into hard-edged "foam" wherever the band sits just above
+  // the floor.)
   float l0 = max(rv_luma(e), 1e-6);
   float x0 = max(l0 - uFloor, 0.0);
-  e *= (x0 * x0 / (x0 + uFloor * 0.6)) / l0;      // soft toe: the diffuse halo fades out, no contour line
+  e *= (x0 * x0 / (x0 + uFloor * 0.6)) / l0 / max(1.0 - uFloor, 0.25);   // soft toe: no contour line
+  float bandL = rv_luma(e);
+  float det = smoothstep(0.01, 0.3, bandL);                 // structure only where there is band light
+  e *= mix(1.0, mix(0.62, 1.35, clouds) * mix(0.88, 1.12, grain), det);
+  // ragged band edges: bright tongues and dark bays
+  e *= mix(1.0, 0.5 + 0.5 * smoothstep(0.15, 0.8, c1), smoothstep(0.03, 0.3, abs(glat)) * 0.5);
+  // reddened, brownish dust edges (extinction ∝ λ^-1)
+  e *= exp(-D * 0.75 * vec3(0.86, 0.96, 1.1));
   // log response: the faint anticentre band stays visible while the core does not blow out
   float lin = max(rv_luma(e), 1e-6);
   float lg = log(1.0 + 12.0 * lin) / log(13.0);
   e *= pow(lg, uContrast) / lin;
   // continuous disk band all around the sky (the local disk seen edge-on), with its own dusty mid-plane
   float prof = exp(-pow((glat - wig * 0.8) / 0.11, 2.0)) * 0.72 + exp(-pow((glat - wig) / 0.26, 2.0)) * 0.28;
-  float rift2 = 1.0 - 0.6 * exp(-pow((glat - wig) / 0.026, 2.0)) * smoothstep(0.3, 0.75, c1 + lanes * 0.5);
-  vec3 syn = vec3(1.0, 0.93, 0.84) * prof * mix(0.45, 1.35, clouds) * mix(0.85, 1.15, grain) * rift2 * exp(-(lanes * 0.8 + lanes2 * 0.4 + globs * 0.7) * prof);
+  float rift2 = 1.0 - 0.6 * exp(-pow((glat - wig) / 0.026, 2.0)) * smoothstep(0.3, 0.75, c1 + clouds2 * 0.5);
+  vec3 syn = vec3(1.0, 0.93, 0.84) * prof * mix(0.55, 1.3, clouds) * mix(0.85, 1.15, grain) * rift2 * exp(-(clouds2 * 0.9 + lanes * 1.0 + lanes2 * 0.5 + globs * 0.5) * prof);
   e += syn * uSyn;
   // myriad faint stars: texel-sized speckles whose density follows the band light
   {
@@ -155,6 +164,7 @@ uniform samplerCube uCube;
 uniform mat3 uL2G;
 uniform float uGain;
 uniform float uPano;
+uniform float uPanoGain;
 uniform vec2 uRes;
 varying vec3 vDir;
 void main(){
@@ -164,7 +174,7 @@ void main(){
     float lon = (uv.x - 0.5) * 6.2831853, lat = (uv.y - 0.5) * 3.1415926;
     d = vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
   }
-  vec3 c = textureCube(uCube, d).rgb * uGain;
+  vec3 c = textureCube(uCube, d).rgb * uGain * (uPano > 0.5 ? uPanoGain : 1.0);
   c += (rv_ign(gl_FragCoord.xy) - 0.5) * 0.0006 * step(1e-5, c.g);   // de-band dim gradients
   gl_FragColor = vec4(max(c, 0.0), 1.0);
 }`;
@@ -270,6 +280,7 @@ export class Sky {
     this.uGain = { value: 1 };
     this.uStarGain = { value: 0.075 };
     this.uFade = { value: 1 };
+    this.uBandGain = { value: 1 };
     this.uTwinkle = { value: 0 };
     this.uPixAng = { value: 0.001 };
     this.uPR = { value: 1 };
@@ -401,7 +412,7 @@ export class Sky {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
     this.bgMat = new THREE.ShaderMaterial({
-      uniforms: { uCube: { value: null }, uL2G: this.uL2G, uGain: this.uFade, uPano: { value: this.world.params?.skypano === '1' ? 1 : 0 }, uRes: { value: new THREE.Vector2(1, 1) } },
+      uniforms: { uCube: { value: null }, uL2G: this.uL2G, uGain: this.uBandGain, uPano: { value: this.world.params?.skypano === '1' ? 1 : 0 }, uPanoGain: { value: +(this.world.params?.skygain || 1) }, uRes: { value: new THREE.Vector2(1, 1) } },
       vertexShader: FULLSCREEN_BG_VERT, fragmentShader: BG_FRAG,
       depthTest: false, depthWrite: false,
     });
@@ -484,6 +495,16 @@ export class Sky {
     if (this.bgMat.uniforms.uPano.value) { ctx.renderer.getDrawingBufferSize(this.bgMat.uniforms.uRes.value); if (this.stars) this.stars.visible = false; this.galaxies.visible = false; }
     this.uPR.value = ctx.pixelRatio;
     this.uTwinkle.value = ctx.inAtmo;
+    // Under an atmosphere at night the atmosphere composite hides background light fainter than ~3× the sky
+    // radiance (its daytime star-hiding threshold also applies at night, see docs/tracks/space.md Requests):
+    // lift the diffuse band there so the Milky Way still reads on a dark night (stars are bright enough).
+    const cr = Math.max(ctx.camLocal.length(), 1);
+    const sinE = (ctx.camLocal.x * cel.sunDir.x + ctx.camLocal.y * cel.sunDir.y + ctx.camLocal.z * cel.sunDir.z) / cr;
+    const night = THREE.MathUtils.smoothstep(-sinE, 0.03, 0.25);
+    // (once the atmosphere lowers its threshold at night it sets `atmosphere.starVisNight` and the lift drops)
+    const pb = this.world.params?.bandboost;
+    const boost = pb !== undefined ? +pb : this.world.atmosphere?.starVisNight ? 0.5 : 6;
+    this.uBandGain.value = this.uFade.value * (1 + boost * ctx.inAtmo * night);
     if (this.starMat) this.starMat.uniforms.uTime.value = t;
     if (this.pendingCube && ctx.renderer) {
       try { this._bakeCube(ctx.renderer); } catch (e) { console.error('[space] sky cube bake failed', e); this.failed = true; }
