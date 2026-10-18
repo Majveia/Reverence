@@ -1,0 +1,816 @@
+// Civ uber-material: one MeshStandardMaterial (PBR, CSM shadows, env reflections, cloud shadows via
+// world.lighting.setupMaterial) whose fragment stage synthesises the surface from per-vertex data:
+// albedo, roughness, metalness, emission and a PATTERN id (see geo.js PAT): windows with night
+// lights, planks, stone blocks, roof tiles, curtain glass, neon, glyphs, cobbles, asphalt…
+// No textures → no tiling, no seams, crisp at every distance (patterns are analytically AA'd).
+import * as THREE from 'three';
+import { G } from '../../core/Uniforms.js';
+
+const VERT_PARS = /* glsl */`
+attribute vec3 aCol;
+attribute vec4 aMat;
+attribute vec2 aAux;
+attribute vec2 aUv;
+varying vec3 vColL;
+varying vec4 vMatA;
+varying vec2 vAux;
+varying vec2 vUvM;
+varying vec3 vLPos;
+varying vec3 vUpW;
+varying vec3 vNW;
+uniform vec3 uPlanetC;
+`;
+// ---- vertex animation variants (instanced): NPC walkers, flying traffic, boats
+const ANIM_PARS = {
+  npc: /* glsl */`
+attribute vec3 aA; attribute vec3 aB; attribute vec4 aP; attribute vec3 aTint;
+uniform vec3 uUpL; uniform float uTimeA;
+mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale; float rvHide;
+`,
+  traffic: /* glsl */`
+attribute vec4 aL; attribute vec4 aL2;
+uniform vec3 uUpL; uniform vec3 uEastL; uniform vec3 uNorthL; uniform vec3 uSiteC; uniform float uRBase; uniform float uTimeA;
+mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale; float rvHide;
+`,
+  boat: /* glsl */`
+attribute vec4 aL; attribute vec4 aL2;
+uniform vec3 uUpL; uniform vec3 uEastL; uniform vec3 uNorthL; uniform vec3 uSiteC; uniform float uRBase; uniform float uTimeA;
+mat3 rvRot; vec3 rvOff; float rvWalk; float rvScale; float rvHide;
+`,
+};
+const ANIM_NORMAL = {
+  npc: /* glsl */`
+{
+  vec3 ab = aB - aA; float L = max(length(ab), 0.01);
+  float s = uTimeA * aP.x / L + aP.y;
+  float ph = fract(s * 0.5);
+  float tri = abs(ph * 2.0 - 1.0);
+  rvOff = mix(aA, aB, 1.0 - tri);
+  vec3 fwd = (ph < 0.5 ? 1.0 : -1.0) * ab / L;
+  if (aP.x < 0.01) fwd = normalize(vec3(sin(aP.y * 6.28), 0.0, cos(aP.y * 6.28)));
+  vec3 up = uUpL;
+  vec3 fw = normalize(fwd - up * dot(fwd, up) + 1e-5);
+  rvRot = mat3(cross(up, fw), up, fw);
+  rvWalk = aP.x > 0.01 ? s * L / 0.75 * 3.14159 : 0.0;
+  rvScale = aP.z;
+  rvHide = aP.w;
+}
+objectNormal = rvRot * objectNormal;
+`,
+  traffic: /* glsl */`
+{
+  float ang = aL2.z + uTimeA * aL2.y / max(0.5 * (aL.z + aL.w), 1.0);
+  float c = cos(aL2.w), sn = sin(aL2.w);
+  vec2 e = vec2(cos(ang) * aL.z, sin(ang) * aL.w);
+  vec2 de = vec2(-sin(ang) * aL.z, cos(ang) * aL.w) * sign(aL2.y);
+  vec2 p2 = aL.xy + vec2(e.x * c - e.y * sn, e.x * sn + e.y * c);
+  vec2 d2 = normalize(vec2(de.x * c - de.y * sn, de.x * sn + de.y * c));
+  vec3 tp = uEastL * p2.x + uNorthL * p2.y;
+  vec3 dirW = normalize(uSiteC + tp);
+  float bob = sin(uTimeA * 0.7 + aL2.z * 5.0) * 0.6;
+  rvOff = dirW * (uRBase + aL2.x + bob) - uSiteC;
+  vec3 up = dirW;
+  vec3 fwd = uEastL * d2.x + uNorthL * d2.y;
+  vec3 fw = normalize(fwd - up * dot(fwd, up));
+  vec3 rt = cross(up, fw);
+  float bank = 0.25 * sign(aL2.y);
+  up = normalize(up * cos(bank) + rt * sin(bank)); rt = cross(up, fw);
+  rvRot = mat3(rt, up, fw);
+  rvWalk = 0.0; rvScale = 1.0; rvHide = 1.0;
+}
+objectNormal = rvRot * objectNormal;
+`,
+  boat: /* glsl */`
+{
+  vec2 p2 = aL.xy;
+  vec3 tp = uEastL * p2.x + uNorthL * p2.y;
+  vec3 dirW = normalize(uSiteC + tp);
+  float bob = sin(uTimeA * 1.1 + aL2.x * 6.0) * 0.18;
+  rvOff = dirW * (uRBase + aL.z + bob) - uSiteC;
+  vec3 up = dirW;
+  float hd = aL.w + sin(uTimeA * 0.13 + aL2.x * 9.0) * 0.12;
+  vec3 fwd = uEastL * sin(hd) + uNorthL * cos(hd);
+  vec3 fw = normalize(fwd - up * dot(fwd, up));
+  vec3 rt = cross(up, fw);
+  float roll = sin(uTimeA * 0.9 + aL2.x * 4.0) * 0.06, pitch = sin(uTimeA * 0.7 + aL2.x * 3.0) * 0.04;
+  up = normalize(up + rt * roll + fw * pitch); fw = normalize(cross(rt, up)); rt = cross(up, fw);
+  rvRot = mat3(rt, up, fw);
+  rvWalk = 0.0; rvScale = aL2.y; rvHide = 1.0;
+}
+objectNormal = rvRot * objectNormal;
+`,
+};
+const ANIM_POS = /* glsl */`
+{
+  vec3 p = transformed * rvScale;
+  // optional props (hand lanterns) exist only on some instances: collapse them on the others
+  if (rvHide < 0.5 && aMat.w > 7.5 && aMat.w < 8.5) p = vec3(0.0, 0.9 * rvScale, 0.0);
+  if (rvWalk != 0.0) {
+    float sw = sin(rvWalk);
+    if (p.y < 0.86 * rvScale) { float side = sign(p.x); p.z += (0.86 * rvScale - p.y) * sw * 0.55 * side; p.y += abs(sw) * 0.03 * step(0.0, side * sw); }
+    else if (p.y < 1.45 * rvScale && abs(p.x) > 0.19 * rvScale) { p.z -= (1.45 * rvScale - p.y) * sw * 0.6 * sign(p.x); }
+    p.y += abs(cos(rvWalk)) * 0.035;
+  }
+  transformed = rvOff + rvRot * p;
+}
+`;
+
+// npc clothing: tops take the instance tint, trousers (marked by their base colour) a per-walker palette
+const NPC_TINT = /* glsl */`
+if (aMat.w > 17.5 && aMat.w < 18.5) {
+  if (abs(aCol.r - 0.2275) < 0.006 && abs(aCol.b - 0.1922) < 0.006) {
+    float ph = fract(aP.y * 3.71 + aP.z * 7.3);
+    vec3 tr = ph < 0.32 ? vec3(0.035, 0.05, 0.1) : ph < 0.55 ? vec3(0.09, 0.07, 0.05) : ph < 0.75 ? vec3(0.02) : ph < 0.88 ? vec3(0.16, 0.14, 0.1) : aTint * 0.55;
+    vColL = tr;
+  } else vColL = aTint;
+}
+`;
+const VERT_MAIN = /* glsl */`
+#ifdef RV_ROAD
+{
+  // decal depth bias: slide the vertex along the view ray toward the camera (no on-screen shift), more
+  // with distance, so draped roads / plazas / fields never sink into coarser terrain LODs far away
+  vec3 rvWpR = (modelMatrix * vec4(transformed, 1.0)).xyz;
+  vec3 rvTc = cameraPosition - rvWpR; float rvDl = length(rvTc);
+  transformed += rvTc / max(rvDl, 1e-3) * min(rvDl * 0.0035, 8.0);
+}
+#endif
+vColL = pow(aCol, vec3(2.2));
+vMatA = vec4(aMat.x / 255.0, aMat.y / 255.0, aMat.z / 16.0, aMat.w);
+vAux = aAux; vUvM = aUv; vLPos = position;
+{
+  vec4 rvWp = modelMatrix * vec4(position, 1.0);
+  vUpW = normalize(rvWp.xyz - uPlanetC);
+  vNW = normalize(mat3(modelMatrix) * objectNormal);
+}
+`;
+
+const FRAG_PARS = /* glsl */`
+#include <rv_noise>
+varying vec3 vColL;
+varying vec4 vMatA;
+varying vec2 vAux;
+varying vec2 vUvM;
+varying vec3 vLPos;
+varying vec3 vUpW;
+varying vec3 vNW;
+uniform float uNightF;
+uniform float uTimeC;
+uniform vec3 uSunDirC;
+uniform float uWet;
+uniform float uSnowC;
+uniform vec3 uWinCol;
+uniform vec3 uWinCol2;
+uniform float uLitFrac;
+uniform float uEmitK;
+uniform float uAge;
+uniform vec4 uWinRect;
+uniform float uGroundOcc;
+uniform float uCanyon;
+uniform float uRagged;
+
+float rvBox(vec2 f, vec4 r, vec2 fw){
+  vec2 a = smoothstep(r.xy - fw, r.xy + fw, f);
+  vec2 b = 1.0 - smoothstep(r.zw - fw, r.zw + fw, f);
+  return a.x * a.y * b.x * b.y;
+}
+vec3 rvBumpN(vec3 surfPos, vec3 n, float h, float k){
+  vec3 sx = dFdx(surfPos), sy = dFdy(surfPos);
+  vec3 r1 = cross(sy, n), r2 = cross(n, sx);
+  float det = dot(sx, r1);
+  float dbx = dFdx(h) * k, dby = dFdy(h) * k;
+  vec3 grad = sign(det) * (dbx * r1 + dby * r2);
+  return normalize(abs(det) * n - grad);
+}
+// window opening masks (cell space); g = 1 grows the shape to its frame / surround
+float rvWinMask(vec2 f, int pat, vec2 fw, float g){
+  if (pat == 1) return rvBox(f, uWinRect + vec4(-0.07, -0.1, 0.07, 0.05) * g, fw);
+  if (pat == 15) {
+    vec2 c = vec2(0.5, 0.66);
+    float rect = rvBox(f, vec4(0.34 - 0.05 * g, 0.14 - 0.04 * g, 0.66 + 0.05 * g, 0.66), fw);
+    float rr = 0.16 + 0.05 * g;
+    float arc = (1.0 - smoothstep(rr - fw.x, rr + fw.x, length((f - c) * vec2(1.0, 0.55)))) * step(c.y, f.y);
+    return max(rect, arc);
+  }
+  if (pat == 22) return rvBox(f, vec4(0.46 - 0.03 * g, 0.12 - 0.04 * g, 0.54 + 0.03 * g, 0.88 + 0.02 * g), fw);
+  return 0.0;
+}
+// glyph: 3x3 stroke alphabet from a hash
+float rvGlyph(vec2 f, float h){
+  vec2 p = (f - 0.5) * 1.35 + 0.5;
+  if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) return 0.0;
+  vec2 g = p * 3.0; vec2 c = floor(g); vec2 q = fract(g) - 0.5;
+  float r = rv_hash12(c + h * 91.7);
+  float hs = step(0.45, r) * (1.0 - smoothstep(0.06, 0.13, abs(q.y)));
+  float vs = step(r, 0.62) * (1.0 - smoothstep(0.06, 0.13, abs(q.x)));
+  float dt = step(0.85, rv_hash12(c * 1.7 + h)) * (1.0 - smoothstep(0.1, 0.18, length(q)));
+  return max(max(hs, vs), dt);
+}
+`;
+
+// computes rvAlb / rvRough / rvMetal / rvEmi / rvH / rvBumpK
+const FRAG_SURF = /* glsl */`
+#ifdef RV_ROAD
+// roads / plazas: aux.x is the edge factor (0 centre → 1 border). Rural paths and plazas get a ragged,
+// noise-perturbed border that frays into the terrain plus a worn, dusty rim (no hard ribbon edge)
+{
+  float en = rv_vnoise(vLPos * 0.5) * 0.55 + rv_vnoise(vLPos * 2.1 + 7.0) * 0.3 + rv_vnoise(vLPos * 7.0) * 0.15;
+  if (uRagged > 0.5 && vAux.x > 0.8 + (en - 0.5) * 0.45) discard;
+}
+#endif
+vec3 rvAlb = vColL; float rvRough = vMatA.x; float rvMetal = vMatA.y; vec3 rvEmi = vec3(0.0);
+float rvH = 0.0; float rvBumpK = 0.0; float rvAO = 1.0; float rvGlass = 0.0; float rvSpecOcc = 1.0;
+int rvPat = int(vMatA.w + 0.5);
+vec2 uv = vUvM;
+vec3 lp = vLPos;
+float seed = vAux.y;
+float upness = dot(normalize(vNW), vUpW);
+float nA = rv_vnoise(lp * 0.21 + seed * 3.1);
+float nB = rv_vnoise(lp * 1.7 + 11.0);
+float nC = rv_vnoise(lp * 7.3 + 5.0);
+float macro = nA * 0.55 + nB * 0.3 + nC * 0.15;
+vec2 fw = fwidth(uv);
+float fwl = max(fw.x, fw.y);
+float night = max(uNightF * 0.0, 1.0 - smoothstep(-0.14, 0.06, dot(vUpW, normalize(uSunDirC))));
+
+if (rvPat == 1 || rvPat == 6 || rvPat == 15 || rvPat == 22) {
+  // ------------------------------------------------ windows (cell units)
+  vec2 id = floor(uv); vec2 f = fract(uv);
+  float hsh = rv_hash12(id + seed * 7.13);
+  float hsh2 = rv_hash12(id * 1.37 + seed * 3.7 + 5.1);
+  float win = 0.0, frame = 0.0;
+  float fade = 1.0 - smoothstep(0.35, 0.6, fwl); // far → average
+  float reveal = 0.0, paneSun = 1.0, sill = 0.0, sillSh = 0.0, drip = 0.0;
+  vec2 fp = f;
+  if (rvPat != 6) {
+    // recessed openings: the pane sits ~0.3 m inside the wall. Parallax-offset the pane in its reveal
+    // (cotangent frame from screen derivatives, no tangents needed) and cast the lintel / jamb shadow of
+    // the sun onto it, so facades read as thick masonry with depth instead of printed decals.
+    vec3 pV = -vViewPosition; vec3 n0 = normalize(vNormal);
+    vec3 dp1 = dFdx(pV), dp2 = dFdy(pV); vec2 du1 = dFdx(uv), du2 = dFdy(uv);
+    vec3 dp2p = cross(dp2, n0), dp1p = cross(n0, dp1);
+    float det = dot(dp1, dp2p);
+    vec3 gU = (dp2p * du1.x + dp1p * du2.x) / (abs(det) > 1e-12 ? det : 1e-12);
+    vec3 gV = (dp2p * du1.y + dp1p * du2.y) / (abs(det) > 1e-12 ? det : 1e-12);
+    vec3 Vv = normalize(vViewPosition);
+    float vn = max(dot(Vv, n0), 0.08);
+    float depthM = rvPat == 22 ? 0.45 : 0.3;
+    vec3 offM = -(Vv - n0 * dot(Vv, n0)) * depthM / vn;
+    vec2 par = vec2(dot(offM, gU), dot(offM, gV)) * fade;
+    par = clamp(par, vec2(-0.35), vec2(0.35));
+    fp = f + par;
+    vec3 Ls = normalize((viewMatrix * vec4(uSunDirC, 0.0)).xyz);
+    float ln = dot(Ls, n0);
+    vec2 sUV = vec2(0.0);
+    if (ln > 0.03) { vec3 so = (Ls - n0 * ln) * depthM / ln; sUV = clamp(vec2(dot(so, gU), dot(so, gV)), vec2(-0.6), vec2(0.6)); }
+    float open_ = rvWinMask(f, rvPat, fw, 0.0);
+    frame = rvWinMask(f, rvPat, fw, 1.0) - open_;
+    win = rvWinMask(fp, rvPat, fw, 0.0) * open_;
+    reveal = max(open_ - win, 0.0) * fade;
+    paneSun = ln > 0.03 ? mix(1.0, rvWinMask(fp + sUV, rvPat, fw, 0.0), fade) : 1.0;
+    if (rvPat == 1) {
+      vec4 r = uWinRect;
+      // mullion cross on the pane
+      float mull = (1.0 - smoothstep(0.012, 0.012 + fw.x, abs(fp.x - (r.x + r.z) * 0.5))) * win;
+      float tran = (1.0 - smoothstep(0.012, 0.012 + fw.y, abs(fp.y - mix(r.y, r.w, 0.68)))) * win;
+      frame += max(mull, tran) * 0.8 * fade; win *= 1.0 - max(mull, tran) * fade;
+      if (hsh2 < uAge * 0.25) { win *= 0.0; }
+      // projecting stone sill + its shadow, and grime washed down from the sill
+      sill = rvBox(f, vec4(r.x - 0.06, r.y - 0.075, r.z + 0.06, r.y - 0.015), fw) * fade;
+      sillSh = rvBox(f + vec2(0.0, 0.05) * step(0.03, ln), vec4(r.x - 0.06, r.y - 0.075, r.z + 0.06, r.y - 0.015), fw) * (1.0 - sill) * fade;
+    }
+    // rain-washed grime below each opening (streaks fade downward)
+    float wx = rvPat == 1 ? (f.x - uWinRect.x) / max(uWinRect.z - uWinRect.x, 0.01) : (rvPat == 15 ? (f.x - 0.3) / 0.4 : (f.x - 0.44) / 0.12);
+    float below = rvPat == 1 ? uWinRect.y - f.y : (rvPat == 15 ? 0.12 - f.y : 0.1 - f.y);
+    float stx = rv_vnoise(vec3(wx * 9.0 + id.x * 7.0, 0.0, seed));
+    drip = step(0.0, below) * step(0.0, wx) * step(wx, 1.0) * smoothstep(0.75, 0.0, below / 0.45) * (0.4 + 0.6 * stx) * fade;
+  } else {
+    // curtain wall: mullions + spandrel band
+    float mx = 1.0 - smoothstep(0.035, 0.035 + fw.x * 1.5, min(f.x, 1.0 - f.x));
+    float my = 1.0 - smoothstep(0.035, 0.035 + fw.y * 1.5, min(f.y, 1.0 - f.y));
+    float band = 1.0 - smoothstep(0.16, 0.16 + fw.y, f.y);
+    frame = max(max(mx, my), band);
+    win = 1.0 - frame;
+  }
+  win *= step(0.0, id.y) * fade + (1.0 - fade) * 0.55 * step(0.0, id.y);
+  frame *= fade;
+  vec3 glass = mix(vec3(0.018, 0.024, 0.03), rvAlb * 0.25, rvPat == 6 ? 0.55 : 0.1);
+  // interior: curtains / rooms
+  vec3 interior = mix(vec3(0.05, 0.045, 0.04), vec3(0.12, 0.09, 0.07), hsh2) * (0.6 + 0.4 * f.y);
+  vec3 trim = mix(rvAlb * 1.35 + 0.05, vec3(0.9, 0.88, 0.82), 0.35);
+  if (rvPat == 6) trim = rvAlb * 0.6;
+  rvAlb = mix(rvAlb, trim, clamp(frame, 0.0, 1.0));
+  // reveal (jambs / lintel inside the opening): self-shadowed wall material; projecting sill; rain grime
+  rvAlb = mix(rvAlb, trim * 0.6 * mix(0.55, 1.0, paneSun), reveal);
+  rvAlb = mix(rvAlb, trim * 1.04, sill);
+  rvAlb *= 1.0 - 0.45 * sillSh;
+  rvAlb *= 1.0 - drip * (0.12 + 0.45 * uAge) * (1.0 - win);
+  rvAlb = mix(rvAlb, mix(glass, interior, (rvPat == 6 ? 0.06 : 0.22) * (0.4 + 0.6 * night)), win);
+  rvSpecOcc *= mix(1.0, 0.45, (1.0 - paneSun) * win);
+  rvRough = mix(rvRough, 0.12 + 0.06 * hsh2, win);
+  rvMetal = mix(rvMetal, rvPat == 6 ? 0.65 : 0.25, win);
+  rvGlass = win;
+  // plaster / cladding micro relief outside the panes
+  rvH = frame * 0.6 - (win + reveal) * 0.8 + sill * 0.9 + (1.0 - win - frame - reveal) * (nC * 0.25 + nB * 0.1);
+  rvBumpK = 0.03;
+  // night lights (and dim interior by day)
+  // lights come on per ROOM (runs of 2-4 windows on a floor share one light), some floors are dark
+  // offices, so a facade reads as lived-in rooms instead of a random per-window checkerboard
+  float roomW = 2.0 + floor(rv_hash11(id.y * 1.7 + seed * 3.3) * 3.0);
+  float rid = floor((id.x + floor(rv_hash11(id.y + seed) * 3.0)) / roomW);
+  float hr = rv_hash12(vec2(rid, id.y) + seed * 5.3 + 0.5);
+  float darkFloor = step(rv_hash11(id.y * 3.1 + seed * 7.7), 0.12);
+  float lit = step(mix(hsh, hr, 0.8), uLitFrac) * (1.0 - darkFloor);
+  float hsh3 = rv_hash12(id * 2.71 + seed * 1.9 + 17.0);
+  vec3 wc = hr > 0.82 ? uWinCol2 : (hr > 0.72 ? vec3(0.75, 1.0, 0.8) : uWinCol);
+  wc *= mix(0.35, 1.25, hsh3 * 0.4 + hr * 0.6);
+  // TV / screen glow in a few rooms (cool flicker)
+  if (hr > 0.94) wc = vec3(0.35, 0.55, 1.0) * (0.55 + 0.3 * sin(uTimeC * 7.0 + hr * 40.0) + 0.15 * sin(uTimeC * 23.0 + hsh * 9.0));
+  // room interior silhouettes inside the pane (only when the window is resolved on screen)
+  vec4 wr = rvPat == 1 ? uWinRect : (rvPat == 6 ? vec4(0.03, 0.16, 0.97, 0.97) : vec4(0.3, 0.12, 0.7, 0.85));
+  vec2 wf = clamp((fp - wr.xy) / max(wr.zw - wr.xy, vec2(0.01)), 0.0, 1.0);
+  // interior detail only where a window spans >= ~10 px (no sub-pixel speckle on distant facades)
+  float dfade = 1.0 - smoothstep(0.06, 0.14, fwl);
+  float lampX = 0.25 + 0.5 * hsh3;
+  float hot = exp(-pow((wf.x - lampX) * 3.5, 2.0) - pow((wf.y - 0.92) * 4.0, 2.0));
+  float furnH = 0.22 + 0.22 * rv_hash11(floor(wf.x * 4.0) + hsh * 13.0);
+  float furn = step(wf.y, furnH) * step(0.35, hsh2) * (1.0 - smoothstep(0.0, 0.02, abs(fract(wf.x * 4.0) - 0.5) - 0.42));
+  float px = 0.22 + 0.56 * hsh;
+  float body = (1.0 - smoothstep(0.07, 0.07 + fw.x * 3.0, abs(wf.x - px))) * step(wf.y, 0.6);
+  float head = 1.0 - smoothstep(0.065, 0.065 + fw.x * 3.0, length((wf - vec2(px, 0.7)) * vec2(1.0, 0.8)));
+  float person = max(body, head) * step(0.78, hsh3);
+  float room = mix(1.0, (0.65 + 0.9 * hot) * (1.0 - 0.75 * furn) * (1.0 - 0.9 * person), dfade);
+  // blinds / curtains on some windows
+  float bl = fp.y * 9.0; float fwb = fwidth(bl) * 1.2;
+  float blinds = hsh2 > 0.45 && hsh2 < 0.7 ? mix(0.72, 0.4 + 0.6 * smoothstep(0.4 - fwb, 0.4 + fwb, abs(fract(bl) - 0.5) * 2.0), 1.0 - smoothstep(0.05, 0.1, fwb)) : 1.0;
+  // light gradient: lampshade glow in the upper part of the pane, plus a dim floor-lamp pool low
+  float grad = (0.55 + 0.6 * smoothstep(0.2, 0.95, fp.y)) * blinds * room;
+  float onK = mix(0.03, 1.0, night);
+  rvEmi += wc * lit * win * grad * onK * uEmitK * (rvPat == 6 ? 0.9 : 1.6);
+  rvAlb *= mix(1.0, blinds, win * 0.5);
+} else if (rvPat == 0) {
+  // plain surfaces: subtle trowel / cast relief so close-ups are never flat
+  rvH = nC * 0.35 + nB * 0.2;
+  rvBumpK = 0.008;
+} else if (rvPat == 2) {
+  // ------------------------------------------------ planks (horizontal boards)
+  float bw = 0.24;
+  float row = floor(uv.y / bw); float fy = fract(uv.y / bw);
+  float bh = rv_hash11(row * 7.1 + seed);
+  float seg = floor((uv.x + bh * 7.0) / 3.1);
+  float bh2 = rv_hash12(vec2(row, seg) + seed);
+  float groove = smoothstep(0.0, 0.1, fy) * smoothstep(1.0, 0.86, fy);
+  float grain = rv_vnoise(vec3(uv.x * 1.3, uv.y * 42.0, bh * 10.0));
+  rvAlb *= (0.72 + 0.4 * bh2) * (0.85 + 0.25 * grain) * mix(0.55, 1.0, groove);
+  rvH = groove * 0.8 + grain * 0.15;
+  rvBumpK = 0.02;
+  rvRough = min(1.0, rvRough + 0.1 * grain);
+} else if (rvPat == 3 || rvPat == 23) {
+  // ------------------------------------------------ stone blocks (ashlar), optional moss
+  float bh = 0.52, bwid = 1.05;
+  float row = floor(uv.y / bh);
+  float off = rv_hash11(row * 3.3 + seed) * bwid;
+  float col = floor((uv.x + off) / bwid);
+  vec2 f = vec2(fract((uv.x + off) / bwid), fract(uv.y / bh));
+  vec2 id = vec2(col, row);
+  float h = rv_hash12(id + seed * 1.3);
+  vec2 e = min(f, 1.0 - f) * vec2(bwid, bh);
+  float m = min(e.x, e.y);
+  float mortar = 1.0 - smoothstep(0.015, 0.035 + fwl * 0.3, m);
+  float fadeM = 1.0 - smoothstep(0.08, 0.4, fwl);
+  mortar *= fadeM;
+  float chip = rv_vnoise(vec3(uv * 6.0, h * 9.0));
+  rvAlb *= mix(0.78 + 0.34 * h, 1.0, 1.0 - fadeM) * (0.88 + 0.2 * chip);
+  rvAlb = mix(rvAlb, rvAlb * 0.45, mortar);
+  rvH = smoothstep(0.0, 0.08, m) * (0.8 + 0.2 * chip) * fadeM;
+  rvBumpK = 0.045;
+  rvRough = clamp(rvRough + 0.1 * chip, 0.0, 1.0);
+  if (rvPat == 23) {
+    float mo = smoothstep(0.45, 0.75, rv_vnoise(lp * 0.6 + 3.0) * 0.7 + upness * 0.45 + nC * 0.2 - vAux.x * 0.012);
+    rvAlb = mix(rvAlb, vec3(0.13, 0.2, 0.06) * (0.7 + 0.6 * nC), mo);
+    rvRough = mix(rvRough, 1.0, mo);
+    rvH += mo * nC * 0.6;
+  }
+} else if (rvPat == 4 || rvPat == 19) {
+  // ------------------------------------------------ metal panels (+ rust)
+  vec2 ps = vec2(1.6, 1.2);
+  vec2 id = floor(uv / ps); vec2 f = fract(uv / ps);
+  float h = rv_hash12(id + seed);
+  vec2 e = min(f, 1.0 - f) * ps;
+  float m = min(e.x, e.y);
+  float seam = 1.0 - smoothstep(0.012, 0.03 + fwl * 0.2, m);
+  vec2 rv = abs(f - 0.5) * ps - (ps * 0.5 - 0.09);
+  float rivet = (1.0 - smoothstep(0.018, 0.03, length(max(rv, 0.0)))) * step(0.0, rv.x) * step(0.0, rv.y);
+  rvAlb *= 0.88 + 0.22 * h;
+  rvAlb *= 1.0 - seam * 0.55;
+  rvH = -seam + rivet * 0.6 + h * 0.05;
+  rvBumpK = 0.02;
+  rvRough = clamp(rvRough + (h - 0.5) * 0.15, 0.05, 1.0);
+  if (rvPat == 19 || uAge > 0.58) {
+    float streak = rv_vnoise(vec3(uv.x * 3.0, uv.y * 0.25, seed));
+    float rust = smoothstep(0.5, 0.8, macro * 0.7 + streak * 0.5 + (rvPat == 19 ? 0.15 : uAge * 0.1) - 0.1);
+    vec3 rc = mix(vec3(0.32, 0.12, 0.04), vec3(0.55, 0.26, 0.08), nC);
+    rvAlb = mix(rvAlb, rc, rust);
+    rvRough = mix(rvRough, 0.92, rust); rvMetal = mix(rvMetal, 0.1, rust);
+    rvH += rust * nC * 0.4;
+  }
+} else if (rvPat == 5) {
+  // ------------------------------------------------ roof tiles (rows along slope v)
+  float rh = 0.3, tw = 0.24;
+  float row = floor(uv.y / rh);
+  float fx = fract(uv.x / tw + row * 0.5);
+  float fy = fract(uv.y / rh);
+  float id = rv_hash12(vec2(floor(uv.x / tw + row * 0.5), row) + seed);
+  float prof = sin(fx * 3.14159);
+  float lip = smoothstep(0.0, 0.18, fy);
+  float fade = 1.0 - smoothstep(0.03, 0.12, fwl);
+  float tpatch = rv_vnoise(vec3(uv * 0.35, seed));
+  rvAlb *= mix(0.8, 1.14, tpatch);
+  rvAlb *= mix(1.0, (0.88 + 0.18 * id) * mix(0.62, 1.0, lip) * (0.88 + 0.14 * prof), fade);
+  rvAlb *= mix(1.0, 0.9, (1.0 - fade) * 0.5);
+  rvH = (prof * 0.5 + fy * 0.8) * fade;
+  rvBumpK = 0.05;
+  float moss = smoothstep(0.55, 0.85, macro + nC * 0.2);
+  rvAlb = mix(rvAlb, vec3(0.16, 0.2, 0.08), moss * 0.55 * (0.4 + uAge));
+  // lichen spots, darker eaves (dirt + moss collect at the bottom courses), sun-bleached ridge
+  float lich = smoothstep(0.72, 0.8, rv_vnoise(vec3(uv * 2.3, seed + 9.0))) * (0.3 + uAge);
+  rvAlb = mix(rvAlb, vec3(0.42, 0.4, 0.3), lich * 0.6);
+  rvAlb *= mix(0.68, 1.0, smoothstep(0.0, 1.4, uv.y + nC * 0.3));
+  rvAlb *= 1.0 + 0.08 * smoothstep(0.4, 1.0, macro);
+} else if (rvPat == 7 || rvPat == 17) {
+  // ------------------------------------------------ neon tubes / holograms (always lit)
+  float fl = 0.92 + 0.08 * sin(uTimeC * 37.0 + seed * 13.0) * step(0.93, rv_hash11(floor(uTimeC * 6.0) + seed));
+  float k = vMatA.z * uEmitK * mix(0.55, 1.4, night) * fl;
+  if (vMatA.z > 14.5) {
+    // vehicle light trail: stochastic (dithered) transparency along its length, only after dark
+    float a = clamp(max(vColL.r, max(vColL.g, vColL.b)) * 1.6, 0.0, 1.0) * smoothstep(0.3, 0.8, night);
+    if (a * a < rv_ign(gl_FragCoord.xy + fract(uTimeC * 7.31) * 97.0)) discard;
+    k = 3.5 * uEmitK;
+  }
+  if (rvPat == 17) {
+    float scan = 0.65 + 0.35 * sin(uv.y * 60.0 - uTimeC * 4.0);
+    float bars = step(0.5, fract(uv.y * 1.3 - uTimeC * 0.15 + rv_hash11(floor(uv.x * 3.0) + seed)));
+    float glitch = step(0.97, rv_hash11(floor(uTimeC * 9.0) + seed * 3.0));
+    k *= scan * mix(0.55, 1.0, bars) * (1.0 - 0.5 * glitch);
+    rvAlb *= 0.2;
+    // ad content: scrolling glyph copy (paged every ~2.5 s), a rotating logo roundel and a two-tone
+    // gradient sweep, so a billboard reads as a lit advert instead of a flat coloured sheet
+    vec2 cell = uv / vec2(1.1, 1.45);
+    vec2 cid = floor(cell);
+    float page = floor(uTimeC * 0.4 + seed * 7.0 + rv_hash11(cid.y + seed) * 3.0);
+    float row = step(0.4, rv_hash11(cid.y * 1.31 + page * 0.7 + seed));
+    float gl = rvGlyph(fract(cell), rv_hash12(cid + page * 1.7 + seed)) * row;
+    vec2 bf = fract(uv / 7.5 + vec2(seed, 0.0)) - 0.5;
+    float lr = length(bf);
+    float logo = (1.0 - smoothstep(0.30, 0.30 + fwl * 0.2, lr)) * (0.45 + 0.55 * step(0.0, sin(atan(bf.y, bf.x) * 3.0 + uTimeC * 1.5)));
+    logo += (1.0 - smoothstep(0.012, 0.012 + fwl * 0.15, abs(lr - 0.36))) * 0.8;
+    float cfade = 1.0 - smoothstep(0.25, 0.7, fwl);
+    vec3 c2 = vColL.brg * 0.8 + 0.1;
+    float sweep = 0.5 + 0.5 * sin(uv.y * 0.35 + uv.x * 0.21 + uTimeC * 0.6 + seed * 5.0);
+    vec3 base = mix(vColL, c2, sweep * 0.55);
+    float content = mix(0.75, 0.22 + 1.25 * gl + 0.7 * logo, cfade);
+    rvEmi += base * k * content;
+    k = 0.0;
+  }
+  rvEmi += vColL * k;
+  rvRough = 0.3;
+} else if (rvPat == 24) {
+  // ------------------------------------------------ lit shop interior behind glass (u, v in meters)
+  float bayW = 2.4;
+  float bay = floor(uv.x / bayW); vec2 bf = vec2(fract(uv.x / bayW), uv.y);
+  float hb = rv_hash11(bay * 1.37 + seed * 11.0), hb2 = rv_hash11(bay * 3.1 + seed * 5.0 + 2.0);
+  float cfade = 1.0 - smoothstep(0.08, 0.3, fwl);
+  // ceiling light falloff (bright near the top, pooled on the floor)
+  float lightV = 0.45 + 0.55 * smoothstep(0.2, 2.8, uv.y) + 0.35 * exp(-pow((uv.y - 0.25) * 2.2, 2.0));
+  vec3 inCol = vColL * lightV * (0.75 + 0.5 * hb);
+  float strip = (1.0 - smoothstep(0.03, 0.03 + fw.y, abs(uv.y - 2.75))) * step(0.08, bf.x) * step(bf.x, 0.92);
+  // shelves with goods (colourful product dots) or a counter + menu board
+  float shelf = 0.0, goods = 0.0, counter = 0.0, menu = 0.0;
+  if (hb < 0.55) {
+    for (int i = 0; i < 3; i++) {
+      float sy = 0.55 + float(i) * 0.6;
+      shelf = max(shelf, 1.0 - smoothstep(0.025, 0.025 + fw.y, abs(uv.y - sy)));
+      vec2 gid = vec2(floor(uv.x / 0.18), float(i));
+      float gh = rv_hash12(gid + seed + bay);
+      goods = max(goods, step(0.3, gh) * step(sy + 0.03, uv.y) * step(uv.y, sy + 0.12 + 0.2 * gh) * step(0.15, fract(uv.x / 0.18)));
+    }
+  } else {
+    counter = step(uv.y, 1.0) * step(0.1, bf.x) * step(bf.x, 0.9);
+    menu = rvBox(bf, vec4(0.15, 1.9, 0.85, 2.45), fw / bayW) * (0.6 + 0.4 * rvGlyph(fract(vec2(bf.x * 6.0, (uv.y - 1.9) * 3.6)), floor(bf.x * 6.0) + bay + seed));
+  }
+  // customers / shopkeeper silhouettes
+  float px = 0.3 + 0.4 * hb2;
+  vec2 q = vec2((bf.x - px) * bayW, uv.y);
+  float body = (1.0 - smoothstep(0.2, 0.2 + fw.x * 2.0, abs(q.x) + max(0.0, 0.9 - q.y) * 0.05)) * step(0.0, q.y) * step(q.y, 1.45);
+  float head = 1.0 - smoothstep(0.12, 0.12 + fw.x * 2.0, length(q - vec2(0.0, 1.6)));
+  float person = max(body, head) * step(0.35, hb2);
+  vec3 prodCol = 0.5 + 0.5 * cos(6.2831 * (rv_hash12(floor(uv / vec2(0.18, 0.6)) + seed) + vec3(0.0, 0.33, 0.67)));
+  vec3 inside = inCol;
+  inside = mix(inside, prodCol * lightV * 0.9, goods * cfade);
+  inside = mix(inside, vColL * 0.15, max(shelf, counter * 0.85) * cfade);
+  inside = mix(inside, vec3(1.0, 0.95, 0.85) * 1.2, menu * cfade);
+  inside = mix(inside, vec3(0.02), person * cfade * 0.92);
+  inside += vec3(1.0, 0.97, 0.9) * strip * 2.0 * cfade;
+  // glass: faint diagonal reflection streaks
+  float refl = smoothstep(0.7, 1.0, sin((uv.x + uv.y * 0.6) * 1.7 + seed * 4.0)) * 0.12;
+  rvAlb = vec3(0.02);
+  rvRough = 0.08; rvMetal = 0.0; rvGlass = 1.0;
+  rvEmi += (inside * 0.55 + refl * vColL) * vMatA.z * uEmitK * mix(0.25, 1.0, night);
+} else if (rvPat == 8) {
+  // ------------------------------------------------ lamps / lanterns (night emissive)
+  rvEmi += vColL * vMatA.z * uEmitK * mix(0.04, 1.0, night);
+} else if (rvPat == 9) {
+  // ------------------------------------------------ thatch / straw
+  float fib = rv_vnoise(vec3(uv.x * 26.0, uv.y * 1.8, seed));
+  float fib2 = rv_vnoise(vec3(uv.x * 61.0, uv.y * 3.1, seed + 3.0));
+  float layer = fract(uv.y / 0.35);
+  rvAlb *= (0.6 + 0.55 * fib) * (0.8 + 0.25 * fib2) * mix(0.6, 1.0, smoothstep(0.0, 0.3, layer));
+  rvH = fib * 0.6 + layer * 0.6;
+  rvBumpK = 0.06;
+  rvRough = 1.0;
+} else if (rvPat == 10) {
+  // ------------------------------------------------ corrugated metal
+  float c = sin(uv.x * 6.2831 / 0.13);
+  float fade = 1.0 - smoothstep(0.05, 0.13, fwl);
+  rvH = c * 0.5 * fade;
+  rvBumpK = 0.012;
+  float streak = rv_vnoise(vec3(uv.x * 2.0, uv.y * 0.3, seed * 2.0));
+  float rust = smoothstep(0.55, 0.85, streak * 0.6 + macro * 0.5 + uAge * 0.2);
+  rvAlb = mix(rvAlb * (0.9 + 0.15 * c * fade), vec3(0.36, 0.16, 0.06) * (0.7 + 0.5 * nC), rust * 0.85);
+  rvRough = mix(rvRough, 0.9, rust); rvMetal = mix(rvMetal, 0.15, rust);
+} else if (rvPat == 11 || rvPat == 21) {
+  // ------------------------------------------------ cobbles / flagstone paving
+  vec2 p = rvPat == 11 ? uv * 3.4 : uv * vec2(0.75, 0.75);
+  vec2 w = rv_worley(vec3(p, seed));
+  float edge = w.y - w.x;
+  float cell = rv_hash12(floor(p) + seed);
+  if (rvPat == 21) {
+    vec2 f = fract(p); vec2 e = min(f, 1.0 - f);
+    edge = min(e.x, e.y) * 2.0;
+    cell = rv_hash12(floor(p) + 3.0);
+  }
+  float fade = 1.0 - smoothstep(0.25, 0.9, fwl * 2.6);
+  float joint = (1.0 - smoothstep(0.03, 0.12, edge)) * fade;
+  rvAlb *= (0.8 + 0.35 * cell * fade) * (1.0 - joint * 0.55);
+  rvH = smoothstep(0.0, 0.3, edge) * fade;
+  rvBumpK = rvPat == 11 ? 0.035 : 0.02;
+  rvRough = mix(rvRough, 0.95, joint);
+} else if (rvPat == 12) {
+  // ------------------------------------------------ asphalt road (uv.x: -1..1 across, uv.y: meters along)
+  float g = rv_vnoise(vec3(uv * vec2(14.0, 3.0), seed)) * 0.5 + nC * 0.5;
+  rvAlb *= 0.8 + 0.35 * g;
+  float ax = abs(uv.x);
+  float fx = fwidth(uv.x);
+  float centre = (1.0 - smoothstep(0.018, 0.018 + fx, ax)) * step(0.5, fract(uv.y / 7.0));
+  float edgeL = (1.0 - smoothstep(0.02, 0.02 + fx, abs(ax - 0.86)));
+  float paint = max(centre, edgeL) * (0.75 + 0.25 * nB);
+  rvAlb = mix(rvAlb, vec3(0.75, 0.68, 0.45), paint);
+  float crack = smoothstep(0.02, 0.0, abs(rv_vnoise(vec3(uv * vec2(3.0, 0.8), 1.0)) - 0.5)) * 0.4;
+  rvAlb *= 1.0 - crack;
+  rvRough = mix(0.88, 0.7, paint);
+} else if (rvPat == 13) {
+  // ------------------------------------------------ dirt path (ruts at the wheel tracks)
+  float ax = abs(uv.x);
+  float rut = exp(-pow((ax - 0.45) * 7.0, 2.0));
+  float peb = step(0.8, rv_vnoise(vec3(uv * 9.0, seed)));
+  rvAlb *= (0.8 + 0.3 * nB) * (1.0 - 0.18 * rut) * (1.0 + peb * 0.25);
+  rvH = -rut * 0.6 + peb * 0.3 + nC * 0.2;
+  rvBumpK = 0.05;
+} else if (rvPat == 14) {
+  // ------------------------------------------------ glyph wall (carved + glowing)
+  vec2 gs = vec2(0.9, 1.1);
+  vec2 id = floor(uv / gs); vec2 f = fract(uv / gs);
+  float h = rv_hash12(id + seed);
+  float gl = rvGlyph(f, h) * step(0.2, h);
+  float fade = 1.0 - smoothstep(0.2, 0.5, fwl);
+  gl *= fade;
+  rvAlb = mix(rvAlb * (0.85 + 0.2 * nB), rvAlb * 0.35, gl);
+  rvH = -gl;
+  rvBumpK = 0.03;
+  float pulse = 0.55 + 0.45 * sin(uTimeC * 1.3 - id.y * 0.7 + id.x * 0.21 + seed);
+  rvEmi += uWinCol2 * gl * pulse * vMatA.z * uEmitK * mix(0.5, 1.4, night);
+  rvEmi += uWinCol2 * vMatA.z * 0.06 * (1.0 - fade) * uEmitK * night;
+} else if (rvPat == 16) {
+  // ------------------------------------------------ board-formed concrete
+  float board = fract(uv.y / 0.3);
+  float bl = 1.0 - smoothstep(0.0, 0.06 + fwl, min(board, 1.0 - board));
+  vec2 pp = uv / vec2(2.4, 1.2); vec2 f = fract(pp); vec2 e = min(f, 1.0 - f) * vec2(2.4, 1.2);
+  float joint = 1.0 - smoothstep(0.01, 0.02 + fwl * 0.3, min(e.x, e.y));
+  vec2 tq = abs(f - 0.5) * vec2(2.4, 1.2) - vec2(0.9, 0.35);
+  float tie = 1.0 - smoothstep(0.02, 0.035, length(tq));
+  float stain = rv_vnoise(vec3(uv.x * 1.5, uv.y * 0.12, seed));
+  rvAlb *= (0.9 + 0.15 * nB) * (1.0 - 0.1 * bl) * (1.0 - 0.4 * joint) * (1.0 - 0.45 * tie) * mix(0.75, 1.0, smoothstep(0.2, 0.7, stain));
+  rvH = -bl * 0.25 - joint - tie * 0.8 + nC * 0.2;
+  rvBumpK = 0.02;
+} else if (rvPat == 18) {
+  // ------------------------------------------------ canvas / fabric
+  float weave = sin(uv.x * 220.0) * sin(uv.y * 220.0);
+  float fold = sin(uv.x * 2.2 + nA * 3.0) * 0.5 + 0.5;
+  rvAlb *= (0.82 + 0.25 * fold) * (0.95 + 0.05 * weave) * (0.85 + 0.25 * nB);
+  rvH = fold * 0.8;
+  rvBumpK = 0.04;
+  rvRough = 0.95;
+  // backlit translucency glow at night (lamps inside tents)
+  rvEmi += vColL * uWinCol * vMatA.z * uEmitK * night * 0.35 * (0.7 + 0.3 * fold);
+} else if (rvPat == 25) {
+  // ------------------------------------------------ crop field (uv metres: x across the rows, y along)
+  float rw = 0.85;
+  float fxr = fract(uv.x / rw);
+  float fadeR = 1.0 - smoothstep(0.12, 0.4, fwidth(uv.x / rw));
+  float rowM = 1.0 - smoothstep(0.18, 0.42, abs(fxr - 0.5));
+  float plant = rv_vnoise(vec3(uv.x * 2.7, uv.y * 1.1, seed)) * 0.6 + rv_vnoise(vec3(uv * 0.12, seed + 3.0)) * 0.4;
+  vec3 soil = vec3(0.21, 0.15, 0.1) * (0.85 + 0.3 * nB);
+  vec3 crop = rvAlb * (0.75 + 0.5 * plant);
+  rvAlb = mix(soil, crop, mix(0.72, rowM, fadeR));
+  // irregular growth patches + tractor turn rows at the headland
+  rvAlb *= 0.88 + 0.24 * smoothstep(0.3, 0.7, rv_vnoise(vec3(uv * 0.05, seed + 7.0)));
+  rvH = rowM * fadeR * 0.9 + plant * 0.2;
+  rvBumpK = 0.05;
+  rvRough = 0.95;
+} else if (rvPat == 20) {
+  // ------------------------------------------------ crystal
+  vec3 V = normalize(vViewPosition);
+  float fres = pow(1.0 - abs(dot(normalize(vNormal), V)), 3.0);
+  float inner = rv_vnoise(lp * 0.8 + uTimeC * 0.05);
+  rvEmi += vColL * vMatA.z * uEmitK * (0.25 + 0.75 * inner) * (0.4 + fres * 1.5) * mix(0.35, 1.2, night);
+  rvRough = 0.08; rvMetal = 0.3;
+  rvAlb *= 0.5;
+}
+
+#ifdef RV_ROAD
+{
+  float en2 = rv_vnoise(vLPos * 0.5) * 0.55 + rv_vnoise(vLPos * 2.1 + 7.0) * 0.45;
+  float border = smoothstep(0.5, 0.9, vAux.x + (en2 - 0.5) * 0.35) * uRagged;
+  rvAlb = mix(rvAlb, rvAlb * vec3(0.78, 0.74, 0.66) + vec3(0.025, 0.022, 0.012), border * 0.7);
+  rvH += border * (nC - 0.5) * 0.6;
+  // tyre / foot polish along the middle of paths, puddle-dark ruts after rain
+  rvRough = mix(rvRough, rvRough * 0.85, (1.0 - vAux.x) * uRagged * 0.4);
+}
+#endif
+// ---------------------------------------------------- weathering & context
+if (rvPat != 7 && rvPat != 8 && rvPat != 17 && rvPat != 24) {
+  float ageK = (0.1 + uAge * 0.5) * (1.0 - rvGlass * 0.85);
+  float notGlass = 1.0 - rvGlass;
+  // per-building colour variation (each building has its own seed): value ±8 %, a slight warm/cool cast
+  float bh = rv_hash11(seed * 1.731 + 0.37);
+  rvAlb *= mix(vec3(1.0), (0.92 + 0.16 * bh) * mix(vec3(1.03, 1.0, 0.96), vec3(0.97, 1.0, 1.04), rv_hash11(seed * 3.17)), notGlass * (uGroundOcc > 0.99 ? 0.0 : 1.0));
+  // macro colour variation (plaster mottling, patched / repainted areas) + grime
+  float mott = rv_vnoise(lp * 0.43 + seed) * 0.6 + rv_vnoise(lp * 1.9 + seed * 2.0) * 0.4;
+  rvAlb *= mix(1.0 - 0.45 * ageK - 0.05, 1.0 + 0.1 * ageK + 0.03, mix(macro, mott, 0.5));
+  // rain streaks on facades: stronger under ledges / near the top (water runs down from the roofline)
+  float vert = 1.0 - abs(upness);
+  float streak = rv_vnoise(vec3(lp.x * 2.5 + lp.z * 2.5, lp.y * 0.18, seed));
+  float streak2 = rv_vnoise(vec3(lp.x * 7.0 + lp.z * 7.0, lp.y * 0.5, seed + 4.0));
+  rvAlb *= 1.0 - vert * ageK * (0.45 * smoothstep(0.5, 0.9, streak) + 0.25 * smoothstep(0.6, 0.95, streak2)) * notGlass;
+#ifndef RV_ANIM
+  // vertical ambient ramp: ground floors sit in the bounce shadow of the street, upper floors see the sky
+  if (vAux.x < 60.0 && uGroundOcc < 0.99) rvAlb *= mix(0.84, 1.0, smoothstep(0.0, 9.0, vAux.x));
+  // contact AO / splash grime and damp at the base (noisy rising-damp edge, earthy tint)
+  if (vAux.x < 50.0 && uGroundOcc < 0.99) {
+    float edgeN = (nC - 0.5) * 0.9 + (nB - 0.5) * 0.6;
+    float base = smoothstep(-0.2, 2.4, vAux.x + edgeN);
+    rvAO = mix(0.4, 1.0, smoothstep(0.0, 1.6, vAux.x + nC * 0.4));
+    vec3 dirt = rvAlb * vec3(0.62, 0.55, 0.45);
+    rvAlb = mix(dirt * (0.8 + 0.3 * nB), rvAlb, base);
+  }
+#else
+  if (vAux.x < 0.25) rvAlb *= 0.7;
+#endif
+  // snow on up-facing surfaces
+  float sn = uSnowC * smoothstep(0.35, 0.75, upness + nB * 0.25);
+  rvAlb = mix(rvAlb, vec3(0.85, 0.88, 0.92), sn);
+  rvRough = mix(rvRough, 0.7, sn);
+  // wetness: darker, glossier
+  float wet = uWet * (0.6 + 0.4 * smoothstep(0.2, 0.8, upness));
+  rvAlb *= 1.0 - 0.35 * wet;
+  rvRough = mix(rvRough, rvRough * 0.25, wet);
+  // glass never goes mirror-perfect (the night env map holds stars → sparkle noise)
+  rvRough = max(rvRough, 0.12 * rvGlass);
+  // horizon occlusion of env reflections on streets / plazas: in a street canyon a wet pavement mirrors the
+  // (dark, lit-window) facades, not the open sky the env cube holds → without SSR, damp the grazing sky
+  // reflection on up-facing ground so wet asphalt does not turn into a flat sky-coloured sheet
+  float ground = smoothstep(0.75, 0.97, upness) * uGroundOcc;
+  rvSpecOcc = mix(1.0, mix(0.3 + 0.2 * nB, 0.04 + 0.05 * nB, uCanyon), ground);
+  // sky-view occlusion of street floors between tall blocks (env / sky diffuse, incl. lightning env flashes)
+  rvAO *= 1.0 - uCanyon * ground;
+  // street-level warm bounce at night (lamps, shopfronts)
+  // (not on the road/plaza decal mesh: its aux height is not height-above-ground, and the light pools
+  // already carry the real lamp/shopfront footprints there — a uniform bounce read as a beige wash)
+  rvEmi += rvAlb * uWinCol * night * 0.06 * uEmitK * exp(-max(vAux.x, 0.0) * 0.28) * (uGroundOcc > 0.99 ? 0.0 : 1.0);
+}
+`;
+
+let _id = 0;
+/**
+ * Create the civ uber material. style: { winCol, winCol2, litFrac, age, winRect, emit }.
+ * Uniform objects are exposed on mat.userData.u for per-frame tweaks.
+ */
+export function makeCivMaterial(style = {}, opts = {}) {
+  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0, envMapIntensity: 1.0 });
+  const U = {
+    uNightF: G.uNight, uTimeC: G.uTime, uWet: G.uWetness, uSnowC: G.uSnow,
+    uPlanetC: G.uPlanetCenter, uSunDirC: G.uSunDir,
+    uWinCol: { value: new THREE.Color(style.winCol ?? '#ffb467') },
+    uWinCol2: { value: new THREE.Color(style.winCol2 ?? '#9fd8ff') },
+    uLitFrac: { value: style.litFrac ?? 0.55 },
+    uEmitK: { value: style.emit ?? 1.0 },
+    uAge: { value: style.age ?? 0.2 },
+    uWinRect: { value: new THREE.Vector4(...(style.winRect ?? [0.26, 0.3, 0.74, 0.82])) },
+    uGroundOcc: { value: opts.key === 'road' ? 1 : 0.35 },
+    uCanyon: { value: opts.canyon ?? 0 },
+    uRagged: { value: opts.ragged ?? 0 },
+  };
+  m.userData.u = U;
+  const anim = opts.anim || null;
+  if (anim) {
+    U.uUpL = { value: new THREE.Vector3(0, 1, 0) }; U.uEastL = { value: new THREE.Vector3(1, 0, 0) }; U.uNorthL = { value: new THREE.Vector3(0, 0, 1) };
+    U.uSiteC = { value: new THREE.Vector3() }; U.uRBase = { value: 0 }; U.uTimeA = G.uTime;
+  }
+  const key = 'rvciv' + (opts.key || '') + (anim || '');
+  if (anim) m.defines = { ...(m.defines || {}), RV_ANIM: 1 };
+  if (opts.key === 'road') m.defines = { ...(m.defines || {}), RV_ROAD: 1 };
+  m.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, U);
+    let vs = sh.vertexShader.replace('#include <common>', '#include <common>\n' + VERT_PARS + (anim ? ANIM_PARS[anim] : ''));
+    if (anim) {
+      vs = vs.replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n' + ANIM_NORMAL[anim])
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + ANIM_POS);
+      if (anim === 'npc') vs = vs.replace('#include <begin_vertex>', '#include <begin_vertex>');
+    }
+    vs = vs.replace('#include <begin_vertex>', '#include <begin_vertex>\n' + VERT_MAIN + (anim === 'npc' ? NPC_TINT : ''));
+    sh.vertexShader = vs;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\n' + FRAG_PARS)
+      .replace('#include <color_fragment>', '#include <color_fragment>\n' + FRAG_SURF + '\n diffuseColor.rgb = rvAlb;')
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = clamp(rvRough, 0.04, 1.0);')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n metalnessFactor = rvMetal;')
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n if (rvBumpK > 0.0) normal = rvBumpN(-vViewPosition, normal, rvH, rvBumpK);')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += rvEmi;')
+      .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n reflectedLight.indirectDiffuse *= rvAO; reflectedLight.indirectSpecular *= mix(1.0, rvAO, 0.5) * rvSpecOcc;');
+  };
+  m.customProgramCacheKey = () => key;
+  m.name = 'civ-uber' + (opts.key ? '-' + opts.key : '');
+  // three flips the factor for reversed depth but not the units: flip them here so the offset pulls toward the camera
+  if (opts.polygonOffset) { m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = opts.reversed ? 4 : -4; }
+  m.userData.civ = ++_id;
+  return m;
+}
+
+// --------------------------------------------------------------------------- glow sprites
+// Points drawn additively: street lamps, lanterns, beacons, window clusters seen from orbit.
+// attributes: position, aColor (linear rgb * intensity), aSize (m), aKind (0 lamp · 1 blink beacon
+// · 2 lantern sway · 3 far cluster light), aPhase.
+export function makeGlowMaterial() {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uNightF: G.uNight, uTimeC: G.uTime, uPixH: { value: 540 }, uFov: { value: 1 }, uSunDirC: G.uSunDir, uPlanetC: G.uPlanetCenter,
+      uFarFade: { value: new THREE.Vector2(0, 1e9) }, uDayK: { value: 0.0 }, uScale: { value: 1 },
+    },
+    vertexShader: /* glsl */`
+      attribute vec3 aColor; attribute float aSize; attribute float aKind; attribute float aPhase;
+      uniform float uNightF, uTimeC, uPixH, uFov, uDayK, uScale; uniform vec2 uFarFade; uniform vec3 uSunDirC, uPlanetC;
+      varying vec3 vC; varying float vA; varying float vBlob;
+      void main(){
+        vec3 p = position;
+        vBlob = step(3.5, aKind);
+        float k = aKind;
+        vec3 wp = (modelMatrix * vec4(p, 1.0)).xyz;
+        vec3 prel = wp - uPlanetC;
+        float nightL = 1.0 - smoothstep(-0.14, 0.06, dot(normalize(prel), normalize(uSunDirC)));
+        float horizon = step(0.0, dot(prel, cameraPosition - wp));
+        float on = mix(uDayK, 1.0, nightL);
+        float fl = 1.0;
+        if (k > 0.5 && k < 1.5) { fl = step(0.55, fract(uTimeC * 0.5 + aPhase)); on = max(on, 0.6); }
+        else if (k > 1.5 && k < 2.5) { p.x += sin(uTimeC * 1.3 + aPhase * 6.28) * 0.06; p.z += cos(uTimeC * 1.1 + aPhase * 6.28) * 0.06; fl = 0.9 + 0.1 * sin(uTimeC * 11.0 + aPhase * 40.0); }
+        else if (k > 3.5) { fl = 1.0; }
+        else if (k > 2.5) { fl = 0.85 + 0.15 * sin(uTimeC * 0.7 + aPhase * 30.0); }
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        float d = -mv.z;
+        gl_Position = projectionMatrix * mv;
+        float px = aSize * uScale * uPixH / (2.0 * tan(uFov * 0.5) * max(d, 0.1));
+        float fade = smoothstep(uFarFade.x * 0.7, uFarFade.x, d) * (1.0 - smoothstep(uFarFade.y * 0.8, uFarFade.y, d));
+        vA = on * fl * fade * horizon;
+        // keep tiny distant lights visible as 1.5px points, energy-conserving
+        float cl = max(px, 1.6);
+        if (k > 3.5) {
+          // city glow blob: only from afar (fades in beyond ~2.5 km), keeps a visible core from orbit
+          vA *= smoothstep(2500.0, 6000.0, d) * clamp(px / cl, 0.5, 1.0) * mix(0.35, 1.0, smoothstep(2.0, 12.0, px)) * 0.8;
+          cl = max(px, 2.2);
+        } else vA *= min(1.0, (px * px) / (cl * cl) * 6.0 + 0.15) * smoothstep(2.5, 9.0, d); // no giant bokeh discs right at the lens: the lamp geometry itself is visible there
+        gl_PointSize = min(cl, 96.0);
+        vC = aColor;
+        if (vA < 0.002) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+      }`,
+    fragmentShader: /* glsl */`
+      varying vec3 vC; varying float vA; varying float vBlob;
+      void main(){
+        vec2 q = gl_PointCoord * 2.0 - 1.0;
+        float r2 = dot(q, q);
+        if (r2 > 1.0) discard;
+        float core = exp(-r2 * 14.0);
+        float halo = exp(-r2 * 3.5) * 0.35;
+        gl_FragColor = vec4(vC * (vBlob > 0.5 ? exp(-r2 * 4.0) * 0.9 : core * 1.6 + halo) * vA, 1.0);
+      }`,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+}

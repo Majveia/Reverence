@@ -1,0 +1,8 @@
+node_modules/
+dist/
+shots/
+.vite/
+*.log
+.DS_Store
+.t*tmp*
+*.tmp.mjs

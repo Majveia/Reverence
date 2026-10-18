@@ -1,0 +1,485 @@
+# Reverence — Architecture & Contracts
+
+A playable, procedurally generated universe in Three.js (WebGL2): from the **cosmic web**
+(gravity, expansion, structure formation) → **galaxies** → **star systems** → **living planets**
+you can walk, glide, drive and fly across. Minimal, immersive, OLED-black, runs on desktop
+and mobile.
+
+> Vision (from the brief): *Cosmos: Possible Worlds × Planet Earth III × No Man's Sky ×
+> Starfield × Outer Wilds × Pacific Drive × Breath of the Wild × Rick and Morty × Cowboy Bebop.*
+> Emergent, elegant, novel, alive. Worlds with life, civilization, cities, art and technology,
+> each art-directed like a great film. Controls that put you in a flow state. Maximum ambition.
+
+---
+
+## 1. Run & capture
+
+```bash
+npm install
+npm run dev                       # http://localhost:5173  (a shared dev server is usually already running)
+node tools/shoot.mjs --url "/?mode=system&view=surface&tod=0.3" --out shots/x.png
+node tools/check.mjs              # build + boot every mode headlessly, reports console errors
+```
+
+URL params (see `src/core/Params.js`): `mode=cosmic|galaxy|system`, `seed`, `galaxy`, `star`,
+`planet` (`"2"` or moon `"2.1"`), `view=surface|fp|fly|orbit|bike|rover|ship`, `lat`, `lon`,
+`yaw`, `pitch`, `alt`, `dist`, `tod` (0 midnight · .25 sunrise · .5 noon · .75 sunset),
+`q=low|med|high|ultra`, `shot=1`, `ui=1`, `stats=1`, `time`.
+
+**Every visual state a critic needs must be reachable by URL + `__rv` steps.** If you add a
+feature (a city, a vehicle, a creature herd), make it easy to frame: e.g. document good
+`lat/lon/yaw/pitch` values in your track notes, or add a `view=` preset.
+
+`window.__rv` (deterministic in `shot=1`): `ready`, `advance(sec)`, `hold(code, sec)`,
+`press(code)`, `move(x, y, sec)`, `look(dxDeg, dyDeg)`, `click(px, py)`, `go(mode, params)`,
+`state()`, `render()`. Sim time is frozen until the mode is ready, then advances only via
+`advance()` — screenshots are reproducible.
+
+### Showcase worlds (galaxy 0 — test your track on SEVERAL of these, not just one)
+
+| key | URL fragment (`/?mode=system&galaxy=0&…`) | world |
+|---|---|---|
+| W1 | `star=6&planet=1` | Golden Valley — Bierstadt terran, ocean, villages (civ 3) |
+| W2 | `star=11&planet=0` | Hyrule Echo — BotW archipelago, ruins (civ 4) |
+| W3 | `star=9&planet=2` | Arzach Dunes — Moebius savanna, white spires (civ 3) |
+| W4 | `star=2&planet=0` | Neon Monsoon — Blade Runner ocean world, neon megacity (civ 4) |
+| W5 | `star=1&planet=2` | Dimension C-137 Wilds — Rick & Morty jungle (civ 3) |
+| W6 | `star=1&planet=3` | Floating Arches — Roger Dean archipelago (civ 5) |
+| W7 | `star=3&planet=2` | Solaris Sea — Tarkovsky terran, monasteries (civ 3) |
+| W8 | `star=2&planet=1` | Loop Lowlands — Stålenhag savanna, industrial (civ 5) |
+| W9 | `star=2&planet=2.1` | Atlas Bloom — NMS jungle moon of a ringed gas giant (civ 4) |
+| W10 | `star=17&planet=0` | Hearthian Campfire — Outer Wilds jungle, wooden villages (civ 5) |
+| W11 | `star=0&planet=0` | Sea of Corruption — Nausicaä exotic, nomads (civ 4) |
+| W12 | `star=9&planet=5` | Tarkovsky arctic world with rings (civ 2) |
+| G1 | `star=2&planet=2` | ringed gas giant (use `view=orbit`) |
+| M1 | `star=0&planet=2.0` | Monolith Silence — Kubrick barren moon |
+
+## 2. Ownership map (one track = one owner; edit ONLY your paths)
+
+| Track | Owns | Notes |
+|---|---|---|
+| core (lead) | `src/core/*`, `src/main.js`, `src/modes/system/*`, `src/world/World.js`, `src/world/Celestial.js`, `src/universe/*` (except GalaxyModel), `tools/*`, `index.html`, `ARCHITECTURE.md` | contracts; request changes via your track notes |
+| post | `src/post/*` | HDR pipeline, bloom, tonemap, grading, TAA/SMAA, auto-exposure, lens effects |
+| cosmic | `src/modes/cosmic/*` | cosmic web: GPU N-body/Zel'dovich, expansion, clusters, filaments, voids |
+| galaxy | `src/modes/galaxy/*`, `src/universe/GalaxyModel.js` | galaxies, nebulae, dust, black hole (lensing), star picking |
+| space | `src/world/space/*` | star (corona, granulation), other planets/moons/rings seen from anywhere, asteroid belts, comets, star field + Milky-Way sky, orbit map |
+| terrain | `src/world/planet/*`, `src/world/terrain/*` | PlanetSurface (height/biome = CPU source of truth), LOD terrain, terrain materials |
+| atmosphere | `src/world/atmosphere/*` | scattering (space+ground), sun/moon light, shadows (CSM), clouds, weather, night sky glow, env maps, fog |
+| water | `src/world/water/*` | oceans/lakes/lava/acid, waves, shore foam, underwater |
+| flora | `src/world/flora/*` | grass, trees, flowers, alien plants, wind, instancing, LOD |
+| fauna | `src/world/fauna/*` | creatures, flocks, herds, sky whales, fish; behaviors |
+| civ | `src/world/civ/*` | settlements by art style, buildings, roads, lights, monuments/art, NPCs, traffic |
+| player | `src/world/player/*` | character (procedural anim), TP/FP camera, movement (glide, climb, sprint, swim), physics helpers |
+| vehicles | `src/world/vehicles/*` | hoverbike, rover, starship (atmo+space flight, landing, pulse drive) |
+| ui | `src/ui/*`, `src/styles.css` | minimal HUD, mobile touch controls, menus, markers, map, transitions |
+| audio | `src/audio/*` | procedural music & SFX (WebAudio, no files) |
+
+**Rules for parallel work**
+1. Edit only files you own. Need something from another track? Use its public API; if missing,
+   write the request in `docs/tracks/<your-track>.md` under "Requests" and work around it.
+2. **Never run git commands that change state** (commit, add, stash, checkout, reset, rebase).
+   The lead commits. `git diff/status/log` are fine.
+3. Don't start/stop the shared dev server on :5173. `tools/shoot.mjs` auto-starts its own if needed.
+4. Keep your subsystem **fault-tolerant**: guard against missing optional neighbours
+   (`world.get('flora')` may be null). A crash must never blank the screen.
+5. Determinism: generation uses `RNG`/`hashCombine`/`Noise` from `src/core/*` seeded from
+   `body.seed` — **never `Math.random()` for world content** (fine for purely cosmetic jitter).
+6. Performance is a feature. Scale with `engine.quality` (`particleScale`, `floraDensity`,
+   `drawDistance`, `shadows`, `volumetrics`, `terrainDetail`, `tier`, `mobile`). Budgets at
+   `high`: < 600 draw calls, < 3M triangles, no per-frame allocations in hot loops, heavy
+   generation in workers or time-sliced. `low` must be playable on a phone.
+7. Dispose every GPU resource in `dispose()`/`exit()`.
+8. Document your track in `docs/tracks/<track>.md`: what you built, good capture URLs, API.
+
+## 3. Coordinates & scale
+
+* **Cosmic / galaxy modes**: free choice of units inside the mode (document them).
+* **System mode / World**: meters. **Planet-local frame**: planet center at origin, +Y = north
+  pole, rotates with the ground. All gameplay math uses planet-local float64 vectors.
+* Objects on/around the planet are children of **`world.root`** using planet-local positions.
+  The **camera is a child of `world.root`** too. `world.root.position = -world.origin`
+  (floating origin, re-based every 4 km) ⇒ shader world positions are small near the camera.
+  `world.root` never rotates ⇒ directions are the same in local and scene space.
+* Sky bodies (star, planets, moons) are placed each frame via `world.celestial`
+  (`bodyLocal(b)`, `toLocal(inertial)`, `toLocalDir(dir)`); the star field rotates with
+  `celestial.qInv` so stars wheel across the night sky.
+* Lat/lon: `latLonToDir(lat, lon)` (`src/core/math.js`): +Y north, lon 0 on +Z, lon 90 on +X.
+* Scales (see `src/universe/Universe.js`): rocky planets 28–110 km radius, relief ≈ 3.5–7% of
+  radius, atmosphere ≈ 12% of radius, moons 12–45 km, gas giants 260–650 km, stars ≈ 300–2000 km,
+  orbits 2e7–6e8 m, days 16–48 min. Gravity ≈ 0.45–1.35 g (moons lower).
+* **Depth**: reversed-Z with a 32F depth texture (when `EXT_clip_control` exists; check
+  `engine.reversedDepth`). Near 0.05 m, far 2e10 m. In GLSL use `#ifdef USE_REVERSED_DEPTH_BUFFER`
+  (far plane = depth 0). Linearize with `rv_viewZFromDepth(depth, near, far)` (`rv_common`) or
+  three's `perspectiveDepthToViewZ`. Sky domes: see `src/world/atmosphere/index.js` (writes z = far).
+
+## 4. Core APIs (stable — add, don't rename)
+
+* `engine`: `renderer`, `quality`, `input`, `director`, `pipeline`, `universe`, `ui`, `audio`,
+  `events`, `time {t, dt, frame}`, `params`, `shot`, `width/height`, `reversedDepth`.
+* `Input` (`src/core/Input.js`): `axis('move'|'look')`, `held/down/up(action)`, `zoom`,
+  `pointer {nx, ny, clicked, doubleClicked, dragging}`, `setScheme('orbit'|'character'|'vehicle'|'flight')`,
+  `setVirtual(action, bool)` (touch buttons), `touchSticks` (for UI rendering),
+  `lastDevice` ('keyboard'|'touch'|'gamepad'), `requestPointerLock()`.
+  Actions: jump, ascend, descend, sprint, boost, interact(E), vehicle(F), view(V), map(M/Tab),
+  back(Esc), primary, secondary, photo(H), time(T), glide, rollLeft/rollRight(Q/E), up/down/left/right.
+* `Pipeline` (`src/post/Pipeline.js`): `addEffect({name, order, render(renderer, io)})`,
+  `setLook({...})`, `settings`, `depthTexture`, `makeFullscreenMaterial()`, `FullscreenQuad`.
+  Effect orders: ssao 50 · atmosphere 100 · clouds 110 · volumetric light 120 · underwater 130 ·
+  lens/heat/distortion 150.
+* `G` shared uniforms (`src/core/Uniforms.js`): uTime, uResolution, uSunDir, uSunColor,
+  uSunIntensity, uAmbientSky, uAmbientGround, uNight, uPlanetCenter, uPlanetRadius, uSeaLevel,
+  uAtmosphereRadius, uCameraAltitude, uWindDir, uWindStrength, uWetness, uSnow, uCameraPos…
+  Materials can reference them directly (`uniforms: { uTime: G.uTime }`).
+* GLSL chunks: `#include <rv_common>` (hash, IGN dither, luma, depth linearize),
+  `#include <rv_noise>` (simplex, fbm, ridged, worley), `#include <rv_color>` (blackbody).
+  Register your own with `registerChunk(name, glsl)` from `src/shaders/chunks.js`.
+* `World` (`src/world/World.js`): `root`, `camera`, `scene`, `body`, `system`, `star`,
+  `surface`, `celestial`, `time`, `timeScale`, `controller`, `player`, `colliders`, `pois`,
+  `get(name)`, `groundAt(dir, offset)`, `upAt(pos)`, `addCollider()`, `addPOI()`, `events`.
+  Subsystem module: `export default { name, order, async create(world) { return inst } }` with
+  optional `update(dt,t)`, `lateUpdate(dt,t)`, `isReady()`, `getState()`, `onOriginShift(delta)`,
+  `dispose()`.
+* `PlanetSurface` (`world.surface`): `height(x,y,z)`, `sample(x,y,z,out)` → `{height, biome,
+  moisture, temperature}`, `normal(dir)`, `seaLevel`, `maxHeight`, `amp`, `biomeColor(biome)`,
+  `BIOMES`. CPU/worker-safe. **Placement and physics must use this, never raycast the GPU mesh.**
+* Controller hand-off (player ⇄ vehicles): `world.controller` is the object currently driving
+  the camera. The player sets itself on spawn. A vehicle takes control with
+  `world.setController?.(vehicle)` or `world.controller = vehicle` and must return control to
+  `world.player` on exit; the player hides/shows its body accordingly. The player exposes
+  `world.player.pos` (local Vector3), `.forward`, `.up`, `.vel`, `.view`, `.teleport(pos)`.
+* Colliders (`world.colliders`): `{ type: 'sphere'|'capsule'|'box', pos: Vector3(local),
+  radius, height, halfExtents, quaternion, tag }` — civ buildings, rocks, trees register
+  them; the player/vehicles collide against them (spatial hash recommended).
+* POIs (`world.pois`): `{ kind: 'city'|'village'|'monument'|'ruin'|'landing'|'creature'|'wonder',
+  name, pos, radius }` — used by UI markers, discovery toasts, audio, spawn selection.
+* Events (`engine.events` / `world.events`): `discovery {kind,name}`, `mode:enter`,
+  `origin:shift {delta}`, `vehicle:enter|exit {type}`, `player:land`, `player:jump`,
+  `poi:add`, `input:gesture`, `input:scheme`, `ready`.
+* `UI` (`src/ui/UI.js`): `setLocation`, `showTitle`, `prompt(id,text,action)`, `clearPrompt`,
+  `toast`, `hint`, `setTelemetry`, `setMarkers`, `setControls(scheme)`.
+* `Audio` (`src/audio/Audio.js`): `setScene(name, params)`, `setParam(name, v)`, `play(name, opts)`.
+* `Universe` data: `universe.galaxy(g)`, `.star(g, s)`, `.system(g, s)`, `.body(system, "2.1")`,
+  `.bestPlanet(system)`. Planet fields: `radius, gravity, type, dayLength, axialTilt, orbit,
+  atmosphere{present,density,height,tint,mie,mieG,haze}, ocean{present,level,liquid,shallow,deep},
+  clouds{coverage,type,altitude}, terrain{amplitude,features,...}, life{flora,fauna,style},
+  civ{level 0-5, style, name, settlements}, rings, weather, art`.
+* **Art direction** (`src/universe/art.js`): each body has `body.art` = a preset inspired by a
+  director/artist/game (Ghibli, Moebius, Villeneuve, Blade Runner, Stålenhag, Roger Dean,
+  Tarkovsky, Friedrich, Bierstadt, Beksiński, Nausicaä, Bebop, Rick & Morty, Kubrick, Turner,
+  VanderMeer, BotW, Outer Wilds, NMS, Starfield) with `palette`, `grade`, `civ`, `flora`,
+  `clouds`, `weather`. **Read these** so terrain, sky, flora, cities and grade agree.
+
+## 5. Quality bar
+
+**Read [docs/VISION.md](docs/VISION.md) first:** from 18 Oct 2026 the target is the creator's own curated
+reference library (by category) and the eleven art-direction rules there. The notes below still hold.
+
+We are compared **blind, side by side** against screenshots of No Man's Sky, Starfield, Outer
+Wilds, Pacific Drive and Breath of the Wild (and, for cosmic scales, Space Engine / scientific
+visualizations). What separates AAA from "tech demo":
+* Lighting first: correct sun/sky balance, soft shadows, ambient occlusion, bounce light,
+  aerial perspective, atmospheric depth layering, specular highlights, rim light.
+* Material richness: micro-detail normal/roughness variation, triplanar detail up close,
+  no stretched textures, no flat vertex-color look, no obvious tiling/repetition.
+* Density & scale: things at every distance (foreground detail, midground interest,
+  background silhouettes), layered composition, readable silhouettes.
+* Motion: wind in foliage, drifting clouds, living creatures, flickering lights, water motion.
+* Color: art-directed palette, filmic tonemapping, no banding (dither), true OLED blacks.
+* Zero artifacts: no z-fighting, popping, seams, shadow acne, aliasing shimmer, NaNs, black frames.
+
+## 6. Cross-track requests inbox (maintained by the lead — check for your track!)
+
+* **galaxy** — boot logs `THREE.WebGLProgram: Shader Error 0 - VALIDATE_STATUS false` (fails check.mjs). A shader
+  uses `rv_hash13`/helpers without `#include <rv_common>` (rv_noise now includes rv_common itself).
+* **space** — render stars, galactic band, sun disk and planets as *background* (depth = far plane); the
+  atmosphere effect attenuates them by view transmittance and hides faint stars by day. The atmosphere's
+  stand-in star field disables itself once `world.get('space')` exists.
+* **water / flora / civ / fauna** — cloud shadows: `#include <rv_cloudshadow>` with
+  `world.lighting.uniforms.rvCloudShadow*` in custom shaders; react to `G.uWetness` (dark glossy wet
+  surfaces, puddles) and `G.uSnow` (snow on up-facing surfaces). Use `world.lighting.setupMaterial(mat)`.
+* **flora / civ / fauna** — `surface.sample()` also returns `slope, rock, sand, snow, cliff, river, lake,
+  mountain, continental, dune`; `surface.heightLod(x, y, z, lod)` is a cheaper height for distant placement.
+* **player** — `view=orbit` camera must look at the planet (rotation was identity); keep the camera
+  horizon level when spawning on slopes (W2/W12 spawns came out rolled).
+* **ui** — `setMarkers` always prefixes '◦'; add marker kinds (e.g. `kind: 'cosmic'` = small centred label
+  only, since cosmic draws its own ring in-scene).
+* **audio** — cosmic calls `audio.setParam('cosmicGrowth', 0..1)` every 0.2 s and `audio.play('whoosh')`
+  on fly-to; atmosphere/weather sets `G.uWetness`, `G.uWindStrength` (rain, wind beds).
+* **post** — MSAA is now disabled automatically on software GL (`quality.software`); consider auto-exposure
+  keyed to `G.uSunIntensity` / `G.uAmbientSky` for storms and nights; keep OLED blacks at night.
+* **capture tooling (done)** — shared dev server runs without HMR (no mid-capture reloads), screenshots
+  have a 180 s timeout, shot mode never renders idle frames after ready.
+* **flora** (from player) — register `world.addCollider({ type: 'sphere'|'capsule', pos, radius, height })` for
+  boulders > ~1 m and tree trunks so the player collides and the camera avoids big props.
+* **civ** (from player) — register box colliders for buildings (`halfExtents` + `quaternion`, local Y ≈ up):
+  the player can stand on roofs, walls block movement, large boxes block the camera. Climbing on building
+  colliders is not supported yet.
+* **water** (from player) — expose `heightAt(p)` (planet-local point → water surface height in m relative
+  to radius, waves included). Swimming/splashes/ripples pick it up automatically.
+* **audio** (from player) — one-shots: `step {surface: ground|sand|snow|rock, speed, side}`, `jump`,
+  `land {intensity}`, `boost`, `glider {open}`, `splash {intensity}`; params `speed, altitude, wind, glide,
+  swim, boost`.
+* **ui** (from player) — player uses prompt id `'player'` (text only); on touch, map a glide/jump button to
+  `jump` and a slide button to `descend`. Player views: `view=surface|fp|fly|orbit`, `act=slide`,
+  `camyaw`, `zoom` URL params.
+* **vehicles** (from player) — the unoccupied parked bike renders a rider mannequin (remove it when parked);
+  moving vehicle colliders flagged `vehicle: true` are checked per frame by the player.
+* **flora + terrain (PERF, from lead)** — measured on W2 forest at `high`: flora 2.7M tris + 1.0M as shadow
+  casters, terrain 1.8M; with 3 CSM cascades ≈ 9M tris/frame (budget: < 3M main + < 1M casters at high,
+  far less on med/low/mobile). Fix: grass must not cast shadow-map shadows (use AO/contact darkening), trees
+  cast only into the near cascade(s), grass as multi-blade clumps/cards with fewer tris, earlier impostors,
+  coarser terrain chunks at distance. Software captures use a reduced profile (`quality.captureProfile`:
+  floraDensity ≤ 0.45, terrainDetail ≤ 0.85, 1024 shadow maps); add `&full=1` for full-quality hero shots.
+* **terrain** (from flora) — tint the ground toward grass colour (biome + moisture) under dense grass so
+  meadows read denser at mid-distance.
+* **player** (from flora) — avoid spawn positions within ~4 m of colliders tagged `'tree'`.
+* **post** (from flora) — TAA or SMAA to anti-alias alpha-tested foliage/grass edges (alpha-to-coverage
+  only applies when `quality.msaa > 0`, which software captures disable).
+* **debug (lead)** — `?disable=fauna,vehicles` skips subsystems; `?only=terrain,atmosphere` loads just those.
+* **input (done, lead)** — `menu` action = Escape / Pad9 (opens the UI menu); `back` = Backspace (up a scale).
+* **flora** (from civ) — skip instances inside settlement clearings: `C = world.civ?.clearings ||
+  world.get('civ')?.clearings`, entries `[dirX, dirY, dirZ, cosAngularRadius, keepFraction]`; for a candidate
+  unit direction d, if `dot(d, c) > cosR` keep only a `keepFraction` of instances (grass and layers).
+* **player** (from civ) — with no `yaw` URL param, face `world.civ?.spawnTarget` (planet-local Vector3 of the
+  capital) at spawn so the first frame shows the town; keep the horizon level for `view=fly` spawns on slopes.
+* **terrain** (from civ, nice-to-have) — flatten stamps `surface.addFlatten({dir, radius, height, falloff})` so
+  plazas/building pads grade into terrain.
+* **ui** (from civ) — POIs of kind city/village/ruin/monument carry `data.capital`, `data.style`: larger marker
+  and name for capitals. (from ui) civ/flora 'wonder' POIs repeat names ('Elder Oak' ×25): use unique names
+  or `minor: true`; capitals should be `kind: 'city'`.
+* **audio** (from ui) — expose `audio.setVolume(0..1)`; `discovery` events with `source: 'ui'` are place-name
+  banners (good moment for a sting).
+* **vehicles** (from ui) — prompt glyphs: use `engine.ui.device` ('touch' whenever the touch layer is active)
+  instead of `input.lastDevice`.
+* **space** (from galaxy) — render the actual host galaxy from the current star with
+  `GalaxyModel.galaxyDensity()` / `galaxyStructure()` for a Milky-Way band with that galaxy's real dust lanes.
+* **audio** (from galaxy) — `audio.play('select')` on star selection, `audio.play('whoosh')` on travel.
+  (from vehicles) engine voices from params `engine, speed, boost, altitude`; one-shots `takeoff`,
+  `pulse {on}`, `impact {intensity}`, `land {intensity}`, `vehicle.enter/exit` (event `vehicle:enter {type}`).
+* **ui** (from galaxy) — telemetry keys 'Scale', 'Horizon' and marker `sub` text 'class · temperature'.
+  (from vehicles) ship telemetry: `drive: 'PULSE'`, `status` (LANDED/REENTRY), `target` (nearest body +
+  distance); optionally a small target marker.
+* **atmosphere** (from vehicles) — stop rain/snow streaks when the camera is above the cloud layer or outside
+  the atmosphere (`G.uCameraAltitude > atmosphere height`).
+* **flora** (from vehicles) — `flora.clearAround(pos, radius)` or honour `world.pois` of kind `'landing'` so
+  understorey plants are culled under a parked 15 m starship.
+* **vehicles URL params** — `view=bike|rover|ship`, `speed=`, `cam=chase3q|hero`; galaxy `focus=core|local|neb:N`.
+* **atmosphere** (from water) — from orbit the haze turns oceans pale sky-blue: keep Earth-like oceans deep
+  blue under a thinner veil (compare with `&disable=atmosphere`). On volcanic worlds let lava light the low
+  haze (warm glowing fog near sea level) and thin the haze near the surface (star=7&planet=4.0 washes lava
+  pink/white). Keep `lighting.cubeRT.texture` a plain planet-local samplerCube (or expose `lighting.skyCube`).
+* **atmosphere** (from space) — for gas-giant bodies skip the cumulus shell (thin high haze at most; set
+  `world.atmosphere.gasGiantSurface = true` if you draw the deck); apply the daytime star-hiding threshold
+  (`uStarVis`) only to far-plane background, not to planets/rings with real depth; no rain streaks outside
+  the atmosphere (W4 `view=orbit`).
+* **player** (from water) — dive while swimming (descend); underwater rendering is ready
+  (`world.get('water').under`, effect 130); treat `water.solid` (ice seas) as walkable ground; lower-opacity
+  swim ripples. (from space) `view=fp` should honour `fov=` for telephoto sky shots.
+* **terrain** (from water) — thin dark seam line on the sandy seabed underwater (W1 shelf).
+* **vehicles** (from water) — hoverbike/boats: buoyancy via `water.heightAt(p)` / `water.normalAt(p)`.
+* **post** (from space) — lens flare/glare hooks on `world.space.sun` (`dir`, `screen` NDC, `onScreen`,
+  `visibility`, `color`, `angularRadius`).
+* **core (done)** — gas-giant moons now orbit at 3.6–5 R (first) with 1.35–1.7× spacing: W9's giant spans
+  ~15° of sky (was ~10°).
+* **space** (from post) — when seen from orbit, draw the star disc into the HDR target at far-plane depth so the
+  lens-flare occlusion probe sees a real bright disc.
+* **flora** (from post) — dithered alpha on leaf cards (noise keyed to `G.uFrame`) so TAA resolves soft canopy
+  edges; `engine.pipeline.stats.taa` says whether TAA is on.
+* **atmosphere** (from post) — clear-day sky radiance is dim vs sunlit ground (sky highlights ~0.7 after
+  tonemapping): raise it so grading reaches reference-level highlights without over-exposing ground.
+* **ui/core** (from post) — depth of field for transitions/photo mode:
+  `engine.pipeline.setLook({ dof: { enabled: true, focus: 0, aperture: 1 } })` (focus 0 = auto-focus centre).
+* **player** (from fauna) — `world.player.lookAt(pos)` to face a target at spawn (creature showcases via `&fauna=`).
+* **vehicles** (from fauna) — `props=0` URL param (or skip when `&fauna=` is set) to not spawn the parked
+  bike/rover/ship, so creature captures aren't cluttered.
+* **audio** (from fauna) — creature ambience from `fauna.creatures` / `nearest()`: bird calls near flocks, whale
+  song under pods, night insect chorus; creature `discovery` events carry an `archetype`.
+* **ui** (from fauna) — show an icon from the `archetype` field on creature discovery events.
+* **atmosphere (CRITICAL, from terrain)** — on airless bodies (M1 `star=0&planet=2.0&view=fp&lat=-25.555&lon=-70.154&tod=0.5`,
+  and `view=orbit`) every terrain pixel renders (0,0,0) while `&only=terrain,player` renders fine — likely
+  aerial perspective / transmittance with density 0 (divide-by-zero or NaN). Must be a pass-through when
+  `!body.atmosphere.present`.
+* **water** (from terrain) — shore foam drawn on the ocean where it hides terrain beyond the horizon (W2
+  `lat=18.18&lon=-50.80&yaw=22`): in shaders.js `depthBelow = max(uRs - length(bed - uPC), 0)` is 0 when the
+  bed point is above sea level → spurious foam; gate on actual shallow water.
+* **flora** (from terrain) — forward flatten stamps to workers: `world.surface.onFlattenChange((f, all) =>
+  worker.postMessage({type:'flats', flats: all}))` and `gen.setFlattens(flats)` in the worker so trees don't
+  float/sink on graded plazas.
+* **civ** (from terrain) — `surface.addFlatten({dir, radius, height, falloff})` is available: grade plazas and
+  building pads before placing buildings (terrain chunks rebuild automatically).
+* **player** (from terrain) — `view=surface` without `alt` spawns on the nearest flat spot (at the old W1 lake
+  URL that's a 1.5 km clifftop → reads as aerial); add an option to spawn at the lowest nearby flat spot.
+* **vehicles** (from player) — the W1 swim spot (`lat=1.086&lon=-28.557`) has a parked rover on the seabed in
+  ~4 m of water; never park props below `surface.seaLevel`.
+* **flora** (from player) — W2 registers only ~3 colliders near the climb spawn despite many boulders; register
+  rocks larger than ~1 m as colliders too.
+* **ui** (from player) — swim prompts now include `Dive · C` and `Surface · Space`; map the touch slide button
+  to `descend` (which is also dive).
+* **terrain** (from atmosphere) — shadowed slopes at low sun go very dark: the terrain shader may under-weight
+  `scene.environment` (sky ambient) relative to the sun. Cloud shadow strength is now 0.72.
+* **post** (from atmosphere) — keep auto-exposure's night drop moderate so the deep-blue night sky
+  (radiance ~0.005–0.02) stays visible; show lens rain droplets only below the cloud base
+  (`world.atmosphere.clouds.Rc0`).
+* **space** (from atmosphere) — when a moon is up at night (`state.atmosphere.moon`), make sure its disc is
+  drawn; the atmosphere adds the moonlit sky glow around it.
+* **atmosphere** (from flora) — at 1024² capture cascades the 22–130 m cascade texel is ~20 cm: a larger PCF
+  radius or PCSS on the middle cascade would soften trunk and rock shadows. A slightly stronger night
+  ambient on W4 would let glow-lit silhouettes read further.
+* **post** (from flora) — bloom on small emissive sources (lanterns, glow caps) is wide relative to the source;
+  a tighter kernel for small bright discs would keep their silhouettes.
+* **player** (from flora) — the W4 `view=surface` spawn now lands low in tall grass.
+* **fauna** (from audio, optional) — emit `events.emit('creature:alarm', {archetype, pos})` when a herd or flock
+  is startled (player sprinting close, vehicle passing) so audio can play alarm calls and stampede/wing bursts.
+* **player / vehicles** (from audio, optional) — `audio.setParam('danger', x)` when hurt, falling a deadly height
+  or chased; `audio.setParam('discovery', 1)` briefly on first sight of a vista.
+* **ui** (from audio) — add `data-sfx="ui.open"` / `"ui.back"` to menu open/back buttons; the volume slider can
+  call `audio.setVolume(v)`.
+* **atmosphere** (from audio, optional) — expose `weather.boltDist` (m) so the thunder delay matches the flash.
+* **audio** (from cosmic) — cosmic mode calls `audio.setParam('cosmicGrowth', 0..1)` every 0.2 s and
+  `audio.play('whoosh')` on fly-to (both optional-chained); hook them if useful.
+* **water** (from terrain) — shore foam still shows on open ocean where it hides islands beyond the horizon
+  (white "icebergs" on W2 at `lat=18.18&lon=-50.80&yaw=22`): in `shaders.js` treat `length(bed - uPC) > uRs`
+  as deep water and/or fade shore foam with `rThick`.
+* **atmosphere** (from terrain) — cloud billboards and low cumulus cut into the W1 fjord walls and read as flat
+  cut-outs (W1 hero URL, left/right of frame): add a softer depth fade against terrain. Consider a small
+  bounce/earthshine ambient on airless moons.
+* **player / vehicles / all** (from terrain) — terrain below the ~2 km scale changed this round: re-check
+  hard-coded spawn lat/lon values (swim spots, parked vehicles near the waterline).
+* **vehicles / player** (from atmosphere) — the W4 `view=surface` spawn is ~2 m from the parked ship, which hides
+  the storm sky: honour `props=0` or park props at least 15 m from the spawn.
+* **post** (from atmosphere) — silver linings are now soft-limited; if bloom still spreads a veil from the sun
+  disc under broken cloud, use a slightly higher bloom threshold for sky (far-plane) pixels.
+* **audio** (from atmosphere) — `world.atmosphere.weather.boltDist` (m) / `boltTime` and the event
+  `'weather:lightning' {dist, pos}` are available for the thunder delay (distance / 340 m/s).
+* **flora** (from player) — fade or dither out grass and small plant billboards within ~1.5 m of the camera
+  (`G.uCameraPos`): at low camera angles single blades fill the frame. The player camera keeps ~1 m of
+  ground clearance, but tall grass still reaches it.
+* **terrain / flora** (from player) — W3 at `lat=22.571&lon=56.286` renders as a dense field of needle spikes
+  (rock-spire instances or new small-scale relief) although the CPU heightfield there is smooth; please check.
+* **audio** (from player) — the player now sets `setParam('danger', 0..1)` during long free falls without the glider.
+* **vehicles** (from civ) — besides honouring `props=0` (civcam sets it), don't park on civ plazas: avoid
+  `world.civ.clearings` and POIs of kind city/village within their radius (`findSpot` likes graded plazas
+  because they are the flattest ground).
+* **atmosphere** (from civ) — (1) night ambient on W1/W7 is brighter than W4 at the same sun elevation; (2) W8
+  storm fog at t≈0.5 s whites out the valley from 100–400 m; (3) the hard-edged moon/sun rectangle at dusk on
+  W1 needs a radial falloff.
+* **flora / post** (from civ) — W4 street captures show large green and red out-of-focus discs right at the lens:
+  fade glow particles and lens effects within ~3 m of the camera.
+* **terrain** (from flora, optional) — expose the rendered terrain height (or the vertex LOD used near the camera)
+  so grass can root exactly on the drawn mesh (today shade discs work around a 10–20 cm gap).
+* **all** (lead) — `tools/shoot.mjs` per-screenshot timeout is now 420 s (`--shot-timeout <sec>`); dense forest
+  frames on the loaded software renderer no longer time out at 180 s.
+* **cosmic** (from ui) — the first ~3 s (redshift above 26) are near-uniform fog; the UI holds the title card until
+  structure forms, but a sharper, earlier first frame would make the opening land harder.
+* **galaxy / universe** (from ui) — slightly more saturated galaxy `colors.arms` would lift every galaxy depiction
+  (warp portrait, map cards).
+* **core / lead** (from ui) — `quality.setTier()` that switches tier live (the menu currently reloads the page at
+  the same place). Needs every subsystem to react to a tier change; not started.
+* **vehicles** (from ui) — `_hintFor` should check `engine.ui.device` (`'touch'` whenever the touch layer is
+  active) instead of `input.lastDevice`.
+* **post** (from galaxy, nice-to-have) — a hue-preserving tonemap option (per-channel, or an "agx-punchy" with less
+  highlight desaturation) so bright HII knots and arm cores keep their saturation; galaxy mode can switch it via
+  `look.tonemap`.
+* **atmosphere / weather** (from vehicles) — randomize rain-streak spacing, length and opacity per particle and fade
+  streaks with distance (they read as a regular diagonal grid); let `weather=fog` and `weather=dust` also zero
+  the storm so W8 can be dry and misty by URL.
+* **atmosphere** (from vehicles) — add albedo/height variation, gaps and storm-cell structure to W4's cloud deck as
+  seen from low orbit, plus city glow through the gaps at night.
+* **terrain** (from vehicles) — more near-field micro detail (grain, pebbles, normal variation) on sand and soil
+  under the rover's wheels (W3, W8).
+* **fauna** (from vehicles, optional) — a sphere collider or `fauna.near(pos, r)` for large creatures so vehicle
+  chase cameras can avoid them and vehicles can bump them.
+* **atmosphere** (from water) — the hard-edged rectangular bright patch above the sun glint in the 3 km capture is a
+  cumulus billboard with an axis-aligned edge: add a soft radial/depth fade to cloud impostors. From orbit keep
+  Earth-like oceans deep blue under a thinner veil; let lava light the low haze on volcanic worlds; keep
+  `lighting.cubeRT.texture` a plain planet-local samplerCube.
+* **fauna** (from water) — fish schools near the camera when `world.get('water').under` is true would complete the
+  underwater composition (the reef is now there).
+* **ui** (from cosmic) — telemetry labels collide ("COSMIC AGE" is clipped by the redshift value at 1280×720): add
+  `white-space: nowrap` to `.rv-tv-k` and a 16–24 px gap between `.rv-tv` items. Give cosmic marker labels
+  (`.rv-mk.ext .rv-mk-name` / `.rv-mk-sub`) a soft dark text-shadow or a 40 % radial backdrop so they stay legible
+  over bright filaments.
+* **post** (from atmosphere) — lower the auto-exposure key under overcast/storm (e.g. `key * (1 - 0.35 * overcast *
+  storm)` from `world.atmosphere.weather.overcast/storm` or `world.lighting.deckDim`) so storm scenes stay dark.
+* **space** (from atmosphere) — draw the night moon as a phase-shaded sphere (terminator, maria/craters), not a flat
+  disc; give the star a minimum apparent diameter (~0.5°) or a brighter core sprite so a sun disc reads at sunrise and
+  in sea-of-clouds frames.
+* **terrain** (from atmosphere) — at the coarsest orbit LODs use smoother normals or less relief exaggeration: near the
+  terminator (W1 `view=orbit&tod=0.22`) mountains read as angular white cut-out facets.
+* **water** (from atmosphere) — W2 `view=orbit&tod=0.4` shows a hatched grid in the ocean sun glint.
+* **civ** (from atmosphere, still open) — two brown out-of-focus discs float in space left and right of the planet in
+  W1 `view=orbit&tod=0.22`.
+* **terrain / flora** (from atmosphere, still open) — add a golden-hour rim/wrap term on grass and foliage using
+  `G.uSunDir` and `G.uSunColor`.
+* **all tracks** (from terrain, fix r2) — `height()` is now continuous everywhere (zero-width steps of 0.15–30 m
+  were removed). Re-check hard-coded lat/lon spawns and parked props at the foot of ranges, on fjord coasts and
+  near karst towers. Runtime placement through `surface.sample` is unaffected.
+* **flora** (from terrain, fix r2) — thin grass where `sample().bare > 0.5` and on talus where
+  `sample().slope > 0.45`; root grass blades with `world.get('terrain')?.renderedHeight(x, y, z)`.
+* **flora** (from player, fix r2) — W3 at `lat=22.65&lon=56.2` has a giant smooth brown trunk or pillar (~15 m, no
+  bark, strata or normals) next to the dune spawn; the critic read it as a bug. Give large trunks bark detail or keep
+  them out of open dune fields.
+* **fauna** (from player, fix r2) — large creatures (W3 iridescent crawler, grazers) walk straight through the
+  player. Steer around `world.player.pos` (at least 3 m) or register a dynamic collider.
+* **terrain** (from flora, fix r2) — on worlds where flora's grass cover is high in FOREST/JUNGLE biomes (W5 wacky,
+  W11 fungal), tint those floors toward the palette grass colour too, not just grassland. Flora's per-biome cover is
+  at `world.get('flora').S.grass.cover[biome]`.
+* **atmosphere** (from flora, fix r2) — height fog / teal in-scatter at night around W4's glowing forest, and
+  stronger aerial perspective on far forests (W2 aerial).
+* **post** (from ui, fix r2, optional) — expose a cheap CPU-side average luminance from auto-exposure (e.g.
+  `pipeline.stats.avgLum`, a 1×1 readback every ~0.5 s) so the HUD contrast shades can key off real screen brightness.
+* **fauna** (from civ, fix r2) — keep grazing herds out of settlement clearings (`world.civ.clearings`); deer walk
+  W4's streets and W1's plaza in the showcase shots.
+* **post** (from civ, fix r2) — the two brown out-of-focus discs left and right of the planet in W1
+  `view=orbit&tod=0.22` (filed against civ above) are lens ghosts: they remain with `disable=civ`.
+* **atmosphere / player** (from civ, fix r2, FYI) — civ now adds a city pass at pipeline order 112 (after clouds):
+  wet-street reflections, night smog and city glow on the cloud base near settlements. Water cities register 48 m
+  deck colliders (tag `civ`) at street level.
+* **ui** (from galaxy, fix r2) — (1) add `ui.hideTitle()` to fade the arrival title card immediately; galaxy mode
+  calls it on star selection (until it exists, galaxy mode shortens `ui.titleS.dur` through a guarded workaround).
+  (2) The lower-third title card overlaps the bottom-centre prompt pill ("Travel to …") when both are on screen: sit
+  the card above the prompt row, or let it give way. (3) Answer to the saturated `colors.arms` request:
+  `GalaxyModel.galaxyDisplayColors(galaxy)` returns the display palette galaxy mode renders (core / arms / hii / dust,
+  linear RGB, max channel 1); Warp.js can use it for portraits and map cards.
+
+### Season 2 (creator's references, from 18 Oct) — cross-track plan
+* **all tracks** — the cosmic web is final (the creator's call, 18 Oct): never edit `src/modes/cosmic/**`; a global
+  change (post, ui, engine, shared shaders) must leave the cosmic view unchanged (capture `/?mode=cosmic` before
+  and after). Season 2 also covers the creator's Characters, Creatures & Bosses, Interiors and Cosmic & Otherworldly
+  folders (see docs/VISION.md).
+* **terrain → flora, civ, atmosphere** — define per-world landmark sites deterministically and expose them, e.g.
+  `world.get('terrain').landmarks = { mountain: {lat, lon}, sacred: [{lat, lon, kind}] }`: one great mountain
+  visible from everywhere, and sacred sites (where flora grows a World Tree of light, civ builds a sacred building,
+  and land may float free).
+* **fauna → player, vehicles** — a small glowing companion that follows the player and sits when they sit
+  (`world.get('fauna').companion`), and a tall long-legged gentle creature that can be ridden by two (a mount API
+  with seat sockets). Creatures steer around `world.player.pos`.
+* **player → ui, audio** — a rest pose (sit, look up): signal it (e.g. `world.player.resting`) so the UI fades the
+  HUD and audio can swell; first-person hands holding a small lamp.
+* **space → atmosphere, post** — eclipses as events: expose `world.get('space').eclipse` (0..1) so sky light and
+  grading can follow; neighbour worlds and rings large in the sky.
+* **ui** — photo mode (HUD hidden, free camera, looks: two-tone, black and white, poster) and a small ring reticle
+  that closes on things you can interact with.
+
+#### Season 2 round 1 requests (18 Oct)
+* **space → atmosphere** — keep dimming this world's light with `space.eclipse` (other bodies only), never with
+  `space.eclipseView` (includes the current planet seen from orbit); optionally tint the ground key light from the
+  eclipse ring colour (`space.eclipseBody`). At night use a soft star-visibility ratio, e.g.
+  `vis = bl² / (bl² + (k·sl)²)`, and set `atmosphere.starVisNight = true` so space drops its night lift. Planetshine:
+  the parent giant is drawn at about 16° radius from the ground (`space.skyInfo('parent').angDeg`); a brighter,
+  blue-tinted night under a full giant.
+* **space → post** — eclipse grading driven by `space.eclipse` (darker, cooler, more contrast); let the eclipse ring
+  (HDR 5–10) bloom.
+* **space → player** — a third-person camera that can sit low behind the explorer and tilt up past 45° to frame the
+  giant overhead; `view=fp` at W12 lat=35 lon=20 spawns in the sea (`space.dryLand()` works around it).
+* **space → terrain** (optional) — `terrain.landmarks.sacred[{lat, lon}]` so sky wonders (halo, orb, monolith)
+  stand over the sacred site; space already reads it when present.
+* **space → fauna, civ** — the saturated red glowing points over the W9 night terrain distract from the sky:
+  smaller, dimmer halos at distance.
+* **atmosphere → space** — the galactic band needs to be brighter and warmer (warm dust, fine star grain); the
+  night star threshold now lets it through (3.0 → 0.45) but it is still too faint in W2/W3 night and dusk.
+* **atmosphere → post** — at blue hour keep auto-exposure from lifting the land (meter toward the sky, or a lower
+  key when `world.atmosphere.twilight > 0.5`); a touch of Purkinje desaturation on land at late dusk.
+* **atmosphere → water** — the sea at blue hour (W2 tod 0.77) shows bright regular horizontal stripes; a calmer
+  reflection in the sky's colour would double the twilight sky.
+* **atmosphere → terrain** (still open) — coarse orbit LOD shows angular lit facets near the terminator.
