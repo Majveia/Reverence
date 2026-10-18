@@ -129,7 +129,7 @@ class Atmosphere {
     // blue hour: the sky keeps its colour while the land goes dark (expose for the sky): the art "readable
     // night" ground ambient is held back while the twilight dome glows, and returns once it is fully night
     const twRise = 1 - THREE.MathUtils.smoothstep(muS, -0.035, 0.045);
-    const twFade = THREE.MathUtils.smoothstep(muS, -0.34, -0.13);
+    const twFade = THREE.MathUtils.smoothstep(muS, -0.40, -0.19);
     const twi = present ? Math.max(twRise * twFade, this.eclipse) : 0;
     this.twilight = twi;
     this.twBlue = present ? twRise * twFade : 0;   // blue-hour window (lighting.js holds the land's ambient back)
@@ -192,6 +192,12 @@ class Atmosphere {
       catch (e) { if ((this._cErr = (this._cErr || 0) + 1) < 4) console.error('[atmosphere] clouds update failed', e); }
     }
     this.effect.u.uFallbackSun.value = w.get('space') ? 0 : 1;
+    // dust storm / heavy snow: from below, the clouds are swallowed by the veil (one-colour wall)
+    if (this.clouds?.u?.uSwallow) {
+      const W = this.weather, cl = this.clouds;
+      const below = 1 - THREE.MathUtils.smoothstep(camR, cl.Rc0 - 200, cl.Rc0 + 300);
+      this.clouds.u.uSwallow.value = THREE.MathUtils.clamp((W.dust || 0) * 0.92 + (W.snow || 0) * 0.45, 0, 0.95) * below;
+    }
     this.frame++;
   }
 

@@ -18,6 +18,46 @@ Subsystem `atmosphere` (order 20) auto-loaded by `World`. Every pass is fault-is
 | `lighting.js` | `SunLight` key light with custom N-cascade shadows (`RVSunShadow`: 2–4 cascades in one atlas, texel snapping, per-cascade normal bias), moon as key light at night (phase-aware), PMREM environment of the sky + cloud deck (cover / colours follow the weather and time of day) on `scene.environment`, **overcast-aware ambient** (the deck greys and dims the sky dome; blocked direct sun returns as diffuse light), hemisphere fallback, material auto-setup (cloud shadows on the key light) |
 | `index.js` | subsystem glue, per-frame CPU state, pre-render GPU work (LUTs, env map, cloud shadow map) |
 
+### Season 2 · round 2 (toward the creator's frames: the air does the acting)
+* **Blue hour** (`effect.js twilightSky`, `index.js`, `lighting.js`): for the sun between ~+2.5° and −23° an
+  art twilight dome is added to the physical sky: deep saturated navy zenith (a touch of the world's sky tint),
+  a teal band low toward the sun, a rose glow, a thin orange **last-light line** hugging the horizon under the
+  set sun (`exp(-elev/0.022)`, fading with the sun's depression) and the belt of Venus opposite. Meanwhile the
+  land is exposed for the sky: the art "readable night" ground ambient is held back (×0.28) and the sky
+  ambient / environment intensity drop to ×0.44 inside the blue-hour window → land in silhouette, sky in
+  colour; full night returns the readable moonlit ground. `state.atmosphere.twilight`.
+* **Nights**: deeper, more saturated indigo starlight sky; stars and the galactic band are no longer hidden by
+  the night sky glow (`uStarVis` 3.0 by day → 0.45 at night: the daytime contrast threshold was hiding the
+  space track's band and most stars at night).
+* **Orbit limb = thin hard line** (`effect.js limbLine`): an emitting shell just above the cloud tops and the
+  highest relief, seen edge-on (chord / thickness ≈ ×25 limb brightening) → a 1–2 px line just outside the
+  disc edge: teal-white on the day side, warm at the terminator, a faint green airglow line on the night side
+  (the old soft night-only airglow shell fades out from orbit). **Soft terminator**: from orbit the lit ground
+  is faded with the sphere's own N·L (`smoothstep(-0.07, 0.16, μ)`): no lit facets past the terminator, a
+  graded warm band. **Orbit cloud veils** (`clouds.js`, `uShape7.y`, `&veil=`): thin translucent stratiform
+  sheets join the far-field cloud fields (milky ocean between the bright cores instead of white confetti).
+* **Landscape god-ray fan** (`lightshafts.js`): a third screen-space channel — open sky through the deck's gaps
+  (cloud transmittance), averaged over the WHOLE line to the sun (the sun may be ~a screen off-frame) — then
+  contrast against the neighbouring lines a few degrees to each side: lines through gaps are brightened in the
+  key light's hue, the shadowed lines between them dimmed (multiplicative, so it reads against any sky).
+  Gated to partial cover (0.22–0.9), low-to-mid sun, the deck overhead (none above a sea of clouds), fades with
+  `sunDim`. `&fan=0..2` overrides; `&atmoDebug=6` shows the fan buffer (R mean, G/B ± contrast).
+* **Rainbow** (`weather.js`, copy pass at order 125 so it hangs in front of the clouds): primary bow
+  40.5–42.5° from the antisolar point, reversed secondary at 50.4–53.6° (×0.3), brighter sky inside, Alexander's
+  dark band, only over the far land (> ~600 m) and the sky. Natural trigger: wet air + thinning shower + sun
+  out (`sunDim` > 0.45) + sun below ~40°, below the cloud base; `&weather=rainbow` stages it (light drizzle,
+  broken deck, wet ground). `state.atmosphere.rainbow`.
+* **Snow is fog / dust is a one-colour wall** (`index.js _updateFog`, `effect.js uFogMono`): heavy snow
+  ≈ 1.2e-3 /m (land fades within ~1 km); a dust storm ≈ 2.6e-3 /m whose in-scatter collapses to ONE hue
+  (the dust's, from the ground albedo / tint, saturated); clouds are swallowed by the veil from below
+  (`clouds.js uSwallow`).
+* **Coloured fog**: every haze carries ~30–45 % of the world's `art.palette.fog` hue (lavender rain veils, teal
+  neon smog); plain rain (no storm) veils are paler (each ridge one step lighter); on **bioluminescent**
+  worlds at night a low mist glows with the flora's palette colour (teal around W4's forest — flora request).
+* **Eclipse** (space request): `world.get('space').eclipse` (0..1) when present, else 1 − `space.sunVisibility`
+  at the camera: sunlight × (1 − 0.97·e) for the sky, clouds, key light and env map, and the twilight dome
+  with last light all around the horizon (360° sunset). `state.atmosphere.eclipse`.
+
 ### Round 4 (critic fixes: orbit fidelity, storm mood, cloud cleanliness)
 * **Orbit cloud fields read as weather, not cut-out islands**: the weather cube is sheared by **jet streams**
   (latitude-dependent zonal rotation about the planet axis + a large meander) and mildly stretched east-west, so
@@ -182,13 +222,22 @@ world.atmosphere = {
   `atmo_transSegment(p0, p1)` (planet-centred metres).
 * G uniforms written every frame: `uSunDir, uSunColor, uSunIntensity, uAmbientSky, uAmbientGround,
   uNight, uWindDir, uWindStrength, uWetness, uSnow`.
-* `__rv.state().atmosphere` → `{ sunElev, key, night, env, shadows, clouds, weather{…}, wet, snowCover }`.
+* `__rv.state().atmosphere` → `{ sunElev, key, night, env, shadows, clouds, weather{…}, wet, snowCover, twilight,
+  eclipse, rainbow, shafts{fan, gate, cover, …} }`; `world.atmosphere.twilight` (0..1 blue-hour dome),
+  `.eclipse` (0..1), `.weather.rainbow` (0..1).
 
 ## Best capture views (`/?mode=system&galaxy=0&…`)
 Finals of this round (1280×720) are listed first; all are plain URLs (steps only where noted).
 
 | view | URL / steps |
 |---|---|
+| **Blue hour** (S2 r2): sky keeps its colour, afterglow clouds, land in silhouette (W2) | `star=11&planet=0&view=fly&alt=300&tod=0.77&pitch=8&yaw=262` |
+| **Rainbow after rain** (S2 r2): double bow over the sea, soft violet sky (W2) | `star=11&planet=0&view=fly&alt=300&tod=0.31&pitch=8&yaw=275&weather=rainbow` |
+| **Golden-hour fan** (S2 r2): shafts fanning up from the sun behind the ridge through broken cumulus (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.74&pitch=6&yaw=270&cover=0.8` |
+| **Orbit** (S2 r2): thin limb line, milky cloud veils, soft warm terminator, cyclone (W2) | `star=11&planet=0&view=orbit&tod=0.4` |
+| **Night** (S2 r2): indigo starry sky, moonlit wisps, readable ground (W3) | `star=9&planet=2&view=fly&alt=600&tod=0.02&pitch=8&yaw=283` |
+| **Dust storm** (S2 r2): one-colour wall, spires stepping into the haze (W3) | `star=9&planet=2&view=fly&alt=200&tod=0.4&pitch=4&yaw=200&weather=dust` |
+| Snow as fog (W12) | `star=9&planet=5&view=fly&alt=200&tod=0.45&pitch=6&weather=snow` |
 | **BotW cumulus sky** (W2 noon-ish): lumpy cumulus clusters + high cloud | `star=11&planet=0&view=fly&alt=800&tod=0.4&pitch=8` |
 | **Golden hour**, warm streaks fanning from behind the ridge (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.74&pitch=6&yaw=270` |
 | **Morning sun through broken cumulus** (W2, god rays / shadow beams) | `star=11&planet=0&view=fly&alt=800&tod=0.28&pitch=8&yaw=100&cover=0.7` |
@@ -210,7 +259,8 @@ Finals of this round (1280×720) are listed first; all are plain URLs (steps onl
 Framing tips: `__rv.state().atmosphere` reports `sunAz` / `sunElev` and `moon {az, elev}` — pass them as
 `yaw` / `pitch` to face the sun or the moon.
 
-**Art / capture overrides:** `&weather=clear|rain|storm|snow|dust|fog|aurora`, `&lightning=1` (forced bolt on
+**Art / capture overrides:** `&weather=clear|rain|storm|snow|dust|fog|aurora|rainbow`, `&fan=0..2` (landscape god-ray fan strength),
+`&veil=0..0.1` (orbit cloud veils, default 0.015), `&atmoDebug=6` (fan buffer), `&lightning=1` (forced bolt on
 the captured frame), `&clouds=cumulus|storm|stratus|wisp|haze|fogsea|none`, `&cover=0..1` (cloud coverage), `&cirrus=0..1` (high cloud layer opacity).
 Debug: `&atmoDebug=5` shows the volumetric-light terms (R: added light, G: shadowed/removed light, B: 1 − T);
 `&shafts=0` disables the volumetric-light pass (A/B); `&clscale=0.25..1` overrides the cloud march resolution.
@@ -236,6 +286,19 @@ it) and `overcast`.
   pixels near towns; the far rain sheet is one extra instanced draw while it rains.
 
 ## Known issues
+* S2 r2: the landscape fan is screen-space: it needs the sun within ~a screen of the frame and cloud gaps in
+  view; a sun far behind the camera gives no anti-crepuscular fan (the 3D volumetric pass still does). Over a
+  clear sky a faint angular modulation (±9 %) remains.
+* S2 r2: the blue-hour hold-back of the land's ambient is camera-local (sun elevation at the camera); custom
+  shaders that light themselves from `G.uAmbientSky` follow it, emissive surfaces (windows, glow flora) do not
+  (intended: warm windows against a dark land).
+* S2 r2: the limb line sits above the cloud tops (not at the surface) so clouds cannot cut it; on worlds with a
+  very tall relief it is clamped to 0.62 atmosphere heights.
+* S2 r2: the rainbow is drawn over everything farther than ~600 m (sky, far land, clouds) and is not occluded
+  by a cloud that is nearer than the shower.
+* S2 r2: at night thin moonlit cirrus is still the brightest thing in the sky on W3; thick cumulus over W4's
+  city at night reads as dark smoke with a dithered half-res edge (lifted a little by the starlit sky and city
+  glow on the bases).
 * Round 4: from inside the cumulus layer at altitude (W2 `fly&alt=3000`) a faint pale band sits a few degrees above
   the sea horizon where view rays stop leaving the layer through its base (the deck's own horizon, averaged
   distant cloud); physically plausible but slightly too regular.
@@ -263,6 +326,22 @@ it) and `overcast`.
 * Lightning bolts are camera-facing ribbons (no volumetric glow halo; the cloud flash provides that).
 
 ## Requests
+* **space** (S2 r2): the galactic band is now allowed through at night (`uStarVis` drops to 0.45) but it is still
+  too faint to read in W2 / W3 night and late-dusk frames; the creator's frames paint it as warm dust with fine
+  star grain — a brighter, warmer band. (`space.eclipse` is now read directly; thanks.)
+* **post** (S2 r2): blue hour now keeps the sky bright and the land dark; please keep auto-exposure from lifting
+  the silhouette back (meter weighted toward the sky, or a lower key when `world.atmosphere.twilight` > 0.5),
+  and a touch of Purkinje desaturation on the land at late dusk (W3 `tod=0.79` mesas still read warm brown).
+* **water** (S2 r2): the sea at blue hour shows bright, regular horizontal stripes (W2 `tod=0.77`); a calmer,
+  sky-coloured reflection would double the twilight sky (rule 11: still water doubles the sky).
+* **terrain** (still open): angular lit facets of the coarse orbit LOD near the terminator; the atmosphere now
+  fades lit ground past the terminator (`smoothstep(-0.07, 0.16, μ)`), which hides most of them.
+
+### Done (inbox, S2 r2)
+* space → atmosphere: eclipses (`space.eclipse` or `sunVisibility`) dim the sunlight and turn the sky into a
+  twilight dome ringed by last light.
+* flora (fix r2): teal low mist glowing at night around bioluminescent forests (W4); stronger aerial perspective
+  was already in place (`apScale` 0.5).
 * **post** (round 4): under rain / storm decks the atmosphere now drops the ambient (`world.lighting.deckDim`,
   `G.uSunIntensity`, `world.atmosphere.weather.overcast`); auto-exposure (strength 0.7) gives most of it back.
   A lower exposure key under overcast / storm (e.g. `key × (1 − 0.35·overcast·storm)`) would keep the storm mood.

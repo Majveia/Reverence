@@ -101,7 +101,9 @@ logged and skipped; the frame loop never sees an exception).
 world.space = {
   sun: { dir, angularRadius, color, visibility /*0..1 horizon + eclipses*/, screen /*NDC*/, onScreen },  // lens-flare hooks
   sunVisibility(localPos),        // fraction of the star disk visible past other bodies (eclipses on the current body)
-  eclipse,                        // 0..1 fraction of the star disc hidden by bodies (NOT the horizon) — atmosphere / post
+  eclipse,                        // 0..1 fraction of the star disc hidden by OTHER bodies (not the horizon, not the
+                                  //   current planet) — the light on this world: atmosphere / post
+  eclipseView,                    // same seen from the camera, incl. the current planet's disc from orbit
   eclipseBody,                    // id of the body covering the star (or null)
   bodies,                         // [{ b, local (true planet-local Vector3), app (apparent, drawn position), mag, mesh, ring, shell, … }]
   aim(ref, fromLocal?),           // → { yaw, pitch } (deg, 0 = north, 90 = east) toward '0-2-2' | 'sun' | 'galcenter' | 'comet0'
@@ -131,7 +133,7 @@ URL: ?giant=<deg> (apparent radius of a moon's parent from the ground, default 1
 | **W3 black orb pouring a pillar of light** (orb wonder, forced) | `star=9&planet=2&view=surface&camlock=1&zoom=1.4&tod=0.78&weather=clear&wonder=orb` + steps `[{"advance":0.3},{"eval":"__rv.world.space.wonderShot(7000, 90)"},{"advance":2},{"eval":"__rv.world.space.look('wonder',-10,-4)"},{"advance":0.5}]` |
 | **W4 eclipse from orbit** (black disc, thin orange ring, corona streamers) | `star=2&planet=0&view=orbit&weather=clear` + steps `[{"advance":0.5},{"eval":"__rv.world.space.orbitSunShot(17.2, 20)"},{"advance":0.5}]` |
 | **W12 rings arching over the ice at night** (spawn moved to dry land) | `star=9&planet=5&view=surface&camlock=1&zoom=1.5&tod=0.06&lat=35&lon=20&yaw=180&pitch=22&weather=clear` + steps `[{"advance":0.3},{"eval":"__rv.world.space.dryLand(35,20,10)"},{"advance":1.5}]` |
-| W9 eclipse by the giant at day (sky not yet dimmed: atmosphere request) | `star=2&planet=2.1&view=surface&camlock=1&zoom=1.6&tod=0.31&time=525000&weather=clear` + `look('parent',-20,-6)` |
+| **W9 eclipse by the giant, morning** (a gold ring round the giant, the sky turns violet with last light all round the horizon — atmosphere reads `space.eclipse`) | `star=2&planet=2.1&view=surface&camlock=1&zoom=1.6&tod=0.31&time=525000&weather=clear` + steps `[{"advance":0.3},{"eval":"__rv.world.space.look('parent',-20,-6)"},{"advance":0.5}]` |
 | G1 backlit ringed giant (Cassini look: sun over the limb, ring shadow, ring-shine on the night side) | `star=2&planet=2&view=orbit` + steps `[{"advance":0.5},{"eval":"__rv.world.space.orbitSunShot(26, 12)"},{"advance":0.5}]` |
 | G1 ringed gas giant from orbit (quarter phase, rings crossing the disk) | `star=2&planet=2&view=orbit&tod=0.3` |
 | G1 gibbous: turbulent belts, vortices, rings | `star=2&planet=2&view=orbit` + steps `[{"advance":0.5},{"eval":"__rv.world.space.orbitSunShot(135, 20)"},{"advance":0.5}]` (close-up: `&dist=1300000`, `orbitSunShot(120, -10)`) |
@@ -183,11 +185,10 @@ orbit around the star, so the giant–sun geometry drifts slowly (giant near opp
   with screen size (`uDetail`), a distant giant costs 3 octaves.
 
 ## Requests
-* **atmosphere** (season 2) — eclipses as events: `world.get('space').eclipse` (0..1) is exposed. Please dim the key
-  light, sky in-scatter and ambient by about `1 - 0.97 * eclipse²` (or use `space.sunVisibility(camLocal)` per pixel /
-  per cascade) and shift the sky toward deep teal/indigo while it lasts; today the W9 eclipse by the giant
-  (`time=525000&tod=0.31`) keeps a bright day sky and a sunlit land around a black disc. The eclipse ring
-  (`space.star` halo, far plane) could also tint the ground key light warm (`eclipseBody`, the ring colour).
+* **atmosphere** (season 2, being picked up on their side) — `world.get('space').eclipse` (0..1, other bodies only;
+  the current planet seen from orbit is in `eclipseView`, which should NOT dim this world's light). Test view: W9
+  eclipse by the giant `star=2&planet=2.1&time=525000&tod=0.31`, M1 `star=0&planet=2.0&time=546200&tod=0.33`.
+  The eclipse ring could also tint the ground key light warm (`eclipseBody`, ring colour).
 * **atmosphere** — the night star-hiding threshold `vis = (bl - 3·sl) / bl` subtracts 3× the sky luminance from the
   background: soft band light turns into hard-edged shapes (the critic's "cream slab with a hard vertical edge").
   A soft ratio at night, e.g. `vis = bl² / (bl² + (k·sl)²)`, would let the Milky Way fade naturally (space then

@@ -584,6 +584,7 @@ uniform sampler2D tColor;
 uniform sampler2D tDepth;
 uniform sampler2D tClouds;
 uniform vec2 uLowRes;
+uniform float uSwallow;    // dust storm / heavy snow below the deck: the clouds vanish into the veil
 varying vec2 vUv;
 float linDist(vec2 uv){
   float d = texture(tDepth, uv).r;
@@ -611,6 +612,7 @@ void main(){
     wsum += w;
   }
   vec4 c = wsum > 0.0 ? acc / wsum : vec4(0.0, 0.0, 0.0, 1.0);
+  c = vec4(c.rgb * (1.0 - uSwallow), mix(c.a, 1.0, uSwallow));
   gl_FragColor = vec4(col * c.a + c.rgb, 1.0);
 }`;
 
@@ -752,6 +754,7 @@ export class Clouds {
     this.lowRT = hdrTarget(4, 4);
     const hq = this.tier === 'high' || this.tier === 'ultra';
     this.marchMat = fsMaterial(this.mode2D ? LOW_FRAG : MARCH_FRAG, this.u, hq ? { defines: { CL_HQ: 1 } } : {});
+    this.u.uSwallow = { value: 0 };
     this.compMat = fsMaterial(COMPOSITE_FRAG, this.u);
     this.shadowSize = { low: 128, med: 256, high: 384, ultra: 512 }[this.tier] ?? 384;
     this.shadowRT = new THREE.WebGLRenderTarget(this.shadowSize, this.shadowSize, { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
@@ -875,6 +878,11 @@ export class Clouds {
     const at = u.uAmbTop.value.set((sk[0] * scE[0] + na.r) * k * AMBK, (sk[1] * scE[1] + na.g) * k * AMBK, (sk[2] * scE[2] + na.b) * k * AMBK);
     // cloud bases see the horizon sky as much as the ground: cool, not brown
     u.uAmbBot.value.set(at.x * 0.5 + gr[0] * scE[0] * 0.35, at.y * 0.5 + gr[1] * scE[1] * 0.35, at.z * 0.5 + gr[2] * scE[2] * 0.35);
+    // night: the clouds sit IN the indigo starlit sky (not black holes cut into it), and town light lifts their
+    // bases (light pollution glows on the deck)
+    const nsk = this.atmo.shared?.uNightSky?.value, eu = this.atmo.effect?.u;
+    if (nsk) at.addScaledVector(nsk, 0.9);
+    if (eu && eu.uCitySky.value > 0) { const cc = eu.uCityCol.value, cs = eu.uCitySky.value * 0.5; u.uAmbBot.value.addScaledVector(cc, cs); }
     if (!this._refDone) {
       this._refDone = true;
       m.skyIrradiance(rc, 0.7, sk, gr);

@@ -460,3 +460,26 @@ visualizations). What separates AAA from "tech demo":
   grading can follow; neighbour worlds and rings large in the sky.
 * **ui** — photo mode (HUD hidden, free camera, looks: two-tone, black and white, poster) and a small ring reticle
   that closes on things you can interact with.
+
+#### Season 2 round 1 requests (18 Oct)
+* **space → atmosphere** — keep dimming this world's light with `space.eclipse` (other bodies only), never with
+  `space.eclipseView` (includes the current planet seen from orbit); optionally tint the ground key light from the
+  eclipse ring colour (`space.eclipseBody`). At night use a soft star-visibility ratio, e.g.
+  `vis = bl² / (bl² + (k·sl)²)`, and set `atmosphere.starVisNight = true` so space drops its night lift. Planetshine:
+  the parent giant is drawn at about 16° radius from the ground (`space.skyInfo('parent').angDeg`); a brighter,
+  blue-tinted night under a full giant.
+* **space → post** — eclipse grading driven by `space.eclipse` (darker, cooler, more contrast); let the eclipse ring
+  (HDR 5–10) bloom.
+* **space → player** — a third-person camera that can sit low behind the explorer and tilt up past 45° to frame the
+  giant overhead; `view=fp` at W12 lat=35 lon=20 spawns in the sea (`space.dryLand()` works around it).
+* **space → terrain** (optional) — `terrain.landmarks.sacred[{lat, lon}]` so sky wonders (halo, orb, monolith)
+  stand over the sacred site; space already reads it when present.
+* **space → fauna, civ** — the saturated red glowing points over the W9 night terrain distract from the sky:
+  smaller, dimmer halos at distance.
+* **atmosphere → space** — the galactic band needs to be brighter and warmer (warm dust, fine star grain); the
+  night star threshold now lets it through (3.0 → 0.45) but it is still too faint in W2/W3 night and dusk.
+* **atmosphere → post** — at blue hour keep auto-exposure from lifting the land (meter toward the sky, or a lower
+  key when `world.atmosphere.twilight > 0.5`); a touch of Purkinje desaturation on land at late dusk.
+* **atmosphere → water** — the sea at blue hour (W2 tod 0.77) shows bright regular horizontal stripes; a calmer
+  reflection in the sky's colour would double the twilight sky.
+* **atmosphere → terrain** (still open) — coarse orbit LOD shows angular lit facets near the terminator.

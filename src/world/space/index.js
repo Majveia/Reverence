@@ -56,6 +56,7 @@ class Space {
     };
     this.eclipse = 0;            // 0..1 fraction of the star disc hidden by bodies (not the horizon) — for atmosphere / post
     this.eclipseBody = null;
+    this.eclipseView = 0;        // same, seen from the camera, including the current planet (orbit views)
     this.ctx = {
       camLocal: new THREE.Vector3(), pixAng: 0.001, pixelRatio: 1, inAtmo: 0, renderer: this.engine.renderer,
       sunIll: new THREE.Vector3(6, 6, 6),
@@ -142,13 +143,16 @@ class Space {
     // the current planet itself, seen from above its air (orbit / ship): its night disc eclipses the star
     const b = this.world.body;
     const inside = Math.max(ctx.inAtmo, 1 - THREE.MathUtils.smoothstep(camR - b.radius, b.radius * 0.03, b.radius * 0.12));
+    // (`eclipse` counts other bodies only: the current planet hiding the star from orbit is not an eclipse of the
+    // light on that planet — its lit limb stays lit; `eclipseView` includes it, for the view from the camera)
+    this.eclipse = THREE.MathUtils.clamp(1 - es.vis, 0, 1);
     if (inside < 0.5) {
       const top = R + (b.atmosphere?.present ? (b.atmosphere.height || 0) * 0.25 : 0);
       const v0 = es.vis;
       this._eclConsider(ctx, _v2.set(0, 0, 0), top, !!b.atmosphere?.present, !!b.isGas, b.id);
       es.vis = v0 + (es.vis - v0) * (1 - inside * 2);
     }
-    this.eclipse = THREE.MathUtils.clamp(1 - es.vis, 0, 1);
+    this.eclipseView = THREE.MathUtils.clamp(1 - es.vis, 0, 1);
     const on = es.bestS > 0.002;
     es.best.strength = es.bestS;
     this.eclipseBody = on ? es.best.id : null;
@@ -375,7 +379,7 @@ class Space {
       bodies: this.bodies.filter((e) => e.mesh?.visible || e.ring?.visible).map((e) => e.b.id),
       sunVis: +this.sun.visibility.toFixed(3),
       sunAng: +(this.sun.angularRadius * 180 / Math.PI).toFixed(3),
-      eclipse: +(this.eclipse || 0).toFixed(3), eclipseBody: this.eclipseBody || null,
+      eclipse: +(this.eclipse || 0).toFixed(3), eclipseView: +(this.eclipseView || 0).toFixed(3), eclipseBody: this.eclipseBody || null,
       wonder: this.wonder ? this.wonder.state() : null,
     };
   }

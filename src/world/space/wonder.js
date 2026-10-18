@@ -184,15 +184,15 @@ export class Wonder {
     this.orb.position.copy(this.centre);
     this.orb.userData.noCSM = true;
     this.group.add(this.orb);
-    const hot = new THREE.Color(1.0, 0.42, 0.08);
-    this.ringU = { uCol: { value: hot }, uI: { value: 5.5 }, uTime: { value: 0 }, uPx: { value: 100 }, uGap: { value: 0 } };
+    const hot = new THREE.Color(1.0, 0.36, 0.05);
+    this.ringU = { uCol: { value: hot }, uI: { value: 10 }, uTime: { value: 0 }, uPx: { value: 100 }, uGap: { value: 0 } };
     this.ring = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), additive(RING_FRAG, this.ringU));
     this.ring.scale.setScalar(this.orbR * 1.35);
     this.ring.frustumCulled = false; this.ring.renderOrder = 6; this.ring.userData.noCSM = true;
     this.ring.position.copy(this.centre);
     this.group.add(this.ring);
     // pillar of light pouring from the orb to the land
-    this.beamU = { uCol: { value: new THREE.Color(1.0, 0.5, 0.12) }, uI: { value: 4.5 }, uTime: { value: 0 }, uFlow: { value: 1.3 }, uSoft: { value: 0.32 } };
+    this.beamU = { uCol: { value: new THREE.Color(1.0, 0.45, 0.08) }, uI: { value: 7 }, uTime: { value: 0 }, uFlow: { value: 1.3 }, uSoft: { value: 0.32 } };
     this.beam = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), additive(BEAM_FRAG, this.beamU));
     this.beamW = this.orbR * 0.32;
     this.beamTop = h * 0.82 - this.orbR * 0.9;
