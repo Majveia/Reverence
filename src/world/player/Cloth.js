@@ -179,19 +179,19 @@ export class Scarf {
     const hi = quality?.tier !== 'low';
     let nrm = null;
     try { nrm = scarfNormal(); } catch (_) { nrm = null; }
-    this.material = new (hi ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({
-      color: this.tex ? 0xffffff : hairK ? palette.hair : palette.scarf, map: this.tex, roughness: hairK ? 0.55 : 0.86, side: THREE.DoubleSide,
+    this.material = new (hi ? THREE.MeshPhysicalMaterial : hairK ? THREE.MeshLambertMaterial : THREE.MeshStandardMaterial)({
+      color: this.tex ? 0xffffff : hairK ? palette.hair : palette.scarf, map: this.tex, ...(hi || !hairK ? { roughness: hairK ? 0.55 : 0.86 } : {}), side: THREE.DoubleSide,
       normalMap: hairK ? null : nrm, normalScale: new THREE.Vector2(0.8, 0.8), alphaTest: this.tex ? 0.5 : 0,
     });
     if (hi) {
-      if (hairK) { this.material.sheen = 0.5; this.material.sheenRoughness = 0.4; this.material.sheenColor = new THREE.Color(palette.hairHi).multiplyScalar(0.7); }
+      if (hairK) { this.material.specularIntensity = 0.18; this.material.sheen = 0.35; this.material.sheenRoughness = 0.35; this.material.sheenColor = new THREE.Color(palette.hairHi).multiplyScalar(0.5); }
       else { // silk-wool: a soft sheen in the scarf's own (lighter, more saturated) hue — never a pink/white film
         const hsl = {}; palette.scarf.getHSL(hsl);
         this.material.sheen = 0.5; this.material.sheenRoughness = 0.5;
         this.material.sheenColor = new THREE.Color().setHSL(hsl.h, Math.min(1, hsl.s * 1.1), Math.min(0.6, hsl.l * 1.35 + 0.05));
       }
     }
-    if (hairK && nrm) nrm.dispose();
+    if (hairK) { if (nrm) nrm.dispose(); }
     this.meshes = [];
     for (const s of this.strips) {
       const g = new THREE.BufferGeometry();
@@ -218,6 +218,28 @@ export class Scarf {
     this.initialized = false;
     this._a = new THREE.Vector3(); this._b = new THREE.Vector3(); this._n = new THREE.Vector3();
     this.t = 0;
+    // hair: a tapered tube along the main lock's centre gives the ponytail its body (the strips are the wisps)
+    this.core = null;
+    if (hairK) {
+      const s0 = this.strips[0], RS = 8;
+      const g = new THREE.BufferGeometry();
+      this.corePos = new Float32Array(s0.rows * RS * 3); this.coreNrm = new Float32Array(s0.rows * RS * 3);
+      g.setAttribute('position', new THREE.BufferAttribute(this.corePos, 3));
+      g.setAttribute('normal', new THREE.BufferAttribute(this.coreNrm, 3));
+      const uv = new Float32Array(s0.rows * RS * 2);
+      for (let j = 0; j < s0.rows; j++) for (let i = 0; i < RS; i++) { uv[(j * RS + i) * 2] = 0.3 + 0.4 * (i / RS); uv[(j * RS + i) * 2 + 1] = j / (s0.rows - 1) * 0.92; }
+      g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      const idx = [];
+      for (let j = 0; j < s0.rows - 1; j++) for (let i = 0; i < RS; i++) { const a = j * RS + i, b = j * RS + (i + 1) % RS, c = a + RS, d = b + RS; idx.push(a, c, b, b, c, d); }
+      g.setIndex(idx);
+      g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 3);
+      this.coreMat = new (hi ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({ color: palette.hair, roughness: 0.5 });
+      if (hi) { this.coreMat.specularIntensity = 0.18; this.coreMat.sheen = 0.4; this.coreMat.sheenRoughness = 0.35; this.coreMat.sheenColor = new THREE.Color(palette.hairHi).multiplyScalar(0.5); }
+      this.core = new THREE.Mesh(g, this.coreMat);
+      this.core.castShadow = true; this.core.receiveShadow = true; this.core.frustumCulled = false;
+      this.coreRS = RS;
+      this.group.add(this.core);
+    }
   }
 
   /** Place all particles hanging from the anchors (after teleports / first frame). */
@@ -363,11 +385,38 @@ export class Scarf {
       pos.needsUpdate = true;
       this.meshes[k].geometry.attributes.normal.needsUpdate = true;
     }
+    if (this.core) this._updateCore(center);
     this.group.position.copy(center);
     if (!this.initialized) this.reset(anchorsW, this._n.copy(up).negate());
   }
 
+  _updateCore(center) {
+    const s = this.strips[0], X = s.x, N = s.nrm, RS = this.coreRS, P = this.corePos, Nn = this.coreNrm;
+    const t = this._a, b = this._b, n = this._n;
+    for (let j = 0; j < s.rows; j++) {
+      const o = (j * 3 + 1) * 3; // middle column
+      const jn = Math.min(s.rows - 1, j + 1), jp = Math.max(0, j - 1);
+      const on = (jn * 3 + 1) * 3, op = (jp * 3 + 1) * 3;
+      t.set(X[on] - X[op], X[on + 1] - X[op + 1], X[on + 2] - X[op + 2]).normalize();
+      n.set(N[o], N[o + 1], N[o + 2]); n.addScaledVector(t, -n.dot(t)).normalize();
+      b.crossVectors(t, n);
+      const u = j / (s.rows - 1);
+      const r = 0.026 * (1 - 0.82 * Math.pow(u, 1.3)) * (j === 0 ? 0.8 : 1);
+      for (let i = 0; i < RS; i++) {
+        const a = (i / RS) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
+        const k = (j * RS + i) * 3;
+        const nx = n.x * ca * 0.8 + b.x * sa, ny = n.y * ca * 0.8 + b.y * sa, nz = n.z * ca * 0.8 + b.z * sa;
+        P[k] = X[o] - center.x + nx * r; P[k + 1] = X[o + 1] - center.y + ny * r; P[k + 2] = X[o + 2] - center.z + nz * r;
+        const l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+        Nn[k] = nx / l; Nn[k + 1] = ny / l; Nn[k + 2] = nz / l;
+      }
+    }
+    this.core.geometry.attributes.position.needsUpdate = true;
+    this.core.geometry.attributes.normal.needsUpdate = true;
+  }
+
   dispose() {
+    if (this.core) { this.core.geometry.dispose(); this.coreMat.dispose(); }
     for (const m of this.meshes) m.geometry.dispose();
     this.material.dispose();
     this.tex?.dispose();

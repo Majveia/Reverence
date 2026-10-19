@@ -1,7 +1,8 @@
-// Player track — the small companion: a "lantern fox", a cream-furred little creature whose tail tip glows like a
-// lantern and who wears a tiny ring of light on its brow (the sign of the source, small). It trots after the
-// explorer with a spring-damped offset, sits down beside them when they rest (at the left hip, looking out at
-// the same view), leans into the arm put around it and now and then turns its head up to the explorer.
+// Player track — the companion: a white wolf (season 2, the swordswoman's companion; it fits the creator's
+// Characters frames — "a child before a great animal", tender contact). Pale silver-white fur, a faint ring of
+// light on its brow (the sign of the source) and a wisp of light at the tail tip. It lopes after her with a
+// spring-damped offset, sits down beside her when she rests (at her left hip, looking out at the same view), leans
+// into the arm put around it and now and then turns its head to her.
 //
 // Fallback for the fauna track's planned `world.get('fauna').companion` — the Player only builds this one when
 // fauna does not provide a companion. One skinned mesh pair (fur + glow), 11 bones, ~3k triangles,
@@ -14,14 +15,14 @@ import { clamp, lerp, damp, dampF, smoothstep, projectOnPlane, quatFromUpForward
 const C = { root: 0, body: 1, head: 2, tail0: 3, tail1: 4, tail2: 5, legFL: 6, legFR: 7, legBL: 8, legBR: 9, chest: 10 };
 const REST = {
   root: [null, 0, 0, 0],
-  body: ['root', 0, 0.2, -0.02],
-  chest: ['body', 0, 0.22, 0.12],
-  head: ['chest', 0, 0.31, 0.19],
-  tail0: ['body', 0, 0.23, -0.19],
-  tail1: ['tail0', 0, 0.225, -0.3],
-  tail2: ['tail1', 0, 0.215, -0.41],
-  legFL: ['chest', 0.045, 0.19, 0.13], legFR: ['chest', -0.045, 0.19, 0.13],
-  legBL: ['body', 0.05, 0.2, -0.12], legBR: ['body', -0.05, 0.2, -0.12],
+  body: ['root', 0, 0.275, -0.02],
+  chest: ['body', 0, 0.295, 0.12],
+  head: ['chest', 0, 0.385, 0.19],
+  tail0: ['body', 0, 0.305, -0.19],
+  tail1: ['tail0', 0, 0.300, -0.3],
+  tail2: ['tail1', 0, 0.290, -0.41],
+  legFL: ['chest', 0.045, 0.265, 0.13], legFR: ['chest', -0.045, 0.265, 0.13],
+  legBL: ['body', 0.05, 0.275, -0.12], legBR: ['body', -0.05, 0.275, -0.12],
 };
 const NAMES = Object.keys(C).sort((a, b) => C[a] - C[b]);
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -32,41 +33,41 @@ export class Companion {
     this.player = player;
     const lo = quality?.tier === 'low';
     const R = (n) => Math.max(6, Math.round(n * (lo ? 0.6 : 1)));
-    const fur = new THREE.Color('#efe4d0'), fur2 = new THREE.Color('#d9a66a'), dark = new THREE.Color('#2a211b'), inner = new THREE.Color('#c88f78');
-    const glowC = new THREE.Color('#ffd79a');
+    const fur = new THREE.Color('#d6d9dd'), fur2 = new THREE.Color('#c5cad2'), dark = new THREE.Color('#222328'), inner = new THREE.Color('#b8a2a6');
+    const glowC = new THREE.Color('#cfe6ff');
     const A = new Assembler();
     // body + chest ruff + neck
-    const back = new THREE.Color('#e2b98c');
-    A.add('fur', ellipsoid(0.082, 0.08, 0.19, R(18), R(12)).translate(0, 0.2, -0.03), back, (x, y, z, o) => { const t = smoothstep(-0.02, 0.1, z); o[0] = C.body; o[1] = 1 - t; o[2] = C.chest; o[3] = t; return o; });
-    A.add('fur', ellipsoid(0.07, 0.08, 0.075, R(14), R(10)).translate(0, 0.23, 0.12), fur, rigid(C.chest));
-    A.add('fur', ellipsoid(0.05, 0.075, 0.055, R(12), R(8)).translate(0, 0.29, 0.17), fur, blendY(C.chest, C.head, 0.27, 0.32));
+    const back = new THREE.Color('#b9bfc8');
+    A.add('fur', ellipsoid(0.062, 0.07, 0.2, R(18), R(12)).translate(0, 0.280, -0.03), back, (x, y, z, o) => { const t = smoothstep(-0.02, 0.1, z); o[0] = C.body; o[1] = 1 - t; o[2] = C.chest; o[3] = t; return o; });
+    A.add('fur', ellipsoid(0.064, 0.085, 0.085, R(14), R(10)).translate(0, 0.300, 0.12), fur, rigid(C.chest));
+    A.add('fur', ellipsoid(0.05, 0.075, 0.055, R(12), R(8)).translate(0, 0.365, 0.17), fur, blendY(C.chest, C.head, 0.345, 0.395));
     // head: skull, cheeks, snout + nose, ears (outer warm, inner pink), eyes, brow ring of light
-    A.add('fur', ellipsoid(0.062, 0.056, 0.064, R(16), R(12)).translate(0, 0.355, 0.22), fur, rigid(C.head));
-    for (const s of [1, -1]) A.add('fur', ellipsoid(0.03, 0.028, 0.035, R(8), R(6)).translate(s * 0.045, 0.335, 0.235), fur, rigid(C.head));
-    A.add('fur', ellipsoid(0.028, 0.025, 0.055, R(10), R(8)).translate(0, 0.336, 0.29), fur, rigid(C.head));
-    A.add('fur', ellipsoid(0.011, 0.009, 0.009, 8, 6).translate(0, 0.345, 0.343), dark, rigid(C.head));
+    A.add('fur', ellipsoid(0.062, 0.056, 0.064, R(16), R(12)).translate(0, 0.430, 0.22), fur, rigid(C.head));
+    for (const s of [1, -1]) A.add('fur', ellipsoid(0.03, 0.028, 0.035, R(8), R(6)).translate(s * 0.045, 0.410, 0.235), fur, rigid(C.head));
+    A.add('fur', ellipsoid(0.026, 0.024, 0.072, R(10), R(8)).translate(0, 0.409, 0.3), fur, rigid(C.head));
+    A.add('fur', ellipsoid(0.011, 0.009, 0.009, 8, 6).translate(0, 0.418, 0.37), dark, rigid(C.head));
     for (const s of [1, -1]) {
-      const ear = cylinder(0.0, 0.032, 0.085, R(10)); xf(ear, s * 0.038, 0.418, 0.205, -0.15, 0, -s * 0.32); A.add('fur', ear, fur2, rigid(C.head));
-      const ein = cylinder(0.0, 0.02, 0.06, R(8)); xf(ein, s * 0.037, 0.412, 0.214, -0.15, 0, -s * 0.32); A.add('fur', ein, inner, rigid(C.head));
-      const eye = ellipsoid(0.011, 0.012, 0.007, 8, 6); xf(eye, s * 0.03, 0.365, 0.275, 0, s * 0.45, 0); A.add('fur', eye, dark, rigid(C.head));
+      const ear = cylinder(0.0, 0.025, 0.062, R(10)); xf(ear, s * 0.036, 0.48, 0.2, -0.2, 0, -s * 0.22); A.add('fur', ear, fur2, rigid(C.head));
+      const ein = cylinder(0.0, 0.016, 0.045, R(8)); xf(ein, s * 0.035, 0.475, 0.208, -0.2, 0, -s * 0.22); A.add('fur', ein, inner, rigid(C.head));
+      const eye = ellipsoid(0.011, 0.012, 0.007, 8, 6); xf(eye, s * 0.03, 0.44, 0.285, 0, s * 0.45, 0); A.add('fur', eye, dark, rigid(C.head));
     }
-    A.add('glow', torus(0.013, 0.003, 4, 16).translate(0, 0.392, 0.262), glowC.clone().multiplyScalar(0.8), rigid(C.head));
+    A.add('glow', torus(0.013, 0.003, 4, 16).translate(0, 0.467, 0.262), glowC.clone().multiplyScalar(0.8), rigid(C.head));
     // fluffy tail (three segments, thickening then tapering), warm tip that glows like a lantern
-    A.add('fur', ellipsoid(0.042, 0.042, 0.075, R(12), R(8)).translate(0, 0.228, -0.24), fur, rigid(C.tail0));
-    A.add('fur', ellipsoid(0.058, 0.056, 0.075, R(12), R(8)).translate(0, 0.22, -0.35), fur, rigid(C.tail1));
-    A.add('fur', ellipsoid(0.05, 0.048, 0.06, R(12), R(8)).translate(0, 0.212, -0.45), fur2, rigid(C.tail2));
-    A.add('glow', ellipsoid(0.036, 0.035, 0.04, R(10), R(8)).translate(0, 0.21, -0.505), glowC, rigid(C.tail2));
+    A.add('fur', ellipsoid(0.034, 0.036, 0.075, R(12), R(8)).translate(0, 0.303, -0.24), back, rigid(C.tail0));
+    A.add('fur', ellipsoid(0.042, 0.042, 0.08, R(12), R(8)).translate(0, 0.295, -0.35), fur, rigid(C.tail1));
+    A.add('fur', ellipsoid(0.034, 0.034, 0.065, R(12), R(8)).translate(0, 0.287, -0.45), fur, rigid(C.tail2));
+    A.add('glow', ellipsoid(0.018, 0.018, 0.03, R(10), R(8)).translate(0, 0.285, -0.505), glowC.clone().multiplyScalar(0.7), rigid(C.tail2));
     // legs + paws (darker socks)
-    for (const [bn, x, y, z] of [['legFL', 0.045, 0.19, 0.13], ['legFR', -0.045, 0.19, 0.13], ['legBL', 0.05, 0.2, -0.12], ['legBR', -0.05, 0.2, -0.12]]) {
+    for (const [bn, x, y, z] of [['legFL', 0.045, 0.265, 0.13], ['legFR', -0.045, 0.265, 0.13], ['legBL', 0.05, 0.275, -0.12], ['legBR', -0.05, 0.275, -0.12]]) {
       const back = bn[3] === 'B';
-      A.add('fur', ellipsoid(back ? 0.036 : 0.028, 0.06, back ? 0.05 : 0.032, R(10), R(8)).translate(x, y - 0.03, z), fur, rigid(C[bn]));
-      const leg = cylinder(0.014, 0.016, y - 0.02, R(8)); xf(leg, x, (y - 0.02) / 2 + 0.01, z); A.add('fur', leg, fur2.clone().multiplyScalar(0.7), rigid(C[bn]));
+      A.add('fur', ellipsoid(back ? 0.03 : 0.024, 0.065, back ? 0.045 : 0.03, R(10), R(8)).translate(x, y - 0.03, z), fur, rigid(C[bn]));
+      const leg = cylinder(0.013, 0.016, y - 0.02, R(8)); xf(leg, x, (y - 0.02) / 2 + 0.01, z); A.add('fur', leg, fur2, rigid(C[bn]));
       A.add('fur', ellipsoid(0.02, 0.013, 0.028, R(8), R(6)).translate(x, 0.012, z + 0.012), dark, rigid(C[bn]));
     }
     const geos = A.build();
     this.tris = A.tris;
     // skeleton
-    this.bones = NAMES.map((n) => { const b = new THREE.Bone(); b.name = 'fox-' + n; return b; });
+    this.bones = NAMES.map((n) => { const b = new THREE.Bone(); b.name = 'wolf-' + n; return b; });
     for (const n of NAMES) {
       const [par, x, y, z] = REST[n];
       const b = this.bones[C[n]];
@@ -76,12 +77,12 @@ export class Companion {
     this.bones[C.root].updateMatrixWorld(true); // bind pose = rest (bone inverses from the rest transforms)
     this.skeleton = new THREE.Skeleton(this.bones);
     const furMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
-    patchLighting(furMat, { rim: 0.6, sky: 0.25, key: 'fox', sunRim: 1.4, wear: 0 });
+    patchLighting(furMat, { rim: 0.6, sky: 0.25, key: 'wolf', sunRim: 1.5, wear: 0 });
     const glowMat = new THREE.MeshBasicMaterial({ vertexColors: true, color: new THREE.Color(1, 1, 1).multiplyScalar(3.2) });
     this.materials = [furMat, glowMat];
     this.group = new THREE.Group();
     this.group.name = 'companion';
-    this.scale = 1.2;
+    this.scale = 1.75; // a big white wolf (shoulder ≈ 0.6 m)
     this.group.add(this.bones[C.root]);
     for (const [slot, g] of geos) {
       if (!g.getAttribute('aWear')) g.setAttribute('aWear', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
@@ -112,8 +113,8 @@ export class Companion {
   _target(out, sit) {
     const p = this.player, up = p.up;
     _b.crossVectors(up, p.forward).normalize(); // left of the explorer
-    if (sit) out.copy(p.pos).addScaledVector(_b, 0.5).addScaledVector(p.forward, 0.02);
-    else out.copy(p.pos).addScaledVector(_b, 1.0).addScaledVector(p.forward, -1.1);
+    if (sit) out.copy(p.pos).addScaledVector(_b, 0.56).addScaledVector(p.forward, -0.05);
+    else out.copy(p.pos).addScaledVector(_b, 1.5).addScaledVector(p.forward, -1.7);
     const H = p.heights;
     if (H) out.setLength(H.groundR(out));
     return out;
@@ -131,7 +132,7 @@ export class Companion {
     const tgt = this._target(_a, resting);
     _c.copy(tgt).sub(this.pos); projectOnPlane(_c, this.up);
     const d = _c.length();
-    const want = resting ? clamp(d * 2.5, 0, 3.5) : d < 0.6 ? 0 : clamp((d - 0.6) * 2.4, 0, Math.max(11, p.speed * 1.15));
+    const want = resting ? clamp(d * 2.5, 0, 3.5) : d < 0.8 ? 0 : clamp((d - 0.8) * 2.4, 0, Math.max(11, p.speed * 1.15));
     this.vel = damp(this.vel, want, want > this.vel ? 5 : 8, dt);
     if (d > 1e-4 && this.vel > 0.05) {
       _c.divideScalar(d);
@@ -146,7 +147,7 @@ export class Companion {
     }
     projectOnPlane(this.fwd, this.up); if (this.fwd.lengthSq() < 1e-8) this.fwd.copy(p.forward); this.fwd.normalize();
     if (H) this.pos.setLength(H.groundR(this.pos) + (H.water(this.pos) > -1e8 ? Math.max(0, H.R + H.water(this.pos) - H.groundR(this.pos)) : 0));
-    this.seated = resting && d < 0.25;
+    this.seated = resting && d < 0.3;
     this.sitW = damp(this.sitW, this.seated || (this.vel < 0.1 && !resting && this.t > 2 && d < 1.0) ? 1 : 0, 3, dt);
     this.hugW = damp(this.hugW, this.seated && p.restS?.hug ? 1 : 0, 1.6, dt);
     // ---- pose
@@ -182,7 +183,7 @@ export class Companion {
     this.group.quaternion.copy(this._gq);
     this.group.scale.setScalar(this.scale);
     this.group.updateMatrixWorld(true);
-    this.headPos.set(0, 0.36 * this.scale, 0.22 * this.scale).applyQuaternion(this._gq).add(this.pos);
+    this.headPos.set(0, 0.43 * this.scale, 0.24 * this.scale).applyQuaternion(this._gq).add(this.pos);
   }
 
   dispose() {

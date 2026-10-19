@@ -21,6 +21,8 @@ import { Scarf } from './Cloth.js';
 import { Coat } from './Coat.js';
 import { Companion } from './Companion.js';
 import { Viewmodel } from './Viewmodel.js';
+import { Katana } from './Katana.js';
+import { Abilities } from './Abilities.js';
 import { Glider } from './Glider.js';
 import { FX } from './FX.js';
 import { HeightSampler, ColliderIndex, AirField } from './Physics.js';
@@ -130,7 +132,7 @@ export class Player {
     // fade the HUD and audio can swell
     this.restS = { on: false, w: 0, lie: false, dangle: false, hug: false, hold: 0, lieHold: 0, lieArmed: false, seat: null, t: 0, compYaw: null, side: -1 };
     this.resting = 0;
-    this._restPending = p.act === 'rest' || p.act === 'lie' || p.act === 'sit' ? p.act : null;
+    this._restPending = p.act === 'rest' || p.act === 'lie' || p.act === 'sit' || p.act === 'meditate' ? p.act : null;
     this._xPrev = false;
     this.stillT = 0; this.overlook = 0; this._ovT = 99; this._ovTarget = 0;
     this.time = 0;
@@ -230,6 +232,17 @@ export class Player {
     this.hairSpheres = [];
     for (let i = 0; i < 6; i++) this.hairSpheres.push({ c: new THREE.Vector3(), r: 0.1 });
     try { if (P && this.rig) { this.coat = new Coat(P, this.quality); w.root.add(this.coat.group); } } catch (e) { console.error('[player] coat failed', e); this.coat = null; }
+    try {
+      if (P && this.rig) {
+        this.katana = new Katana(w, P, this.quality);
+        this.group.add(this.katana.group);
+        w.root.add(this.katana.trailGroup);
+      }
+    } catch (e) { console.error('[player] katana failed', e); this.katana = null; }
+    this._keyPrev = new Map();
+    try { this.abilities = new Abilities(w, this, this.quality); w.root.add(this.abilities.group); } catch (e) { console.error('[player] abilities failed', e); this.abilities = null; }
+    this.meditating = 0; this.abilityGlow = 0;
+    this.useGlider = this.params.glider === '1'; // the old paraglider (kept for URL compatibility); default: Drift
     try { if (P) { this.glider = new Glider(P, this.quality); this.group.add(this.glider.group); this.glider.group.position.set(0, 1.83, 0.1); } } catch (e) { console.error('[player] glider failed', e); this.glider = null; }
     try {
       this.fx = new FX(w, this.quality);
@@ -548,7 +561,7 @@ export class Player {
     const input = this.input;
     this.colliders.sync(dt);
     if (this._settle > 0) safe(() => this._spawnSettle(dt));
-    else if (this._restPending && this.state === 'ground') { const a = this._restPending; this._restPending = null; safe(() => this._startRest(true, a === 'lie')); }
+    else if (this._restPending && this.state === 'ground') { const a = this._restPending; this._restPending = null; safe(() => { this._startRest(true, a === 'lie'); if (a === 'meditate') { this.restS.med = true; this.meditating = 1; if (this.animator) this.animator.medW = 1; } }); }
 
     if (input.down('view')) {
       if (this.view === 'surface') this.view = 'fp';
@@ -588,6 +601,10 @@ export class Player {
     this._sampleGround(dt);
     this.water = this.heights.water(this.pos);
 
+    // ---- the katana (draw / cut / iaido / sheathe) + the mystic abilities
+    this._sword(dt, I);
+    this._abilityInput(dt, I);
+
     // ---- state machine
     this._prevVel.copy(this.vel);
     const r0 = this.pos.length();
@@ -609,7 +626,10 @@ export class Player {
     this.up.copy(this.pos).normalize();
     if (this.grounded) this.groundVr = (this.pos.length() - r0) / dt;
     this.grounded = this.state === 'ground' || this.state === 'slide';
-    if (this.state === 'ground' || this.state === 'slide' || this.state === 'swim') this.jetFuel = Math.min(T.jetFuel, this.jetFuel + T.jetRegen * dt);
+    if (this.state === 'ground' || this.state === 'slide' || this.state === 'swim') {
+      this.jetFuel = Math.min(T.jetFuel, this.jetFuel + T.jetRegen * dt);
+      if (this.abilities) this.abilities.aether = Math.min(3, this.abilities.aether + dt * 1.5);
+    }
 
     // ---- derived motion
     projectOnPlane(_a.copy(this.vel), this.up);
@@ -626,6 +646,7 @@ export class Player {
     if (this.state !== 'ground' && RS.on) this._standUp();
     RS.w = damp(RS.w, RS.on ? 1 : 0, RS.on ? 1.3 : 2.5, dt);
     this.resting = smoothstep(0.05, 0.95, RS.w);
+    this.meditating = damp(this.meditating, RS.on && RS.med ? 1 : 0, RS.on && RS.med ? 0.9 : 2.5, dt); // public: the sky answers
     this.stillT = this.state === 'ground' && this.speed < 0.4 && !RS.on ? this.stillT + dt : 0;
     this._ovT += dt;
     if (this._ovT > 0.3) { this._ovT = 0; this._ovTarget = this.stillT > 1.2 ? this._dropAhead() : 0; }
@@ -651,6 +672,95 @@ export class Player {
   }
 
   // ======================================================================================= helpers
+  /** Raw key / pad button held (works with the real Input and the lab's scripted input). */
+  _key(code) {
+    const I = this.input;
+    return !!((typeof I.code === 'function' && I.code(code)) || (typeof I._codeHeld === 'function' && I._codeHeld(code)) || I.held?.(code));
+  }
+  /** Raw key / pad button pressed this frame (a 1-frame simulated press counts too). */
+  _keyDown(code) {
+    const now = this._key(code);
+    const prev = this._keyPrev.get(code) || false;
+    this._keyPrev.set(code, now);
+    // (a 1-frame simulated tap can be pressed and released between two player updates: count the release too)
+    return (now && !prev) || !!this.input._pressed?.has?.(code) || (!prev && !!this.input._released?.has?.(code));
+  }
+
+  /** Resonance (R / pad X), Blink (Q / pad LT), Lumen (L / pad RT), Commune (Z: meditate). */
+  _abilityInput(dt, I) {
+    const A = this.abilities;
+    if (!A) return;
+    const free = this.state === 'ground' || this.state === 'air' || this.state === 'glide';
+    if ((this._keyDown('KeyR') | this._keyDown('Pad2')) && (free || this.restS.on)) A.pulseNow();
+    if ((this._keyDown('KeyQ') | this._keyDown('Pad6')) && free && !this.restS.on) {
+      const d = _a.copy(I.mag > 0.15 ? I.wish : this.forward);
+      projectOnPlane(d, this.up);
+      if (d.lengthSq() > 1e-6) { d.normalize(); if (A.blink(d) > 0) { this.forward.copy(d); this.cam.addTrauma(0.05); if (this.state === 'glide') this.glide.dir.copy(d); } }
+    }
+    if (this._keyDown('KeyL') | this._keyDown('Pad7')) A.sendLumen(this.cam.camF || this.cam.fwd);
+    if (this._keyDown('KeyZ')) {
+      const R = this.restS;
+      if (R.on) { R.med = !R.med; R.lie = false; }
+      else if (this.state === 'ground' && this.speed < 2) { this._startRest(false, false); R.med = true; }
+    }
+  }
+
+  /** The katana: input → timeline (Katana.tick), the cut's consequences (events, petals, lunge, the iai dash). */
+  _sword(dt, I) {
+    const K = this.katana;
+    if (!K) return;
+    const canAct = (this.state === 'ground' || this.state === 'air') && !this.restS.on && this._visible;
+    const ctl = this._swCtl || (this._swCtl = { primary: false, drawPressed: false, canAct: false, grounded: false });
+    ctl.primary = this.input.held('primary') || this._key('KeyJ');
+    ctl.drawPressed = this._keyDown('KeyG') | this._keyDown('Pad3');
+    ctl.canAct = canAct; ctl.grounded = this.state === 'ground';
+    const wasAct = K.act;
+    safe(() => K.tick(dt, ctl, (type, data) => this._swordEvent(type, data)));
+    // a new cut faces where you look (or where the stick points)
+    if (K.act && K.act !== wasAct && K.act !== 'sheathe' && K.act !== 'draw') {
+      this._swordFace = I.mag > 0.15 ? _v.copy(I.wish) : _v.copy(this.cam.fwd);
+      this._swordFaceT = 0.18;
+      this._swordFaceDir = (this._swordFaceDir || new THREE.Vector3()).copy(this._swordFace);
+    }
+    if (this._swordFaceT > 0) { this._swordFaceT -= dt; this._turnToward(this._swordFaceDir, 22, dt); }
+    if (K.lunge > 0 && this.state === 'ground') this.vel.addScaledVector(this.forward, K.lunge);
+  }
+
+  _swordEvent(type, data) {
+    const w = this.world, au = this.engine?.audio;
+    if (type === 'draw') {
+      w.events?.emit?.('player:draw', { drawn: !!data.drawn, pos: this.pos });
+      au?.play?.(data.drawn ? 'draw' : 'sheathe', { iai: !!data.iai });
+      return;
+    }
+    if (type === 'sheathed') { if (this._iaiPending) this._iaiBloom(); return; }
+    if (type === 'slash') {
+      const up = this.up;
+      const P = this._slashPos || (this._slashPos = new THREE.Vector3());
+      const D = this._slashDir || (this._slashDir = new THREE.Vector3());
+      D.copy(this.forward);
+      const reach = data.kind === 'iai' ? 1.4 : 1.15;
+      P.copy(this.pos).addScaledVector(this.forward, reach).addScaledVector(up, 0.9);
+      w.events?.emit?.('player:slash', { pos: P, dir: D, radius: data.radius, kind: data.kind });
+      au?.play?.('slash', { kind: data.kind, intensity: data.kind === 'iai' ? 1 : 0.6 });
+      this.cam.addTrauma(data.kind === 'iai' ? 0.22 : 0.08);
+      if (data.kind === 'iai') { this._iaiPending = true; this._iaiFrom = (this._iaiFrom || new THREE.Vector3()).copy(this.pos); }
+      else if (this.fx && this.katana) this.katana.burst(this.fx, _a.copy(this.pos).addScaledVector(this.forward, 0.6), up, this.forward, data.radius, data.kind, (p) => this.heights.groundR(p), this.katana.glow);
+    }
+  }
+
+  /** The beat after the flash cut: on the click of the sheathe, everything that was cut falls in petals and light. */
+  _iaiBloom() {
+    this._iaiPending = false;
+    if (!this.fx || !this.katana) return;
+    const from = this._iaiFrom || this.pos;
+    // along the dash line, behind her
+    for (let i = 0; i <= 3; i++) {
+      _a.copy(from).lerp(this.pos, i / 3);
+      this.katana.burst(this.fx, _a, this.up, this.forward, 2.2, 'iai', (p) => this.heights.groundR(p), this.katana.glow + 1);
+    }
+    this.world.events?.emit?.('player:slash', { pos: _b.copy(this.pos).addScaledVector(this.up, 0.9), dir: this.forward, radius: 3.6, kind: 'iai-bloom' });
+  }
   /** How far the land falls away in front of the camera (0..1): an overlook worth framing. */
   _dropAhead() {
     const H = this.heights;
@@ -823,6 +933,8 @@ export class Player {
       if (I.descend) spd = Math.min(spd, T.crouch);
       if (hard) spd *= 0.15;
     }
+    const K = this.katana;
+    if (K?.act) spd *= K.charging || K.act === 'charge' || K.act === 'chargeDrawn' ? 0 : K.act === 'iai' ? 0 : K.act.startsWith('slash') ? 0.3 : K.act === 'draw' || K.act === 'sheathe' ? 0.75 : 1;
     const target = _a.copy(I.wish).multiplyScalar(spd);
     // slope: gentle modulation (flow), block steep uphill
     const dh = projectOnPlane(_b.copy(n), up); // points downhill
@@ -854,6 +966,18 @@ export class Player {
       if (this.climbPush > 0.18 && this._enterClimb(_n, I.wish)) return;
     } else this.climbPush = 0;
 
+    // the iai flash: a few metres forward in a tenth of a second (a streak of light), then the held pose
+    if (K && K.dash > 0) {
+      const step = Math.min(K.dash, 34 * dt);
+      K.dash -= step;
+      this.vel.copy(this.forward).multiplyScalar(step / dt);
+      if (this.fx) for (let i = 0; i < 3; i++) {
+        _b.copy(this.pos).addScaledVector(this.up, 0.5 + this.fx.rand.next() * 1.1).addScaledVector(this.forward, -this.fx.rand.next() * step);
+        _c.copy(this.forward).multiplyScalar(-1.5).addScaledVector(this.up, 0.3);
+        this.fx.emit(_b, _c, { kind: 2, size: 0.05, size1: 0.01, life: 0.6 + this.fx.rand.next() * 0.6, color: _col.setRGB(3.0, 2.6, 2.0), alpha: 0.85, drag: 2 });
+      }
+      if (K.dash <= 0) this.vel.multiplyScalar(0.05);
+    }
     this._move(dt);
     this._resolveColliders();
     // snap / leave ground
@@ -871,7 +995,7 @@ export class Player {
   /** Sit down here. Looks for an edge just ahead (sit on the ridge with the legs over the drop). */
   _startRest(instant = false, lie = false) {
     const R = this.restS;
-    R.on = true; R.t = 0; R.hold = 0; R.lieHold = 0; R.lieArmed = false; R.lie = !!lie;
+    R.on = true; R.t = 0; R.hold = 0; R.lieHold = 0; R.lieArmed = false; R.lie = !!lie; R.med = false;
     R.seat = null; R.dangle = false;
     this.vel.set(0, 0, 0);
     const H = this.heights;
@@ -915,7 +1039,7 @@ export class Player {
     const cp = comp?.pos;
     if (!cp?.isVector3) { RS.hug = false; RS.compYaw = null; return; }
     const d = cp.distanceTo(this.pos);
-    RS.hug = RS.on && d < 0.85;
+    RS.hug = RS.on && d < 1.0;
     if (d < 4) {
       _a.crossVectors(this.up, this.forward); // left
       _b.copy(comp.headPos?.isVector3 ? comp.headPos : cp).sub(this.pos).addScaledVector(this.up, -1.0);
@@ -926,7 +1050,7 @@ export class Player {
   _standUp() {
     const R = this.restS;
     if (!R.on) return;
-    R.on = false; R.lie = false; R.hold = 0; R.seat = null;
+    R.on = false; R.lie = false; R.med = false; R.hold = 0; R.seat = null;
     this.world.events?.emit?.('player:rest', { on: false, pos: this.pos });
   }
 
@@ -935,9 +1059,13 @@ export class Player {
     const R = this.restS;
     R.t += dt;
     if (!I.descend) R.lieArmed = true;
-    if (R.lieArmed && I.descend && !R.dangle) {
+    if (R.lieArmed && I.descend) {
       R.lieHold += dt;
-      if (R.lieHold > 0.9) { R.lie = !R.lie; R.lieHold = 0; R.lieArmed = false; }
+      // hold C again: sit → meditate (Commune) → lie back → sit
+      if (R.lieHold > 0.9) {
+        if (R.med) { R.med = false; R.lie = !R.dangle; } else if (R.lie) R.lie = false; else R.med = true;
+        R.lieHold = 0; R.lieArmed = false;
+      }
     } else R.lieHold = 0;
     this.vel.set(0, 0, 0);
     if (R.seat) { // shuffle onto the edge
@@ -975,29 +1103,30 @@ export class Player {
     vy -= this.g * dt;
     // variable jump height
     if (!I.jumpHeld && vy > 0 && !this.jumpCut && this.airTime > 0.05 && this.airTime < 0.3 && !this.usedDouble) { vy *= 0.6; this.jumpCut = true; }
-    // double jump (jetpack burst) / glider
+    // a light second jump off a flash of the ring of light / Drift (jump again high up, or hold jump)
+    const aboveGround = this.pos.length() - this.heights.groundR(this.pos);
+    this._jumpHeldT = I.jumpHeld ? (this._jumpHeldT || 0) + dt : 0;
     if (I.jumpDown && this.coyote <= 0) {
-      const aboveGround = this.pos.length() - this.heights.groundR(this.pos);
-      if (!this.usedDouble && this.jetFuel > 0.3 && this.airTime > 0.06) {
-        this.usedDouble = true; vy = Math.max(vy, T.dblV); this.jetBurst = 0.42; this.jetFuel -= 0.35;
+      if (!this.usedDouble && this.airTime > 0.06) {
+        this.usedDouble = true; vy = Math.max(vy, T.dblV); this.jetBurst = 0.3;
         if (I.mag > 0.1) vt.lerp(_a.copy(I.wish).multiplyScalar(Math.max(vt.length(), T.run)), 0.5);
+        this.abilities?.flashRing();
         this.world.events?.emit?.('player:jump', { pos: this.pos, double: true });
-        this.engine?.audio?.play?.('boost', { intensity: 0.6 });
-      } else if (aboveGround > 2.2) {
+        this.engine?.audio?.play?.('jump', { double: true, surface: 'air' });
+      } else if (aboveGround > 1.6) {
         this.vel.copy(vt).addScaledVector(up, vy);
         this._openGlider(true);
         this._move(dt);
         return;
       }
+    } else if (this._jumpHeldT > 0.32 && vy < 1.5 && aboveGround > 1.4 && this.airTime > 0.3) {
+      // hold jump through the apex: she rises onto the ring and drifts
+      this.vel.copy(vt).addScaledVector(up, vy);
+      this._openGlider(true);
+      this._move(dt);
+      return;
     }
-    // sustained jet thrust (Shift in the air) — refills on the ground; no stamina on foot
-    const jetOn = I.sprint && this.jetFuel > 0 && this.airTime > 0.12;
-    if (jetOn) {
-      vy = Math.min(vy + T.jet * dt, T.jetMaxUp);
-      vt.addScaledVector(this.forward, 3.5 * dt);
-      this.jetFuel = Math.max(0, this.jetFuel - dt);
-    }
-    this.boostP = damp(this.boostP, jetOn || this.jetBurst > 0 ? 1 : 0, jetOn || this.jetBurst > 0 ? 18 : 6, dt);
+    this.boostP = 0;
     vy = Math.max(vy, -60);
     this.vel.copy(vt).addScaledVector(up, vy);
     this._move(dt);
@@ -1040,7 +1169,12 @@ export class Player {
     const sunElev = safe(() => this.world.celestial.sunDir.dot(up), 0.5);
     const lift = this.air.updraft(this.pos, alt, sunElev);
     this.lift = lift;
-    const sinkT = lerp(T.sink, T.sinkDive, g.dive * g.dive) + 0.45 * Math.abs(g.bank) - 0.25 * flare;
+    let sinkT = lerp(T.sink, T.sinkDive, g.dive * g.dive) + 0.45 * Math.abs(g.bank) - 0.25 * flare;
+    // Drift: holding jump draws on the aether to rise slowly (refills on the ground)
+    const A = this.abilities;
+    if (A && !this.useGlider) {
+      if (I.jumpHeld && A.aether > 0 && g.t > 0.25) { sinkT -= 2.2; A.aether = Math.max(0, A.aether - dt); }
+    }
     g.w = damp(g.w, -sinkT + lift, g.w < -sinkT - 3 ? 1.1 : 1.6, dt); // arrests a fall smoothly after deploy
     this.air.wind(this.pos, this.windV);
     this.vel.copy(g.dir).multiplyScalar(g.s).addScaledVector(up, g.w).addScaledVector(this.windV, 0.55);
@@ -1052,7 +1186,7 @@ export class Player {
     this._resolveColliders();
     this.airTime += dt;
     // exits
-    if (I.jumpDown || I.descendDown) { this._openGlider(false); this.usedDouble = true; return; }
+    if ((I.jumpDown && g.t > 0.35 && this.useGlider) || I.descendDown) { this._openGlider(false); this.usedDouble = true; return; }
     this.up.copy(this.pos).normalize();
     const r = this.pos.length();
     const floor = this._floorR(this.pos, this.up);
@@ -1321,7 +1455,7 @@ export class Player {
     S.state = st === 'fly' ? 'air' : st;
     const RS = this.restS;
     S.crouch = st === 'ground' && this.input.held('descend') && this.speed < 3 && !RS.on && RS.w < 0.5;
-    S.rest.on = RS.on; S.rest.lie = RS.lie; S.rest.dangle = RS.dangle; S.rest.hug = RS.on && RS.hug; S.rest.compYaw = RS.compYaw;
+    S.rest.on = RS.on; S.rest.lie = RS.lie && !RS.med; S.rest.med = RS.on && !!RS.med; S.rest.dangle = RS.dangle; S.rest.hug = RS.on && RS.hug; S.rest.compYaw = RS.compYaw;
     S.speed = st === 'swim' ? this.speed : this.speed;
     // acceleration in character space (x = left, z = forward)
     _a.crossVectors(this.up, this.forward); // left
@@ -1331,6 +1465,8 @@ export class Player {
     S.hardLand = st === 'ground' ? clamp(this.hardT / 0.22, 0, 1) : 0;
     if (this.landImpact > 0) { S.landImpact = this.landImpact; this.landImpact = 0; }
     S.fp = this.view === 'fp';
+    S.sword = this.katana ? this.katana.S : null;
+    S.drift = this.state === 'glide' && !this.useGlider;
     S.vy = this.vel.dot(this.up);
     S.airTime = this.airTime;
     S.boost = this.boostP;
@@ -1419,9 +1555,30 @@ export class Player {
       }
     }
     this.group.updateMatrixWorld(true);
+    // ---- katana + scabbard (group space from the animator), trails, edge glow
+    if (this.katana) {
+      const glowBoost = (this.abilityGlow || 0) + clamp(G.uNight.value || 0, 0, 1) * 0.25;
+      safe(() => this.katana.update(dt, this.animator, this.group, glowBoost, this.gpos));
+      this.katana.group.visible = this.view !== 'fp';
+      this.katana.trailGroup.visible = vis;
+    }
+    // ---- abilities (Lumen, the ring of light, resonance wave) + the woven stars
+    if (this.abilities) {
+      const ac = this._abCtx || (this._abCtx = { visible: true, fp: false, drift: 0, meditate: 0, resting: 0, feet: new THREE.Vector3(), quat: new THREE.Quaternion(), dark: 0 });
+      ac.visible = vis || this.view === 'fp'; ac.fp = this.view === 'fp';
+      ac.drift = this.state === 'glide' && !this.useGlider ? 1 : 0;
+      ac.meditate = this.meditating; ac.resting = this.resting;
+      if (this.animator) ac.feet.copy(this.animator.footWorld.L).add(this.animator.footWorld.R).multiplyScalar(0.5).addScaledVector(up, -0.06);
+      else ac.feet.copy(this.pos);
+      if (this.meditating > 0.01) ac.feet.lerp(_a.copy(this.pos).addScaledVector(up, 0.03), this.meditating);
+      ac.quat.copy(this.gquat);
+      safe(() => this.abilities.update(dt, ac));
+      this.abilityGlow = this.abilities.glow + this.meditating * 0.6 + ac.drift * 0.35;
+    }
+    SUIT_LIGHT.uStar.value = clamp((G.uNight.value || 0) * 0.3 + this.abilityGlow * 0.7, 0, 1.6);
     // ---- glider
     if (this.glider) {
-      const open = this.state === 'glide';
+      const open = this.state === 'glide' && this.useGlider;
       safe(() => {
         const rr = this.engine?.renderer;
         if (rr?.domElement) this.glider.setViewport(rr.domElement.height || 720, (rr.domElement.width || 1280) / (rr.domElement.height || 720));
@@ -1480,8 +1637,8 @@ export class Player {
       const place = (i, b, ox, oy, oz, r) => {
         sp[i].c.set(ox, oy, oz).applyQuaternion(an.gq[b]).add(an.gp[b]).applyQuaternion(this.gquat).add(this.gpos); sp[i].r = r;
       };
-      place(0, B.head, 0, 0.085, 0.0, 0.112);
-      place(1, B.neck, 0, 0.0, -0.01, 0.07);
+      place(0, B.head, 0, 0.07, 0.012, 0.1);
+      place(1, B.neck, 0, -0.02, -0.005, 0.065);
       place(2, B.chest, 0, 0.13, -0.03, 0.15);
       place(3, B.chest, 0, 0.0, -0.02, 0.15);
       place(4, B.spine, 0, -0.05, 0.0, 0.15);
@@ -1503,6 +1660,10 @@ export class Player {
     ctx.climbN = this.climbS.n; ctx.climbUp = this.climbS.up; ctx.climbSide = this.climbS.side;
     ctx.rest = this.restS.w; ctx.restOn = this.restS.on; ctx.restSide = this.restS.side; ctx.restLie = this.restS.lie;
     ctx.overlook = this.overlook;
+    const K = this.katana;
+    const stanceT = K && (K.charging || K.act === 'iai' || (K.act === 'sheathe' && K.fromSheath && K.dur > 1)) ? 1 : 0;
+    this._stance = damp(this._stance || 0, stanceT, stanceT ? 3 : 1.2, dt);
+    ctx.stance = this._stance;
     if (this.state === 'climb') { // height above the ground at the foot of the wall (camera composition)
       _a.copy(this.pos).addScaledVector(this.climbS.n, 2.5);
       ctx.climbAgl = this.pos.length() - this.heights.groundR(_a);
@@ -1517,7 +1678,10 @@ export class Player {
         const I = this.input, lk = I.axis('look');
         vc.visible = this._visible; vc.speed = this.speed; vc.phase = this.animator?.phase || 0;
         vc.lookX = lk.x; vc.lookY = lk.y; vc.state = this.state; vc.aspect = this.camera.aspect; vc.pitch = this.cam.pitch; vc.fov = this.camera.fov;
-        vc.reach = I.held('primary') || (typeof I.code === 'function' && I.code('KeyR')) || I.held('KeyR');
+        vc.reach = this._key('KeyR') || this._key('Pad2') || (this.abilities ? this.abilities.cool.pulse > 0.8 : false);
+        const K = this.katana;
+        vc.drawn = !!K?.drawn; vc.act = K?.act || null; vc.u = K ? K.S.u : 0; vc.glow = K ? K.glow : 0;
+        vc.light = this.abilities?.lumenOn && !(this.abilities.lumenSent > 0) ? 1 : 0;
         safe(() => this.viewmodel.update(dt, vc));
       }
       // in first person the body turns with the view when standing (body awareness)
@@ -1529,14 +1693,12 @@ export class Player {
       this.cam.thirdPerson(dt, ctx);
       if (this.viewmodel?.group.visible) this.viewmodel.group.visible = false;
     }
-    // the lantern's light: in the hand (first person) or swinging off the pack; brighter as night falls
-    if (this.lampLight) {
-      const fp = this.view === 'fp' && this.viewmodel;
-      const anchor = fp ? this.viewmodel.lightAnchor : this.rig.bones[B.antenna];
-      if (this.lampLight.parent !== anchor) { anchor.add(this.lampLight); this.lampLight.position.set(0, fp ? 0 : -0.14, 0); }
-      const night = clamp(G.uNight.value || 0, 0, 1);
-      const flick = 1 + 0.04 * Math.sin(this.time * 13.1) + 0.03 * Math.sin(this.time * 7.3 + 1);
-      this.lampLight.intensity = this._visible ? (0.12 + 1.5 * night + 0.4 * night * this.resting) * (fp ? 0.6 : 1) * flick : 0;
+    // the Lumen's light: above the open palm in first person, else in the orb that follows her
+    const lt = this.abilities?.light;
+    if (lt) {
+      const fp = this.view === 'fp' && this.viewmodel && !(this.abilities.lumenSent > 0);
+      const anchor = fp ? this.viewmodel.lightAnchor : this.abilities.lumen;
+      if (lt.parent !== anchor) { anchor.add(lt); lt.position.set(0, 0, 0); }
     }
   }
 
@@ -1675,9 +1837,14 @@ export class Player {
       ctx.shadow.opacity = this._visible && this.state !== 'swim' && this.view !== 'fp' ? 0.42 * (1 - smoothstep(0.2, 4, hAbove)) : 0;
       ctx.shadow.size = 1.15;
       const tr = ctx.trails;
-      tr.on = this.state === 'glide' && this.glide.s > 11.5 && this._visible && this.glider;
+      tr.on = this.state === 'glide' && this.glide.s > 11.5 && this._visible && (this.glider || !this.useGlider);
       tr.alpha = clamp((this.glide.s - 11) / 8, 0, 0.55);
-      if (tr.on) {
+      if (tr.on && !this.useGlider && this.animator) {
+        // Drift: light streams from her fingertips and draws the turn
+        const an = this.animator;
+        tr.a.set(0, -0.09, 0).applyQuaternion(an.gq[B.handL]).add(an.gp[B.handL]).applyMatrix4(this.group.matrix);
+        tr.b.set(0, -0.09, 0).applyQuaternion(an.gq[B.handR]).add(an.gp[B.handR]).applyMatrix4(this.group.matrix);
+      } else if (tr.on) {
         const gg = this.glider.group;
         _m.multiplyMatrices(this.group.matrix, gg.matrix);
         for (const [s, out] of [[1, tr.a], [-1, tr.b]]) {
@@ -1718,9 +1885,11 @@ export class Player {
     // ---- contextual prompts (minimal)
     let pr = null;
     if (this.restS.on) pr = null; // resting: the HUD fades (world.player.resting)
-    else if (this.state === 'ground' && this.stillT > 3 && this.speed < 0.2) pr = ['Rest · hold C', 'descend'];
-    else if (this.state === 'air' && this.airTime > 0.35 && this.pos.length() - this.heights.groundR(this.pos) > 5) pr = ['Glide', 'jump'];
-    else if (this.state === 'glide') pr = ['Dive · Shift   Drop · C', 'sprint'];
+    else if (this.katana?.charging) pr = ['Release · the flash cut', 'primary'];
+    else if (this.state === 'ground' && this.stillT > 4.5 && this.speed < 0.2) pr = ['Rest · hold C   Meditate · Z', 'descend'];
+    else if (this.state === 'ground' && this.stillT > 1.6 && this.speed < 0.2 && this.katana) pr = this.katana.drawn ? ['Cut · click   Iaido · hold   Sheathe · G', 'primary'] : ['Draw katana · G   Iaido · hold click', 'primary'];
+    else if (this.state === 'air' && this.airTime > 0.35 && this.pos.length() - this.heights.groundR(this.pos) > 4) pr = [this.useGlider ? 'Glide' : 'Drift · hold Space', 'jump'];
+    else if (this.state === 'glide') pr = this.useGlider ? ['Dive · Shift   Drop · C', 'sprint'] : ['Rise · hold Space   Dive · Shift   Drop · C', 'jump'];
     else if (this.state === 'climb') pr = ['Jump off · Space   Let go · C', 'jump'];
     else if (this.state === 'swim') pr = this.dive > 0.3 ? ['Surface · Space', 'jump'] : ['Dive · C', 'descend'];
     else if (this.state === 'ground' && this.groundN.dot(this.up) < 0.92 && this.speed > 2) pr = ['Slide · C', 'descend'];
@@ -1751,7 +1920,10 @@ export class Player {
       fuel: +this.jetFuel.toFixed(2),
       surface: this.surfaceKind,
       dive: +(this.dive || 0).toFixed(2),
-      resting: +this.resting.toFixed(2), rest: this.restS.on ? (this.restS.lie ? 'lie' : this.restS.dangle ? 'edge' : 'sit') : null,
+      resting: +this.resting.toFixed(2), rest: this.restS.on ? (this.restS.med ? 'meditate' : this.restS.lie ? 'lie' : this.restS.dangle ? 'edge' : 'sit') : null,
+      meditating: +this.meditating.toFixed(2),
+      sword: this.katana ? (this.katana.act || (this.katana.drawn ? 'drawn' : 'sheathed')) : null,
+      aether: this.abilities ? +this.abilities.aether.toFixed(2) : 0,
       tris: this.rig?.triangles | 0,
       colliders: this.colliders.count,
     };
@@ -1769,6 +1941,8 @@ export class Player {
       if (this._fallbackMesh) { this._fallbackMesh.geometry.dispose(); this._fallbackMesh.material.dispose(); }
       if (this.scarf) { this.world.root.remove(this.scarf.group); this.scarf.dispose(); }
       if (this.hair) { this.world.root.remove(this.hair.group); this.hair.dispose(); }
+      if (this.katana) { this.world.root.remove(this.katana.trailGroup); this.katana.dispose(); }
+      if (this.abilities) { this.world.root.remove(this.abilities.group); this.abilities.dispose(); }
       if (this.coat) { this.world.root.remove(this.coat.group); this.coat.dispose(); }
       if (this.companion) { this.world.root.remove(this.companion.group); this.companion.dispose(); }
       if (this.viewmodel) { this.viewmodel.group.parent?.remove(this.viewmodel.group); this.viewmodel.dispose(); }

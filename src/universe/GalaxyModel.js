@@ -141,6 +141,11 @@ function buildStructure(g) {
     if (hv < 0.8) S.m = 2;
     S.pitch = Math.max(S.pitch, (17 + 8 * U(hash32(hashCombine(g.seed, 0xb17c)))) * Math.PI / 180);
   }
+  // grand-design spirals (2–3 arms) open up like M51 / M81 (≈ 18–26°): tightly wound 2-arm spirals
+  // read as a CG pinwheel at full-galaxy scale (independent hash, the RNG stream is untouched)
+  if (type === 'spiral' && S.m <= 3) {
+    S.pitch = Math.max(S.pitch, (18 + 8 * U(hash32(hashCombine(g.seed, 0x9d51)))) * Math.PI / 180);
+  }
   S.ringStyle = type === 'ring' ? (hv < 0.4 ? 'cartwheel' : hv < 0.7 ? 'hoag' : 'resonance') : null;
   if (S.ringStyle === 'hoag') S.m = 0;
   S.tanP = Math.tan(S.pitch); S.sinP = Math.sin(S.pitch);

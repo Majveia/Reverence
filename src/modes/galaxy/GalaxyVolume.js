@@ -27,8 +27,8 @@ export function galaxyPalette(S) {
   const early = S.type === 'lenticular' || S.type === 'elliptical';
   // (Sombrero-like S0s read almost neutral white-lavender in Hubble colour: strong bulge, no blue arms)
   const ring = S.type === 'lenticular' && S.dustRing;
-  const bulge = norm(mix(ring ? [1.0, 0.9, 0.8] : early ? [1.0, 0.8, 0.6] : [1.0, 0.7, 0.44], c.core, ring ? 0.08 : 0.2));
-  const old = norm(mix(ring ? [1.0, 0.94, 0.9] : early ? [1.0, 0.86, 0.72] : [1.0, 0.8, 0.62], c.core, ring ? 0.05 : 0.15));
+  const bulge = norm(mix(ring ? [1.0, 0.9, 0.8] : early ? [1.0, 0.8, 0.6] : [1.0, 0.78, 0.52], c.core, ring ? 0.08 : 0.2));
+  const old = norm(mix(ring ? [1.0, 0.94, 0.9] : early ? [1.0, 0.86, 0.72] : [1.0, 0.9, 0.78], c.core, ring ? 0.05 : 0.15));
   const young = norm(mix([0.16, 0.4, 1.0], c.arms, 0.1));
   const hii = norm(mix([1.0, 0.12, 0.34], c.hii, 0.2));
   return { bulge, old, young, hii };
@@ -90,7 +90,7 @@ export class GalaxyVolume {
       uColBar: { value: new THREE.Vector3(...pal.bulge).lerp(new THREE.Vector3(...pal.old), 0.4) },
       uColHalo: { value: new THREE.Vector3(1.0, 0.86, 0.72) },
       uExt: { value: new THREE.Vector3(0.58, 0.76, 1.0) },
-      uOldL: { value: type === 'lenticular' ? (S.dustRing ? 0.22 : 0.4) : type === 'irregular' ? 0.3 : 0.35 },
+      uOldL: { value: type === 'lenticular' ? (S.dustRing ? 0.22 : 0.4) : type === 'irregular' ? 0.3 : type === 'spiral' ? 0.45 : 0.35 },
       uYoungL: { value: type === 'irregular' ? 0.9 : 0.62 },
       uHiiL: { value: type === 'irregular' ? 2.2 : 2.0 },
       uDustL: { value: 8.0 }, uScreen: { value: 0.9 },

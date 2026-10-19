@@ -538,6 +538,7 @@ export default class GalaxyMode extends Mode {
       this.rig.handleInput(input, dt, { cursorPoint: (nx, ny) => this._cursorPoint(nx, ny), lockTarget: this._traveling });
       this.rig.update(dt, this.pat);
       this._updateFraming();
+      this._updateInDisk(R);
 
       // exposure: edge-on disks are path-integrated (much brighter) → meter them down like a camera
       {
@@ -563,11 +564,11 @@ export default class GalaxyMode extends Mode {
         // next to the hole the bloom must not fog the shadow: a black disc keeps a thin, bright edge
         const bs = e.pipeline.settings.bloom;
         if (bs && this.look.bloom) bs.strength = this.look.bloom.strength * (0.3 + 0.7 * bk);
-        // the accretion disk is a saturated emitter: keep its gold instead of letting AgX slide it to cream
+        // the accretion disk and nebulae are saturated emitters: keep their gold / Hα instead of letting AgX slide it to cream
         const ps = e.pipeline.settings;
-        if (bk < 0.97) { ps.tonemap = 'agx-punchy'; ps.tonemapHue = 0.85; }
+        if (bk < 0.97 || nf > 0.3) { ps.tonemap = 'agx-punchy'; ps.tonemapHue = 0.7; }
         else if (ps.tonemap !== this.look.tonemap) ps.tonemap = this.look.tonemap;
-        this.volume.compositeMat.uniforms.uGain.value = (0.3 + 0.7 * k * k * (3 - 2 * k)) * (1 - 0.85 * nf) * (0.02 + 0.98 * bk);
+        this.volume.compositeMat.uniforms.uGain.value = (0.3 + 0.7 * k * k * (3 - 2 * k)) * (1 - 0.85 * nf) * (0.02 + 0.98 * bk) * (1 + 0.5 * (this._kIn || 0));
       }
       this.volume.update(this.camera, this.pat);
       rotTheta(this.camera.position, -this.pat, this._camPat);
@@ -583,6 +584,29 @@ export default class GalaxyMode extends Mode {
     } catch (err) {
       if (!this._warned) { console.error('[galaxy] update failed', err); this._warned = true; }
     }
+  }
+
+  /**
+   * Inside the disk (stellar neighbourhood) the galaxy is a band around the whole sky: a wider lens shows it
+   * as the thin luminous river of the ESO Milky Way panorama (band, bulge, rifts, dark sky above and below)
+   * instead of a brown wall filling a 42° frame, and the reddening along the very long in-plane sight
+   * lines is softened toward the whitish band the eye sees. Smoothly undone outside the disk, at the
+   * black hole and next to nebulae.
+   */
+  _updateInDisk(R) {
+    const cam = this.camera, p = cam.position;
+    const hOld = (this.S?.hOld ?? 1000) / 1000;
+    const rc = Math.hypot(p.x, p.z);
+    let nf = 0;      // only a nebula you are actually visiting (within ~10 radii) keeps the normal lens
+    for (const it of this.nebulae?.active ?? []) nf = Math.max(nf, 1 - smoothstep(4, 10, it.d / it.radius));
+    const kIn = smoothstep(2.0, 0.4, this.rig.distance) * (1 - smoothstep(1.5 * hOld, 4 * hOld, Math.abs(p.y)))
+      * smoothstep(0.06 * R, 0.14 * R, rc) * (1 - nf);
+    this._kIn = (this._kIn ?? kIn) + (kIn - (this._kIn ?? kIn)) * 0.2;
+    if (this.engine.shot) this._kIn = kIn;
+    const fov = 42 + 30 * this._kIn;
+    if (Math.abs(cam.fov - fov) > 0.01) { cam.fov = fov; cam.updateProjectionMatrix(); }
+    const ext = this.volume?.uniforms?.uExt?.value;
+    if (ext) ext.set(0.58 + 0.2 * this._kIn, 0.76 + 0.1 * this._kIn, 1.0);
   }
 
   _updateSelectionUi() {
@@ -678,6 +702,7 @@ export default class GalaxyMode extends Mode {
       stars: this.stars?.filled, local: this.lod.on ? this.stars?.localCount ?? 0 : 0, tau: +this.tau.toFixed(3),
       selected: this.selected ? { index: this.selected.index, name: this.selected.star.name, cls: this.selected.star.cls } : null,
       blackHoleRs: this.blackHole ? +this.blackHole.distanceRs(this.camera).toPrecision(4) : null,
+      inDisk: +(this._kIn ?? 0).toFixed(3), fov: +this.camera.fov.toFixed(1), camY: +this.camera.position.y.toPrecision(3), camR: +Math.hypot(this.camera.position.x, this.camera.position.z).toPrecision(3), R: +this.R.toPrecision(3), neb: +Math.max(0, ...(this.nebulae?.active ?? []).map((i) => i.fade)).toFixed(2),
     };
   }
 }

@@ -2,76 +2,73 @@
 
 Owner paths: `src/world/player/**`, this file.
 
-## Season 2 round 2 (toward the creator's frames)
+## Season 2 round 3 — the cosmic mystic swordswoman (the creator, 19 Oct)
 
-**The explorer is now a wayfarer, not an astronaut.** Silhouette first: a deep hood with a soft peak, a short
-shoulder mantle (front hem lifted so the chest and straps show), a long wool coat whose split skirt is simulated
-cloth (`Coat.js`), wrapped shins and low boots, a tall canvas rucksack with a striped bedroll on top, a coil of
-rope, a tin mug, a small warm **lantern** swinging on a pendulum bone off the pack, and a **walking staff** strapped
-diagonally across the back with a little brass **ring of light** on top (the source's sign, carried). The only
-saturated accent is the **red scarf**, wrapped over the mouth with two wide wool tails (verlet). Goggles pushed up
-on the hood brim. Muted wool / canvas / leather tones picked against the world's ground hue (`heroPalette`);
-~7 heads tall. Materials: felted wool (new `woolNormal`), waxy leather, brass, skin; a **sun-keyed back rim**
-(golden-hour halo when the sun is behind the figure) and the old fresnel rim fixed (it was brightening every
-front-facing pixel — the "flat plastic" look).
+"Ghost of Yotei like figure and feel, she needs to look badass, sexy, and cool with katana on her back that you can
+draw and use." The wayfarer (hood, pack, lantern, staff) and every trace of the spacesuit / jetpack / paraglider are
+gone from the default look.
 
-**Rest as a verb** (`world.player.resting`, 0..1, smoothed): hold **C** (descend) while standing still for 0.75 s,
-or tap **X**, to sit; move / jump / X to stand; hold C again (1 s) to **lie back** / sit up.
-* knees-up sit: forearms draped over the knees, gaze wandering over the horizon and the sky; the **pack comes off**
-  and is set down at the right hip, the **lantern is put on the ground** in front (a small hearth);
-* **sit on a ridge**: if the ground drops away within ~1.4 m ahead, the explorer shuffles onto the edge and sits
-  with the legs hanging over the drop, hands on the ledge;
-* **lie back**: the pack becomes a pillow, hands behind the head, looking up;
-* **tender contact**: the companion sits at the left hip and the near arm goes around it; now and then the
-  explorer's head turns to it and it leans in / nuzzles.
-* camera: a slow drift to a ¾-back composition, lens low and tilted up (pitch ≈ +7°, FOV 44, arm 4.6 m, aim
-  above the figure) so the **sky holds about two thirds** and the figure sits small in the lower third; a very slow
-  breathing drift. Events `player:rest {on, pos}`; audio param `rest` (0..1); the HUD prompt clears while resting.
-* URL: `act=rest` (sit at spawn, composition snapped), `act=lie`.
+**She** (`Explorer.js`, an original design): athletic, ~7.5 heads tall, narrow-shouldered and poised. A fitted
+kimono-style coat with a cross-over collar (left over right, a fine gold thread on the lapel), a dark obi with gold
+edges, fitted sleeves over wrapped forearms with black lacquered bracers, hakama trousers with pleats tucked into calf
+wraps (kyahan) and slim black boots — all in ONE deep night colour (indigo; plum-black on blue/violet worlds) with a
+gold thread on hems and seams. One black lacquered guard on the left shoulder (the sword hand stays free). A leather
+baldric crosses her chest to the **katana on her back**: black lacquered scabbard with gold flecks, the hilt over her
+right shoulder. Dark hair swept back into a **high ponytail** (verlet: a tapered tube core + three wispy locks,
+`Scarf(kind 'hair')` in `Cloth.js`), two locks framing an oval face, a side-swept fringe. The **red scarf** worn loose
+at the neck with two long verlet tails is the one warm accent. **Woven stars** (`SUIT_LIGHT.uStar`): tiny gold-white
+points in the dark cloth (coat skirt too) — faint at night, bright when an ability flows through her (pulse, blink,
+drift, meditation). The coat skirt (`Coat.js`) is the same night silk with a gold hem thread, to mid-calf.
 
-**Companion** (`Companion.js`): a small cream "lantern fox" whose tail tip glows and who wears a tiny ring of light
-on its brow. Follows with a spring-damped offset (left-behind), trots, sits when idle, sits beside the explorer
-at rest, leans into the hug. It is a fallback: if fauna ever exposes `world.get('fauna').companion` (with `.pos`,
-optional `.headPos`), the player uses that one for the hug / gaze and does not build its own. `companion=0`
-disables it. 2 draw calls, ~3k tris.
+**The katana** (`Katana.js` model + state machine, `SwordAnim.js` key poses, Animator overlay + `_swordSolve`):
+* **G** / gamepad **Y**: draw over the right shoulder (reach the hilt, pull it out along the scabbard, swing it over the
+  top, settle into a low ready stance) / sheathe (chiburi flick, over the shoulder, slide home, click).
+* **click** / **RB** (also **J**): a fluid three-cut combo — kesa-giri down across the body, a flat backhand, a rising
+  finisher — chained by clicking during a cut; each cut lunges a step. A click while sheathed draws with a cut.
+* **hold click**: the **iaido stance** (low, right shoulder back, hand on the hilt, the left hand forward; with the
+  blade drawn: held low and back). **Release**: the flash cut — out and through in a tenth of a second while she dashes
+  ~3–5 m in a streak of light, the follow-through is HELD (the beat), a flick, then (if she drew from the scabbard) a
+  slow sheathe; on the **click** everything along the dash falls in petals and light (`player:slash` kind
+  `iai-bloom`). The camera swings to a low ¾ front **standoff** framing for the stance, the cut and the sheathe.
+* the blade: faceted, curved (sori), kissaki, a wavy hamon (rougher/finer), an **edge glow** (abilities, night, the
+  iaido charge, the flash of the draw) and **blade trails of light** (additive ribbon, warm core → cosmic blue tail,
+  sub-stepped so fast arcs stay round).
+* cuts throw **petals, leaves and grass cuttings** (new FX particle kind 3: a tumbling lit petal) in the world's flora
+  colours (`art.palette.flora`), plus motes of light (more when the blade glows).
+* while she sits, the katana comes off her back and is laid on the ground at her right hip (in front of her when she
+  meditates); swimming / climbing / vehicles stow it at once.
+* events: `player:draw {drawn, pos}`, `player:slash {pos, dir, radius, kind}` (kind `slash1|slash2|slash3|iai|iai-bloom`);
+  audio one-shots `draw {iai}`, `sheathe`, `slash {kind, intensity}`.
 
-**First person body** (`Viewmodel.js`, rebuilt in round 2b, children of the camera, lit by the scene): built for the
-frame edges like the reference frames. Each forearm runs in from a lower corner in a folded wool sleeve (compression
-folds above the wrist, drape folds, fold shading, a lighter turned-back cuff) to a wrapped wrist and a fingerless
-leather glove with **articulated fingers** (3 joints each + a 3-joint thumb) blended between a grip and an open pose.
-Hands are posed from a forearm direction + a palm axis, so every pose is a body (the elbow leaves the frame). The
-right hand holds the **lantern** by its bail low right; it **hangs plumb** (compensates the view pitch) and swings
-with the gait / turns, with a real warm point light inside. The left hand grips the **staff** low left; the staff
-leans away into the frame and its ring of light stands in the upper-left third. **Reach**: hold **R** (or primary /
-RB) — the staff is lowered out of frame and the whole left arm reaches out from the lower-left corner toward the
-view, palm down, fingers relaxed and spread (u_153 / u_154). Gait bob, breathing, look-lag. The layout keeps its
-screen positions at any `fov=` (the rig is pushed deeper for telephoto). The body's own arms collapse in FP (the
-legs and coat stay visible when looking down).
+**Abilities** (`Abilities.js`):
+* **Drift** — replaces the jetpack and the paraglider (`glider=1` brings the old canopy back): jump again high up, or
+  hold jump through the apex, and she stands on a **ring of light** (concentric gold rings + glyph ticks, turning) and
+  glides with the glide physics (banking, thermals, ridge lift); **hold jump** to rise slowly (3 s of aether, refills
+  on the ground); Shift dives, C drops. Pose: upright, knees soft, arms open low like wings, banking about the feet;
+  light streams from her fingertips at speed. A tap of jump in the air is a light second jump off a flash of the ring.
+* **Lumen** — a small orb of light with a halo and a real point light (off on `low`) following at her left shoulder
+  (it leads a little when she is fast); **L** / gamepad **RT** sends it to where you look (it hovers there ~7 s, press
+  again to call it back); in first person it floats above her open left palm. `lumen=0` hides it. Event `player:lumen {pos}`.
+* **Resonance** — **R** / gamepad **X**: a ring of light runs ~60 m out over the land, conformed to the heightfield (it
+  rides over the sea), with a burst of motes; her woven stars and the blade light up. Event `player:pulse {pos, radius}`.
+* **Blink** — **Q** / gamepad **LT**: a ~7 m step through light along the stick (or forward), stopped by rising ground;
+  a stardust streak along the path. Event `player:blink {from, to}`.
+* **Commune** — sit (X / hold C), then hold C again: sit → **meditate** → lie back → sit (or **Z** directly):
+  cross-legged, spine tall, palms up on the knees, she rises a hand's breadth on the ring of light, motes of light rise
+  around her and the Lumen circles her. `world.player.meditating` (0..1) — the sky can answer. `act=meditate`.
 
-**Vista finder** (`vista=<m>`, or `vista=1` = 350 m): at spawn the explorer walks to the best OVERLOOK within that
-radius and faces out over it: walkable, dry, the land falling away in front (an edge within ~45 m, a valley below
-within 600 m), nothing near (26–300 m) rising into the view, a distant range welcome but not a mountain face
-(150 candidates × 20 headings × 10 distances, one-shot). On foot it also starts already composed as an overlook.
-Works with `act=rest` (sit facing the view), `view=fp` (first-person vista) and `yaw=` (relative turn).
-`world.player.vistaInfo = {score}` for debugging.
+**The white wolf** (`Companion.js`, restyled from the lantern fox): a big pale silver-white wolf (shoulder ≈ 0.6 m)
+with a faint ring of light on its brow and a wisp of light at the tail tip; it lopes after her, sits at her left hip
+when she rests, and her arm goes around its shoulders (still the fallback for `world.get('fauna').companion`).
 
-**Framing presets** (`frame=shoulder|wide|low`, **B** cycles in play: auto → shoulder → wide → low):
-* `shoulder`: close over the right shoulder (arm 2.15 m, lateral 0.62 m, FOV ≤ 50): pack, bedroll, scarf and staff
-  in frame, the view ahead (u_136 "over-the-shoulder with the cargo in frame").
-* `wide`: the small figure under a vast sky (arm 9.5 m, chest-height lens tilted up ~6°: the horizon on the lower
-  third, figure centred and small) — the overlook framing, always on.
-* `low`: the lens low behind the walker looking up past the figure (pitch ~15°, FOV ≥ 62): the walker against the
-  sky / a giant overhead.
-* event `player:framing {framing}`. Rest keeps its own composition.
+**First person** (`Viewmodel.js`): the right hand holds the katana low right with the blade rising into the view (it
+sweeps across the frame on a cut, rises from below on the draw); sheathed, a relaxed hand at the lower-right edge. The
+left hand is open and cupped low left with the Lumen floating above the palm (its light rides with it). R (the pulse)
+reaches the left arm out toward the view.
 
-**Camera framing director** (Camera.js): default third person has more sky (arm 4.3 m, aim 1.6 m, idle pitch
-−3.4°); **overlook**: standing still > 1.2 s where the land drops away along the view (> 4–14 m within 50 m)
-the lens pulls back to 9 m, drops to chest height (1.45 m) and tilts ~6° up so the horizon sits near the lower
-third and the sky holds about two thirds, the figure small and centred; **lie back**: the lens looks down onto the
-figure from ~3.5 m (above the meadow grass, not through it); **rest** as above;
-**glide**: arm +2.9 m (round 2b: pulled back ~40% more), aim higher, level pitch (more sky above the canopy). Looking up (pitch > 0.3) the lens
-now sits low behind the explorer instead of re-aiming down when terrain lifts it (space request: frame the
-giant overhead).
+Kept from round 2 (now framing her): rest as a verb (sit, sit on a ridge with the legs over the drop, lie back,
+`world.player.resting`), the rest / overlook / wide / low / shoulder camera framings (B cycles), the vista finder
+(`vista=`), the companion contact, the first-person body.
 
 ## What was built
 
@@ -82,15 +79,18 @@ A BotW / Journey / Outer Wilds-style explorer that plays on a spherical planet.
 | `index.js` | subsystem module (order 50) → `Player` |
 | `Player.js` | controller: state machine, spherical gravity, collisions, spawn, vehicle hand-off, events, audio params, prompts, FX triggers |
 | `Camera.js` | camera rig: third-person spring arm, first person, fly, orbit |
-| `Explorer.js` | procedurally modelled character (24-bone skeleton, 5 skinned meshes / draw calls, art-directed palette per world) |
+| `Explorer.js` | the swordswoman, procedurally modelled (24-bone skeleton, 6 skinned meshes / draw calls, night-colour palette per world, woven-star cloth shader) |
 | `geo.js` | modelling toolkit (lofts, armour patches with bevels, lathe/tube helpers, skin-weight assembler) |
 | `textures.js` | procedural panel normal + panel albedo (panel lines, grime streaks) / fabric normal maps and wear roughness (canvas, cached) |
 | `bake.js` | one-time surface bake of the suit: voxel AO (14 hemisphere rays / vertex), convex-edge paint wear, height + cavity grime tinted with the planet's dust colour → vertex colours + `aWear` (roughness / clearcoat / metalness per vertex) |
 | `Animator.js` | procedural animation: effector-space layer blending + analytic two-bone IK |
-| `Cloth.js` | verlet scarf (2 wide wool tails, wind + relative airflow, body / hood / pack / bedroll collision spheres) |
+| `Cloth.js` | verlet strips: the red scarf (2 tails) and the ponytail (`kind 'hair'`: 3 locks + a tapered tube core) |
 | `Coat.js` | verlet coat skirt (4 panels: open front, back vent, side slits; shape memory, leash, leg / pelvis / pack capsules, ground plane) |
-| `Companion.js` | the lantern fox companion (follow / sit / hug), fallback for fauna's companion |
-| `Viewmodel.js` | first-person hands: lantern (point light), staff with ring of light, reach gesture |
+| `Companion.js` | the white wolf companion (follow / sit / hug), fallback for fauna's companion |
+| `Viewmodel.js` | first-person hands: the katana low right, the Lumen above the open left palm (point light), reach |
+| `Katana.js` | katana + scabbard model, draw / combo / iaido / sheathe state machine, blade trails, edge glow, petals |
+| `SwordAnim.js` | katana key poses (chest space) and their evaluation |
+| `Abilities.js` | Drift ring of light, Lumen orb + light, Resonance wave, Blink, meditation motes |
 | `Glider.js` | paraglider (arched cellular canopy, lines, deploy/stow, flutter, backlit translucency) |
 | `FX.js` | pooled particles (dust, spray, droplets, motes, jet sparks), ripples, footprints, contact shadow, jet flames, wingtip trails |
 | `Physics.js` | `HeightSampler` (cached heightfield + normals + water), `ColliderIndex` (spatial hash over `world.colliders`, capsule resolve, raycast), `AirField` (wind, thermals, ridge lift) |
@@ -185,7 +185,11 @@ the frame shows the drop and the vista. First person (V) from the animated eye (
   `.onControlLost()` / `.onControlGained()` (hide / show the body for vehicles), `.inputScheme='character'`.
 * Season 2: `.resting` (0..1), `.restS {on, lie, dangle, hug}`, `.companion` (own fallback fox, may be null),
   `.viewmodel` (FP hands), `.coat` (cloth skirt); `getState()` adds `resting`, `rest` ('sit'|'edge'|'lie'|null).
-* Events: `player:jump {pos, speed, double?}`, `player:land {pos, speed, hard}`, `player:rest {on, pos}`.
+* Events: `player:jump {pos, speed, double?}`, `player:land {pos, speed, hard}`, `player:rest {on, pos}`,
+  `player:draw {drawn, pos}`, `player:slash {pos, dir, radius, kind}`, `player:pulse {pos, radius}`,
+  `player:blink {from, to}`, `player:lumen {pos}`, `player:framing {framing}`.
+* Season 2 round 3: `.meditating` (0..1), `.katana` (`.drawn`, `.act`, `.charging`, `.glow`), `.abilities`
+  (`.lumenPos`, `.glow`, `.aether`), `.hair`; `getState()` adds `meditating`, `sword`, `aether`.
 * Audio: `setParam('speed'|'altitude'|'wind'|'glide'|'swim'|'boost')`,
   `play('step'|'jump'|'land'|'boost'|'glider'|'splash', {surface, intensity…})`.
 * UI: one contextual prompt id `'player'` (Glide / Dive·Drop / Slide / Jump off).
@@ -209,6 +213,12 @@ the frame shows the drop and the vista. First person (V) from the animated eye (
 * `act=rest` / `act=lie` → sit (or lie back) at spawn with the rest composition snapped; `companion=0` → no fox;
   `view=fp` spawns at sea step ashore to the nearest dry ground within ~4 km (`dry=0` disables).
 * `zoom=<k>` arm multiplier (0.5 = close-up), `fov=<deg>`.
+* `frame=shoulder|wide|low` third-person framing preset (B cycles auto → shoulder → wide → low): shoulder = close over
+  the right shoulder; wide = the small figure under a vast sky (arm 9.5 m, horizon on the lower third); low = the lens
+  low behind her looking up past the figure.
+* `vista=<m>` (or `vista=1` = 350 m): walk to the best overlook nearby and face out over it (works with `act=rest`,
+  `act=meditate`, `view=fp`).
+* `act=meditate` (Commune at spawn), `act=rest|sit|lie`; `glider=1` (the old paraglider instead of Drift); `lumen=0`.
 * Surface/fp spawns snap to the nearest walkable spot within 45 m (`flat=0` disables).
 
 ## Best captures — season 2 (verified; 1280x720)
@@ -253,15 +263,20 @@ Suit bake: one-time at build (voxel grid 0.7 MB, AO cached per tessellation leve
 Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (a few hundred lookups).
 
 ## Known issues
+* Round 3 (the swordswoman): the katana has no collision — the blade passes through rocks and the body on extreme
+  poses; the cuts do not yet cut the grass (flora request) — petals and leaves are the player's own particles.
+* The over-the-shoulder draw is stylised: the blade slides out along the scabbard and swings over the top while the
+  hand travels less than the blade's length (it pops through the scabbard mouth for a frame or two, hidden by the flash).
+* The ponytail and scarf are verlet strips; without world wind (the lab) the scarf hangs to the ground.
+* The white wolf is the player's own fallback companion (ellipsoid-built, 11 bones, no IK); it walks through small props.
+* The face is simple (oval, almond eyes, lips): it reads at game distance, not in extreme close-ups.
 * Season 2: the coat skirt is a single-sided cloth sheet (darker lining on back faces); seated on the ground it
   spreads flat around the hips. Large / fast teleports re-drape it (one frame).
 * The FP viewmodel is drawn in the world pass (children of the camera): it can poke into a wall the explorer
   is pressed against. Sleeves are plain tapered tubes (no folds).
-* The lantern fox is the player track's own fallback companion: a simple 11-bone rig (no IK), it walks
-  through small props, swims by floating at the surface, and its idle sit reads stiff from behind.
 * Rest: lying back is disabled when sitting on an edge (legs over the drop). The edge seat search only looks
   1.45 m straight ahead (face the drop before sitting).
-* The lantern's point light adds one light to every lit material (constant, no recompiles; off on `low`).
+* The Lumen's point light adds one light to every lit material (constant, no recompiles; off on `low`).
 * The W4 `view=surface` spawn lands in tall grass (flora); use `zoom` / `pitch` or a nearby lat/lon for clean captures.
 * Large fauna can walk through the explorer (no creature colliders yet) — see Requests.
 * Climbing works on the heightfield only (not on building / boulder colliders); the mantle is a hop,
@@ -279,6 +294,26 @@ Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (
   heavily weathered Starfield look; there is no fabric wrinkle simulation.
 
 ## Requests
+* **flora** (season 2 round 3, the katana) — `player:slash {pos, dir, radius, kind}` (planet-local `pos` ~1 m above the
+  ground in front of her, `radius` 2.2–3.6 m; kind `iai-bloom` comes ~2 s after an iaido cut, on the sheathe click):
+  please cut / flatten grass, flowers and bamboo inside the radius (a short-lived "cut" list for the grass shader next to
+  the existing player push, e.g. 4 slots `{pos, radius, t}` that shorten blades and tip flower heads for ~20 s), and
+  spawn your own petals / leaves if you have per-species colours (the player already throws petals in
+  `art.palette.flora` colours). Also (round 2, still open): fade grass within ~1.5 m of the camera.
+* **fauna** (round 3) — `player:pulse {pos, radius ≈ 60}`: creatures within the radius look up / toward her, giants lower
+  their heads; `player:blink {from, to}` and `player:slash` nearby can startle small critters (no harm — the world is
+  gentle). A fauna-owned companion (`world.get('fauna').companion`) replaces the player's white wolf if present.
+* **flora / civ / terrain** (round 3) — on `player:pulse`, glow life, paths and sacred sites within the radius for a few
+  seconds (an emissive pulse travelling outward at ≈ 25 m/s matches the player's ring of light).
+* **atmosphere / space** (round 3) — `world.player.meditating` (0..1): let the sky answer — stars brighten, the ring of
+  the source appears faintly overhead, the wind stills.
+* **ui** (round 3) — ability keys in the controls list / touch: draw/sheathe **G** (pad Y), cut **click** (pad RB; hold
+  = iaido), Resonance **R** (pad X), Blink **Q** (pad LT), Lumen **L** (pad RT), meditate **Z** (or hold C while
+  sitting), Drift = hold jump in the air. Fade the HUD with `world.player.resting` / `.meditating`. The player prompt
+  shows "Draw katana · G   Iaido · hold click" / "Release · the flash cut".
+* **audio** (round 3) — one-shots `draw {iai}`, `sheathe` (the click), `slash {kind, intensity}`, `pulse`, `blink`,
+  `jump {double: true}` (the light jump); param `rest` (0..1). A low drone + held breath during the iaido stance
+  (`world.player.katana.charging`) would land the standoff.
 * **ui** (season 2) — `world.player.resting` (0..1, smoothed) is live: fade the HUD with it (the player already
   clears its prompt while resting). Events `player:rest {on, pos}`. Keys: hold **C** still / tap **X** = sit,
   hold C again = lie back, **R** (or primary) in first person = reach. Touch: a "rest" button can map to `descend`

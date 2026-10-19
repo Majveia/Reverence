@@ -28,7 +28,7 @@ uniform vec4 uNeb[${MAXN}];     // world center (kly), radius (kly)
 uniform vec4 uNebP[${MAXN}];    // kind, seed, palette (1 = hubble), fade
 uniform mat3 uNebRot[${MAXN}];  // world → local
 uniform int uSteps;
-uniform float uFrame, uTime;
+uniform float uFrame, uTime, uHalo;
 varying vec2 vUv;
 
 vec4 N(vec3 p){ return texture(tNoise, p); }
@@ -72,11 +72,11 @@ vec4 emissionCloud(vec3 q, vec3 s, float hub){
   float glob = smoothstep(0.84, 0.94, N(w * 1.5 + s * 5.1).b) * outer;
   dustF = max(dustF, glob);
   float rim = max(dustF - dustNear, 0.0) * ion;
-  vec3 col = mix(Ha(hub), O3(hub), smoothstep(0.55, 0.12, dc) * 0.9);
+  vec3 col = mix(Ha(hub), O3(hub), smoothstep(0.62, 0.08, dc + 0.25 * (det - 0.5)) * 0.95);
   col = mix(col, S2(hub), smoothstep(0.45, 0.9, r) * 0.6);
   vec3 em = col * gas * (0.5 + 5.0 * ion) + mix(vec3(1.0, 0.5, 0.4), vec3(1.0, 0.82, 0.5), hub) * rim * 30.0;
   em += vec3(0.45, 0.6, 1.0) * exp(-dc * dc * 40.0) * (0.3 + det) * 0.6;   // reflection haze
-  return vec4(em, dustF * 16.0 + gas * 0.2);
+  return vec4(em, dustF * 26.0 + gas * 0.2);
 }
 
 // ---- Pillars of Creation (JWST-like): sculpted molecular columns leaning toward the ionising cluster
@@ -146,16 +146,18 @@ vec4 pillars(vec3 q, vec3 s, float hub){
   float skin = smoothstep(-0.06, 0.0, d) * (1.0 - smoothstep(0.0, 0.07, d)) * TL;
   float n4 = N(q * 3.0 + s * 0.4).a, n5 = N(q * 1.4 + s * 1.9).r;
   // JWST-like palette: gold / amber lit dust, rust-brown bodies, near-black dense cores
-  vec3 deep = mix(vec3(0.14, 0.035, 0.01), vec3(0.36, 0.1, 0.028), n5);
-  vec3 lit = mix(vec3(1.0, 0.4, 0.08), vec3(1.0, 0.6, 0.2), n4);
-  vec3 rimC = mix(vec3(1.0, 0.62, 0.25), vec3(1.0, 0.8, 0.5), n4);
-  float amb = 0.12 + 0.2 * smoothstep(-1.2, 0.8, q.y);        // cavity light from all around
-  vec3 bodyC = deep * amb + lit * TL * 0.62;
+  vec3 deep = mix(vec3(0.09, 0.022, 0.008), vec3(0.3, 0.075, 0.02), n5);
+  vec3 lit = mix(vec3(1.0, 0.38, 0.06), vec3(1.0, 0.62, 0.16), n4);
+  vec3 rimC = mix(vec3(1.0, 0.5, 0.14), vec3(1.0, 0.72, 0.36), n4);
+  float amb = 0.07 + 0.14 * smoothstep(-1.2, 0.8, q.y);        // cavity light from all around
+  vec3 bodyC = deep * amb + lit * TL * 1.1;
   // optically thick: radiance ≈ (scattered + emitted) ≈ colour × (ambient + direct) — scale by σ
   float sigma = rho * 26.0;
-  vec3 em = bodyC * sigma;
-  em += rimC * skin * 9.0;
-  em += mix(vec3(1.0, 0.62, 0.3), vec3(0.95, 0.8, 0.55), flow) * wisp * (0.4 + 2.2 * TL) * 1.6;
+  // translucent fringes (low column) glow gold where the cluster light leaks through: backlit veils
+  float fringe = 1.0 - smoothstep(0.15, 0.85, rho);
+  vec3 em = (bodyC + lit * fringe * (0.15 + 1.1 * TL)) * sigma * 1.1;
+  em += rimC * skin * TL * TL * 6.0;
+  em += mix(vec3(1.0, 0.55, 0.2), vec3(1.0, 0.75, 0.4), flow) * wisp * (0.1 + 2.0 * TL) * 0.7;
   // embedded protostar: a red-glowing knot at the tip of the middle column (JWST's red "lava")
   vec3 tip = vec3(0.7, 0.2, 0.05);
   float dt = length(q - tip);
@@ -190,7 +192,7 @@ vec3 cavityWall(vec3 q, vec3 s, float front){
 //  · a faint, broken outer halo, and the hot white dwarf at the centre
 vec3 gViewL = vec3(0.0, 0.0, 1.0);   // ray direction in the nebula's local frame (set per nebula)
 vec4 planetary(vec3 q, vec3 s, float hub){
-  vec3 p = q * vec3(1.0, 1.12, 1.0);
+  vec3 p = q * vec3(1.0, 1.28, 1.0);
   float r = length(p);
   vec3 dir = p / max(r, 1e-4);
   // the shell is a thick torus seen pole-on (Helix): its caps along the line of sight are missing, so
@@ -205,10 +207,10 @@ vec4 planetary(vec3 q, vec3 s, float hub){
   float spk = N(rq + s * 0.7).g;
   float clump = N(q * 1.1 + s * 2.1).r, clump2 = N(q * 2.4 + s * 0.4).a;
   // [OIII] interior: filled, limb-brightening toward the shell, faint radial spokes
-  float o3 = smoothstep(rs + 0.03, rs - 0.12, r) * (0.35 + 0.65 * smoothstep(0.0, rs, r)) * (0.75 + 0.5 * spk);
+  float o3 = smoothstep(rs + 0.02, rs - 0.1, r) * (0.18 + 0.82 * pow(smoothstep(0.0, rs, r), 1.6)) * (0.7 + 0.6 * spk);
   // Hα / [NII] shell: thick, clumpy, peak just outside rs
   float hr = (r - rs - 0.09) / 0.11;
-  float ha = exp(-hr * hr) * (0.12 + 1.6 * smoothstep(0.32, 0.72, clump)) * (0.45 + 1.0 * smoothstep(0.3, 0.75, clump2)) * (0.7 + 0.6 * spk) * torus;
+  float ha = exp(-hr * hr) * (0.12 + 1.6 * smoothstep(0.32, 0.72, clump)) * (0.45 + 1.0 * smoothstep(0.3, 0.75, clump2)) * (0.25 + 1.5 * spk * spk) * torus;
   // inner bright rim of the shell (where [OIII] and Hα overlap: white-blue in the photos)
   float rimR = (r - rs + 0.01) / 0.04;
   float rim = exp(-rimR * rimR) * (0.5 + 0.8 * clump2) * torus;
@@ -218,11 +220,11 @@ vec4 planetary(vec3 q, vec3 s, float hub){
   float tail = smoothstep(0.7, 0.9, cel) * smoothstep(-0.02, 0.03, kr) * (1.0 - smoothstep(0.03, 0.16, kr)) * torus;
   // outer halo, broken into arcs
   float halo = exp(-pow((r - 0.8) / 0.09, 2.0)) * smoothstep(0.4, 0.75, N(q * 1.2 + s * 3.0).r);
-  vec3 cO3 = mix(vec3(0.12, 0.6, 0.85), vec3(0.15, 0.45, 1.0), hub);
+  vec3 cO3 = mix(vec3(0.08, 0.62, 0.9), vec3(0.1, 0.55, 1.0), hub);
   vec3 cHa = mix(vec3(1.0, 0.2, 0.08), vec3(1.0, 0.36, 0.12), hub);
-  vec3 em = cO3 * o3 * 0.4
+  vec3 em = cO3 * o3 * 0.75
           + cHa * ha * 1.1
-          + mix(vec3(0.55, 0.85, 1.0), cHa, 0.2) * rim * 0.75
+          + mix(vec3(0.6, 0.92, 1.0), cHa, 0.12) * rim * 1.4
           + vec3(1.0, 0.75, 0.6) * head * 2.2
           + cHa * halo * 0.22;
   em += vec3(0.8, 0.9, 1.0) * exp(-r * r * 2500.0) * 60.0;          // white dwarf
@@ -269,6 +271,28 @@ void main(){
     float hub = uNebP[k].z, fade = uNebP[k].w;
     mat3 M = uNebRot[k];
     gViewL = normalize(M * rd);
+    // the nebula tints the space around it (rule 6): scattered and faint ionised light far beyond the
+    // bright body, integrated analytically along the ray (Gaussian column through the impact point),
+    // broken into wisps by noise at the point of closest approach. Hue shifts toward the complementary
+    // colour at the edge (red / teal), so the field around the object is never flat black.
+    {
+      float tc = max(-b, 0.0);
+      vec3 pc = oc + rd * tc;
+      float x = length(pc) / R;
+      float side = 0.5 + 0.5 * clamp(-b / (2.5 * R), -1.0, 1.0);
+      vec3 ql = M * (pc / R);
+      vec3 wq = ql + 1.2 * (N(ql * 0.05 + s * 0.3).rgb - 0.5);
+      float n1 = N(wq * 0.11 + s).r, n2 = N(wq * 0.31 + s * 1.7).a, n3 = N(wq * 0.8 + s * 0.6).g;
+      float wisp = 0.08 + 1.7 * smoothstep(0.35, 0.85, n1) * (0.4 + 1.0 * n2) + 0.6 * smoothstep(0.6, 0.95, n3) * n1;
+      vec3 inner, outer;
+      if (kind == 2) { inner = vec3(0.10, 0.55, 0.85); outer = vec3(0.9, 0.18, 0.08); }
+      else if (kind == 1) { inner = vec3(0.12, 0.32, 0.9); outer = vec3(0.6, 0.35, 0.15); }
+      else if (kind == 3) { inner = vec3(0.2, 0.6, 0.9); outer = vec3(0.85, 0.2, 0.3); }
+      else { inner = mix(vec3(1.0, 0.18, 0.3), vec3(1.0, 0.45, 0.25), hub); outer = vec3(0.1, 0.5, 0.65); }
+      vec3 hc = mix(inner, outer, smoothstep(1.2, 4.5, x));
+      float prof = 0.05 * exp(-x * x / 2.0) + 0.016 * exp(-x * x / 10.0) + 0.003 * exp(-x / 5.0);
+      L += T * hc * prof * wisp * side * fade * uHalo * (kind == 1 ? 0.35 : 1.0);
+    }
     // pillars: the cavity wall of the surrounding HII region (shell of radius RS) — textured
     // backdrop that fills the frame from inside, fades out once the camera leaves the region
     float RS = 2.6 * R;
@@ -332,7 +356,7 @@ export class Nebulae {
       tNoise: volUniforms.tNoise,
       uCamPos: { value: new THREE.Vector3() }, uInvProj: { value: new THREE.Matrix4() }, uCamRot: { value: new THREE.Matrix3() },
       uCount: { value: 0 }, uNeb: { value: nebU }, uNebP: { value: nebP }, uNebRot: { value: nebR },
-      uSteps: { value: this.steps }, uFrame: { value: 0 }, uTime: { value: 0 },
+      uSteps: { value: this.steps }, uFrame: { value: 0 }, uTime: { value: 0 }, uHalo: { value: 1 },
     };
     this.mat = new THREE.ShaderMaterial({ vertexShader: FS_VERT, fragmentShader: FRAG, uniforms: this.uniforms, depthTest: false, depthWrite: false });
     this.quadScene = new THREE.Scene();

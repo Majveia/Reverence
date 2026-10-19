@@ -24,7 +24,12 @@ void main(){
   vRot = vec2(c, s);
   q = mat2(c, -s, s, c) * q;
   vec3 off = vec3(q * size, 0.0);
-  if (vKind > 0.5 && vKind < 1.5) {
+  if (vKind > 2.5) {
+    // petal / leaf: tumbles (the billboard squashes along its width as it turns over), spins
+    float tumble = 0.2 + 0.8 * abs(cos(iMisc.w * 23.0 + vSeedAge.x * 9.0));
+    vec2 pq = mat2(c, -s, s, c) * (position.xy * vec2(tumble, 1.0));
+    off = vec3(pq * size, 0.0);
+  } else if (vKind > 0.5 && vKind < 1.5) {
     // stretched droplet / sand grain along screen-space velocity
     vec3 vv = (modelViewMatrix * vec4(iVel, 0.0)).xyz;
     vec2 d = vv.xy; float l = length(d);
@@ -81,6 +86,13 @@ void main(){
   } else if (vKind < 1.5) {
     a = smoothstep(1.0, 0.1, r);
     col = col * (uSunColor * 0.35 + uAmbientSky * 1.1) + pow(max(0.0, 1.0 - r), 3.0) * uSunColor * 0.15;
+  } else if (vKind > 2.5) {
+    // petal / leaf: a pointed lens with a darker midrib, sun-lit with a little translucency
+    float hw = 0.52 * pow(max(0.0, 1.0 - p.y * p.y), 0.75);
+    float e = abs(p.x) - hw;
+    a = smoothstep(0.06, -0.04, e);
+    float rib = smoothstep(0.08, 0.0, abs(p.x)) * 0.25;
+    col = col * (1.0 - rib) * (uSunColor * 0.55 + uAmbientSky * 0.95 + 0.02) + col * uSunColor * 0.22;
   } else {
     // emissive spark / mote
     a = smoothstep(1.0, 0.0, r);
@@ -374,7 +386,7 @@ export class FX {
   }
 
   // --------------------------------------------------------------------------- emitters
-  /** kind: 0 puff, 1 droplet, 2 emissive spark/mote */
+  /** kind: 0 puff, 1 droplet, 2 emissive spark/mote, 3 petal / leaf */
   emit(pos, vel, { kind = 0, size = 0.3, size1 = null, life = 1, color, alpha = 0.6, drag = 1.5, grav = 0, spin = 0 } = {}) {
     const P = this.P;
     let i = P.alive;
@@ -477,7 +489,8 @@ export class FX {
       const ow = w * 3;
       ip[ow] = P.pos[ow]; ip[ow + 1] = P.pos[ow + 1]; ip[ow + 2] = P.pos[ow + 2];
       iv[ow] = P.vel[ow]; iv[ow + 1] = P.vel[ow + 1]; iv[ow + 2] = P.vel[ow + 2];
-      const fade = P.kind[w] === 2 ? Math.sin(Math.PI * Math.min(1, t)) : P.kind[w] === 0 ? (1 - t) * Math.min(1, t * 6 + 0.3) : (1 - t) * (1 - t) * Math.min(1, t * 8 + 0.2);
+      const kd = P.kind[w];
+      const fade = kd === 2 ? Math.sin(Math.PI * Math.min(1, t)) : kd === 0 ? (1 - t) * Math.min(1, t * 6 + 0.3) : kd === 3 ? Math.min(1, t * 12) * (1 - t * t * t) : (1 - t) * (1 - t) * Math.min(1, t * 8 + 0.2);
       ic[w * 4] = P.col[ow]; ic[w * 4 + 1] = P.col[ow + 1]; ic[w * 4 + 2] = P.col[ow + 2]; ic[w * 4 + 3] = P.a0[w] * fade;
       const o4 = w * 4;
       im[o4] = P.s0[w] + (P.s1[w] - P.s0[w]) * t; im[o4 + 1] = P.kind[w] + P.seed[w]; im[o4 + 2] = P.rot[w]; im[o4 + 3] = t;
