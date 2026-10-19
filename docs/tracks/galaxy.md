@@ -146,11 +146,54 @@ GalaxyModel works in ly.
 * `GalaxyModel.galaxyDisplayColors(galaxy)` — the saturated display palette the galaxy mode renders (answers the ui
   request for more saturated `colors.arms`; Universe's own record is core-owned).
 
+## Season 2 round 2 (critic s2r1 → fixes)
+
+* **Black hole = the ring of the source (BlackHole.js)**
+  * The disk is now made of **analytic orbiting arcs** (`arcs()`): per ln-r band one thin line at a random offset,
+    cut into an integer number of dashes (seamless in azimuth), random length and brightness, slight trailing
+    shear, three layers (F = 30, 69, 159 bands per ln r). Lines are widened and dimmed to ≥ ~1 px
+    (energy-conserving analytic AA), so unresolved bands fade into an even glow instead of a dotted wire or
+    blocky noise. Replaces the low-frequency fbm "camouflage" (critic #1).
+  * Gold "ring of fire" colour ramp (deep red embers → orange → gold → warm white at the ISCO), beaming g³ with a
+    soft knee, steeper outward fall-off (prof^3.8, outer edge fades from 0.25 to 0.9 × r_out), white-hot inner
+    heart (`uDiskBase`, larger when unresolved / far, small up close so the arcs carry the light).
+  * **Distance exposure** `uDiskK` = `diskK` (2.2) × (0.34 … 1) with log distance: up close the frame is filled
+    by the hottest gas and is exposed down (no white-out). Near the hole (and near nebulae) the mode switches the
+    pipeline tone map to `agx-punchy` (hue 0.7) so the gold and Hα stay saturated instead of sliding to cream
+    (galaxy-mode settings only; the Director resets the look on mode change).
+  * Photon ring drawn analytically at pixel scale (gold-white core + soft outer glow, Doppler-brighter side,
+    black inside); the shadow is true black (bloom scaled down next to the hole).
+  * **Pillar of light**: a collimated polar jet (gold-white core, fiery flickering sheath, travelling knots)
+    integrated along the bent rays; it fades when seen pole-on so it never fogs the shadow (`&gx=Jet:`).
+  * **Torn space**: red Hα / teal [OIII] veils with dark filaments around the hole, a function of direction only,
+    so the geodesics wrap it into Einstein rings; concentrated around the hole's direction and added outside the
+    nucleus-glow gain (it was invisible before). Default subtle (0.1); `&gx=Torn:0.28` for the Cosmic &
+    Otherworldly look (black orb, blazing gold ring, pillar of light, space torn red and teal).
+* **Nebulae colour the space around them (Nebulae.js)**: an analytic halo per nebula (Gaussian columns
+  integrated along the ray through the impact point, three radii up to ~5 R), broken into wisps by noise at the
+  point of closest approach, hue shifting toward the complementary colour at the edge (Helix teal → red,
+  emission Hα → teal). `uHalo` scales it.
+* **Helix**: eye-shaped (1.28 elongation), cyan [OIII] interior with a radial gradient (darker centre, bright
+  toward the rim), a brighter cyan-white inner rim, radially streaked Hα shell.
+* **Emission nebula**: larger teal [OIII] core, denser dark dust (τ 16 → 26 per unit).
+* **Pillars**: deeper umber shadows, richer gold lit faces, directional (TL²) ionisation rims instead of a pale
+  skin over the whole surface, backlit translucent fringes, fewer pale wisps.
+* **Stellar neighbourhood**: inside the disk (camera within ~2 kly of its target, within 1.5 h_old of the plane,
+  away from the nucleus and from a visited nebula) the lens widens 42° → 72° and the reddening along in-plane
+  sight lines is softened (`uExt`), so the galaxy reads as a band with dark sky above and below rather than a
+  brown wall; diffuse light gain ×1.5 there. Picking uses the same camera, so selection still matches.
+* **Spirals**: creamier old disk / bulge palette, brighter old disk (`uOldL` 0.45 for spirals), inner disk
+  brightened (×2.7 at the centre, e-folding 0.17 R) with half the dust there, so the centre is never darker than
+  the arms. GalaxyModel: 2–3-arm spirals open up to ≥ 18–26° pitch (independent hash; galaxy 0 and the showcase
+  systems are unchanged; star class / temperature / luminosity unchanged).
+* `state()` reports `inDisk`, `fov`, `camY`, `camR`, `R`, `neb` for capture debugging.
+
 ## URL parameters
 
 `&galaxy=<i>` · `&yaw=<deg>` `&pitch=<deg>` `&dist=<kly>` · `&focus=core | local | star:<i> | neb:<k>`
 (`&dist` is in r_s with `focus=core`, in nebula radii with `focus=neb`) · `&star=<i>` focuses/selects a
 star · `&gx=OldL:0.4,YoungL:0.8,HiiL:2,DustL:8,Screen:0.9,BulgeL:24,HaloL:0.35,exp:0.8,stars:1` art-direction overrides.
+Black-hole keys: `&gx=Jet:0.06,Torn:0.1,DiskK:2.2,DiskGain:5,DiskT:6000,DiskOut:20,Ring:1`.
 
 Galaxy types for seed 1: 0 ring (4 arms), 1 spiral (3), 2 barred (3), 3/4/6/16/19/20 spiral,
 5/17/21/23 lenticular (Sombrero-like dust rings), 7/11/12/14/15/18 barred, 8 elliptical, 9/22 irregular, 10/13 ring.
@@ -159,20 +202,22 @@ Galaxy types for seed 1: 0 ring (4 arms), 1 spiral (3), 2 barred (3), 3/4/6/16/1
 
 | view | URL |
 |---|---|
-| grand-design spiral (Whirlpool-like, fills frame) | `/?mode=galaxy&galaxy=3` |
+| black hole, oblique (Interstellar: lensed gold disk over and under the shadow, photon ring, jet) | `/?mode=galaxy&galaxy=0&focus=core` |
+| black hole, face-on ring of fire (u_14) | `/?mode=galaxy&galaxy=0&focus=core&pitch=89&dist=30` |
+| black hole, filling the view | `/?mode=galaxy&galaxy=0&focus=core&pitch=78&dist=9` |
+| the source, otherworldly (black orb, gold ring, pillar of light, space torn red and teal) | `/?mode=galaxy&galaxy=0&focus=core&pitch=4&yaw=30&dist=60&gx=Torn:0.28` |
+| black hole from afar (small and glowing) | `/?mode=galaxy&galaxy=0&focus=core&pitch=25&dist=140` |
+| grand-design spiral | `/?mode=galaxy&galaxy=3` (face-on `&pitch=89`) |
 | barred spiral | `/?mode=galaxy&galaxy=7` or `galaxy=2` |
 | cartwheel ring galaxy | `/?mode=galaxy&galaxy=0` |
-| Sombrero (edge-on lenticular, default view) | `/?mode=galaxy&galaxy=5` (also `galaxy=17`) |
-| elliptical | `/?mode=galaxy&galaxy=8` |
-| irregular | `/?mode=galaxy&galaxy=9` |
-| face-on spiral | `/?mode=galaxy&galaxy=3&pitch=89` |
-| black hole (lensing, disk, photon ring, lensed stars) | `/?mode=galaxy&galaxy=0&focus=core` (or `&pitch=16&yaw=40`) |
+| Sombrero (edge-on lenticular) | `/?mode=galaxy&galaxy=5` |
+| elliptical / irregular | `/?mode=galaxy&galaxy=8` / `galaxy=9` |
+| planetary nebula (Helix) | `/?mode=galaxy&galaxy=0&focus=neb:3` |
 | pillars nebula | `/?mode=galaxy&galaxy=0&focus=neb:1` |
-| emission nebula | `/?mode=galaxy&galaxy=0&focus=neb:4` (also `neb:0`; positions follow the HII sites, they moved with the r3 spokes) |
-| planetary nebula | `/?mode=galaxy&galaxy=0&focus=neb:3` |
-| stellar neighbourhood (band split by a dust rift, dense starfield) | `/?mode=galaxy&galaxy=3&focus=local` (also `galaxy=0&focus=local`) |
-| selected star + UI | `/?mode=galaxy&galaxy=0&focus=local` + `--ui --steps '[{"advance":1},{"click":[452,186]},{"advance":0.8}]'` (960×540; an O supergiant) |
-| disk map debug | `/?mode=galaxy&galaxy=3&gxdebug=map` (square viewport recommended) |
+| emission nebula | `/?mode=galaxy&galaxy=0&focus=neb:4` |
+| stellar neighbourhood (band + rift, wide lens) | `/?mode=galaxy&galaxy=3&focus=local` |
+| selected star + UI | `/?mode=galaxy&galaxy=3&focus=local` + `--ui --steps '[{"advance":1},{"click":[576,469]},{"advance":0.8}]'` (1280×720; an O supergiant) |
+| disk map debug | `/?mode=galaxy&galaxy=3&gxdebug=map` |
 
 ## Performance
 
@@ -187,8 +232,21 @@ Galaxy types for seed 1: 0 ring (4 arms), 1 spiral (3), 2 barred (3), 3/4/6/16/1
   Pillars: sphere-traced through the SDF (2.6 × tier steps max, 5 shadow samples only inside / near the dust).
   Generation fully in workers (main-thread fallback time-sliced).
 
+* (s2r2) Black-hole disk arcs: 3 layers of hash-only dashes per disk crossing (cheaper than the old 3-octave
+  simplex noise); nebula halo: 4 noise fetches per pixel per active nebula, analytic column (no extra steps).
+
 ## Known issues
 
+* (s2r2) Pillars are richer in colour but still read as soft "cotton" columns; the cluster's self-shadowing gives
+  little side-to-side modelling from the default view. The JWST fine striations and dense spiked-star field are
+  not there yet.
+* (s2r2) The hero spiral is brighter in the centre but still reads synthetic beside M51 (regular arms, few HII
+  strings, no companion galaxy, no foreground depth layers).
+* (s2r2) Stellar neighbourhood: the band is now a band, but it is dim and brownish-grey with a fairly uniform rift
+  and faint vertical streaks in the volume; galaxy 0's local star sits in the Cartwheel ring, so its view toward
+  the centre is mostly empty (use galaxy 3).
+* (s2r2) Face-on hole (u_14): the inner disk is gold rather than u_14's near-white blaze, and the disk reaches a
+  little further out before fading to black.
 * Spirals are much closer to Hubble structure but still read a little "rendered": the young arms are clean
   blue-white ribbons of beaded clusters, HII strings are sparser than M51's, and lanes are thinner than the
   reference's broad brown bundles at full-galaxy scale (the map is 2048² → ~1.7 texels / px at 1280).

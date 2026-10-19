@@ -337,7 +337,7 @@ export class BlackHole {
     const ek = Math.min(1, Math.max(0, (Math.log10(Math.max(1, dr)) - 0.9) / (1.9 - 0.9)));
     u.uDiskK.value = this.diskK * (0.34 + 0.66 * ek);
     // unresolved, the inner disk reads as one white-hot heart; resolved up close, its arcs carry the light
-    u.uDiskBase.value = 0.04 + 0.3 * ek * ek;
+    u.uDiskBase.value = 0.04 + 0.55 * ek * ek;
     u.uTorn.value = this.torn * near;
     this.quad.render(renderer, io.output);
   }
