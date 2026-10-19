@@ -35,11 +35,11 @@ function coatTexture(c1, c2, trim) {
   }
   // hem band (bottom), a stitched trim line above it, the frayed hem edge (alpha)
   ctx.fillStyle = hex(c2); ctx.fillRect(0, H * 0.88, W, H * 0.12);
-  ctx.fillStyle = hex(trim); ctx.fillRect(0, H * 0.84, W, 2);
+  ctx.fillStyle = hex(trim); ctx.fillRect(0, H * 0.84, W, 2); ctx.fillRect(0, H * 0.965, W, 1);
   for (let x = 0; x < W; x += 6) { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(x, H * 0.86, 3, 1); }
   // dust darkens the lowest part of the hem (walked through the world)
   const gr = ctx.createLinearGradient(0, H * 0.7, 0, H);
-  gr.addColorStop(0, 'rgba(70,58,44,0)'); gr.addColorStop(1, 'rgba(70,58,44,0.35)');
+  gr.addColorStop(0, 'rgba(70,58,44,0)'); gr.addColorStop(1, 'rgba(70,58,44,0.12)');
   ctx.fillStyle = gr; ctx.fillRect(0, H * 0.7, W, H * 0.3);
   ctx.clearRect(0, H - 3, W, 3);
   for (let x = 0; x < W; x += 2) { const l = 1 + ((x * 7919) % 5); ctx.fillStyle = hex(c2); ctx.fillRect(x, H - 3, 1, Math.min(3, l)); }
@@ -54,7 +54,7 @@ export class Coat {
     const lo = quality?.tier === 'low';
     this.rows = lo ? 7 : 10;
     this.cols = lo ? 4 : 6;
-    this.len = 0.6;                         // waist → hem (mid-shin)
+    this.len = 0.66;                        // waist → hem (mid-calf)
     this.seg = this.len / (this.rows - 1);
     this.y0 = 0.962;                        // pin ring height (group space, under the belt)
     this.rx = 0.18; this.rz = 0.128;
@@ -138,16 +138,16 @@ export class Coat {
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 3);
     this.geo = g;
     let map = null;
-    try { map = coatTexture(palette.coat, palette.coat2, palette.scarf2.clone().multiplyScalar(0.55)); } catch (_) { map = null; }
+    try { map = coatTexture(palette.coat, palette.coat2, palette.gold || palette.scarf2); } catch (_) { map = null; }
     this.map = map;
     const tex = getTextures(null);
     const hi = !lo;
     const mat = new (hi ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({
-      map, color: map ? 0xffffff : palette.coat, roughness: 0.95, side: THREE.DoubleSide,
-      normalMap: tex.woolNormal || null, normalScale: new THREE.Vector2(0.7, 0.7), alphaTest: map ? 0.5 : 0,
+      map, color: map ? 0xffffff : palette.coat, roughness: 0.82, side: THREE.DoubleSide,
+      normalMap: tex.fabricNormal || tex.woolNormal || null, normalScale: new THREE.Vector2(0.45, 0.45), alphaTest: map ? 0.5 : 0,
     });
-    if (hi) { mat.sheen = 0.55; mat.sheenRoughness = 0.75; mat.sheenColor = new THREE.Color(palette.coat).lerp(new THREE.Color(0.75, 0.72, 0.66), 0.45); }
-    patchLighting(mat, { rim: 0.35, sky: 0.14, key: 'coat', sunRim: 1.0 });
+    if (hi) { mat.sheen = 0.7; mat.sheenRoughness = 0.45; mat.sheenColor = new THREE.Color(palette.coat).lerp(new THREE.Color(0.62, 0.64, 0.8), 0.55); }
+    patchLighting(mat, { rim: 0.32, sky: 0.16, key: 'coat', sunRim: 1.15, stars: 1, starUv: true });
     // darker lining on the inside faces
     const prev = mat.onBeforeCompile;
     mat.onBeforeCompile = (sh, r) => {

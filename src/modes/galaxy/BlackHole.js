@@ -89,6 +89,29 @@ vec3 fireRamp(float t){
   return c;
 }
 
+// one layer of orbiting arcs: u = band coordinate across the flow (one thin line per band at a random
+// offset), ph = azimuth. Each band's ring is cut into N dashes (integer → seamless) of random length and
+// brightness. fu = band units per pixel: the line is widened and dimmed to stay ≥ ~1 px (analytic AA,
+// energy-conserving), so unresolved bands fade into an even glow instead of a dotted wire.
+float arcs(float u, float ph, float fu, float layer){
+  float id = floor(u);
+  float h1 = rv_hash12(vec2(id, layer * 17.0 + 3.1));
+  float h2 = rv_hash12(vec2(id + 7.7, layer * 5.0 + 11.3));
+  float c = 0.2 + 0.6 * h1, w = 0.06 + 0.1 * h2;
+  float we = sqrt(w * w + 0.36 * fu * fu);
+  float dd = fract(u) - c;
+  float line = (w / we) * exp(-dd * dd / (we * we));
+  float N = floor(5.0 + 24.0 * h2);
+  float v = ph * 0.159155 * N + h1 * 13.0;
+  float did = mod(floor(v), N);
+  float h3 = rv_hash12(vec2(id * 1.37 + did, layer + 2.9));
+  float L = 0.35 + 0.6 * fract(h3 * 7.13);
+  float sd = clamp(fract(v) / L, 0.0, 1.0);
+  float dash = sqrt(4.0 * sd * (1.0 - sd)) * step(0.28, h3) * (0.35 + 0.65 * fract(h3 * 3.71));
+  // unresolved dashes blur into their mean along the arc too
+  return line * mix(dash, 0.45, smoothstep(0.4, 1.2, fu));
+}
+
 // thin disk sample at crossing point p (BH frame, y≈0) seen along photon direction ph (toward camera);
 // foot = pixel footprint on the disk (r_s) for anti-aliasing the fine filaments
 vec4 disk(vec3 p, vec3 ph, float foot){
@@ -108,22 +131,17 @@ vec4 disk(vec3 p, vec3 ph, float foot){
   float fpl = foot / r;                         // footprint in ln r
   // coarse clumps (±) — slow, broad
   float cl = rv_snoise(vec3(cos(phi) * 1.3, sin(phi) * 1.3, lr * 5.0 + uSeed));
-  // fine anisotropic filaments: long along the flow (azimuth), thin across it (ln r), trailing shear
-  float phS = phi + 1.8 * lr;
-  // u_14-like: short bright dashes riding circular orbits (long in azimuth, very thin in radius)
-  float st = 0.0, ws = 0.0, F = 38.0, A = 3.6, amp = 1.0;
+  // u_14: thousands of thin bright arcs riding circular orbits, broken into dashes, dark gaps between
+  float phS = phi + 1.4 * lr;                           // slight trailing shear
+  float st = 0.0, ws = 0.0, F = 30.0, amp = 1.0;
   for (int k = 0; k < 3; k++){
-    float aa = 1.0 - smoothstep(0.18, 0.5, F * fpl);    // fade a layer once its period nears 2-3 px
-    float nk = rv_snoise(vec3(cos(phS) * A, sin(phS) * A, lr * F + uSeed * 1.7 + float(k) * 7.31));
-    st += amp * aa * nk; ws += amp * aa;
-    F *= 2.1; A *= 1.85; amp *= 0.7; phS += 0.35 * lr;
+    st += amp * arcs(lr * F + float(k) * 0.37, phS + float(k) * 1.3, F * fpl, float(k));
+    ws += amp;
+    F *= 2.3; amp *= 0.55; phS += 0.25 * lr;
   }
-  float con = smoothstep(0.08, 0.45, ws / 2.19);       // how much filament contrast survives the footprint
-  st /= max(ws, 1e-3);
-  float fil = smoothstep(-0.1, 0.45, st + 0.25 * cl);
-  // brightness: crisp dashes with truly dark gaps; where the footprint is too coarse to resolve them,
-  // the same mean energy as a smooth glow (no dark band near the shadow, no aliasing)
-  float filB = mix(0.42 + 0.12 * cl, 0.03 + 1.4 * fil * fil, con);
+  st /= ws;
+  float fil = clamp(st * (1.0 + 0.3 * cl), 0.0, 1.5);
+  float filB = 0.03 + 2.8 * fil;
   // a few compact hot spots (flares) riding the flow at their own Keplerian rate
   float hot = 0.0;
   for (int k = 0; k < 3; k++) {
@@ -135,17 +153,17 @@ vec4 disk(vec3 p, vec3 ph, float foot){
     hot += exp(-dot(dd, dd) / (0.3 + 0.2 * fk)) * (1.2 - 0.3 * fk);
   }
   float edgeIn = smoothstep(uDiskIn * 0.98, uDiskIn * 1.08, r);
-  float edgeOut = 1.0 - smoothstep(uDiskOut * 0.3, uDiskOut, r);
+  float edgeOut = 1.0 - smoothstep(uDiskOut * 0.25, uDiskOut * 0.9, r);
   // gaps between filaments are thin and nearly transparent: the far side and the black sky show through
-  float a = clamp((0.16 + 0.74 * mix(0.5, fil, con)) * edgeIn * edgeOut + 0.25 * hot, 0.0, 0.95);
+  float a = clamp((0.12 + 0.85 * min(1.0, fil * 1.6)) * edgeIn * edgeOut + 0.1 * hot, 0.0, 0.95);
   // colour temperature: Novikov–Thorne profile × redshift; art-directed ramp: a white-hot heart near
   // the ISCO, gold through the middle, deep orange-red embers fading to black at the rim (u_14)
-  float t = pow(prof, 1.15) * pow(g, 1.15) * (uDiskT / 6000.0) * 1.32 * (0.82 + 0.3 * mix(0.5, fil, con) + 0.3 * hot);
+  float t = pow(prof, 1.15) * pow(g, 1.15) * (uDiskT / 6000.0) * 1.02 * (0.8 + 0.35 * min(1.0, fil * 1.6) + 0.3 * hot);
   vec3 col = fireRamp(t);
   // relativistic beaming I ∝ g³ (+ gravitational redshift) with a soft knee on the approaching side
   float gb = pow(g, 3.0);
   gb = gb <= 1.0 ? gb : 1.0 + (gb - 1.0) / (1.0 + 0.45 * (gb - 1.0));
-  float I = uDiskGain * pow(prof, 3.0) * gb * filB * (1.0 + 0.25 * cl) * (1.0 + 1.5 * hot) * uDiskK;
+  float I = uDiskGain * gb * (pow(prof, 3.8) * filB * (1.0 + 0.25 * cl) + 0.4 * pow(prof, 6.0)) * (1.0 + 2.5 * hot * min(1.0, fil * 2.0)) * uDiskK;
   return vec4(col * I / max(a, 0.05), a);
 }
 
@@ -271,10 +289,11 @@ export class BlackHole {
       uTime: { value: 0 }, uDiskIn: { value: isco }, uDiskOut: { value: 20 },
       uDiskT: { value: 5000 + 1800 * bh.spin }, uDiskGain: { value: 5.0 }, uSeed: { value: (S.seed % 997) * 0.37 },
       uSteps: { value: steps }, uBgGain: { value: 1 }, uStarF: { value: 0 },
-      uPixAng: { value: 0.001 }, uRing: { value: 1 }, uJet: { value: 0.0 }, uTorn: { value: 0 },
+      uPixAng: { value: 0.001 }, uRing: { value: 1 }, uJet: { value: 0.0 }, uTorn: { value: 0 }, uDiskK: { value: 1 },
     });
     this.jet = 0.06;      // jet brightness (×uDiskGain units); &gx=Jet:… overrides
     this.torn = 0.06;     // torn-space nebula brightness
+    this.diskK = 1.6;     // disk exposure multiplier (&gx=DiskK:…)
     this.quad = new FullscreenQuad(this.material);
     this._m3 = new THREE.Matrix3();
     this._v = new THREE.Vector3();
@@ -306,7 +325,15 @@ export class BlackHole {
     u.uPixAng.value = 2 * Math.tan((cam.fov || 45) * Math.PI / 360) / (cam.zoom || 1) / H;
     // close to the hole: the polar jet (pillar of light) and the torn red/teal gas of the nucleus behind it
     const near = 1 - k;
-    u.uJet.value = this.jet * near;
+    // the jet runs along the spin axis: seen pole-on it would only fog the shadow, so it fades there
+    const cy = Math.abs(this._v.y) / Math.max(1e-6, this._v.length());
+    const side = 1 - Math.min(1, Math.max(0, (cy - 0.55) / 0.3));
+    u.uJet.value = this.jet * near * side * side;
+    // disk exposure: the closer you are, the more of the frame the inner (hottest) disk fills → expose down
+    // so it stays a gold ring of fire with dark gaps instead of a white-out (u_14)
+    const dr = this.distanceRs(cam);
+    const ek = Math.min(1, Math.max(0, (Math.log10(Math.max(1, dr)) - 0.9) / (1.9 - 0.9)));
+    u.uDiskK.value = this.diskK * (0.42 + 0.58 * ek);
     u.uTorn.value = this.torn * near;
     this.quad.render(renderer, io.output);
   }

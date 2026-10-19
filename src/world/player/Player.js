@@ -225,26 +225,20 @@ export class Player {
     }
     const P = this.rig?.palette;
     try { if (P) { this.scarf = new Scarf(w, P, this.quality); w.root.add(this.scarf.group); } } catch (e) { console.error('[player] scarf failed', e); this.scarf = null; }
+    try { if (P && this.rig) { this.hair = new Scarf(w, P, this.quality, 'hair'); w.root.add(this.hair.group); } } catch (e) { console.error('[player] hair failed', e); this.hair = null; }
+    this.hairAnchorsW = [0, 1, 2].map(() => [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]);
+    this.hairSpheres = [];
+    for (let i = 0; i < 6; i++) this.hairSpheres.push({ c: new THREE.Vector3(), r: 0.1 });
     try { if (P && this.rig) { this.coat = new Coat(P, this.quality); w.root.add(this.coat.group); } } catch (e) { console.error('[player] coat failed', e); this.coat = null; }
     try { if (P) { this.glider = new Glider(P, this.quality); this.group.add(this.glider.group); this.glider.group.position.set(0, 1.83, 0.1); } } catch (e) { console.error('[player] glider failed', e); this.glider = null; }
     try {
       this.fx = new FX(w, this.quality);
       w.root.add(this.fx.group);
-      if (this.rig) {
-        const pack = this.rig.bones[B.pack];
-        this.fx.jets.forEach((j, i) => { pack.add(j); j.position.set(i ? -0.085 : 0.085, -0.28, -0.09); j.rotation.x = -0.18; j.scale.set(1.7, 1.9, 1.7); });
-      }
+      for (const j of this.fx.jets) j.visible = false; // no jetpack: Drift (a ring of light) replaces it
     } catch (e) { console.error('[player] fx failed', e); this.fx = null; }
     // first-person hands (lantern + staff) hang off the camera; a warm point light rides in the lantern
     try { if (P) { this.viewmodel = new Viewmodel(P, this.quality); this.camera.add(this.viewmodel.group); } } catch (e) { console.error('[player] viewmodel failed', e); this.viewmodel = null; }
-    try {
-      if (P && this.rig && this.quality?.tier !== 'low') {
-        this.lampLight = new THREE.PointLight(new THREE.Color(1.0, 0.7, 0.4), 0, 7, 2);
-        this.lampLight.name = 'explorer-lantern';
-        this.rig.bones[B.antenna].add(this.lampLight);
-        this.lampLight.position.set(0, -0.14, 0);
-      }
-    } catch (e) { this.lampLight = null; }
+    this.lampLight = null; // (the Lumen orb carries the light now: Abilities.js)
     // small companion (fallback until the fauna track provides world.get('fauna').companion); companion=0 disables
     try {
       if (P && this.params.companion !== '0' && !w.get?.('fauna')?.companion) { this.companion = new Companion(w, this, this.quality); w.root.add(this.companion.group); }
@@ -527,6 +521,7 @@ export class Player {
     if (this.view === 'fly' || this.view === 'orbit') this.view = 'surface';
     if (this.state === 'fly') this.state = 'air';
     if (this.scarf) this.scarf.initialized = false;
+    if (this.hair) this.hair.initialized = false;
     if (this.coat) this.coat.initialized = false;
     this._standUp();
     this._setVisible(true);
@@ -536,6 +531,7 @@ export class Player {
     this._visible = v;
     if (this.group) this.group.visible = v;
     if (this.scarf) this.scarf.group.visible = v;
+    if (this.hair) this.hair.group.visible = v;
     if (this.coat) this.coat.group.visible = v;
     if (this.companion) this.companion.group.visible = v;
     if (!v && this.fx) for (const j of this.fx.jets) j.visible = false;
@@ -1458,21 +1454,43 @@ export class Player {
       const place = (i, b, ox, oy, oz, r) => {
         sp[i].c.set(ox, oy, oz).applyQuaternion(an.gq[b]).add(an.gp[b]).applyQuaternion(this.gquat).add(this.gpos); sp[i].r = r;
       };
-      place(0, B.head, 0, 0.1, -0.03, 0.17);   // hood
-      place(1, B.chest, 0, 0.08, 0.0, 0.21);   // mantle
-      place(2, B.spine, 0, 0.0, 0.0, 0.19);
-      place(3, B.pack, 0, 0.06, -0.1, 0.18);   // rucksack
-      place(4, B.pack, 0, -0.12, -0.1, 0.18);
-      place(5, B.hips, 0, 0.0, 0.0, 0.2);
+      place(0, B.head, 0, 0.09, -0.01, 0.125); // head + hair
+      place(1, B.chest, 0, 0.08, 0.0, 0.165);  // shoulders
+      place(2, B.spine, 0, 0.0, 0.0, 0.16);
+      place(3, B.chest, -0.1, 0.12, -0.08, 0.1); // shoulder blades
+      place(4, B.chest, 0.1, 0.12, -0.08, 0.1);
+      place(5, B.hips, 0, 0.0, 0.0, 0.19);
       place(6, B.thighL, -0.09, -0.2, 0, 0.11);
-      place(7, B.pack, 0.13, 0.27, -0.09, 0.085); // bedroll ends
-      place(8, B.pack, -0.13, 0.27, -0.09, 0.085);
-      place(9, B.chest, 0, 0.12, -0.1, 0.19);  // mantle back
+      place(7, B.thighR, 0.09, -0.2, 0, 0.11);
+      place(8, B.pack, 0.0, 0.0, -0.04, 0.06);  // the scabbard across the back
+      place(9, B.chest, 0, -0.06, -0.06, 0.15);
       const w = _d.copy(this.windV);
       if (this.state === 'swim') w.multiplyScalar(0.1);
       safe(() => this.scarf.update(dt, this.anchorsW, up, this.g, w, sp, this.gpos));
     }
     if (this.scarf) this.scarf.group.visible = vis && this.view !== 'fp';
+    // ---- ponytail (verlet locks anchored at the tie, head space)
+    if (this.hair && vis && this.view !== 'fp') {
+      const an = this.animator;
+      const hp = an.gp[B.head], hq = an.gq[B.head];
+      for (let k = 0; k < 3; k++) for (let i = 0; i < 3; i++) {
+        this.hairAnchorsW[k][i].copy(this.hair.anchorsC[k][i]).applyQuaternion(hq).add(hp).applyQuaternion(this.gquat).add(this.gpos);
+      }
+      const sp = this.hairSpheres;
+      const place = (i, b, ox, oy, oz, r) => {
+        sp[i].c.set(ox, oy, oz).applyQuaternion(an.gq[b]).add(an.gp[b]).applyQuaternion(this.gquat).add(this.gpos); sp[i].r = r;
+      };
+      place(0, B.head, 0, 0.085, 0.0, 0.112);
+      place(1, B.neck, 0, 0.0, -0.01, 0.07);
+      place(2, B.chest, 0, 0.13, -0.03, 0.15);
+      place(3, B.chest, 0, 0.0, -0.02, 0.15);
+      place(4, B.spine, 0, -0.05, 0.0, 0.15);
+      place(5, B.pack, 0.0, 0.0, -0.04, 0.06);
+      const w = _d.copy(this.windV);
+      if (this.state === 'swim') w.multiplyScalar(0.1);
+      safe(() => this.hair.update(dt, this.hairAnchorsW, up, this.g, w, sp, this.gpos));
+    }
+    if (this.hair) this.hair.group.visible = vis && this.view !== 'fp';
   }
 
   _camera(dt) {
@@ -1750,6 +1768,7 @@ export class Player {
       }
       if (this._fallbackMesh) { this._fallbackMesh.geometry.dispose(); this._fallbackMesh.material.dispose(); }
       if (this.scarf) { this.world.root.remove(this.scarf.group); this.scarf.dispose(); }
+      if (this.hair) { this.world.root.remove(this.hair.group); this.hair.dispose(); }
       if (this.coat) { this.world.root.remove(this.coat.group); this.coat.dispose(); }
       if (this.companion) { this.world.root.remove(this.companion.group); this.companion.dispose(); }
       if (this.viewmodel) { this.viewmodel.group.parent?.remove(this.viewmodel.group); this.viewmodel.dispose(); }

@@ -177,7 +177,7 @@ export function bakeSurface(geos, P, lodKey = 1) {
         c.r += (tgtL - c.r) * k * 0.8; c.g += (tgtL - c.g) * k * 0.8; c.b += (tgtL * 1.02 - c.b) * k * 0.8;
       }
       // dust / grime tint (dust darkens light surfaces and lightens dark ones → reads as a film of dirt)
-      const dk = dirt * (slot === 'metal' ? 0.35 : slot === 'fabric' ? 0.5 : 0.55);
+      const dk = dirt * (slot === 'metal' ? 0.35 : slot === 'fabric' ? 0.5 : 0.55) * (P.dustK ?? 1) * (slot === 'hair' || slot === 'skin' ? 0.2 : 1);
       c.r += (dust.r - c.r) * dk; c.g += (dust.g - c.g) * dk; c.b += (dust.b - c.b) * dk;
       // ambient occlusion (kept out of the specular path: vertex colour only darkens diffuse)
       const occl = 0.3 + 0.7 * Math.pow(a, 1.35);

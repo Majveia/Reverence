@@ -468,6 +468,11 @@ visualizations). What separates AAA from "tech demo":
 * **ui** — photo mode (HUD hidden, free camera, looks: two-tone, black and white, poster) and a small ring reticle
   that closes on things you can interact with.
 
+* **all world tracks** (19 Oct) — the worlds take the feel and art direction of Ghost of Yotei and must feel alive:
+  wind moving grass, flowers and leaves in travelling waves (flora reads one shared wind field from atmosphere),
+  drifting petals and leaves, moving skies, animals everywhere, an iconic snow-capped volcano per world (terrain
+  `landmarks.mountain`). Audio rebuilds the music as chillhop/lofi x Ghost of Yotei x Zelda (see docs/VISION.md).
+
 #### Season 2 round 1 requests (18 Oct)
 * **space → atmosphere** — keep dimming this world's light with `space.eclipse` (other bodies only), never with
   `space.eclipseView` (includes the current planet seen from orbit); optionally tint the ground key light from the

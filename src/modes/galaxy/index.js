@@ -119,6 +119,7 @@ export default class GalaxyMode extends Mode {
         if (!Number.isFinite(+v)) continue;
         if (k === 'Jet') this.blackHole.jet = +v;
         else if (k === 'Torn') this.blackHole.torn = +v;
+        else if (k === 'DiskK') this.blackHole.diskK = +v;
         else if (/^(DiskGain|DiskT|DiskOut|Ring)$/.test(k)) this.blackHole.material.uniforms['u' + k].value = +v;
       }
     }
@@ -562,6 +563,10 @@ export default class GalaxyMode extends Mode {
         // next to the hole the bloom must not fog the shadow: a black disc keeps a thin, bright edge
         const bs = e.pipeline.settings.bloom;
         if (bs && this.look.bloom) bs.strength = this.look.bloom.strength * (0.3 + 0.7 * bk);
+        // the accretion disk is a saturated emitter: keep its gold instead of letting AgX slide it to cream
+        const ps = e.pipeline.settings;
+        if (bk < 0.97) { ps.tonemap = 'agx-punchy'; ps.tonemapHue = 0.85; }
+        else if (ps.tonemap !== this.look.tonemap) ps.tonemap = this.look.tonemap;
         this.volume.compositeMat.uniforms.uGain.value = (0.3 + 0.7 * k * k * (3 - 2 * k)) * (1 - 0.85 * nf) * (0.02 + 0.98 * bk);
       }
       this.volume.update(this.camera, this.pat);
