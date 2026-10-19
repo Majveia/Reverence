@@ -54,14 +54,14 @@ vec4 rvFT( vec3 p, vec3 w, float s ) {
   vec3 P = vRvFP + uRvOriginMod; vec3 Nw = normalize( vRvFN );
   vec3 w = pow( abs( Nw ), vec3( 4.0 ) ); w /= dot( w, vec3( 1.0 ) );
   float d = length( vRvFP - cameraPosition );
-  float lod = clamp( log2( d * 0.004 ), 0.0, 7.0 );
-  vec4 a = textureLod( uRvDetail, vec3( P.zy / 24.0, 0.0 ), lod ) * w.x + textureLod( uRvDetail, vec3( P.xz / 24.0 + 0.37, 0.0 ), lod ) * w.y + textureLod( uRvDetail, vec3( P.xy / 24.0 + 0.71, 0.0 ), lod ) * w.z;
-  vec4 b = textureLod( uRvDetail, vec3( P.zy / 6.0, 0.0 ), lod + 1.0 ) * w.x + textureLod( uRvDetail, vec3( P.xz / 6.0 + 0.37, 0.0 ), lod + 1.0 ) * w.y + textureLod( uRvDetail, vec3( P.xy / 6.0 + 0.71, 0.0 ), lod + 1.0 ) * w.z;
+  // (implicit derivatives: mip-filtered at every distance, no aliasing "mesh" pattern)
+  vec4 a = texture( uRvDetail, vec3( P.zy / 48.0, 0.0 ) ) * w.x + texture( uRvDetail, vec3( P.xz / 48.0 + 0.37, 0.0 ) ) * w.y + texture( uRvDetail, vec3( P.xy / 48.0 + 0.71, 0.0 ) ) * w.z;
+  vec4 b = texture( uRvDetail, vec3( P.zy / 9.0, 0.0 ) ) * w.x + texture( uRvDetail, vec3( P.xz / 9.0 + 0.37, 0.0 ) ) * w.y + texture( uRvDetail, vec3( P.xy / 9.0 + 0.71, 0.0 ) ) * w.z;
   float fb = 1.0 - smoothstep( 60.0, 400.0, d );
-  diffuseColor.rgb *= ( 0.78 + 0.44 * a.a ) * mix( 1.0, 0.82 + 0.36 * b.a, fb ) * ( 0.85 + 0.3 * a.b );
+  diffuseColor.rgb *= ( 0.84 + 0.32 * a.a ) * mix( 1.0, 0.86 + 0.28 * b.a, fb ) * ( 0.88 + 0.24 * a.b );
 }`);
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-feature-v1' + (lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-feature-v2' + (lite ? 'L' : '');
   return mat;
 }
 
@@ -205,19 +205,22 @@ function buildIsle(o, pal, grassC) {
 /** Natural rock arch (local frame: X across the span, +Y up, Z = opening axis). */
 function buildArch(o, pal, grassC, seed) {
   const n = new SNoise(seed ^ 0xa4c);
-  const W = o.span || 58, Hh = o.rise || 50, T = W * 0.32, D = W * 0.42;
+  const W = o.span || 58, Hh = o.rise || 50, T = W * 0.3, D = W * 0.46;
   const a = W / 2 + T / 2, b = Hh + T / 2;
-  const NR = 120, seg = 36, bury = 18;
+  const NR = 170, seg = 48, bury = 18;
   const pos = [], col = [], idx = [];
-  const rock = pal.rock.clone(), rockD = pal.rock.clone().multiplyScalar(0.6);
+  const rock = pal.rock.clone(), rockD = pal.rock.clone().multiplyScalar(0.5), rockP = pal.rock.clone().lerp(new THREE.Color(0.85, 0.8, 0.72), 0.35);
   const c = new THREE.Color();
-  // centreline: buried leg (straight) → semi-ellipse → buried leg
+  const ridged = (x, y, z) => 0.5 - Math.abs(n.n3(x, y, z));
+  // centreline: buried leg (straight, slightly splayed) → semi-ellipse → buried leg; the crown is offset
+  // a little toward one leg (natural arches are never symmetric)
+  const skew = 0.12 * n.n3(3.3, 1.1, 0.4);
   const center = (s) => {
-    // s ∈ [0,1]
-    const legF = 0.12;
-    if (s < legF) { const t = s / legF; return { p: [-a, -bury * (1 - t), 0], tn: [0, 1, 0], phi: 0 }; }
-    if (s > 1 - legF) { const t = (s - (1 - legF)) / legF; return { p: [a, -bury * t, 0], tn: [0, -1, 0], phi: Math.PI }; }
-    const phi = ((s - legF) / (1 - 2 * legF)) * Math.PI;
+    const legF = 0.1;
+    if (s < legF) { const t = s / legF; return { p: [-a - 0.15 * T * (1 - t), -bury * (1 - t), 0], tn: [0.15 * T / bury, 1, 0], phi: 0 }; }
+    if (s > 1 - legF) { const t = (s - (1 - legF)) / legF; return { p: [a + 0.15 * T * t, -bury * t, 0], tn: [0.15 * T / bury, -1, 0], phi: Math.PI }; }
+    const u = (s - legF) / (1 - 2 * legF);
+    const phi = (u + skew * Math.sin(u * Math.PI)) * Math.PI;
     const x = -a * Math.cos(phi), y = b * Math.sin(phi);
     const tx = a * Math.sin(phi), ty = b * Math.cos(phi), tl = Math.hypot(tx, ty);
     return { p: [x, y, 0], tn: [tx / tl, ty / tl, 0], phi };
@@ -226,30 +229,33 @@ function buildArch(o, pal, grassC, seed) {
     const s = j / NR, C = center(s);
     const sp = Math.sin(C.phi);
     const legK = 1 - sp;   // 1 at the legs, 0 at the crown
-    const ht = (T / 2) * (1 + 0.55 * legK * legK) * (1 + 0.12 * n.n3(s * 6, 1.3, 2.2));
-    const hd = (D / 2) * (1 + 0.35 * legK) * (1 + 0.1 * n.n3(s * 5, 4.4, 0.7));
-    // section frame: normal in the XY plane (perpendicular to the tangent), binormal = Z
-    const nx = -C.tn[1], ny = C.tn[0];
+    // thin, eroded crown; massive flaring legs
+    const ht = (T / 2) * (0.62 + 0.38 * legK + 0.9 * Math.pow(legK, 3)) * (1 + 0.16 * n.n3(s * 5, 1.3, 2.2));
+    const hd = (D / 2) * (0.75 + 0.6 * Math.pow(legK, 2)) * (1 + 0.14 * n.n3(s * 4, 4.4, 0.7));
+    const nx = -C.tn[1] / Math.hypot(C.tn[0], C.tn[1]), ny = C.tn[0] / Math.hypot(C.tn[0], C.tn[1]);
     for (let i = 0; i <= seg; i++) {
       const th = (i / seg) * Math.PI * 2;
       const ct = Math.cos(th), st = Math.sin(th);
-      // superellipse section (blocky, rounded corners)
-      const e = 0.55;
+      const e = 0.5;   // superellipse: blocky section with rounded corners
       const sx = Math.sign(ct) * Math.pow(Math.abs(ct), e), sz = Math.sign(st) * Math.pow(Math.abs(st), e);
       let px = C.p[0] + nx * sx * ht, py = C.p[1] + ny * sx * ht, pz = sz * hd;
-      // rock relief: lumps + horizontal strata ledges (altitude-locked) + fine roughness
-      const lump = 0.11 * T * n.n3(px / 14, py / 14, pz / 14) + 0.04 * T * n.n3(px / 4, py / 4, pz / 4);
-      const ledge = 0.035 * T * Math.abs(((py / 3.1 + 0.3 * n.n3(px / 30, 0, pz / 30)) % 1 + 1) % 1 - 0.5) * 2;
       const nnx = nx * sx, nny = ny * sx, nnz = sz;
       const nl = Math.hypot(nnx, nny, nnz) || 1;
-      const off = lump + ledge;
+      // relief: big lumps, ridged crags (sharp), horizontal strata ledges (stepped, altitude-locked)
+      let off = 0.16 * T * n.n3(px / 16, py / 16, pz / 16) + 0.09 * T * (ridged(px / 6, py / 6, pz / 6) - 0.2) + 0.03 * T * n.n3(px / 1.8, py / 1.8, pz / 1.8);
+      const lv = py / 3.4 + 0.35 * n.n3(px / 40, 0.3, pz / 40), lf = lv - Math.floor(lv);
+      off += 0.07 * T * (lf < 0.75 ? lf / 0.75 : (1 - lf) / 0.25) * (0.6 + 0.4 * n.n3(px / 12, 5.5, pz / 12));
+      off *= 1 - 0.5 * Math.max(0, -nny / nl) * (1 - legK);   // the soffit of the crown is smoother
       px += (nnx / nl) * off; py += (nny / nl) * off; pz += (nnz / nl) * off;
       pos.push(px, py, pz);
-      const band = 0.86 + 0.22 * Math.sin(py * 0.5 + n.n3(px / 25, py / 25, pz / 25) * 2.5);
-      c.copy(rock).lerp(rockD, sstep(-bury, 8, -py) * 0.6 + 0.25 * Math.max(0, n.n3(px / 9, py / 18, pz / 9))).multiplyScalar(band);
-      // moss / grass on up-facing rock (crown, ledges)
+      // colour: strata bands, pale fresh scars, dark varnish streaks down the faces, moss on top
+      const band = 0.8 + 0.3 * Math.sin(py * 0.62 + n.n3(px / 25, py / 25, pz / 25) * 2.5) + 0.12 * n.n3(0.2, py / 2.1, 0.7);
+      c.copy(rock).multiplyScalar(band);
+      c.lerp(rockP, Math.max(0, n.n3(px / 11, py / 7, pz / 11) - 0.25) * 0.9);
+      const streak = Math.max(0, n.n3(px / 3.5, py / 26, pz / 3.5) - 0.1) * 1.3;
+      c.lerp(rockD, Math.min(0.75, streak * (1 - Math.abs(nny / nl)) + sstep(-bury, 6, -py) * 0.35));
       const up = nny / nl;
-      c.lerp(grassC.clone().multiplyScalar(0.7), sstep(0.45, 0.85, up + 0.2 * n.n3(px / 6, py / 6, pz / 6)) * 0.85);
+      c.lerp(grassC.clone().multiplyScalar(0.62), sstep(0.5, 0.85, up + 0.25 * n.n3(px / 5, py / 5, pz / 5)) * 0.9);
       col.push(c.r, c.g, c.b);
     }
   }

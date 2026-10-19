@@ -446,22 +446,7 @@ export class SurfaceGen {
       arch.yaw = +(ab.b * 180 / Math.PI).toFixed(2);
     }
     const flo = site('floating', beta + 0.95, 2600, -1, { radius: 400 });
-    // the floating isles: a receding line (each further one paler in the haze), deterministic sizes/heights
-    {
-      const fb = bearingTo(S2, flo.dir).b;
-      const isl = [];
-      const dists = [0, 650, 1450, 2450, 3700, 5300];
-      for (let i = 0; i < dists.length; i++) {
-        const lat = (rnd() - 0.5) * 900 + (i % 2 ? 260 : -260);
-        let q = offsetDir(flo.dir, fb, dists[i] / R);
-        q = offsetDir(q, fb + Math.PI / 2, lat / R);
-        const g = Math.max(hAt(q, 4), sea);
-        const r = (i === 0 ? 95 : 45 + rnd() * 70) * Math.min(1.3, Math.max(0.6, R / 70000));
-        const ll = llOf(q);
-        isl.push({ lat: +ll.lat.toFixed(4), lon: +ll.lon.toFixed(4), dir: q, ground: g, alt: g + 160 + rnd() * 260 + i * 35, radius: r, seed: (rnd() * 1e9) >>> 0 });
-      }
-      flo.islands = isl;
-    }
+    this._isles(flo, S2, rnd);
     const sLL = llOf(S2);
     const deg = (v) => +((v * 180 / Math.PI + 360) % 360).toFixed(1);
     const archBack = offsetDir(arch.dir, (arch.yaw * Math.PI / 180) + Math.PI, 115 / R);
@@ -477,6 +462,27 @@ export class SurfaceGen {
         floating: { lat: +sLL.lat.toFixed(4), lon: +sLL.lon.toFixed(4), yaw: deg(bearingTo(S2, flo.dir).b), pitch: 10 },
       },
     };
+  }
+
+  /** The floating isles: a receding line from the spawn (each further one paler in the haze). */
+  _isles(flo, S2, rnd) {
+    const R = this.R, sea = this.hasOcean ? 0 : -1e9;
+    const hAt = (d, lod = 2) => this._eval(d[0], d[1], d[2], lod, null);
+    const fb = bearingTo(S2, flo.dir).b;
+    const isl = [];
+    const dists = [0, 650, 1450, 2450, 3700, 5300];
+    const sc = Math.min(1.3, Math.max(0.6, R / 70000));
+    for (let i = 0; i < dists.length; i++) {
+      const lat = (rnd() - 0.5) * 900 + (i % 2 ? 260 : -260);
+      let q = offsetDir(flo.dir, fb, dists[i] / R);
+      q = offsetDir(q, fb + Math.PI / 2, lat / R);
+      const g = Math.max(hAt(q, 4), sea, flo.floor ?? -1e9);
+      const r = (i === 0 ? 95 : 45 + rnd() * 70) * sc;
+      const ll = llOf(q);
+      const lift = flo.lift ? flo.lift * (0.75 + 0.5 * rnd()) + i * 40 : (130 + rnd() * 200 + i * 30) * sc;
+      isl.push({ lat: +ll.lat.toFixed(4), lon: +ll.lon.toFixed(4), dir: q, ground: g, alt: g + lift, radius: r, seed: (rnd() * 1e9) >>> 0 });
+    }
+    flo.islands = isl;
   }
 
   /**
@@ -535,6 +541,94 @@ export class SurfaceGen {
     };
     if (best) L.views.mountain = pack(best, 0.55);
     if (near) L.views.mountainNear = pack(near, 0.6);
+    // ---- the arch: find the spot near the spawn with the clearest view of the summit; the arch stands
+    //      ~115 m ahead of it on flat dry ground and opens toward the mountain (the frame of rule 11)
+    const arch = L.sacred.find((q) => q.kind === 'arch');
+    if (arch) {
+      let bestA = null;
+      for (let i = 0; i < 90; i++) {
+        const V = i === 0 ? S2 : offsetDir(S2, i * 2.39996, (Math.sqrt(i) * 420) / R);
+        const r = evalView(V);
+        if (!r || r.vis < 0.05) continue;
+        const Ap = offsetDir(V, r.b, 115 / R);
+        const ha = hAt(Ap, 1);
+        if (ha < sea + 4) continue;
+        let mx = 0;
+        for (let j = 0; j < 4; j++) { const q = offsetDir(Ap, j * Math.PI / 2, 40 / R); mx = Math.max(mx, Math.abs(hAt(q, 1) - ha)); }
+        const hv = hAt(V, 1);
+        // (prefer the arch a little BELOW the viewpoint's eye line so its opening frames the far peak)
+        const sc = r.score - mx * 0.4 - Math.max(0, ha - hv - 25) * 0.15 - Math.sqrt(i) * 0.15;
+        if (mx < 16 && (!bestA || sc > bestA.sc)) bestA = { sc, r, Ap, ha };
+      }
+      if (bestA) {
+        const ll = llOf(bestA.Ap), ab = bearingTo(bestA.Ap, C);
+        Object.assign(arch, { lat: +ll.lat.toFixed(4), lon: +ll.lon.toFixed(4), dir: bestA.Ap, height: bestA.ha, yaw: +(ab.b * 180 / Math.PI).toFixed(2) });
+        const v = pack(bestA.r, 0.5);
+        L.views.arch = { lat: v.lat, lon: v.lon, yaw: v.yaw, pitch: v.pitch, dist: v.dist, visible: v.visible };
+      }
+    }
+    // ---- the floating isles: over open low ground (a valley, a lake, the sea) in clear view of the spawn,
+    //      ~40-110° off the mountain's bearing so they compose as a second focal group
+    const flo = L.sacred.find((q) => q.kind === 'floating');
+    if (flo && best) {
+      // preferred: the isles hang in the mountain view, a little to one side of the summit, receding toward
+      // the cone (each further one paler in the haze) and always above the blocking ridge line
+      const V = best.V, side = best.b + 0.3;
+      const hV = Math.max(hAt(V, 1), sea), eye = hV + 2;
+      const tanB = Math.tan(Math.max(best.aBase, -0.05) + 0.03);
+      const rr = rng(this.cfg.seed ^ 0x15e5);
+      const dists = [1900, 2700, 3700, 5000, 6600, 8500];
+      const sc = Math.min(1.3, Math.max(0.6, R / 70000));
+      const isl = [];
+      for (let i = 0; i < dists.length; i++) {
+        const dd = Math.min(dists[i], best.dist - GM.Rb * 0.75);
+        // (fanned out sideways and in height so they never stack behind each other)
+        let q = offsetDir(V, side + (rr() - 0.5) * 0.06 + (i % 2 ? 1 : -1) * (0.05 + 0.035 * i), dd / R);
+        if (this._gr(q[0], q[1], q[2]) < 1.02) q = offsetDir(V, side + 0.25, dd / R);
+        const g = Math.max(hAt(q, 4), sea);
+        const r = (i === 0 ? 90 : 50 + rr() * 70) * sc;
+        const minAlt = eye + dd * tanB + dd * dd / (2 * R) + r * 2.2;
+        const alt = Math.max(g + 140 * sc, minAlt) + (i % 3) * 140 * sc + rr() * 120 * sc + i * 30;
+        const ll = llOf(q);
+        isl.push({ lat: +ll.lat.toFixed(4), lon: +ll.lon.toFixed(4), dir: q, ground: g, alt, radius: r, seed: (rr() * 1e9) >>> 0 });
+      }
+      const q0 = isl[0].dir, ll0 = llOf(q0);
+      Object.assign(flo, { lat: +ll0.lat.toFixed(4), lon: +ll0.lon.toFixed(4), dir: q0, height: isl[0].ground, islands: isl });
+      const vv = pack(best, 0.45);
+      L.views.floating = { lat: vv.lat, lon: vv.lon, yaw: +(((best.b + 0.17) * 180 / Math.PI + 360) % 360).toFixed(1), pitch: vv.pitch + 2 };
+    } else if (flo) {
+      const hS = Math.max(hAt(S2, 1), sea), eye = hS + 2;
+      const bM = bearingTo(S2, C).b;
+      let bestF = null;
+      for (let k = 0; k < 32; k++) {
+        const b = (k / 32) * TAU;
+        const off = Math.abs(((b - bM + 3 * Math.PI) % TAU) - Math.PI);
+        for (const dist of [1600, 2400, 3400]) {
+          const q = offsetDir(S2, b, dist / R);
+          if (this._gr(q[0], q[1], q[2]) < 1.15) continue;
+          const g = Math.max(hAt(q, 4), sea);
+          const el = (sd, hq) => { const th = sd / R, rq = R + hq; return Math.atan2(rq * Math.cos(th) - (R + eye), rq * Math.sin(th)); };
+          let aB = -1, aBg = -1;
+          for (let i = 1; i < 18; i++) { const sd = dist * i / 18; const p = offsetDir(S2, b, sd / R); aB = Math.max(aB, el(sd, Math.max(hAt(p, 6), sea))); }
+          // background: the isles should stand against the SKY (or far haze), not against a ridge
+          for (let i = 1; i <= 10; i++) { const sd = dist + i * 900; const p = offsetDir(S2, b, sd / R); aBg = Math.max(aBg, el(sd, Math.max(hAt(p, 12), sea))); }
+          for (const lift of [200, 380, 600]) {
+            const aT = el(dist, g + lift);
+            const clear = (aT - aB) * 57.3, sky = (aT - aBg) * 57.3;
+            if (clear < 1.5 || sky < 0.8) continue;
+            const score = Math.min(clear, 10) + Math.min(sky, 4) + (g < hS - 20 ? 2 : 0) + (g <= sea + 1 ? 1.5 : 0) - Math.abs(off - 1.3) * 2 - dist / 2400 - lift / 300;
+            if (!bestF || score > bestF.score) bestF = { score, q, g, b, lift };
+            break;
+          }
+        }
+      }
+      if (bestF) {
+        const ll = llOf(bestF.q);
+        Object.assign(flo, { lat: +ll.lat.toFixed(4), lon: +ll.lon.toFixed(4), dir: bestF.q, height: bestF.g, floor: hS - 60, lift: bestF.lift });
+        this._isles(flo, S2, rng(this.cfg.seed ^ 0x15e5));
+        L.views.floating = { lat: L.spawn.lat, lon: L.spawn.lon, yaw: +((bestF.b * 180 / Math.PI + 360) % 360).toFixed(1), pitch: 7 };
+      }
+    }
     return L.views;
   }
 
