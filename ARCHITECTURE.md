@@ -443,9 +443,9 @@ visualizations). What separates AAA from "tech demo":
   linear RGB, max channel 1); Warp.js can use it for portraits and map cards.
 
 ### Season 2 (creator's references, from 18 Oct) — cross-track plan
-* **all tracks** — the cosmic web is final (the creator's call, 18 Oct): never edit `src/modes/cosmic/**`; a global
-  change (post, ui, engine, shared shaders) must leave the cosmic view unchanged (capture `/?mode=cosmic` before
-  and after). Season 2 also covers the creator's Characters, Creatures & Bosses, Interiors and Cosmic & Otherworldly
+* **all tracks** — the cosmic web must not regress (the creator loves it, 19 Oct): only the cosmic track edits
+  `src/modes/cosmic/**`, each of its fixes passes a blind before/after guard or is reverted, and a global change
+  (post, ui, engine, shared shaders) must leave the cosmic view unchanged (capture `/?mode=cosmic` before and after). Season 2 also covers the creator's Characters, Creatures & Bosses, Interiors and Cosmic & Otherworldly
   folders (see docs/VISION.md).
 * **terrain → flora, civ, atmosphere** — define per-world landmark sites deterministically and expose them, e.g.
   `world.get('terrain').landmarks = { mountain: {lat, lon}, sacred: [{lat, lon, kind}] }`: one great mountain

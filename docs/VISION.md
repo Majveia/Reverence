@@ -31,9 +31,10 @@ categories.
 | Cosmic & Otherworldly | Rings of light in pale skies, black orbs with blazing edges, pillars of light, the world coming gently apart |
 | Art Direction: Painterly & Surreal | Painterly, graphic and surreal looks |
 
-**The cosmic web is final.** The creator asked to leave the opening cosmic web exactly as it is: no track changes
-`src/modes/cosmic/**`, and global changes (post-processing, UI, engine, shared shaders) must leave the cosmic view
-unchanged.
+**The cosmic web must not regress.** The creator loves the opening cosmic web as it is ("it looks so beautiful").
+Only the cosmic track changes `src/modes/cosmic/**`, and every one of its fixes is checked by a blind before/after
+judge on fixed views and reverted unless the new look wins. Global changes (post-processing, UI, engine, shared
+shaders) must leave the cosmic view unchanged.
 
 ## Art direction rules (apply everywhere)
 
