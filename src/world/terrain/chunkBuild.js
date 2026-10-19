@@ -9,7 +9,8 @@
 //   aMorphN   i8x4    surface normal of the parent level
 //   aMat      u8x4    rock/cliff · sand · temperature · moisture
 //   aMat2     u8x4    wet (river/lake) · glacier · curvature (0.5 flat, >0.5 concave) · mountain
-//   aMat3     u8x4    talus / rubble apron · bare ground (soil / gravel patches, no grass) · reserved
+//   aMat3     u8x4    talus / rubble apron · bare ground (soil / gravel patches, no grass) · season region
+//                     (0 spring green · 1/3 blossom · 2/3 gold · 1 crimson) · season strength of this world
 //   aUV       f32x3   local texture frame: cube-face u, v in metres (minus a per-chunk multiple of
 //                     DETAIL_PERIOD, float64 on the CPU → mm precision) and altitude (m)
 import { sstep } from '../planet/noise.js';
@@ -94,7 +95,7 @@ export function buildChunk(gen, job) {
   const Hh = new Float64Array(G * G);         // heights
   const info = {};
   const nInt = N * N;
-  const infoArr = new Float32Array(nInt * 9);
+  const infoArr = new Float32Array(nInt * 10);
   for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
     const k = j * G + i;
     cubeDir(face, u0 + (i - B) * step, v0 + (j - B) * step, D, k * 3);
@@ -103,7 +104,7 @@ export function buildChunk(gen, job) {
     if (interior) {
       const h = gen.evaluate(x, y, z, lod, info);
       Hh[k] = h;
-      const vi = (j - B) * N + (i - B), o = vi * 9;
+      const vi = (j - B) * N + (i - B), o = vi * 10;
       infoArr[o] = info.rock > info.cliff ? info.rock : info.cliff;
       infoArr[o + 1] = info.sand;
       infoArr[o + 2] = info.c;
@@ -113,6 +114,7 @@ export function buildChunk(gen, job) {
       infoArr[o + 6] = info.dune || 0;
       infoArr[o + 7] = info.talus || 0;
       infoArr[o + 8] = info.bare || 0;
+      infoArr[o + 9] = info.season ?? 0.5;
     } else {
       Hh[k] = gen.evaluate(x, y, z, lod, null);
     }
@@ -208,7 +210,7 @@ export function buildChunk(gen, job) {
     const mm = mdx * mdx + mdy * mdy + mdz * mdz; if (mm > mmax) mmax = mm;
     nrmP[v * 4] = q8(mx); nrmP[v * 4 + 1] = q8(my); nrmP[v * 4 + 2] = q8(mz);
     // material hints
-    const o = v * 9;
+    const o = v * 10;
     gen.climate(dx, dy, dz, h, infoArr[o + 2], clim);
     // curvature = offset of the vertex from its neighbourhood mean measured ALONG THE NORMAL
     // ((hMean - h) · cos θ), relative to the vertex spacing; 3×3 kernel (edges 1, corners 0.5).
@@ -234,6 +236,8 @@ export function buildChunk(gen, job) {
     mat2[v * 4 + 3] = u8(sstep(0, 1, infoArr[o + 5]));
     mat3[v * 4] = u8(infoArr[o + 7]);
     mat3[v * 4 + 1] = u8(infoArr[o + 8]);
+    mat3[v * 4 + 2] = u8(infoArr[o + 9]);
+    mat3[v * 4 + 3] = u8(gen.st.seasonAmt ?? 0);
   }
   // ---- skirt ring: copies of the edge vertices. They keep the EDGE position (so shading, shadow
   //      lookups, altitude tints are exactly those of the edge — a crack filled by a skirt is then

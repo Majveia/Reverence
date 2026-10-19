@@ -178,7 +178,51 @@ function computeStyle(cfg) {
   st.wallLam = Math.min(320, Math.max(90, A * 0.055));
   // wave-cut platforms at the foot of sea cliffs (no rng draw: keeps every other style value stable)
   st.shelf = T === 'ocean' || T === 'archipelago' ? 1 : 0.8;
+  // ---- season regions (Ghost of Yotei painterly fields). Own rng: every value above is unchanged.
+  //      ramp 0 spring green · 1/3 blossom (petal carpets) · 2/3 gold pampas · 1 crimson lilies / maples
+  {
+    const r2 = rng(cfg.seed ^ 0x5ea5011);
+    st.seasonAmt = { terran: 1, ocean: 1, archipelago: 1, jungle: 0.7, savanna: 0.85, desert: 0.35, arctic: 0.55, exotic: 0.6, toxic: 0.45, crystal: 0.5, barren: 0, volcanic: 0.15 }[T] ?? 0.7;
+    st.seasonBias = 0.15 + 0.7 * r2();
+    st.seasonSpread = 0.45 + 0.25 * r2();
+    const sb = { bierstadt: [0.68, 0.5], botw: [0.28, 0.55], ghibli: [0.3, 0.6], moebius: [0.7, 0.3], stalenhag: [0.72, 0.35], tarkovsky: [0.62, 0.4], friedrich: [0.75, 0.35], turner: [0.7, 0.4], outerwilds: [0.6, 0.5], rickmorty: [0.35, 0.6] }[art];
+    if (sb) { st.seasonBias = sb[0]; st.seasonSpread = sb[1]; }
+    if (T === 'desert' || T === 'savanna') st.seasonBias = Math.max(st.seasonBias, 0.62);
+    st.greatTilt = r2();   // great mountain: lobe phase / small asymmetry
+  }
   return st;
+}
+
+function smin(a, b, k) { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; }
+function dirLL(latDeg, lonDeg) {
+  const la = latDeg * Math.PI / 180, lo = lonDeg * Math.PI / 180, c = Math.cos(la);
+  return [c * Math.sin(lo), Math.sin(la), c * Math.cos(lo)];
+}
+function llOf(d) {
+  return { lat: Math.asin(Math.max(-1, Math.min(1, d[1]))) * 180 / Math.PI, lon: Math.atan2(d[0], d[2]) * 180 / Math.PI };
+}
+/** east / north tangent basis at unit dir u (same convention as the player: east = Y × up). */
+function enBasis(u) {
+  let ex, ey, ez;
+  if (Math.abs(u[1]) > 0.999) { ex = -u[1]; ey = u[0]; ez = 0; }   // (0,0,1) × up
+  else { ex = u[2]; ey = 0; ez = -u[0]; }                          // (0,1,0) × up
+  const l = Math.hypot(ex, ey, ez) || 1; ex /= l; ey /= l; ez /= l;
+  const nx = u[1] * ez - u[2] * ey, ny = u[2] * ex - u[0] * ez, nz = u[0] * ey - u[1] * ex;
+  return [[ex, ey, ez], [nx, ny, nz]];
+}
+/** unit dir at angular distance `ang` (rad) from u along compass bearing `b` (rad, 0 = north, π/2 = east). */
+function offsetDir(u, b, ang) {
+  const [e, n] = enBasis(u);
+  const s = Math.sin(ang), c = Math.cos(ang), cb = Math.cos(b), sb = Math.sin(b);
+  const d = [0, 1, 2].map((i) => u[i] * c + (n[i] * cb + e[i] * sb) * s);
+  const l = Math.hypot(d[0], d[1], d[2]); return [d[0] / l, d[1] / l, d[2] / l];
+}
+/** compass bearing (rad) from u toward v and the angle between them. */
+function bearingTo(u, v) {
+  const [e, n] = enBasis(u);
+  const c = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  const f = [v[0] - u[0] * c, v[1] - u[1] * c, v[2] - u[2] * c];
+  return { b: Math.atan2(f[0] * e[0] + f[1] * e[1] + f[2] * e[2], f[0] * n[0] + f[1] * n[1] + f[2] * n[2]), ang: Math.acos(Math.max(-1, Math.min(1, c))) };
 }
 
 export class SurfaceGen {
@@ -214,6 +258,14 @@ export class SurfaceGen {
     this._calibrate();
     this.maxHeight = this.A * 1.25 + (this.st.spires ? this.st.spireH : 0) + (this.st.karst ? this.st.karstH : 0);
     this.minHeight = -this.A * 0.62;
+    // ---- landmarks: one great snow-capped mountain per world + sacred sites (deterministic, flats-free:
+    //      main thread and every worker compute the identical layout)
+    this.great = null;
+    this.landmarks = { mountain: null, sacred: [], spawn: null, views: {} };
+    if (!(cfg.dbg & 64) && cfg.great !== false && this.type !== 'gas') {
+      try { this._placeLandmarks(); } catch (e) { this.great = null; this.landmarks = { mountain: null, sacred: [], spawn: null, views: {}, error: String(e) }; }
+    }
+    if (this.great) this.maxHeight += this.great.H;
     this.flats = [];
     this._flatId = 1;
     this._flatListeners = [];
@@ -259,6 +311,254 @@ export class SurfaceGen {
     f.cosOuter = Math.cos(Math.min(Math.PI, (f.radius + f.falloff) / this.R));
   }
   _flatChanged(f) { for (const cb of this._flatListeners) { try { cb(f, this.flats); } catch (_) { /* listener errors never break physics */ } } }
+
+  // ------------------------------------------------------------------ great mountain & sacred sites
+  /** Normalized radius (1 = edge of the cone's footprint, lobed) of unit dir from the great mountain; 9 = far. */
+  _gr(x, y, z) {
+    const GM = this.great;
+    if (!GM) return 9;
+    const cd = x * GM.x + y * GM.y + z * GM.z;
+    if (cd <= GM.cosOut) return 9;
+    const ang = Math.acos(cd < 1 ? cd : 1);
+    const f = GM.lf, n = this.nF;
+    const lobe = 1 + GM.lobeA * n.n3(x * f + 7.1, y * f + 3.3, z * f + 9.4) + 0.035 * n.n3(x * f * 2.9 + 1.7, y * f * 2.9 + 5.2, z * f * 2.9 + 0.3);
+    return ang * this.R / (GM.Rb * lobe);
+  }
+
+  /** Where the player lands by default (Player._findLand from lat 12, lon 28; flats-free). */
+  _spawnEst(d0) {
+    if (!this.hasOcean) return d0;
+    const [e, n] = enBasis(d0);
+    let best = d0, bestS = -Infinity;
+    const R = this.R, eps = 1.2 / R;
+    for (let i = 0; i < 400; i++) {
+      const t = i * 2.39996, r = Math.sqrt(i) * 0.02;
+      let d = [0, 1, 2].map((k) => d0[k] + e[k] * Math.cos(t) * r + n[k] * Math.sin(t) * r);
+      const l = Math.hypot(d[0], d[1], d[2]); d = [d[0] / l, d[1] / l, d[2] / l];
+      const h = this._eval(d[0], d[1], d[2], 0.5, null);
+      let s = h > 20 && h < this.A * 0.35 ? 1 - r : -1;
+      if (s > 0) {
+        const [e2, n2] = enBasis(d);
+        const h1 = this._eval(d[0] + e2[0] * eps, d[1] + e2[1] * eps, d[2] + e2[2] * eps, 0.5, null);
+        const h2 = this._eval(d[0] + n2[0] * eps, d[1] + n2[1] * eps, d[2] + n2[2] * eps, 0.5, null);
+        const gx = (h1 - h) / 1.2, gy = (h2 - h) / 1.2;
+        if (1 / Math.sqrt(1 + gx * gx + gy * gy) <= 0.9) s -= 0.6;
+      }
+      if (s > bestS) { bestS = s; best = d; if (s > 0.9) break; }
+    }
+    return best;
+  }
+
+  _placeLandmarks() {
+    const R = this.R, A = this.A, w = this._g;
+    const rnd = rng(this.cfg.seed ^ 0x9e3779b1);
+    const H = Math.min(5600, Math.max(1800, A * 1.2)) * (this.cfg.isMoon ? 0.85 : 1);
+    const Rb = H * 2.45;
+    const sea = this.hasOcean ? 0 : -1e9;
+    const d0 = dirLL(12, 28);
+    const S = this._spawnEst(d0);
+    // ---- the great mountain: a ring of candidate centres ~1.2 footprints from the default spawn (it must
+    //      fill the first view: on a 30-100 km planet curvature hides everything beyond ~25 km), scored for
+    //      land under the footprint, no competing range at its base and an open line of sight
+    const land = (d) => {
+      this._warp(d[0], d[1], d[2], w);
+      const c = this._continent(w[0], w[1], w[2], 2000) - this.oceanBias;
+      return { c, mm: this._mtnMask(w[0], w[1], w[2], c) };
+    };
+    let best = null;
+    const ph = rnd() * TAU;
+    for (let k = 0; k < 32; k++) {
+      const b = ph + (k / 32) * TAU;
+      for (const df of [1.14, 1.32]) {
+        const C = offsetDir(S, b, (Rb * df) / R);
+        const ll = llOf(C);
+        let sc = 0, mm0 = 0;
+        for (let j = 0; j < 7; j++) {
+          const q = j === 0 ? C : offsetDir(C, (j / 6) * TAU, (Rb * 0.6) / R);
+          const L = land(q);
+          if (!this.hasOcean || L.c > 0.012) sc += j === 0 ? 2 : 1;
+          if (j === 0) mm0 = L.mm;
+        }
+        const mid = land(offsetDir(S, b, (Rb * df * 0.5) / R));
+        // (the cone must not raise new land closer to the player's search origin than the spawn itself, or
+        //  the default spawn would move onto its flank)
+        const cdd = Math.acos(Math.min(1, C[0] * d0[0] + C[1] * d0[1] + C[2] * d0[2])) * R;
+        const sdd = Math.acos(Math.min(1, S[0] * d0[0] + S[1] * d0[1] + S[2] * d0[2])) * R;
+        const clear = cdd > Rb * 1.18 + sdd ? 0 : 3;
+        let score = sc / 8 - 0.7 * mm0 - 0.5 * mid.mm - (Math.abs(ll.lat) > 55 ? 1 : 0) + 0.12 * rnd() - 0.05 * (df - 1.14) - clear;
+        if (!best || score > best.score) best = { score, C, b, df };
+      }
+    }
+    const C = best.C;
+    const lf = R / (Rb * 0.95);
+    const rc = 0.045, cd = 0.055;
+    const tr = 1 - rc;
+    const pRim = 0.55 * Math.pow(tr, 2.2) + 0.45 * Math.pow(tr, 1.2);
+    const snow = this.type === 'barren' ? 0 : this.type === 'volcanic' ? 0.6 : 1;
+    this.great = {
+      x: C[0], y: C[1], z: C[2], H, Rb, cosOut: Math.cos(Math.min(Math.PI * 0.9, (2.1 * Rb) / R)),
+      lf, lobeA: 0.07, rc, cd, pRim, snow, snowLo: 0.47, snowHi: 0.53, e: enBasis(C)[0], n: enBasis(C)[1],
+      gully: 1.7, gwl: Math.max(300, Rb * 0.12),
+    };
+    const hAt = (d, lod = 2) => this._eval(d[0], d[1], d[2], lod, null);
+    // summit = highest point of the crater rim
+    let peakH = -1e9;
+    for (let j = 0; j < 12; j++) { const q = offsetDir(C, (j / 12) * TAU, (rc * Rb) / R); peakH = Math.max(peakH, hAt(q, 4)); }
+    const mLL = llOf(C);
+    // ---- sacred sites around the default spawn, composed against the mountain (bearing beta from the spawn)
+    let S2 = this._spawnEst(d0);
+    if (this._gr(S2[0], S2[1], S2[2]) < 1.05) S2 = S;
+    const bt = bearingTo(S2, C);
+    const beta = bt.b, distM = bt.ang * R;
+    const dry = (d, flat) => {
+      if (flat < 0) return this._gr(d[0], d[1], d[2]) > 1.05;   // (floating isles: over land or sea)
+      const h = hAt(d, 1);
+      if (h < sea + 5) return false;
+      if (this._gr(d[0], d[1], d[2]) < 1.02) return false;
+      if (!flat) return true;
+      let mx = 0;
+      for (let j = 0; j < 4; j++) { const q = offsetDir(d, j * Math.PI / 2, flat / R); mx = Math.max(mx, Math.abs(hAt(q, 1) - h)); }
+      return mx < flat * 0.28;
+    };
+    const site = (kind, b, dm, flat = 0, extra = {}, O = S2) => {
+      // nearest dry (and, if asked, flat) spot to the composed position: bearings fan out, then distances
+      let d = null;
+      for (const k of [1, 0.75, 1.3, 0.55, 1.7, 0.4, 2.2]) {
+        for (let j = 0; j < 13 && !d; j++) {
+          const db = (j & 1 ? 1 : -1) * Math.ceil(j / 2) * 0.12;
+          const q = offsetDir(O, b + db, (dm * k) / R);
+          if (dry(q, flat)) d = q;
+        }
+        if (d) break;
+      }
+      // last resort: a spiral around the spawn (always dry land)
+      for (let i = 12; i < 400 && !d; i++) { const q = offsetDir(S2, b + i * 2.39996, (Math.sqrt(i) * 160) / R); if (dry(q, flat * 0.6)) d = q; }
+      if (!d) d = S2;
+      const ll = llOf(d);
+      return { kind, lat: +ll.lat.toFixed(4), lon: +ll.lon.toFixed(4), dir: d, height: hAt(d, 0.5), ...extra };
+    };
+    // the shrine stands at the mountain's foot on the side facing the spawn (a processional way leads up)
+    const shrine = site('shrine', bearingTo(C, S2).b + 0.32, 1.1 * Rb, 25, { radius: 60 }, C);
+    const tree = site('tree', beta - 0.55, 1700, 18, { radius: 40 });
+    const arch = site('arch', beta, 520, 40, { radius: 55, span: 58, rise: 50 });
+    {
+      const ab = bearingTo(arch.dir, C);   // the arch opens toward the mountain
+      arch.yaw = +(ab.b * 180 / Math.PI).toFixed(2);
+    }
+    const flo = site('floating', beta + 0.95, 2600, -1, { radius: 400 });
+    // the floating isles: a receding line (each further one paler in the haze), deterministic sizes/heights
+    {
+      const fb = bearingTo(S2, flo.dir).b;
+      const isl = [];
+      const dists = [0, 650, 1450, 2450, 3700, 5300];
+      for (let i = 0; i < dists.length; i++) {
+        const lat = (rnd() - 0.5) * 900 + (i % 2 ? 260 : -260);
+        let q = offsetDir(flo.dir, fb, dists[i] / R);
+        q = offsetDir(q, fb + Math.PI / 2, lat / R);
+        const g = Math.max(hAt(q, 4), sea);
+        const r = (i === 0 ? 95 : 45 + rnd() * 70) * Math.min(1.3, Math.max(0.6, R / 70000));
+        const ll = llOf(q);
+        isl.push({ lat: +ll.lat.toFixed(4), lon: +ll.lon.toFixed(4), dir: q, ground: g, alt: g + 160 + rnd() * 260 + i * 35, radius: r, seed: (rnd() * 1e9) >>> 0 });
+      }
+      flo.islands = isl;
+    }
+    const sLL = llOf(S2);
+    const deg = (v) => +((v * 180 / Math.PI + 360) % 360).toFixed(1);
+    const archBack = offsetDir(arch.dir, (arch.yaw * Math.PI / 180) + Math.PI, 115 / R);
+    const abLL = llOf(archBack);
+    this.landmarks = {
+      mountain: { kind: 'volcano', lat: +mLL.lat.toFixed(4), lon: +mLL.lon.toFixed(4), dir: C, height: peakH, peak: H, radius: Rb, snowline: peakH - H * (1 - this.great.snowLo) },
+      sacred: [shrine, tree, flo, arch],
+      spawn: { lat: +sLL.lat.toFixed(4), lon: +sLL.lon.toFixed(4), dir: S2, toMountain: deg(beta), mountainDist: Math.round(distM) },
+      views: {
+        // capture presets (view=surface / fly): yaw in degrees from north
+        mountain: { lat: +sLL.lat.toFixed(4), lon: +sLL.lon.toFixed(4), yaw: deg(beta), pitch: 8 },
+        arch: { lat: +abLL.lat.toFixed(4), lon: +abLL.lon.toFixed(4), yaw: +((arch.yaw + 360) % 360).toFixed(1), pitch: 6 },
+        floating: { lat: +sLL.lat.toFixed(4), lon: +sLL.lon.toFixed(4), yaw: deg(bearingTo(S2, flo.dir).b), pitch: 10 },
+      },
+    };
+  }
+
+  /**
+   * Capture / photo viewpoints that frame the great mountain with a clear line of sight (main thread only,
+   * on demand: ~10-30 ms). For each candidate ground point the terrain profile toward the summit is marched
+   * (curvature included); the score is the angular height of the mountain left above the nearest blocking
+   * ridge, with an open foreground. Fills landmarks.views.mountain / .mountainNear (lat, lon, yaw, pitch,
+   * dist, visible: degrees of mountain above the blocking horizon).
+   */
+  findViews() {
+    const L = this.landmarks, GM = this.great;
+    if (!L || !GM || L._viewsDone) return L?.views;
+    L._viewsDone = true;
+    const R = this.R, C = [GM.x, GM.y, GM.z];
+    const sea = this.hasOcean ? 0 : -1e9;
+    const top = L.mountain.height;
+    const hAt = (d, lod) => this._eval(d[0], d[1], d[2], lod, null);
+    const S2 = L.spawn.dir;
+    const b0 = bearingTo(C, S2).b;
+    const evalView = (V) => {
+      const hv = hAt(V, 2);
+      if (hv < sea + 3) return null;
+      const bt = bearingTo(V, C), dist = bt.ang * R, eye = Math.max(hv, sea) + 2;
+      // elevation angle of a point at arc distance s with height hq, seen from the eye (curvature included)
+      const elev = (s, hq) => { const th = s / R, rq = R + hq; return Math.atan2(rq * Math.cos(th) - (R + eye), rq * Math.sin(th)); };
+      const aTop = elev(dist, top);
+      let aBlock = -1, fore = 0;
+      const N = 44;
+      for (let i = 1; i < N; i++) {
+        const s = dist * Math.pow(i / N, 1.6);
+        const q = offsetDir(V, bt.b, s / R);
+        if (this._gr(q[0], q[1], q[2]) < 0.95) break;          // reached the cone itself
+        const hq = Math.max(hAt(q, Math.max(4, s * 0.004)), sea);
+        const a = elev(s, hq);
+        if (a > aBlock) aBlock = a;
+        if (s < 600 && hq > eye + 4) fore += (hq - eye) / 40;
+      }
+      const aBase = aBlock;
+      const vis = aTop - aBase;
+      return { V, b: bt.b, dist, vis, aTop, aBase, score: vis * 57.3 - fore * 3 - Math.max(0, dist / GM.Rb - 1.25) * 3 };
+    };
+    let best = null, near = null;
+    for (const df of [1.06, 1.15, 1.26, 1.4]) {
+      for (let k = -6; k <= 6; k++) {
+        const V = offsetDir(C, b0 + k * 0.13, (GM.Rb * df) / R);
+        const r = evalView(V);
+        if (!r) continue;
+        if (!best || r.score > best.score) best = r;
+        if (df <= 1.15 && (!near || r.score > near.score)) near = r;
+      }
+    }
+    const pack = (r, pitchK) => {
+      const ll = llOf(r.V);
+      return { lat: +ll.lat.toFixed(4), lon: +ll.lon.toFixed(4), yaw: +((r.b * 180 / Math.PI + 360) % 360).toFixed(1),
+        pitch: +((r.aBase + (r.aTop - r.aBase) * pitchK) * 180 / Math.PI).toFixed(1), dist: Math.round(r.dist), visible: +(r.vis * 57.3).toFixed(1) };
+    };
+    if (best) L.views.mountain = pack(best, 0.55);
+    if (near) L.views.mountainNear = pack(near, 0.6);
+    return L.views;
+  }
+
+  /**
+   * Season region at unit dir (0 spring green · 1/3 blossom · 2/3 gold pampas · 1 crimson lilies / maples),
+   * broad one-hue regions with soft borders. (px,py,pz) = continent-warped dir; h = height (m).
+   */
+  _season(px, py, pz, h) {
+    const st = this.st, n = this.nB, R = this.R;
+    const f1 = R / 11000, f2 = R / 3800;
+    let s = st.seasonBias + st.seasonSpread * (0.95 * n.n3(px * f1 + 13.1, py * f1 + 7.7, pz * f1 + 3.9) + 0.32 * n.n3(px * f2 + 2.2, py * f2 + 9.1, pz * f2 + 5.5));
+    s += 0.22 * sstep(0.15, 0.5, h / this.A);   // uplands turn first (autumn climbs down the hills)
+    s = s < 0 ? 0 : s > 1 ? 1 : s;
+    const q = s * 3, fi = Math.floor(q > 2.999 ? 2.999 : q);
+    return (fi + sstep(0.36, 0.64, q - fi)) / 3;
+  }
+
+  /** Public: season ramp value (see _season) + strength for this world at unit dir (x,y,z). */
+  season(x, y, z) {
+    const w = this._w2;
+    this._warp(x, y, z, w);
+    return this._season(w[0], w[1], w[2], this._eval(x, y, z, 30, null));
+  }
+  get seasonAmt() { return this.st.seasonAmt; }
 
   // ------------------------------------------------------------------ continents
   _warp(x, y, z, out) {
@@ -388,6 +688,9 @@ export class SurfaceGen {
     return sum;
   }
 
+  /** Ranges fade out around the great mountain so it stands alone (1 far away, 0 at its foot). */
+  _gFade(x, y, z) { return this.great ? sstep(0.8, 1.65, this._gr(x, y, z)) : 1; }
+
   /** Mountain-range presence mask (0..1) at a warped point with continental value c. */
   _mtnMask(px, py, pz, c) {
     const st = this.st, rf = this.cf * 1.9;
@@ -413,12 +716,12 @@ export class SurfaceGen {
     {
       let qx = x + ax * e, qy = y + ay * e, qz = z + az * e; l = 1 / Math.hypot(qx, qy, qz); qx *= l; qy *= l; qz *= l;
       this._warp(qx, qy, qz, w);
-      d1 = (this._mtnMask(w[0], w[1], w[2], this._continent(w[0], w[1], w[2], lod) - this.oceanBias) - mm) / 60;
+      d1 = (this._mtnMask(w[0], w[1], w[2], this._continent(w[0], w[1], w[2], lod) - this.oceanBias) * this._gFade(qx, qy, qz) - mm) / 60;
     }
     {
       let qx = x + bx * e, qy = y + by * e, qz = z + bz * e; l = 1 / Math.hypot(qx, qy, qz); qx *= l; qy *= l; qz *= l;
       this._warp(qx, qy, qz, w);
-      d2 = (this._mtnMask(w[0], w[1], w[2], this._continent(w[0], w[1], w[2], lod) - this.oceanBias) - mm) / 60;
+      d2 = (this._mtnMask(w[0], w[1], w[2], this._continent(w[0], w[1], w[2], lod) - this.oceanBias) * this._gFade(qx, qy, qz) - mm) / 60;
     }
     out[0] = ax * d1 + bx * d2; out[1] = ay * d1 + by * d2; out[2] = az * d1 + bz * d2;
     return out;
@@ -461,10 +764,10 @@ export class SurfaceGen {
    * (after Fewes / clayjohn "eroded terrain noise", adapted to 3D on a sphere).
    * G = height gradient in m/m (tangent). Returns a height offset in meters (~[-1,1]*amp).
    */
-  _gullies(x, y, z, lod, Gx, Gy, Gz, strength) {
+  _gullies(x, y, z, lod, Gx, Gy, Gz, strength, wl0 = this.st.gullyWl) {
     const st = this.st, R = this.R, e = this._e;
     const SLOPE = 1.8, BRANCH = 0.5;
-    let wl = st.gullyWl, a = st.gullyAmp * wl * strength;
+    let wl = wl0, a = st.gullyAmp * wl * strength;
     let h = 0, ex = 0, ey = 0, ez = 0;
     const gMag = Math.hypot(Gx, Gy, Gz);
     for (let o = 0; o < 5; o++) {
@@ -662,6 +965,12 @@ export class SurfaceGen {
     let c = this._continent(px, py, pz, lod) - this.oceanBias;
     const nF = this.nF, nH = this.nH;
     let rock = 0, sand = 0, river = 0, lake = 0, cliff = 0, dune = 0, glacier = 0, talus = 0;
+    // great mountain footprint: carving features (canyons, rivers, mesas, towers...) stay off its cone and
+    // mountain ranges fade out around its base, so it stands alone over open land (Yotei, Fuji)
+    const GM = this.great;
+    const gr = GM ? this._gr(x, y, z) : 9;
+    const gOut = gr > 1.1 ? 1 : sstep(0.6, 1.1, gr);
+    const gFadeR = gr > 1.65 ? 1 : sstep(0.8, 1.65, gr);
 
     // ---- coastal cliffs along a perturbed coastline (before the base profile)
     let cliffMask = 0;
@@ -703,7 +1012,7 @@ export class SurfaceGen {
     // ---- mountain ranges
     let mtn = 0, steep = 0, wallH = 0, wallS = 0;
     if (st.mountains > 0) {
-      const mm = this._mtnMask(px, py, pz, c);
+      const mm = this._mtnMask(px, py, pz, c) * gFadeR;
       const mp0 = Math.pow(mm, 1.35);
       if (A * st.mtnHeight * mp0 > 0.02) {
         const mv = this._mountain(x, y, z, lod, g);
@@ -751,6 +1060,45 @@ export class SurfaceGen {
       }
     }
 
+    // ---- the great mountain: a lone stratovolcano (concave cone, summit crater, radial gullies, snow cap)
+    if (GM && gr < 1.0) {
+      const H = GM.H, t = 1 - gr;
+      const t12 = Math.pow(t, 1.2);
+      let p = 0.55 * t12 * t + 0.45 * t12;                                        // 0.55 t^2.2 + 0.45 t^1.2
+      const dp = 0.55 * 2.2 * t12 + 0.45 * 1.2 * Math.pow(t, 0.2);                // -dp/dgr
+      p = smin(p, GM.pRim, 0.035);                                                // summit truncated at the rim
+      if (gr < GM.rc) { const u = gr / GM.rc, b = 1 - u * u; p -= GM.cd * b * b; } // crater bowl
+      let hc = H * p, gv = 0;
+      // radial gullies / barrancos: the slope-aligned erosion filter steered by the cone's own slope
+      const gs = GM.gully * sstep(0.05, 0.22, gr) * (1 - sstep(0.72, 0.99, gr));
+      if (gs > 1e-3 && !(this.cfg.dbg & 4)) {
+        const cdt = x * GM.x + y * GM.y + z * GM.z;
+        let vx = x * cdt - GM.x, vy = y * cdt - GM.y, vz = z * cdt - GM.z;   // tangent, toward the centre
+        const vl = Math.hypot(vx, vy, vz) || 1;
+        const gm = (H * dp) / GM.Rb;
+        gv = this._gullies(x, y, z, lod, (vx / vl) * gm, (vy / vl) * gm, (vz / vl) * gm, gs, GM.gwl);
+        hc += gv;
+      }
+      h += hc;
+      // snow: long fingers down the gullies and radial streaks (Fuji / Yotei in late spring), not a dome
+      let streak = 0;
+      {
+        const cdt = x * GM.x + y * GM.y + z * GM.z;
+        const vx = x - GM.x * cdt, vy = y - GM.y * cdt, vz = z - GM.z * cdt;
+        const ve = vx * GM.e[0] + vy * GM.e[1] + vz * GM.e[2], vn = vx * GM.n[0] + vy * GM.n[1] + vz * GM.n[2];
+        const vl = Math.hypot(ve, vn) || 1;
+        const K = 7.5;
+        streak = nF.n3((ve / vl) * K + 4.4, (vn / vl) * K + 1.9, gr * 2.2 + 7.3) * 0.75 + nF.n3((ve / vl) * K * 2.3 + 9.1, (vn / vl) * K * 2.3 + 3.3, gr * 3.5 + 0.7) * 0.35;
+      }
+      const pn = p + 0.03 * nF.n3(x * R / 700 + 3.1, y * R / 700 + 8.8, z * R / 700 + 1.4) + 0.11 * streak * sstep(0.0, 0.12, 0.62 - p) - 3.2 * gv / H;
+      const cap = GM.snow * sstep(GM.snowLo, GM.snowHi, pn);
+      if (cap > glacier) glacier = cap;
+      const ash = sstep(0.36, 0.52, p) * 0.8 * (1 - 0.6 * cap);   // bare volcanic scree above the tree line
+      if (ash > rock) rock = ash;
+      const mg = sstep(0.22, 0.55, p);
+      if (mg > mtn) mtn = mg;
+    }
+
     const steepM = steep;   // mountain-face part of the steep hint (see the 3D wall relief)
     // wall height = steep-weighted MEAN of the contributing walls (mountain face, plateau / mesa /
     // canyon cliffs). Switching wallH to whichever hint was largest made h discontinuous (wallH
@@ -759,7 +1107,7 @@ export class SurfaceGen {
     let steepNM = 0;   // non-mountain part (plateau / mesa / canyon walls), continuous
     // ---- plateaus (large tablelands) and mesas (isolated buttes), with strata terraces
     if ((st.plateaus > 0 || st.mesas > 0) && c > -0.02) {
-      const inland = sstep(0.02, 0.12, c);
+      const inland = sstep(0.02, 0.12, c) * gOut;
       if (st.plateaus > 0) {
         const f = R / st.plateauWl;
         const wv = nF.n3(px * f * 0.5 + 3, py * f * 0.5 + 7, pz * f * 0.5 + 1) * 0.35;
@@ -820,7 +1168,7 @@ export class SurfaceGen {
       const wv = nF.n3(px * f * 0.6 + 8, py * f * 0.6 + 1, pz * f * 0.6 + 3);
       const wm = nF.n3(px * f * 2.6 + 4.4, py * f * 2.6 + 1.2, pz * f * 2.6 + 8.1);
       const cn = nF.n3(px * f + 0.9 * wv + 0.28 * wm, py * f + 2 - 0.5 * wv - 0.2 * wm, pz * f + 5 + 0.25 * wm) + 0.15 * nF.n3(px * f * 4, py * f * 4 + 1, pz * f * 4 + 2);
-      const reg = sstep(-0.25, 0.25, nF.n3(px * 1.9 + 90, py * 1.9 + 3, pz * 1.9)) * st.canyons * sstep(0.02, 0.12, c);
+      const reg = sstep(-0.25, 0.25, nF.n3(px * 1.9 + 90, py * 1.9 + 3, pz * 1.9)) * st.canyons * sstep(0.02, 0.12, c) * gOut;
       const v = Math.abs(cn) / 0.11;
       if (v < 1 && reg > 0) {
         let prof;
@@ -854,7 +1202,7 @@ export class SurfaceGen {
 
     // ---- terraces (stepped hillsides, strata)
     if (st.terraces > 0 && h > 20) {
-      const reg = sstep(0.0, 0.4, nF.n3(px * 2.4 + 17, py * 2.4 + 9, pz * 2.4 + 4)) * st.terraces * sstep(20, 80, h);
+      const reg = sstep(0.0, 0.4, nF.n3(px * 2.4 + 17, py * 2.4 + 9, pz * 2.4 + 4)) * st.terraces * sstep(20, 80, h) * gOut;
       if (reg > 0) {
         const step = 42 + 30 * (0.5 + 0.5 * nF.n3(px * 6, py * 6 + 4, pz * 6 + 2));
         const t = SurfaceGen.terrace(h / step, 1, 0.28) * step;
@@ -867,7 +1215,7 @@ export class SurfaceGen {
       // (every feature is faded in by its region / continent value instead of hard `c > …` / `reg > 0.01`
       //  gates: those cut a step of 1 % of the feature height — or, at the coast gate, the whole
       //  feature — into the height field: zero-width cliffs up to 20 m tall)
-      let reg = sstep(-0.1, 0.35, nF.n3(px * 3.1 + 5, py * 3.1 + 55, pz * 3.1)) * st.karst * sstep(-0.03, -0.015, c);
+      let reg = sstep(-0.1, 0.35, nF.n3(px * 3.1 + 5, py * 3.1 + 55, pz * 3.1)) * st.karst * sstep(-0.03, -0.015, c) * gOut;
       reg *= sstep(0.004, 0.03, reg);
       if (reg > 0.004) {
         const f = R / st.karstWl, J = this.nG.jit;
@@ -892,7 +1240,7 @@ export class SurfaceGen {
 
     // ---- spires / crystal needles / hoodoos
     if (st.spires > 0 && c > 0) {
-      let reg = sstep(0.0, 0.4, nF.n3(px * 2.6 + 44, py * 2.6 + 3, pz * 2.6 + 19)) * st.spires * sstep(0.0, 0.008, c);
+      let reg = sstep(0.0, 0.4, nF.n3(px * 2.6 + 44, py * 2.6 + 3, pz * 2.6 + 19)) * st.spires * sstep(0.0, 0.008, c) * gOut;
       reg *= sstep(0.004, 0.03, reg);
       if (reg > 0.004) {
         const f = R / st.spireWl, J = this.nG.jit;
@@ -912,7 +1260,7 @@ export class SurfaceGen {
     // ---- kopjes: granite boulder hills on savanna plains
     if (st.kopjes > 0 && c > 0.02) {
       const f = R / 900, J = this.nG.jit;
-      let reg = sstep(0.1, 0.5, nF.n3(px * 4 + 8, py * 4, pz * 4 + 33)) * st.kopjes * sstep(0.02, 0.035, c);
+      let reg = sstep(0.1, 0.5, nF.n3(px * 4 + 8, py * 4, pz * 4 + 33)) * st.kopjes * sstep(0.02, 0.035, c) * gOut;
       reg *= sstep(0.004, 0.03, reg);
       if (reg > 0.004) {
         const t = this._cells(x * f + 7.7, y * f, z * f, f, 0.7, (d, hh) => {
@@ -930,7 +1278,7 @@ export class SurfaceGen {
 
     // ---- dunes: transverse crests with sharp slip faces, sinuous, in dry basins
     if (st.dunes > 0 && c > 0.005) {
-      const reg = sstep(-0.05, 0.35, nF.n3(px * 2.2 + 81, py * 2.2 + 8, pz * 2.2 + 1)) * st.dunes * (1 - mtn);
+      const reg = sstep(-0.05, 0.35, nF.n3(px * 2.2 + 81, py * 2.2 + 8, pz * 2.2 + 1)) * st.dunes * (1 - mtn) * gOut;
       if (reg > 0.01) {
         const D = st.duneDir, wl = st.duneWl;
         const f = R / wl;
@@ -952,7 +1300,7 @@ export class SurfaceGen {
 
     // ---- craters (moons, barren worlds)
     if (st.craters > 0) {
-      h += this._craters(x, y, z, lod) * st.craters;
+      h += this._craters(x, y, z, lod) * st.craters * (0.25 + 0.75 * gOut);
     }
 
     // ---- volcanoes with calderas
@@ -969,7 +1317,7 @@ export class SurfaceGen {
         if (q < cr) { p = Math.pow(1 - cr, 1.6) - 0.5 * (1 - q / cr) * (1 - q / cr) * 0.35; lava = 1; }
         return p;
       });
-      if (t > 0) { h += A * 0.75 * st.volcano * t; rock = Math.max(rock, sstep(0.2, 0.6, t)); }
+      if (t > 0) { h += A * 0.75 * st.volcano * t * gOut; rock = Math.max(rock, sstep(0.2, 0.6, t) * gOut); }
       void lava;
     }
 
@@ -1034,7 +1382,7 @@ export class SurfaceGen {
       const f = R / st.riverWl;
       const wv = nF.n3(px * f * 0.45 + 2, py * f * 0.45 + 6, pz * f * 0.45 + 9);
       const rn = nF.n3(px * f + wv * 1.1, py * f + 30 + wv * 0.4, pz * f + 12) + 0.18 * nF.n3(px * f * 3.3 + 1, py * f * 3.3, pz * f * 3.3 + 4);
-      const reg = sstep(-0.3, 0.2, nF.n3(px * 1.5 + 200, py * 1.5, pz * 1.5 + 7)) * Math.max(st.rivers, st.fjords) * sstep(-0.01, 0.0, c);
+      const reg = sstep(-0.3, 0.2, nF.n3(px * 1.5 + 200, py * 1.5, pz * 1.5 + 7)) * Math.max(st.rivers, st.fjords) * sstep(-0.01, 0.0, c) * gOut;
       const av = Math.abs(rn);
       if (reg > 0 && av < 0.16) {
         const valley = 1 - sstep(0.0, 0.16, av);
@@ -1067,7 +1415,7 @@ export class SurfaceGen {
     }
     if (st.lakes > 0 && this.hasOcean && c > 0.01) {
       const f = R / (5200 * Math.max(0.5, R / 70000)), J = this.nG.jit;
-      let reg = st.lakes * sstep(-0.1, 0.3, nF.n3(px * 2.7 + 300, py * 2.7, pz * 2.7 + 1)) * sstep(0.01, 0.02, c);
+      let reg = st.lakes * sstep(-0.1, 0.3, nF.n3(px * 2.7 + 300, py * 2.7, pz * 2.7 + 1)) * sstep(0.01, 0.02, c) * (gr > 1.12 ? 1 : sstep(0.85, 1.12, gr));
       reg *= sstep(0.004, 0.03, reg);
       if (reg > 0.004 && h < 220) {
         const warpL = 0.12 * nF.n3(px * R / 900, py * R / 900, pz * R / 900);
@@ -1090,7 +1438,7 @@ export class SurfaceGen {
     // ---- sinkholes / cenotes
     if (st.sinkholes > 0 && c > 0.02) {
       const f = R / 1100, J = this.nG.jit;
-      let reg = sstep(0.0, 0.4, nF.n3(px * 3.3 + 2, py * 3.3 + 400, pz * 3.3)) * st.sinkholes * sstep(0.02, 0.035, c);
+      let reg = sstep(0.0, 0.4, nF.n3(px * 3.3 + 2, py * 3.3 + 400, pz * 3.3)) * st.sinkholes * sstep(0.02, 0.035, c) * gOut;
       reg *= sstep(0.004, 0.03, reg);
       if (reg > 0.004) {
         const t = this._cells(x * f + 1, y * f + 2, z * f + 3, f, 0.8, (d, hh) => {
@@ -1244,7 +1592,9 @@ export class SurfaceGen {
     // ---- fractal detail: meso bumps → decimetre relief (rougher on rock)
     if (!(this.cfg.dbg & 8)) {
       const rk = rock > mtn ? rock : mtn;
-      const roughK = st.rough * (0.35 + 2.6 * rk) * (1 - 0.6 * dune) * (1 - 0.5 * lake);
+      // (the great mountain's cone keeps a clean silhouette: its gullies carry the structure)
+      const coneK = gr < 1 ? 1 - 0.55 * sstep(0.0, 0.25, 1 - gr) : 1;
+      const roughK = st.rough * (0.35 + 2.6 * rk) * (1 - 0.6 * dune) * (1 - 0.5 * lake) * coneK;
       const rr = sstep(0.15, 0.5, rk);
       // starts at 720 m: the two big octaves only exist on rock (crags & buttresses on mountain faces)
       // On walls the octaves below 200 m are sampled at the 3D surface point (radius R + h) and scaled
@@ -1299,6 +1649,7 @@ export class SurfaceGen {
         }
       }
       info.bare = bare;
+      info.season = st.seasonAmt > 0 ? this._season(px, py, pz, h) : 0.5;
       info.c = c; info.land = land; info.mtn = mtn; info.rock = rock; info.sand = sand;
       info.river = river; info.lake = lake; info.cliff = cliff; info.dune = dune; info.glacier = glacier;
       info.steep = steep; info.wallS = wallS; info.talus = talus;
@@ -1364,6 +1715,7 @@ export class SurfaceGen {
     out.rock = info.rock; out.sand = info.sand; out.cliff = info.cliff; out.river = info.river; out.lake = info.lake;
     out.mountain = info.mtn; out.continental = info.c; out.dune = info.dune; out.talus = info.talus || 0;
     out.bare = info.bare || 0;
+    out.season = info.season ?? 0.5;
     if (withSlope) {
       // finite differences over ~1.5 m on a tangent frame
       const e = 1.5 / this.R;

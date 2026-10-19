@@ -360,7 +360,7 @@ export class Animator {
     L.handGR.lerpVectors(_v, _w, dg);
     if (hug > 0.001) {
       // around the companion's back (it sits at the left hip, ~0.45 m out), palm resting on its far side
-      _v.set(0.5, 0.44 + 0.01 * Math.sin(t * 0.8), -0.06 + 0.015 * Math.sin(t * 0.37)); // over the wolf's shoulders
+      _v.set(0.56, 0.46 + 0.01 * Math.sin(t * 0.8), -0.0 + 0.015 * Math.sin(t * 0.37)); // over the wolf's shoulders
       L.handGL.lerp(_v, hug);
       L.chest.z += 0.1 * hug; L.spine.z += 0.06 * hug; L.chest.y += 0.12 * hug;
     }
