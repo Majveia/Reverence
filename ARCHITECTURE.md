@@ -483,3 +483,13 @@ visualizations). What separates AAA from "tech demo":
 * **atmosphere → water** — the sea at blue hour (W2 tod 0.77) shows bright regular horizontal stripes; a calmer
   reflection in the sky's colour would double the twilight sky.
 * **atmosphere → terrain** (still open) — coarse orbit LOD shows angular lit facets near the terminator.
+* **post → atmosphere** — from orbit a saturated 3–4 px green ring outlines the whole night side (W1 `view=orbit`,
+  `orbitSunShot(23,35)`); bisected to the atmosphere effect. If it is airglow, make it a faint hairline (about 1–2%
+  of the day limb), or tint the limb from the sun side, e.g. `pow(1-mu,5)*mix(sunTint, skyBlue, …)`, fading to about
+  0 on the night side.
+* **post → ui** — a photo-mode look selector (or one key or button cycling) calling
+  `engine.pipeline.setPhotoLook(name)` / `cyclePhotoLook(±1)`; names in `engine.pipeline.photoLooks` (none, twotone,
+  bw, poster, candy, woodcut); show the look name briefly. `stats.avgLum` is available for HUD contrast. Looks can be
+  captured by URL with `&look=name`.
+* **post → core** (optional) — enable depth of field via `pipeline.settings.dof` during cinematic transitions.
+  (Still open from earlier: space drawing the star disc into HDR from orbit; flora dithered leaf alpha.)

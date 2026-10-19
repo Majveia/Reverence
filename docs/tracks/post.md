@@ -39,7 +39,9 @@ scene (Halton-jittered projection on TAA tiers) → HDR sceneRT (RGBA16F + Float
 * **Overcast** lowers the key (`× (1 − 0.35·overcast·storm)`); **eclipse** (`space.eclipse`) darker, cooler, harder.
 * **Space**: above the air the sun probe trusts depth alone (no cloud can sit in front of a star), so starburst, halo
   and ghosts show from orbit even when the star disc is too small/dim to meter; the star tints a wide patch of space
-  around it (`flare.spaceGlow`, default 1).
+  around it (`flare.spaceGlow`, default 1). Screen-space ghosts of other bright lights fade out above the air (they
+  mirrored the lit planet into big brown discs from orbit — civ's W1 `view=orbit&tod=0.22` report).
+* `stats.avgLum` for the HUD (ui request), see API.
 
 ### Photo looks (UI photo mode)
 `pipeline.setPhotoLook(name, opts?)`, `pipeline.cyclePhotoLook(dir)`, `pipeline.photoLooks` (names), URL `&look=name`.

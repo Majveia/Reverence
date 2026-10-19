@@ -110,7 +110,7 @@ export class Scarf {
     this.world = world;
     const q = quality?.tier === 'low' ? 0.7 : 1;
     // two generous wool tails (the one warm accent of the silhouette): 0.2 m wide, 1.35 m long, tapering to 60 %
-    this.strips = [new Strip(3, Math.round(18 * q), 0.2, 1.35, 0.4), new Strip(3, Math.round(13 * q), 0.15, 0.9, 0.4)];
+    this.strips = [new Strip(3, Math.round(17 * q), 0.18, 1.2, 0.42), new Strip(3, Math.round(12 * q), 0.14, 0.82, 0.42)];
     // anchors in chest space (back of the neck wrap, over the hood's cowl)
     this.anchorsC = [
       [new THREE.Vector3(-0.03, 0.235, -0.125), new THREE.Vector3(0.05, 0.24, -0.12), new THREE.Vector3(0.13, 0.232, -0.095)],

@@ -687,7 +687,9 @@ export class Pipeline {
     u.uSunCol.value.set(this._sunCol.r, this._sunCol.g, this._sunCol.b);
     u.uGhosts.value = f.ghosts ?? 1; u.uStarburst.value = f.starburst ?? 1; u.uHalo.value = f.halo ?? 1;
     u.uStreak.value = f.streak ?? 0.3; u.uDirt.value = flareOn ? (f.dirt ?? 0.3) : 0;
-    u.uSSGhost.value = flareOn ? (f.ssGhosts ?? 0.012) : 0;
+    // screen-space ghosts mirror every bright light; from orbit the lit planet itself becomes big brown discs that
+    // read as bugs (civ request), so they fade out above the air (the sun's own ghosts stay)
+    u.uSSGhost.value = flareOn ? (f.ssGhosts ?? 0.012) * (1 - 0.85 * THREE.MathUtils.smoothstep(spaceK, 0.5, 0.95)) : 0;
     u.uPurkinje.value = aeOn ? (s.purkinje ?? 0) : 0;
     u.uSpaceGlow.value = (f.spaceGlow ?? 1) * THREE.MathUtils.smoothstep(spaceK, 0.5, 0.95);
     // season 2: depth-aware grade

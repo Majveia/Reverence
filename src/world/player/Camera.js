@@ -127,32 +127,32 @@ export class CameraRig {
       // sky holds two thirds of the frame and the figure sits small in the lower third (the creator's
       // "rest as a verb" frames); a very slow breathing drift keeps it alive
       const rw = ctx.rest;
-      _a.copy(ctx.forward).applyAxisAngle(up, (ctx.restSide || 1) * (0.42 + 0.05 * Math.sin(this.t * 0.11)));
+      _a.copy(ctx.forward).applyAxisAngle(up, (ctx.restSide || 1) * (0.78 + 0.05 * Math.sin(this.t * 0.11)));
       this.recenter(up, _a, (this.restSnap ? 60 : 0.55) * rw, dt, 3.14);
-      const tgtP = (ctx.restLie ? 0.2 : 0.12) + 0.015 * Math.sin(this.t * 0.17);
+      const tgtP = (ctx.restLie ? 0.22 : 0.15) + 0.015 * Math.sin(this.t * 0.17);
       this.pitch = this.restSnap ? tgtP : damp(this.pitch, tgtP, 0.6 * rw, dt);
     } else if ((ctx.overlook || 0) > 0.01 && this.idleLook > 2 && st === 'ground') {
       // OVERLOOK: standing still at a drop — the lens pulls back and levels out, the figure small and centred
       this.pitch = damp(this.pitch, 0.0, 0.7 * ctx.overlook, dt);
     } else if (this.idleLook > 2.2) {
-      const target = st === 'glide' ? -0.1 : st === 'swim' ? -0.32 : st === 'slide' ? -0.2 : sp > 7 ? -0.12 : -0.06;
+      const target = st === 'glide' ? -0.03 : st === 'swim' ? -0.32 : st === 'slide' ? -0.2 : sp > 7 ? -0.12 : -0.06;
       this.pitch = damp(this.pitch, target, 0.5, dt);
     }
     // ---- arm length by state
     const glideK = st === 'glide' ? 1 : 0;
-    let arm = 4.3 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (0.75 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? 0.35 : st === 'slide' ? -0.15 : 0) + (st === 'climb' ? 0.2 + 0.7 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
+    let arm = 4.3 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (1.7 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? 0.35 : st === 'slide' ? -0.15 : 0) + (st === 'climb' ? 0.2 + 0.7 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
     // looking up from low: shorten the arm so the camera sits low behind the explorer and can tilt up past 45°
     // to frame a giant planet / the sky overhead (BotW; space request)
     const restW = st === 'ground' ? (ctx.rest || 0) : 0;
     const ovW = st === 'ground' ? (ctx.overlook || 0) * (1 - restW) : 0;
     arm *= 1 - (0.35 + 0.2 * smoothstep(0.5, 1.0, this.pitch)) * smoothstep(0.05, 0.9, this.pitch) * (1 - restW);
-    arm = lerp(arm, 4.6 + 0.12 * Math.sin(this.t * 0.13), restW);
+    arm = lerp(arm, 5.3 + 0.12 * Math.sin(this.t * 0.13), restW);
     arm = lerp(arm, 7.8, ovW);
     arm *= this.zoom;
     this.frameW = Math.max(restW, ovW);
     // ---- pivot (critically damped; looser in the air so jumps don't jerk the frame)
-    let pivotH = st === 'swim' ? 1.6 : st === 'slide' ? 0.5 : st === 'glide' ? 1.75 : 1.6;
-    pivotH = lerp(lerp(pivotH, 2.15, ovW), ctx.restLie ? 1.0 : 1.17, restW);
+    let pivotH = st === 'swim' ? 1.6 : st === 'slide' ? 0.5 : st === 'glide' ? 2.15 : 1.6;
+    pivotH = lerp(lerp(pivotH, 2.15, ovW), ctx.restLie ? 1.15 : 1.32, restW);
     this.pivot.omega = st === 'glide' ? 10 : st === 'air' ? 12 : st === 'slide' ? 14 : 18;
     // velocity feed-forward cancels the spring's steady-state lag (2v/ω): fast falls / glides / sprints stay
     // framed, while small hops (|vy| < 4 m/s) keep their vertical smoothing
