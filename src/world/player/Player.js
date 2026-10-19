@@ -80,6 +80,12 @@ export class Player {
     let dir = latLonToDir(p.lat !== undefined ? +p.lat : 12, p.lon !== undefined ? +p.lon : 28);
     if (p.lat === undefined && this.surface) dir = this._findLand(dir);
     else if (this.surface && p.view !== 'fly' && p.view !== 'orbit' && !(+p.alt > 0.5) && p.flat !== '0') dir = p.flat === 'low' ? this._lowSpot(dir, clamp(+p.flatr || 400, 20, 3000)) : this._flatSpot(dir, 45);
+    // vista=<m>: walk to the best overlook nearby and face out over the drop (overlook / rest / first-person vistas)
+    let vista = null;
+    if (p.vista !== undefined && p.vista !== '0' && this.surface && !(+p.alt > 0.5) && p.view !== 'fly' && p.view !== 'orbit') {
+      safe(() => { vista = this._vistaSpot(dir, clamp(+p.vista > 1 ? +p.vista : 350, 20, 3000)); });
+      if (vista) dir = vista.dir;
+    }
     // first person spawned out at sea (e.g. W12 lat=35 lon=20): step ashore to the nearest dry ground (space request)
     if (this.view === 'fp' && p.lat !== undefined && !(+p.alt > 0.5) && p.dry !== '0') safe(() => { dir = this._nearestDry(dir); });
     this.up = dir.clone().normalize();
@@ -91,8 +97,12 @@ export class Player {
     tangentBasis(this.up, east, north);
     const yaw = (p.yaw !== undefined ? +p.yaw : 30) * DEG;
     this.forward = north.clone().multiplyScalar(Math.cos(yaw)).addScaledVector(east, Math.sin(yaw)).normalize();
+    if (vista) { // face out over the drop (yaw= then turns relative to that heading)
+      this.forward.copy(projectOnPlane(vista.heading.clone(), this.up).normalize());
+      if (p.yaw !== undefined) this.forward.applyAxisAngle(this.up, -yaw);
+    }
     // no explicit heading: face the capital so the first frame shows the town (civ track request)
-    if (p.yaw === undefined) {
+    else if (p.yaw === undefined) {
       const tgt = world.civ?.spawnTarget || world.get?.('civ')?.spawnTarget;
       if (tgt?.isVector3 && tgt.distanceTo(this.pos) < 9000) {
         const f = projectOnPlane(tgt.clone().sub(this.pos), this.up);
@@ -180,6 +190,15 @@ export class Player {
     if (p.act === 'slide' && this.state === 'ground') this._startSlide(true);
     if (p.act === 'climb' && this.state === 'ground') safe(() => this._spawnClimb(clamp(+p.climbh || 4, 1.2, 40)));
 
+    // frame=shoulder|wide|low: a third-person framing preset (B cycles in play)
+    if (p.frame && CameraRig.FRAMINGS.includes(p.frame)) { this.cam.framing = p.frame; this.cam.snapFrame = true; this.cam.idleLook = 3; }
+    this._bPrev = false;
+    // vista spawn on foot: start already composed as an overlook (the lens pulled back, the sky two thirds)
+    if (vista && this.view === 'surface' && this.state === 'ground' && !this._restPending && p.camyaw === undefined) {
+      this.overlook = 1; this._ovTarget = 1; this.stillT = 1.3; this._ovT = 0;
+      this.cam.idleLook = 3;
+      if (p.pitch === undefined) this.cam.pitch = 0.11;
+    }
     world.player = this;
     world.controller = this;
     this.engine?.input?.setScheme?.('character');
@@ -295,6 +314,60 @@ export class Player {
       if (ok(d)) return d.clone();
     }
     return dir;
+  }
+
+  /**
+   * vista=<m> (or vista=1 → 350 m): the best OVERLOOK within `meters` — a walkable, dry spot where the land
+   * falls away in front (an edge, a drop to a valley) and nothing rises to block the far view, so the sky can
+   * hold two thirds of the frame. Returns { dir, heading } (heading = tangent direction to face) or null.
+   * The creator's "over-the-edge view" / "classic overlook" frames, findable on any world. One-shot at spawn
+   * (~20k height samples).
+   */
+  _vistaSpot(dir, meters) {
+    const S = this.surface;
+    if (!S) return null;
+    const R = this.R, sea = S.seaLevel > -1e8 ? S.seaLevel : -Infinity;
+    const e = new THREE.Vector3(), n = new THREE.Vector3(), d = new THREE.Vector3(), q = new THREE.Vector3();
+    const te = new THREE.Vector3(), tn = new THREE.Vector3(), hd = new THREE.Vector3(), nrm = new THREE.Vector3();
+    const H = (v) => { const h = S.height(v.x, v.y, v.z); return Number.isFinite(h) ? h : 0; };
+    const DIST = [7, 14, 26, 45, 80, 150, 300, 600, 1200, 2400];
+    const NH = 20, NC = 150;
+    tangentBasis(dir, e, n);
+    let best = null, bestS = -Infinity;
+    for (let i = 0; i < NC; i++) {
+      const t = i * 2.39996, r = Math.sqrt(i / NC) * meters / R;
+      d.copy(dir).addScaledVector(e, Math.cos(t) * r).addScaledVector(n, Math.sin(t) * r).normalize();
+      const h0 = H(d);
+      if (h0 < sea + 4) continue;
+      if (S.normal(d, nrm, 1.2).dot(d) < 0.9) continue; // somewhere to stand (and sit)
+      tangentBasis(d, te, tn);
+      const eye = h0 + 1.7;
+      for (let k = 0; k < NH; k++) {
+        const a = (k / NH) * Math.PI * 2;
+        hd.copy(tn).multiplyScalar(Math.cos(a)).addScaledVector(te, Math.sin(a));
+        let nearH = -1, farH = -1, dropNear = 0, lowFar = Infinity;
+        for (let j = 0; j < DIST.length; j++) {
+          const s = DIST[j];
+          q.copy(d).addScaledVector(hd, s / R).normalize();
+          const hq = H(q) - (s * s) / (2 * R); // the planet's curvature drops the far land
+          const el = Math.atan2(hq - eye, s);
+          if (s >= 26 && s <= 300 && el > nearH) nearH = el;
+          if (s > 300 && el > farH) farH = el;
+          if (s <= 45) dropNear = Math.max(dropNear, h0 - hq);
+          if (s >= 45 && s <= 600) lowFar = Math.min(lowFar, hq);
+        }
+        const dropFar = h0 - lowFar;
+        // a drop right in front (an edge), deep land below (a valley), nothing near rising into the view (a wall
+        // fills the frame), a distant range welcome (a destination) but not a mountain face; a gentle
+        // preference for the URL point itself
+        const sc = smoothstep(3, 22, dropNear) * 0.7 + smoothstep(10, 140, dropFar)
+          - 2.0 * smoothstep(0.04, 0.18, nearH) - 1.0 * smoothstep(0.22, 0.42, farH) + 0.2 * smoothstep(0.0, 0.12, farH)
+          - 0.25 * (r * R / meters);
+        if (sc > bestS) { bestS = sc; best = { dir: d.clone(), heading: hd.clone(), score: sc }; }
+      }
+    }
+    this.vistaInfo = best ? { score: +bestS.toFixed(3) } : null;
+    return best && bestS > 0.2 ? best : null;
   }
 
   /**
@@ -562,6 +635,17 @@ export class Player {
     if (this._ovT > 0.3) { this._ovT = 0; this._ovTarget = this.stillT > 1.2 ? this._dropAhead() : 0; }
     this.overlook = damp(this.overlook, this._ovTarget, this._ovTarget > this.overlook ? 0.7 : 2.5, dt);
 
+    // B: cycle the third-person framing (auto → over the shoulder → wide → low)
+    safe(() => {
+      const bNow = typeof input.code === 'function' && input.code('KeyB');
+      if ((bNow && !this._bPrev) || input._pressed?.has?.('KeyB')) {
+        const F = CameraRig.FRAMINGS, c = this.cam;
+        c.framing = F[(F.indexOf(c.framing) + 1) % F.length];
+        c.idleLook = Math.max(c.idleLook, 1.3);
+        w.events?.emit?.('player:framing', { framing: c.framing });
+      }
+      this._bPrev = bNow;
+    });
     this._updateCompanionLink();
     this._syncBody(dt);
     if (this.companion) safe(() => this.companion.update(dt));
@@ -1414,7 +1498,7 @@ export class Player {
         const vc = this._vmCtx || (this._vmCtx = {});
         const I = this.input, lk = I.axis('look');
         vc.visible = this._visible; vc.speed = this.speed; vc.phase = this.animator?.phase || 0;
-        vc.lookX = lk.x; vc.lookY = lk.y; vc.state = this.state; vc.aspect = this.camera.aspect;
+        vc.lookX = lk.x; vc.lookY = lk.y; vc.state = this.state; vc.aspect = this.camera.aspect; vc.pitch = this.cam.pitch; vc.fov = this.camera.fov;
         vc.reach = I.held('primary') || (typeof I.code === 'function' && I.code('KeyR')) || I.held('KeyR');
         safe(() => this.viewmodel.update(dt, vc));
       }
