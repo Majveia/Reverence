@@ -68,7 +68,7 @@ export const DEFAULT_POST = {
   dof: { enabled: false, focus: 0, aperture: 1.0, maxCoc: 28, bokeh: 3 },  // enabled: true | false | 'photo'; maxCoc px @1080p
   // --- season 2 art direction (system mode only unless set explicitly)
   harmony: 'auto',         // 'auto' (two hues from body.art.palette + red accent) | false | { hueA, hueB, strength, ... }
-  harmonyStrength: 0.42,   // hue pull toward the nearer anchor for 'auto'
+  harmonyStrength: 0.56,   // hue pull toward the nearer anchor for 'auto'
   haze: { enabled: 'auto', strength: 0.34, distance: 'auto' },  // depth-layered aerial perspective (m; auto = 0.5 × atmosphere height)
   night: { lift: 0.9 },    // multiplicative lift of the land's dim tones at night (black stays 0) + indigo Purkinje
   dusk: { desat: 0.5, keyDrop: 0.42 },   // blue hour: land loses colour toward the sky hue; exposure meters for the sky
@@ -355,11 +355,11 @@ export class Pipeline {
       uSunUv: { value: this._sunUv }, uSunCol: { value: new THREE.Vector3(1, 1, 1) }, uFlare: { value: 0 },
       uGhosts: { value: 1 }, uStarburst: { value: 1 }, uStreak: { value: 0.3 }, uHalo: { value: 1 }, uDirt: { value: 0.5 },
       uSSGhost: { value: 0 }, uHasDirt: { value: this.lens.dirt ? 1 : 0 }, uFlareRot: { value: 0.2 },
-      uPurkinje: { value: 0 }, uTonemapHue: { value: 0.6 },
+      uPurkinje: { value: 0 }, uTonemapHue: { value: 0.6 }, uSpaceGlow: { value: 0 },
       tDepth: { value: this.depthTexture }, tSky: { value: this.skyMeter.texture }, uHasDepth: { value: 0 }, uNear: { value: 0.1 }, uFar: { value: 1e9 },
       uHaze: { value: 0 }, uHazeDist: { value: 5000 }, uTwilight: { value: 0 }, uNightLift: { value: 0 }, uEclipse: { value: 0 }, uDuskDesat: { value: 0 },
       uLookId: { value: 0 }, uLookLand: { value: 1 }, uLookAccent: { value: 0 }, uLookInk: { value: 0 }, uLookBands: { value: 4 }, uPLSat: { value: 1 }, uInkWidth: { value: 1.5 },
-      uToneA: { value: new THREE.Vector3() }, uToneB: { value: new THREE.Vector3(1, 0, 0.5) }, uToneC: { value: new THREE.Vector3(1, 1, 1) }, uToneD: { value: new THREE.Vector3(1, 1, 1) },
+      uToneA: { value: new THREE.Vector3() }, uToneB: { value: new THREE.Vector3(1, 0, 0.5) }, uToneC: { value: new THREE.Vector3(1, 1, 1) }, uToneD: { value: new THREE.Vector3(1, 1, 1) }, uHazeFallback: { value: new THREE.Vector3() },
     });
     this.finalMat = makeFullscreenMaterial(FINAL_FRAG, {
       tSrc: { value: this.ldrRT.texture }, uInvRes: { value: new THREE.Vector2(1 / this.width, 1 / this.height) },
@@ -617,7 +617,19 @@ export class Pipeline {
       const o = this._aeOpts || (this._aeOpts = {});
       Object.assign(o, aes); o.key = aeKey;
       this.ae.update(r, this.quad, hdr.texture, dt, o);
-    }
+      // cheap CPU-side screen brightness for the HUD (ui request): one 1×1 readback every ~0.5 s,
+      // display-referred estimate (0..1) of the mean frame luminance after exposure + tone curve
+      const now = performance.now();
+      if (!(now - (this._avgT || 0) < 500)) {
+        this._avgT = now;
+        const m = this.ae.read(r);
+        if (m && Number.isFinite(m.lum)) {
+          const e = (s.exposure ?? 1) * THREE.MathUtils.clamp(Math.pow(aeKey / Math.max(m.lum, 1e-6), aes.strength ?? 0.7), aes.min ?? 0.4, aes.max ?? 4);
+          const x = m.lum * e, t = x / (1 + x);
+          st.avgLum = +(t <= 0.0031308 ? t * 12.92 : 1.055 * Math.pow(t, 1 / 2.4) - 0.055).toFixed(3);
+        }
+      }
+    } else st.avgLum = null;
 
     // ---- bloom
     const bloomTex = this._renderBloom(hdr.texture, bloomMode);
@@ -627,7 +639,7 @@ export class Pipeline {
     if (flareOn) {
       flareVis = this._updateSun(camera, prof);
       // 1-px probe; always run (also when off-screen) so a reset never leaves a stale visibility behind
-      this.lens.update(r, this.quad, this.depthTexture, hdr.texture, this._sun, dt, this.width, this.height, this._sunLumRef);
+      this.lens.update(r, this.quad, this.depthTexture, hdr.texture, this._sun, dt, this.width, this.height, this._sunLumRef, THREE.MathUtils.smoothstep(spaceK0, 0.6, 0.98));
     }
 
     // ---- grade LUT (rebuilt only when the grade changes)
@@ -677,6 +689,7 @@ export class Pipeline {
     u.uStreak.value = f.streak ?? 0.3; u.uDirt.value = flareOn ? (f.dirt ?? 0.3) : 0;
     u.uSSGhost.value = flareOn ? (f.ssGhosts ?? 0.012) : 0;
     u.uPurkinje.value = aeOn ? (s.purkinje ?? 0) : 0;
+    u.uSpaceGlow.value = (f.spaceGlow ?? 1) * THREE.MathUtils.smoothstep(spaceK, 0.5, 0.95);
     // season 2: depth-aware grade
     u.tDepth.value = this.depthTexture; u.tSky.value = this.skyMeter.texture;
     u.uHasDepth.value = persp ? 1 : 0;
@@ -685,6 +698,7 @@ export class Pipeline {
     u.uHaze.value = hazeOn ? (hz.strength ?? 0.34) * (1 - spaceK0) * (1 - 0.75 * night) : 0;
     u.uHazeDist.value = typeof hz.distance === 'number' ? Math.max(1, hz.distance) : atmH * 0.5;
     u.uTwilight.value = twilight; u.uDuskDesat.value = duskDesat;
+    { const a = G.uAmbientSky.value, k = hz.fallback ?? 1.1; u.uHazeFallback.value.set(a.r * k, a.g * k, a.b * k); }
     u.uNightLift.value = aeOn && modeName === 'system' && !under ? (s.night?.lift ?? 0.9) * night * (1 - spaceK0) : 0;
     u.uEclipse.value = ecl;
     this._applyPhotoLook(u, world);
@@ -730,7 +744,7 @@ export class Pipeline {
     if (typeof h === 'object') return h;
     if (modeName !== 'system') return null;
     const art = world?.body?.art || null;
-    const k = this.settings.harmonyStrength ?? 0.42;
+    const k = this.settings.harmonyStrength ?? 0.56;
     if (art !== this._harmArt || k !== this._harmK) {
       this._harmArt = art; this._harmK = k;
       this._harm = art ? harmonyFromArt(art, k) : null;

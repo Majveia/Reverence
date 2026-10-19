@@ -9,7 +9,7 @@ const VIS_FRAG = /* glsl */ `
 #include <rv_post>
 uniform sampler2D tDepth, tColor, tPrev;
 uniform vec2 uSun, uRadius;       // sun uv, probe radius in uv (x,y)
-uniform float uDt, uSnap, uOnScreen, uLumRef;
+uniform float uDt, uSnap, uOnScreen, uLumRef, uSpace;
 varying vec2 vUv;
 void main(){
   float vis = 0.0, disc = 0.0, ring = 0.0, n = 0.0;
@@ -37,6 +37,9 @@ void main(){
   // stand out from its surroundings (a visible sun is far brighter than the sky next to it)
   float contrast = disc / max(ring, 1e-5);
   float lumVis = max(smoothstep(1.03, 1.35, contrast), smoothstep(0.25, 1.0, disc / max(uLumRef, 1e-3)));
+  // above the atmosphere nothing (no cloud, no haze) can sit in front of the star at far depth: depth alone
+  // decides, so a star the sky track draws too small or too dim to meter still gets its flare
+  lumVis = mix(lumVis, 1.0, uSpace);
   float target = uOnScreen * vis * lumVis;
   float prev = texture2D(tPrev, vec2(0.5)).r;
   float a = uSnap > 0.5 ? 1.0 : 1.0 - exp(-uDt * 14.0);
@@ -51,7 +54,7 @@ export class Lens {
     this.visMat = makeFullscreenMaterial(VIS_FRAG, {
       tDepth: { value: null }, tColor: { value: null }, tPrev: { value: null },
       uSun: { value: new THREE.Vector2(0.5, 0.5) }, uRadius: { value: new THREE.Vector2(0.01, 0.01) },
-      uDt: { value: 0.016 }, uSnap: { value: 1 }, uOnScreen: { value: 0 }, uLumRef: { value: 20 },
+      uDt: { value: 0.016 }, uSnap: { value: 1 }, uOnScreen: { value: 0 }, uLumRef: { value: 20 }, uSpace: { value: 0 },
     });
     this.snap = true;
     this.dirt = makeDirtTexture();
@@ -60,14 +63,14 @@ export class Lens {
   get visTexture() { return this.visB.texture; }
 
   /** sun: { uv: Vector2, onScreen: 0..1, radiusPx } */
-  update(renderer, quad, depthTex, colorTex, sun, dt, w, h, lumRef) {
+  update(renderer, quad, depthTex, colorTex, sun, dt, w, h, lumRef, space = 0) {
     const u = this.visMat.uniforms;
     u.tDepth.value = depthTex; u.tColor.value = colorTex; u.tPrev.value = this.visB.texture;
     u.uSun.value.copy(sun.uv);
     const rpx = Math.max(2.5, Math.min(sun.radiusPx, 40));
     u.uRadius.value.set(rpx / w, rpx / h);
     u.uDt.value = Math.min(Math.max(dt, 0), 0.25); u.uSnap.value = this.snap ? 1 : 0;
-    u.uOnScreen.value = sun.onScreen; u.uLumRef.value = lumRef;
+    u.uOnScreen.value = sun.onScreen; u.uLumRef.value = lumRef; u.uSpace.value = space;
     quad.draw(renderer, this.visMat, this.visA);
     const t = this.visA; this.visA = this.visB; this.visB = t;
     this.snap = false;

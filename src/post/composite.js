@@ -14,7 +14,7 @@ precision highp sampler3D;
 uniform sampler2D tColor, tBloom, tBloomWide, tAdapt, tSunVis, tDirt, tDepth, tSky;
 uniform float uHasDepth, uNear, uFar, uHaze, uHazeDist, uTwilight, uNightLift, uEclipse, uDuskDesat;
 uniform float uLookId, uLookLand, uLookAccent, uLookInk, uLookBands, uPLSat, uInkWidth;
-uniform vec3 uToneA, uToneB, uToneC, uToneD;
+uniform vec3 uToneA, uToneB, uToneC, uToneD, uHazeFallback;
 uniform sampler3D tLUT;
 uniform float uHasBloom, uBloomMode, uBloomStrength, uBloomScatter, uClarity;
 uniform float uExposure, uAuto, uAEKey, uAEMin, uAEMax, uAEStrength;
@@ -22,7 +22,7 @@ uniform float uTemperature, uTint, uLookPower, uLookSat;
 uniform float uVignette, uChromatic, uBlackPoint, uLutSize, uUseLUT; uniform int uTonemap;
 uniform vec2 uRes;
 uniform vec2 uSunUv; uniform vec3 uSunCol; uniform float uFlare, uGhosts, uStarburst, uStreak, uHalo, uDirt, uSSGhost, uHasDirt, uFlareRot;
-uniform float uPurkinje, uTonemapHue;
+uniform float uPurkinje, uTonemapHue, uSpaceGlow;
 varying vec2 vUv;
 
 vec3 agxContrast(vec3 x){
@@ -71,6 +71,8 @@ vec3 sunFlare(vec2 uv, float vis){
   // core + halo / veiling glare around the sun (a bright core also stands in for a sun disc that
   // is too small to resolve; over a rendered disc it just saturates)
   f += uSunCol * uHalo * (1.6 / (1.0 + r * r * 90000.0) + 0.05 / (1.0 + r * r * 1400.0) + 0.012 * exp(-r * 6.0));
+  // above the air: the star tints a wide patch of space around it (rule 6) — soft, ~a quarter of the frame
+  f += uSunCol * uSpaceGlow * (0.022 / (1.0 + r * r * 60.0) + 0.006 * exp(-r * 2.5));
   // starburst: 6-blade aperture diffraction spikes (thin, tapering) + fine ragged rays
   float ang = atan(d.y, d.x) + uFlareRot;
   float spikes = pow(abs(cos(ang * 3.0)), 400.0);
@@ -127,7 +129,7 @@ float accentMask(vec3 e){
   float C = length(vec2(I, Q));
   float d = abs(atan(Q, I) - 0.33);
   d = min(d, 6.2831853 - d);
-  return (1.0 - smoothstep(0.2, 0.46, d)) * smoothstep(0.06, 0.16, C);
+  return (1.0 - smoothstep(0.2, 0.46, d)) * smoothstep(0.15, 0.26, C);   // saturated reds only (scarf, lanterns), not pink sand
 }
 vec3 gradMap3(float g, vec3 a, vec3 b, vec3 c){
   return g < 0.62 ? mix(a, b, smoothstep(0.0, 1.0, g / 0.62)) : mix(b, c, smoothstep(0.0, 1.0, (g - 0.62) / 0.38));
@@ -142,15 +144,29 @@ float bands(float x, float n){
 vec3 palette4(float q, vec3 a, vec3 b, vec3 c, vec3 d){
   return q < 0.3334 ? mix(a, b, q * 3.0) : q < 0.6667 ? mix(b, c, q * 3.0 - 1.0) : mix(c, d, q * 3.0 - 2.0);
 }
-vec3 photoLook(vec3 e, vec2 uv, bool sky, vec3 bloomW){
+// display luminance of a small disc around uv (linear HDR average → exposure → tone curve → sRGB): the
+// poster and woodcut looks band THIS, so grass blades and leaf speckle merge into flat shapes
+float smoothL(vec2 uv, float expo){
+  vec3 a = vec3(0.0);
+  vec2 px = max(2.0, uRes.y / 270.0) / uRes;
+  for (int i = 0; i < 12; i++) {
+    float r = sqrt((float(i) + 0.5) / 12.0);
+    float th = float(i) * 2.39996323;
+    a += min(texture2D(tColor, uv + vec2(cos(th), sin(th)) * r * px).rgb, vec3(64.0));
+  }
+  vec3 c = clamp(agx(a / 12.0 * expo), 0.0, 1.0);
+  return rv_luma(linearToSRGB(c));
+}
+vec3 photoLook(vec3 e, vec2 uv, bool sky, vec3 bloomW, float Ls){
   float L = dot(e, vec3(0.2126, 0.7152, 0.0722));
   float acc = uLookAccent > 0.0 ? accentMask(e) * uLookAccent : 0.0;
   vec3 eSat = clamp(vec3(L) + (e - vec3(L)) * 1.35, 0.0, 1.0);
   float id = uLookId;
   vec3 o = e;
   if (id < 1.5) {                       // two-tone: black → hue → pale, the land in silhouette
-    float g = smoothstep(0.03, 0.92, L * (sky ? 1.0 : uLookLand));
-    o = gradMap3(g, uToneA, uToneB, uToneC);
+    float g = pow(smoothstep(0.03, 0.97, L * (sky ? 1.0 : uLookLand)), 0.7);
+    // most of the range is the hue; only the hottest highlights go pale (a poured magenta sky)
+    o = g < 0.8 ? mix(uToneA, uToneB, smoothstep(0.0, 1.0, g / 0.8)) : mix(uToneB, uToneC, smoothstep(0.0, 1.0, (g - 0.8) / 0.2));
   } else if (id < 2.5) {                // high-key black and white with halation
     float h = 1.0 - exp(-rv_luma(bloomW) * 0.6);
     float g = clamp((L - 0.025) * 1.32 + h * 0.18, 0.0, 1.0);
@@ -158,17 +174,24 @@ vec3 photoLook(vec3 e, vec2 uv, bool sky, vec3 bloomW){
     g = mix(g, g * g * (3.0 - 2.0 * g), 0.55);
     o = vec3(g);
   } else if (id < 3.5) {                // flat poster: n value bands → 4-colour palette + ink
-    float q = bands(pow(L, 0.8), uLookBands);
-    o = palette4(q, uToneA, uToneB, uToneC, uToneD);
+    float q = bands(pow(mix(L, Ls, 0.75), 0.8), uLookBands);
+    o = uLookBands < 3.5 ? (q < 0.5 ? mix(uToneA, uToneB, q * 2.0) : mix(uToneB, uToneC, q * 2.0 - 1.0))
+                         : palette4(q, uToneA, uToneB, uToneC, uToneD);
   } else if (id < 4.5) {                // candy sky over a near-black land
-    if (sky) { o = clamp(vec3(L) + (e - vec3(L)) * uPLSat, 0.0, 1.0); o = pow(o, vec3(0.9)); }
+    if (sky) {
+      // candy ramp by height in the sky + brightness: deep rose at the top → coral → pale gold at the sun
+      float g = clamp(L * 1.1 + (0.35 - uv.y) * 0.35, 0.0, 1.0);
+      vec3 ramp = g < 0.55 ? mix(uToneB, uToneC, smoothstep(0.0, 1.0, g / 0.55)) : mix(uToneC, uToneD, smoothstep(0.0, 1.0, (g - 0.55) / 0.45));
+      vec3 sat = clamp(vec3(L) + (e - vec3(L)) * uPLSat, 0.0, 1.0);
+      o = mix(ramp, ramp * (0.6 + 0.8 * sat), 0.35);
+    }
     else o = mix(uToneA, e, uLookLand);
   } else {                              // woodcut: stepped two-colour sky, engraved land
     if (sky) {
-      float q = bands(L, uLookBands);
+      float q = bands(mix(L, Ls, 0.6), uLookBands);
       o = mix(uToneB, uToneC, q);
     } else {
-      float dk = 1.0 - smoothstep(0.03, 0.55, L);
+      float dk = 1.0 - smoothstep(0.03, 0.55, mix(L, Ls, 0.5));
       float sp = max(3.0, uRes.y / 180.0);
       vec2 fc = gl_FragCoord.xy;
       float s1 = abs(fract((fc.x - fc.y) / sp) - 0.5) * 2.0;
@@ -219,8 +242,11 @@ void main(){
   vec3 hz = vec3(0.0); float hzOk = 0.0;
   if (uHaze > 0.0 || uDuskDesat > 0.0) {
     vec4 sm = texture2D(tSky, vec2(0.5));
-    hzOk = smoothstep(0.002, 0.03, sm.a);
-    hz = sm.rgb / max(sm.a, 1e-5);
+    float metered = smoothstep(0.002, 0.03, sm.a);
+    // no sky in frame (looking down at the land): the sky's radiance from its irradiance (E ≈ π·L,
+    // horizon a little brighter than the mean)
+    hz = mix(uHazeFallback, sm.rgb / max(sm.a, 1e-5), metered);
+    hzOk = max(metered, step(1e-6, rv_luma(uHazeFallback)));
     float hl = rv_luma(hz);
     hz = mix(hz, vec3(hl) * vec3(0.93, 0.98, 1.08), 0.22);
   }
@@ -275,7 +301,9 @@ void main(){
   if (uDuskDesat > 0.0 && !sky) {
     float l = rv_luma(col);
     vec3 skyHue = hzOk > 0.0 ? hz / max(rv_luma(hz), 1e-5) : vec3(0.8, 0.9, 1.2);
-    skyHue = clamp(skyHue, 0.0, 2.5);
+    // the land takes the sky's hue, a little stronger than the sky itself (blue hour reads blue, not grey)
+    skyHue = clamp(mix(vec3(1.0), skyHue, 1.7), 0.0, 2.5);
+    skyHue /= max(rv_luma(skyHue), 1e-3);
     col = mix(col, l * skyHue, uDuskDesat);
   }
   // eclipse: darker, cooler, harder
@@ -300,7 +328,10 @@ void main(){
     vec3 lc = enc * ((uLutSize - 1.0) / uLutSize) + 0.5 / uLutSize;
     enc = texture(tLUT, lc).rgb;
   }
-  if (uLookId > 0.5) enc = photoLook(enc, uv, sky, bloomW);
+  if (uLookId > 0.5) {
+    float Ls = (uLookId > 2.5 && uLookId < 3.5) || uLookId > 4.5 ? smoothL(uv, expo) : 0.0;
+    enc = photoLook(enc, uv, sky, bloomW, Ls);
+  }
   gl_FragColor = vec4(enc, 1.0);
 }`;
 

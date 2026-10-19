@@ -37,7 +37,8 @@ export function harmonyFromArt(art, strength = 0.42) {
       hueA, hueB, strength,
       accentHue: 0.33,       // YIQ angle of the explorer's red scarf / lanterns (~ pure red)
       accentWidth: 0.46,     // radians; reds/crimson fully exempt, orange (~-0.1) is pulled to the land hue
-      accentSat: 1.18, otherSat: 0.86, weightB: 1.0,
+      accentSat: 1.2, otherSat: 0.8, weightB: 1.0,
+      splitShadow: 0.04, splitHigh: 0.022, warmHue: -0.2,   // YIQ chroma: cool (sky-hue) shadows, warm highlights
     };
   } catch (_) { return null; }
 }
@@ -49,8 +50,8 @@ export const PHOTO_LOOKS = {
   none: { id: 0 },
   twotone: { id: 1, toneA: '#000000', toneB: '#d0105e', toneC: '#ffd6ec', land: 0.45, accent: 0, ink: 0, grain: 0.035 },
   bw: { id: 2, toneA: '#000000', toneB: '#7a7a7a', toneC: '#ffffff', land: 1.0, accent: 0, ink: 0, grain: 0.05 },
-  poster: { id: 3, toneA: '#100c22', toneB: 'auto', toneC: 'auto', toneD: '#fff3df', land: 1.0, accent: 1, ink: 1, bands: 4, grain: 0.0 },
-  candy: { id: 4, toneA: '#06040c', land: 0.1, accent: 1, ink: 0, sat: 1.55, grain: 0.02 },
+  poster: { id: 3, toneA: '#14102a', toneB: 'auto', toneC: '#f6e7cf', land: 1.0, accent: 1, ink: 1, bands: 3, grain: 0.0 },
+  candy: { id: 4, toneA: '#07040d', toneB: '#c2306e', toneC: '#ff7a5c', toneD: '#ffe2a8', land: 0.08, accent: 1, ink: 0, sat: 1.4, grain: 0.02 },
   woodcut: { id: 5, toneA: '#0a0710', toneB: 'auto', toneC: 'auto', toneD: '#f4ead6', land: 1.0, accent: 1, ink: 1, bands: 5, grain: 0.0 },
 };
 export const PHOTO_LOOK_NAMES = Object.keys(PHOTO_LOOKS);
