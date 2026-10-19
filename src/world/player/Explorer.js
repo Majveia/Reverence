@@ -38,10 +38,10 @@ const REST = {
   neck: ['chest', 0, 1.475, -0.012],
   head: ['neck', 0, 1.585, 0.0],
   shoulderL: ['chest', 0.06, 1.405, -0.02],
-  upperArmL: ['shoulderL', 0.19, 1.395, -0.025],
-  foreArmL: ['upperArmL', 0.19, 1.115, -0.025],
-  handL: ['foreArmL', 0.19, 0.855, -0.025],
-  fingersL: ['handL', 0.19, 0.765, -0.02],
+  upperArmL: ['shoulderL', 0.178, 1.395, -0.025],
+  foreArmL: ['upperArmL', 0.178, 1.115, -0.025],
+  handL: ['foreArmL', 0.178, 0.855, -0.025],
+  fingersL: ['handL', 0.178, 0.765, -0.02],
   thighL: ['hips', 0.092, 0.935, 0],
   shinL: ['thighL', 0.092, 0.51, 0.008],
   footL: ['shinL', 0.092, 0.09, -0.005],
@@ -298,12 +298,12 @@ export function buildExplorer(renderer, body, quality) {
     { y: 0.93, rx: 0.158, rz: 0.112, e: 2.3 },
     { y: 1.0, rx: 0.146, rz: 0.103, e: 2.3 },
     { y: 1.06, rx: 0.126, rz: 0.093, e: 2.3 },
-    { y: 1.14, rx: 0.134, rz: 0.097, e: 2.4 },
-    { y: 1.22, rx: 0.15, rz: 0.104, fz: 0.026, e: 2.5 },
-    { y: 1.29, rx: 0.16, rz: 0.108, fz: 0.034, e: 2.6 },
-    { y: 1.355, rx: 0.168, rz: 0.106, fz: 0.014, e: 2.7 },
-    { y: 1.415, rx: 0.17, rz: 0.102, e: 2.8 },
-    { y: 1.46, rx: 0.124, rz: 0.088, e: 2.4 },
+    { y: 1.14, rx: 0.13, rz: 0.096, e: 2.3 },
+    { y: 1.22, rx: 0.145, rz: 0.104, fz: 0.026, e: 2.3 },
+    { y: 1.29, rx: 0.152, rz: 0.108, fz: 0.034, e: 2.35 },
+    { y: 1.355, rx: 0.156, rz: 0.104, fz: 0.014, e: 2.45 },
+    { y: 1.415, rx: 0.158, rz: 0.1, e: 2.6 },
+    { y: 1.46, rx: 0.118, rz: 0.086, e: 2.3 },
     { y: 1.495, rx: 0.068, rz: 0.064 },
     { y: 1.54, rx: 0.052, rz: 0.054 },
   ];
@@ -334,7 +334,6 @@ export function buildExplorer(renderer, body, quality) {
     A.add('fabric', loft(obi, { radial: R(32), sub: 2 }), P.coat2, rigid(B.hips));
     for (const s of [obi[0], obi[2]]) { const g = torus(1, 0.0032, 4, R(40)); xf(g, 0, s.y + (s === obi[0] ? 0.004 : -0.004), 0, Math.PI / 2, 0, 0, s.rx + 0.003, (s.rz + 0.003), 1); A.add('metal', g, gold, rigid(B.hips)); }
     const knot = box(0.11, 0.075, 0.05, 0.02, 3); xf(knot, 0, 1.0, -0.125); A.add('fabric', knot, P.coat2, rigid(B.hips));
-    const cord = torus(0.022, 0.004, 4, 12); xf(cord, 0.09, 1.0, 0.105, 0, 0.6, 0); A.add('metal', cord, gold, rigid(B.hips));
     const tail = tube([new THREE.Vector3(0.095, 0.99, 0.11), new THREE.Vector3(0.1, 0.94, 0.112), new THREE.Vector3(0.105, 0.89, 0.108)], 0.0035, 8, 4); A.add('metal', tail, gold, rigid(B.hips));
   }
   // baldric: the scabbard strap crossing the chest from the right shoulder to the left hip
@@ -348,7 +347,7 @@ export function buildExplorer(renderer, body, quality) {
 
   // ================================================================ arms: fitted sleeves, wrapped forearms, gloves
   const buildArm = (side) => {
-    const x = 0.19 * side, z = -0.025;
+    const x = 0.178 * side, z = -0.025;
     const ax = (b) => B[b + (side > 0 ? 'L' : 'R')];
     const secs = [
       { y: 0.85, rx: 0.042, rz: 0.046, ox: x, oz: z },
@@ -381,12 +380,12 @@ export function buildExplorer(renderer, body, quality) {
   buildArm(1); buildArm(-1);
   // a single lacquered shoulder guard on the left shoulder (asymmetry: the sword hand stays free)
   {
-    const SH = ellipsoidSurface(new THREE.Vector3(0.2, 1.405, -0.022), new THREE.Vector3(0.082, 0.072, 0.082));
+    const SH = ellipsoidSurface(new THREE.Vector3(0.19, 1.4, -0.022), new THREE.Vector3(0.078, 0.06, 0.08), (v, az, el) => { v.y -= 0.02 * Math.max(0, -Math.sin(el)); });
     const sk = (x, y, z, o) => { o[0] = B.upperArmL; o[1] = 0.6; o[2] = B.chest; o[3] = 0.4; return o; };
     A.add('hard', patch(SH, { u0: 0.15, u1: 2.95, v0: -0.25, v1: 1.15, nu: R(14), nv: R(8), off: 0.006, thick: 0.007, bevel: 0.004, round: 4 }), P.lacquer, sk);
     A.add('hard', patch(SH, { u0: 0.4, u1: 2.7, v0: -0.95, v1: -0.2, nu: R(12), nv: R(5), off: 0.016, thick: 0.006, bevel: 0.003, round: 4 }), P.lacquer, rigid(B.upperArmL));
     const pts = []; const p = new THREE.Vector3();
-    for (let i = 0; i <= 14; i++) { SH(0.4 + (i / 14) * 2.3, -0.95, p); const c = p.clone().sub(new THREE.Vector3(0.2, 1.405, -0.022)).normalize(); pts.push(p.clone().addScaledVector(c, 0.019)); }
+    for (let i = 0; i <= 14; i++) { SH(0.4 + (i / 14) * 2.3, -0.95, p); const c = p.clone().sub(new THREE.Vector3(0.19, 1.4, -0.022)).normalize(); pts.push(p.clone().addScaledVector(c, 0.019)); }
     A.add('metal', tube(pts, 0.0026, R(28), 4), gold, rigid(B.upperArmL));
   }
 
@@ -471,11 +470,11 @@ export function buildExplorer(renderer, body, quality) {
       taper: (t) => [-0.85 - 0.6 * t, 0.85 + 0.6 * t] }), P.hair, hk);
     // strand grooves (darker lines sweeping back to the tie) read as combed hair, not a helmet
     const p = new THREE.Vector3(), q = new THREE.Vector3();
-    for (let i = 0; i < 9; i++) {
-      const az0 = -0.75 + i * 0.19;
+    for (let i = 0; i < 7; i++) {
+      const az0 = -0.66 + i * 0.22;
       const pts = [];
       for (let k = 0; k <= 8; k++) { const t = k / 8; HS(az0 * (1 - t) + Math.PI * Math.sign(az0 || 1) * t * 0.98, 0.5 + 0.55 * Math.sin(t * Math.PI) * 0.6 + t * 0.15, p); q.copy(p).sub(HC).normalize(); pts.push(p.clone().addScaledVector(q, 0.0075)); }
-      A.add('hair', tube(pts, 0.0028, 24, 3), P.hairHi.clone().multiplyScalar(0.55), hk);
+      A.add('hair', tube(pts, 0.0022, 24, 3), P.hairHi.clone().multiplyScalar(0.8), hk);
     }
     // the tie: a gold band and a short cuff of hair where the ponytail springs out (the tail itself is cloth)
     const T = HEAD.tie;
@@ -499,8 +498,8 @@ export function buildExplorer(renderer, body, quality) {
     // side-swept fringe across the brow (from the parting on her left to the right temple)
     {
       const pts = [];
-      for (let k = 0; k <= 6; k++) { const t = k / 6; HS(0.45 - t * 1.25, 0.62 - 0.22 * Math.sin(t * Math.PI * 0.9) - 0.06 * t, p); q.copy(p).sub(HC).normalize(); pts.push(p.clone().addScaledVector(q, 0.004)); }
-      const g = tube(pts, 0.011, 20, 6);
+      for (let k = 0; k <= 6; k++) { const t = k / 6; HS(0.3 - t * 1.1, 0.95 - 0.5 * t - 0.12 * Math.sin(t * Math.PI), p); q.copy(p).sub(HC).normalize(); pts.push(p.clone().addScaledVector(q, 0.006 + 0.004 * Math.sin(t * Math.PI))); }
+      const g = tube(pts, 0.009, 20, 6);
       A.add('hair', g, P.hair, hk);
     }
   }
