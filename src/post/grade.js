@@ -38,7 +38,7 @@ export function gradeSignature(s, harm = null) {
     if (Array.isArray(a)) { add(a[0]); add(a[1]); add(a[2]); } else add(k.length * 7);
   }
   add(s.splitBalance ?? 0);
-  if (harm && harm.strength > 0) { add(harm.hueA); add(harm.hueB); add(harm.strength); add(harm.accentHue); add(harm.accentWidth); add(harm.accentSat); add(harm.otherSat); add(harm.weightB ?? 1); }
+  if (harm && harm.strength > 0) { add(harm.hueA); add(harm.hueB); add(harm.strength); add(harm.accentHue); add(harm.accentWidth); add(harm.accentSat); add(harm.otherSat); add(harm.weightB ?? 1); add(harm.splitShadow ?? 0); add(harm.splitHigh ?? 0); add(harm.warmHue ?? 0); }
   return h;
 }
 
@@ -60,6 +60,9 @@ export function buildLUT(s, tex = null, harm = null) {
   const aH = H ? (H.accentHue ?? 0.33) : 0, aW = H ? (H.accentWidth ?? 0.42) : 1;
   const aSat = H ? (H.accentSat ?? 1.15) : 1, oSat = H ? (H.otherSat ?? 0.85) : 1, wB = H ? (H.weightB ?? 1) : 1;
   const yq = [0, 0, 0];
+  const sA = H ? (H.splitShadow ?? 0) : 0, sW = H ? (H.splitHigh ?? 0) : 0;
+  const cA = Math.cos(hA), sinA = Math.sin(hA), wHue = H ? (H.warmHue ?? -0.2) : 0;
+  const cW = Math.cos(wHue), sinW = Math.sin(wHue);
   const P = 0.435; // contrast pivot in encoded space (≈ linear 0.16)
   const toHalf = THREE.DataUtils.toHalfFloat;
   let o = 0;
@@ -97,21 +100,30 @@ export function buildLUT(s, tex = null, harm = null) {
       const e0 = l2s(clamp01(r)), e1 = l2s(clamp01(g)), e2 = l2s(clamp01(b));
       yiq(e0, e1, e2, yq);
       const C = Math.hypot(yq[1], yq[2]);
+      let I0 = yq[1], Q0 = yq[2];
       if (C > 1e-5) {
         const th = Math.atan2(yq[2], yq[1]);
         const da = wrapPi(hA - th), db = wrapPi(hB - th);
         // nearer anchor wins (land anchor may be favoured with weightB)
         const d = Math.abs(da) <= Math.abs(db) * wB ? da : db;
-        const accent = 1 - smooth(aW * 0.45, aW, Math.abs(wrapPi(th - aH)));
+        const accent = (1 - smooth(aW * 0.45, aW, Math.abs(wrapPi(th - aH)))) * smooth(0.08, 0.18, C);   // only strong reds stay the accent
         const cw = smooth(0.012, 0.06, C);                         // near-greys keep their (tiny) hue
         const nth = th + d * hk * cw * (1 - accent);
         const nC = C * (oSat + (aSat - oSat) * accent);
-        const I = Math.cos(nth) * nC, Q = Math.sin(nth) * nC, Y = yq[0];
-        r = s2l(clamp01(Y + 0.956 * I + 0.621 * Q));
-        g = s2l(clamp01(Y - 0.272 * I - 0.647 * Q));
-        b = s2l(clamp01(Y - 1.106 * I + 1.703 * Q));
-        l2 = luma(r, g, b);
+        I0 = Math.cos(nth) * nC; Q0 = Math.sin(nth) * nC;
       }
+      // split tone (two hues): shadows lean to the sky hue, highlights to a warm light; zero at black
+      // (OLED) and luma-neutral (YIQ chroma only)
+      const Y = yq[0];
+      if (sA > 0 || sW > 0) {
+        const wsY = smooth(0.0, 0.07, Y) * (1 - smooth(0.12, 0.5, Y));
+        const whY = smooth(0.5, 0.95, Y) * (1 - smooth(0.97, 1.0, Y));
+        I0 += cA * sA * wsY + cW * sW * whY; Q0 += sinA * sA * wsY + sinW * sW * whY;
+      }
+      r = s2l(clamp01(Y + 0.956 * I0 + 0.621 * Q0));
+      g = s2l(clamp01(Y - 0.272 * I0 - 0.647 * Q0));
+      b = s2l(clamp01(Y - 1.106 * I0 + 1.703 * Q0));
+      l2 = luma(r, g, b);
     }
     // hue-preserving gamut clamp (scale toward luma instead of per-channel clipping)
     const lo = Math.min(r, g, b);

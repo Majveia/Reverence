@@ -2,6 +2,7 @@
 //   panelNormal : 512² atlas, 4 hard-surface panel layouts (inset grooves, vents, rivets, emboss)
 //                 mapped per plate with uv (0..1) → quadrant.
 //   fabricNormal: 256² tileable technical fabric (fine weave + quilted stitch channels), uv1 (meters).
+//   woolNormal  : 256² tileable felted wool / canvas (twill ribs, slub threads), uv1 (meters).
 //   wearRough   : 256² tileable roughness variation (smudges, micro scratches), uv1 (meters).
 import * as THREE from 'three';
 import { FastRand } from './util.js';
@@ -199,6 +200,36 @@ function fabric() {
   return heightToNormal(c, 1.6, true);
 }
 
+/** Felted wool / heavy canvas: soft twill ribs, slubby threads and fibre noise (no quilting). Tileable. */
+function wool() {
+  const S = 256;
+  const c = canvas(S, S);
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(S, S);
+  const d = img.data;
+  const rnd = new FastRand(17);
+  // tileable value noise at a few octaves (lattice wraps at the tile size)
+  const lat = (n) => { const a = new Float32Array(n * n); for (let i = 0; i < n * n; i++) a[i] = rnd.next(); return a; };
+  const L1 = lat(8), L2 = lat(32), L3 = lat(128);
+  const vn = (L, n, x, y) => {
+    const fx = x * n / S, fy = y * n / S, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+    const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+    const g = (i, j) => L[((j % n + n) % n) * n + ((i % n + n) % n)];
+    return (g(ix, iy) * (1 - sx) + g(ix + 1, iy) * sx) * (1 - sy) + (g(ix, iy + 1) * (1 - sx) + g(ix + 1, iy + 1) * sx) * sy;
+  };
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const tw = 0.5 + 0.5 * Math.sin(((x + y * 2) / S) * Math.PI * 2 * 32);     // twill rib
+    const slub = vn(L2, 32, x, y * 0.25);                                     // uneven thread thickness
+    const felt = vn(L1, 8, x, y) * 0.6 + vn(L3, 128, x, y) * 0.4;             // felted fibres
+    const v = 0.5 + 0.16 * (tw - 0.5) * (0.6 + 0.8 * slub) + 0.16 * (felt - 0.5) + 0.06 * (slub - 0.5);
+    const b = Math.max(0, Math.min(255, v * 255)) | 0;
+    const i = (y * S + x) * 4;
+    d[i] = d[i + 1] = d[i + 2] = b; d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return heightToNormal(c, 1.3, true);
+}
+
 function wear() {
   const S = 256;
   const c = canvas(S, S);
@@ -239,7 +270,7 @@ export function getTextures(renderer) {
     t.needsUpdate = true;
     return t;
   };
-  let panel, panelA, fab, wr;
+  let panel, panelA, fab, wr, wl;
   try {
     const pa = panelAtlas();
     panel = mk(pa.normal, { channel: 0 });
@@ -247,6 +278,7 @@ export function getTextures(renderer) {
   } catch (e) { panel = null; panelA = null; }
   try { fab = mk(fabric(), { repeat: true, channel: 1 }); } catch (e) { fab = null; }
   try { wr = mk(wear(), { repeat: true, channel: 1 }); } catch (e) { wr = null; }
-  _cache = { panelNormal: panel, panelAlbedo: panelA, fabricNormal: fab, wearRough: wr };
+  try { wl = mk(wool(), { repeat: true, channel: 1 }); } catch (e) { wl = null; }
+  _cache = { panelNormal: panel, panelAlbedo: panelA, fabricNormal: fab, wearRough: wr, woolNormal: wl };
   return _cache;
 }

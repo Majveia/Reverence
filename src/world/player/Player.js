@@ -18,6 +18,7 @@ import { buildExplorer, B, SUIT_LIGHT } from './Explorer.js';
 import { G } from '../../core/Uniforms.js';
 import { Animator } from './Animator.js';
 import { Scarf } from './Cloth.js';
+import { Coat } from './Coat.js';
 import { Glider } from './Glider.js';
 import { FX } from './FX.js';
 import { HeightSampler, ColliderIndex, AirField } from './Physics.js';
@@ -111,6 +112,13 @@ export class Player {
     this.climbBlend = 0;
     this.climbPush = 0;
     this.swimT = 0; this.dive = 0;
+    // rest: sit (knees up / legs over an edge), lie back against the pack; `resting` (0..1) is public so the UI can
+    // fade the HUD and audio can swell
+    this.restS = { on: false, w: 0, lie: false, dangle: false, hug: false, hold: 0, lieHold: 0, lieArmed: false, seat: null, t: 0, compYaw: null, side: 1 };
+    this.resting = 0;
+    this._restPending = p.act === 'rest' || p.act === 'lie' || p.act === 'sit' ? p.act : null;
+    this._xPrev = false;
+    this.stillT = 0; this.overlook = 0; this._ovT = 99; this._ovTarget = 0;
     this.time = 0;
     this.turnRate = 0; this._prevFacing = this.forward.clone();
     this.accel = new THREE.Vector3(); this._prevVel = new THREE.Vector3(); this.accelUp = 0;
@@ -125,6 +133,7 @@ export class Player {
       state: 'ground', crouch: false, speed: 0, accelLocal: new THREE.Vector3(), accelUp: 0, turnRate: 0,
       hardLand: 0, landImpact: 0, dive: 0, lookYaw: 0, lookPitch: 0, fp: false, vy: 0, airTime: 0, boost: 0, time: 0,
       glide: { pitch: 0, bank: 0, swayZ: 0, swayX: 0 }, slide: { carve: 0 }, climb: { move: 0, dirX: 0, dirY: 0, lean: 0, speed: 0, wallZ: 0.24, lunge: 0 },
+      rest: { on: false, lie: false, dangle: false, hug: false, compYaw: null },
     };
 
     // ---- camera
@@ -193,6 +202,7 @@ export class Player {
     }
     const P = this.rig?.palette;
     try { if (P) { this.scarf = new Scarf(w, P, this.quality); w.root.add(this.scarf.group); } } catch (e) { console.error('[player] scarf failed', e); this.scarf = null; }
+    try { if (P && this.rig) { this.coat = new Coat(P, this.quality); w.root.add(this.coat.group); } } catch (e) { console.error('[player] coat failed', e); this.coat = null; }
     try { if (P) { this.glider = new Glider(P, this.quality); this.group.add(this.glider.group); this.glider.group.position.set(0, 1.83, 0.1); } } catch (e) { console.error('[player] glider failed', e); this.glider = null; }
     try {
       this.fx = new FX(w, this.quality);
@@ -204,8 +214,10 @@ export class Player {
     } catch (e) { console.error('[player] fx failed', e); this.fx = null; }
     this.anchorsW = [[new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()], [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]];
     this.spheres = [];
-    for (let i = 0; i < 7; i++) this.spheres.push({ c: new THREE.Vector3(), r: 0.1 });
+    for (let i = 0; i < 10; i++) this.spheres.push({ c: new THREE.Vector3(), r: 0.1 });
     this.windV = new THREE.Vector3();
+    this._gplane = { p: new THREE.Vector3(), n: new THREE.Vector3(0, 1, 0), on: true };
+    this._coatOpts = { swim: 0, rest: 0 };
     this.gquat = new THREE.Quaternion();
     this.gpos = new THREE.Vector3();
     this.eye = new THREE.Vector3();
@@ -406,6 +418,8 @@ export class Player {
     if (this.view === 'fly' || this.view === 'orbit') this.view = 'surface';
     if (this.state === 'fly') this.state = 'air';
     if (this.scarf) this.scarf.initialized = false;
+    if (this.coat) this.coat.initialized = false;
+    this._standUp();
     this._setVisible(true);
   }
 
@@ -413,6 +427,7 @@ export class Player {
     this._visible = v;
     if (this.group) this.group.visible = v;
     if (this.scarf) this.scarf.group.visible = v;
+    if (this.coat) this.coat.group.visible = v;
     if (!v && this.fx) for (const j of this.fx.jets) j.visible = false;
   }
 
@@ -427,6 +442,7 @@ export class Player {
     const input = this.input;
     this.colliders.sync(dt);
     if (this._settle > 0) safe(() => this._spawnSettle(dt));
+    else if (this._restPending && this.state === 'ground') { const a = this._restPending; this._restPending = null; safe(() => this._startRest(true, a === 'lie')); }
 
     if (input.down('view')) {
       if (this.view === 'surface') this.view = 'fp';
@@ -499,6 +515,16 @@ export class Player {
     this.turnRate = damp(this.turnRate, ang / dt, 10, dt);
     this._prevFacing.copy(this.forward);
 
+    // ---- rest weight (public: world.player.resting) + overlook context for the camera
+    const RS = this.restS;
+    if (this.state !== 'ground' && RS.on) this._standUp();
+    RS.w = damp(RS.w, RS.on ? 1 : 0, RS.on ? 1.3 : 2.5, dt);
+    this.resting = smoothstep(0.05, 0.95, RS.w);
+    this.stillT = this.state === 'ground' && this.speed < 0.4 && !RS.on ? this.stillT + dt : 0;
+    this._ovT += dt;
+    if (this._ovT > 0.3) { this._ovT = 0; this._ovTarget = this.stillT > 1.2 ? this._dropAhead() : 0; }
+    this.overlook = damp(this.overlook, this._ovTarget, this._ovTarget > this.overlook ? 0.7 : 2.5, dt);
+
     this._syncBody(dt);
     if (this.params?.camlock) this.cam.idleLook = 0; // photo mode: the lens keeps its URL heading (no auto-recenter)
     this._camera(dt);
@@ -506,6 +532,23 @@ export class Player {
   }
 
   // ======================================================================================= helpers
+  /** How far the land falls away in front of the camera (0..1): an overlook worth framing. */
+  _dropAhead() {
+    const H = this.heights;
+    const h0 = H.groundR(this.pos);
+    _a.copy(this.cam.fwd); projectOnPlane(_a, this.up);
+    if (_a.lengthSq() < 1e-6) return 0;
+    _a.normalize();
+    let drop = 0;
+    for (const d of [6, 14, 28, 50]) {
+      _b.copy(this.pos).addScaledVector(_a, d);
+      _b.setLength(H.groundR(_b));
+      // the drop seen along the view: ground height below our feet minus the ground ahead, per the sphere's curvature
+      drop = Math.max(drop, h0 - _b.length());
+    }
+    return smoothstep(4, 14, drop);
+  }
+
   _sampleGround(dt) {
     this._sampleT += dt;
     if (this._sampleT < 0.25) return;
@@ -641,6 +684,18 @@ export class Player {
     const up = this.up;
     const n = this._groundNormal(this.pos, this.groundN);
     const slopeCos = n.dot(up);
+    // ---- rest: hold C (descend) while standing still, or tap X, to sit; move / jump / X to stand
+    const R = this.restS;
+    const xNow = typeof this.input.code === 'function' && this.input.code('KeyX');
+    const xDown = xNow && !this._xPrev;
+    this._xPrev = xNow;
+    if (R.on) {
+      if (I.mag > 0.35 || this.jumpBuf > 0 || xDown) { this.jumpBuf = 0; this._standUp(); }
+      else { this._restHold(dt, I); return; }
+    } else {
+      R.hold = I.descend && I.mag < 0.1 && this.speed < 0.6 && slopeCos > 0.82 && this.hardT <= 0 ? R.hold + dt : 0;
+      if (R.hold > 0.75 || (xDown && this.speed < 2 && slopeCos > 0.82)) { this._startRest(false, false); this._restHold(dt, I); return; }
+    }
     const hard = this.hardT > 0;
     let spd = 0;
     if (I.mag > 0.05) {
@@ -692,6 +747,68 @@ export class Player {
   }
 
   _move(dt) { this.pos.addScaledVector(this.vel, dt); }
+
+  // ======================================================================================= rest
+  /** Sit down here. Looks for an edge just ahead (sit on the ridge with the legs over the drop). */
+  _startRest(instant = false, lie = false) {
+    const R = this.restS;
+    R.on = true; R.t = 0; R.hold = 0; R.lieHold = 0; R.lieArmed = false; R.lie = !!lie;
+    R.seat = null; R.dangle = false;
+    this.vel.set(0, 0, 0);
+    const H = this.heights;
+    const h0 = H.groundR(this.pos);
+    for (let d = 0.15; d <= 1.45; d += 0.1) {
+      _a.copy(this.pos).addScaledVector(this.forward, d);
+      const h1 = H.groundR(_a);
+      if (Math.abs(h1 - h0) > 0.45) break; // the seat must be roughly level with where we stand
+      _b.copy(this.pos).addScaledVector(this.forward, d + 0.4);
+      _c.copy(this.pos).addScaledVector(this.forward, d + 1.0);
+      if (h1 - H.groundR(_b) > 0.45 && h1 - H.groundR(_c) > 0.8) {
+        R.seat = (R.seatV || (R.seatV = new THREE.Vector3())).copy(this.pos).addScaledVector(this.forward, Math.max(0, d - 0.12));
+        R.seat.setLength(H.groundR(R.seat));
+        R.dangle = true;
+        break;
+      }
+    }
+    if (R.dangle) R.lie = false;
+    if (instant) {
+      if (R.seat) this.pos.copy(R.seat);
+      R.w = 1; this.resting = 1;
+      if (this.animator) {
+        const an = this.animator;
+        for (const k in an.w) an.w[k] = k === 'rest' ? 1 : 0;
+        an.dangleW = R.dangle ? 1 : 0; an.lieW = R.lie ? 1 : 0;
+      }
+      this.cam.restSnap = true;
+      if (this.coat) this.coat.initialized = false;
+      if (this.scarf) this.scarf.initialized = false;
+    }
+    this.world.events?.emit?.('player:rest', { on: true, pos: this.pos });
+  }
+
+  _standUp() {
+    const R = this.restS;
+    if (!R.on) return;
+    R.on = false; R.lie = false; R.hold = 0; R.seat = null;
+    this.world.events?.emit?.('player:rest', { on: false, pos: this.pos });
+  }
+
+  /** While seated: stay put (scoot onto the edge seat), hold C again to lie back / sit up. */
+  _restHold(dt, I) {
+    const R = this.restS;
+    R.t += dt;
+    if (!I.descend) R.lieArmed = true;
+    if (R.lieArmed && I.descend && !R.dangle) {
+      R.lieHold += dt;
+      if (R.lieHold > 0.9) { R.lie = !R.lie; R.lieHold = 0; R.lieArmed = false; }
+    } else R.lieHold = 0;
+    this.vel.set(0, 0, 0);
+    if (R.seat) { // shuffle onto the edge
+      _a.copy(R.seat).sub(this.pos);
+      if (_a.lengthSq() > 1e-6) this.pos.addScaledVector(_a, dampF(2.2, dt));
+    }
+    this.pos.setLength(this._floorR(this.pos, this.up));
+  }
 
   _turnToward(dir, rate, dt) {
     _t.copy(dir); projectOnPlane(_t, this.up);
@@ -1065,7 +1182,9 @@ export class Player {
   _animState(dt) {
     const S = this.S, st = this.state;
     S.state = st === 'fly' ? 'air' : st;
-    S.crouch = st === 'ground' && this.input.held('descend') && this.speed < 3;
+    const RS = this.restS;
+    S.crouch = st === 'ground' && this.input.held('descend') && this.speed < 3 && !RS.on && RS.w < 0.5;
+    S.rest.on = RS.on; S.rest.lie = RS.lie; S.rest.dangle = RS.dangle; S.rest.hug = RS.on && RS.hug; S.rest.compYaw = RS.compYaw;
     S.speed = st === 'swim' ? this.speed : this.speed;
     // acceleration in character space (x = left, z = forward)
     _a.crossVectors(this.up, this.forward); // left
@@ -1175,6 +1294,18 @@ export class Player {
       gg.visible = gg.visible && vis;
     }
     // ---- scarf (anchors in chest space → planet-local)
+    this.air.wind(this.pos, this.windV);
+    // ---- coat skirt (verlet cloth, also visible in first person when looking down)
+    if (this.coat && vis) {
+      const gpl = this._gplane;
+      gpl.p.copy(this.pos).setLength(this.heights.groundR(this.pos));
+      gpl.n.copy(this.state === 'ground' || this.state === 'slide' ? this.groundN : up);
+      gpl.on = this.state !== 'swim' && this.state !== 'climb';
+      this._coatOpts.swim = this.state === 'swim' ? 1 : 0; this._coatOpts.rest = this.restS.w;
+      const wv = this.state === 'swim' ? _e.copy(this.windV).multiplyScalar(0.1) : this.windV;
+      safe(() => this.coat.update(dt, this.animator, this.gquat, this.gpos, up, this.g, wv, gpl, this._coatOpts));
+    }
+    if (this.coat) this.coat.group.visible = vis;
     if (this.scarf && vis && this.view !== 'fp') {
       const an = this.animator;
       const ch = an.gp[B.chest], cq = an.gq[B.chest];
@@ -1185,14 +1316,16 @@ export class Player {
       const place = (i, b, ox, oy, oz, r) => {
         sp[i].c.set(ox, oy, oz).applyQuaternion(an.gq[b]).add(an.gp[b]).applyQuaternion(this.gquat).add(this.gpos); sp[i].r = r;
       };
-      place(0, B.head, 0, 0.08, 0.01, 0.175);
-      place(1, B.chest, 0, 0.08, 0.0, 0.2);
-      place(2, B.spine, 0, 0.0, 0.0, 0.18);
-      place(3, B.pack, 0, 0.07, -0.06, 0.17);
-      place(4, B.pack, 0, -0.1, -0.06, 0.17);
-      place(5, B.hips, 0, 0.0, 0.0, 0.17);
-      place(6, B.thighL, -0.09, -0.2, 0, 0.1);
-      this.air.wind(this.pos, this.windV);
+      place(0, B.head, 0, 0.1, -0.03, 0.17);   // hood
+      place(1, B.chest, 0, 0.08, 0.0, 0.21);   // mantle
+      place(2, B.spine, 0, 0.0, 0.0, 0.19);
+      place(3, B.pack, 0, 0.06, -0.1, 0.18);   // rucksack
+      place(4, B.pack, 0, -0.12, -0.1, 0.18);
+      place(5, B.hips, 0, 0.0, 0.0, 0.2);
+      place(6, B.thighL, -0.09, -0.2, 0, 0.11);
+      place(7, B.pack, 0.13, 0.27, -0.09, 0.085); // bedroll ends
+      place(8, B.pack, -0.13, 0.27, -0.09, 0.085);
+      place(9, B.chest, 0, 0.12, -0.1, 0.19);  // mantle back
       const w = _d.copy(this.windV);
       if (this.state === 'swim') w.multiplyScalar(0.1);
       safe(() => this.scarf.update(dt, this.anchorsW, up, this.g, w, sp, this.gpos));
@@ -1208,6 +1341,8 @@ export class Player {
     ctx.carve = this.slideS.carve; ctx.dive = this.glide.dive > 0.5; ctx.boost = this.boostP;
     ctx.submerged = this.state === 'swim' && this.dive > 0.6; ctx.forward = this.forward;
     ctx.climbN = this.climbS.n; ctx.climbUp = this.climbS.up; ctx.climbSide = this.climbS.side;
+    ctx.rest = this.restS.w; ctx.restOn = this.restS.on; ctx.restSide = this.restS.side; ctx.restLie = this.restS.lie;
+    ctx.overlook = this.overlook;
     if (this.state === 'climb') { // height above the ground at the foot of the wall (camera composition)
       _a.copy(this.pos).addScaledVector(this.climbS.n, 2.5);
       ctx.climbAgl = this.pos.length() - this.heights.groundR(_a);
@@ -1384,6 +1519,7 @@ export class Player {
       au.setParam('glide', this.state === 'glide' ? 1 : 0);
       au.setParam('swim', this.state === 'swim' ? 1 : 0);
       au.setParam('boost', this.boostP);
+      au.setParam('rest', this.resting); // seated / lying: the music can swell
       // danger: a free fall that would be a hard landing (no glider open) — audio tension bed
       const vy = this.vel.dot(this.up);
       const dz = this.state === 'air' ? smoothstep(9, 22, -vy) * smoothstep(0.4, 1.2, this.airTime) : 0;
@@ -1401,7 +1537,9 @@ export class Player {
     }
     // ---- contextual prompts (minimal)
     let pr = null;
-    if (this.state === 'air' && this.airTime > 0.35 && this.pos.length() - this.heights.groundR(this.pos) > 5) pr = ['Glide', 'jump'];
+    if (this.restS.on) pr = null; // resting: the HUD fades (world.player.resting)
+    else if (this.state === 'ground' && this.stillT > 3 && this.speed < 0.2) pr = ['Rest · hold C', 'descend'];
+    else if (this.state === 'air' && this.airTime > 0.35 && this.pos.length() - this.heights.groundR(this.pos) > 5) pr = ['Glide', 'jump'];
     else if (this.state === 'glide') pr = ['Dive · Shift   Drop · C', 'sprint'];
     else if (this.state === 'climb') pr = ['Jump off · Space   Let go · C', 'jump'];
     else if (this.state === 'swim') pr = this.dive > 0.3 ? ['Surface · Space', 'jump'] : ['Dive · C', 'descend'];
@@ -1433,6 +1571,7 @@ export class Player {
       fuel: +this.jetFuel.toFixed(2),
       surface: this.surfaceKind,
       dive: +(this.dive || 0).toFixed(2),
+      resting: +this.resting.toFixed(2), rest: this.restS.on ? (this.restS.lie ? 'lie' : this.restS.dangle ? 'edge' : 'sit') : null,
       tris: this.rig?.triangles | 0,
       colliders: this.colliders.count,
     };
@@ -1449,6 +1588,7 @@ export class Player {
       }
       if (this._fallbackMesh) { this._fallbackMesh.geometry.dispose(); this._fallbackMesh.material.dispose(); }
       if (this.scarf) { this.world.root.remove(this.scarf.group); this.scarf.dispose(); }
+      if (this.coat) { this.world.root.remove(this.coat.group); this.coat.dispose(); }
       if (this.glider) this.glider.dispose();
       if (this.fx) { this.world.root.remove(this.fx.group); this.fx.dispose(); }
     } catch (e) { console.error('[player] dispose failed', e); }

@@ -32,14 +32,17 @@ class Pose {
     this.handRotL = new THREE.Vector3(); this.handRotR = new THREE.Vector3();
     this.elbowL = new THREE.Vector3(); this.elbowR = new THREE.Vector3();
     this.shoulderL = new THREE.Vector3(); this.shoulderR = new THREE.Vector3();
-    this.fingers = 0; this.terrain = 0; this.pack = 0; this.plant = 0;
+    // group-space hand targets (rest: hands on knees / on the ground / around the companion), weight handG
+    this.handGL = new THREE.Vector3(); this.handGR = new THREE.Vector3();
+    this.fingers = 0; this.terrain = 0; this.pack = 0; this.plant = 0; this.sit = 0; this.handG = 0;
     this._vecs = Object.values(this).filter((v) => v && v.isVector3);
   }
-  zero() { for (const v of this._vecs) v.set(0, 0, 0); this.fingers = 0; this.terrain = 0; this.pack = 0; this.plant = 0; return this; }
+  zero() { for (const v of this._vecs) v.set(0, 0, 0); this.fingers = 0; this.terrain = 0; this.pack = 0; this.plant = 0; this.sit = 0; this.handG = 0; return this; }
   add(o, w) {
     const a = this._vecs, b = o._vecs;
     for (let i = 0; i < a.length; i++) a[i].addScaledVector(b[i], w);
     this.fingers += o.fingers * w; this.terrain += o.terrain * w; this.pack += o.pack * w; this.plant += o.plant * w;
+    this.sit += o.sit * w; this.handG += o.handG * w;
     return this;
   }
 }
@@ -93,8 +96,10 @@ export class Animator {
     this.parentIdx = BONE_NAMES.map((nm) => (PARENT[nm] ? B[PARENT[nm]] : -1));
     this.order = BONE_NAMES.map((nm, i) => i).sort((a, b) => depth(a, this.parentIdx) - depth(b, this.parentIdx));
     this.pose = new Pose();
-    this.layers = { ground: new Pose(), air: new Pose(), glide: new Pose(), slide: new Pose(), swim: new Pose(), climb: new Pose(), crouch: new Pose() };
-    this.w = { ground: 1, air: 0, glide: 0, slide: 0, swim: 0, climb: 0, crouch: 0 };
+    this.layers = { ground: new Pose(), air: new Pose(), glide: new Pose(), slide: new Pose(), swim: new Pose(), climb: new Pose(), crouch: new Pose(), rest: new Pose() };
+    this.w = { ground: 1, air: 0, glide: 0, slide: 0, swim: 0, climb: 0, crouch: 0, rest: 0 };
+    this.restT = 0; this.lieW = 0; this.dangleW = 0; this.hugW = 0;
+    this.armsHidden = false;
     this.phase = 0; this.swimPhase = 0; this.climbPhase = 0; this.idleT = 0;
     this.squash = new Spring(0, 16, 0.42);
     this.leanX = new Spring(0, 7, 0.9); this.leanZ = new Spring(0, 7, 0.9);
@@ -123,11 +128,18 @@ export class Animator {
     this.gpos.copy(gpos); this.gquat.copy(gquat); this.gup.set(0, 1, 0).applyQuaternion(gquat);
     this.stepEvents.length = 0;
     // ---- state weights
-    const target = S.state === 'ground' ? (S.crouch ? 'crouch' : 'ground') : S.state;
-    const rate = S.state === 'swim' || S.state === 'climb' ? 7 : 11;
+    const restOn = S.state === 'ground' && S.rest && S.rest.on;
+    const target = restOn ? 'rest' : S.state === 'ground' ? (S.crouch ? 'crouch' : 'ground') : S.state;
+    // sitting down / standing up is unhurried (≈1 s); everything else snaps quickly
+    const rate = restOn || this.w.rest > 0.02 ? 2.6 : S.state === 'swim' || S.state === 'climb' ? 7 : 11;
     for (const k in this.w) this.w[k] += ((k === target ? 1 : 0) - this.w[k]) * dampF(k === 'glide' ? 8 : rate, dt);
+    if (S.rest) {
+      this.lieW += ((restOn && S.rest.lie ? 1 : 0) - this.lieW) * dampF(1.1, dt);
+      this.dangleW += ((S.rest.dangle ? 1 : 0) - this.dangleW) * dampF(3, dt);
+      this.hugW += ((restOn && S.rest.hug ? 1 : 0) - this.hugW) * dampF(1.4, dt);
+    }
     this.exertion = clamp(this.exertion + dt * (S.speed > 8 ? 0.12 : S.speed > 4 ? 0.02 : -0.06), 0, 1);
-    this.breath += dt * (1.6 + this.exertion * 3.5);
+    this.breath += dt * (1.6 + this.exertion * 3.5 - this.w.rest * 0.6);
 
     // ---- gait clock (shared by ground/crouch layers) + footfall events
     {
@@ -156,7 +168,7 @@ export class Animator {
     if (wsum > 0 && Math.abs(wsum - 1) > 1e-4) {
       const inv = 1 / wsum;
       for (const v of P._vecs) v.multiplyScalar(inv);
-      P.fingers *= inv; P.terrain *= inv; P.pack *= inv; P.plant *= inv;
+      P.fingers *= inv; P.terrain *= inv; P.pack *= inv; P.plant *= inv; P.sit *= inv; P.handG *= inv;
     }
     // ---- hard landing overlay
     if (S.hardLand > 0.001) this._hardLand(P, S.hardLand);
@@ -179,6 +191,14 @@ export class Animator {
     const lookW = S.fp ? 1 : clamp(1 - this.w.swim * 0.5 - this.w.climb * 0.6, 0, 1);
     let ly = clamp(S.lookYaw, -1.25, 1.25), lp = clamp(S.lookPitch, -0.7, 0.55);
     if (!S.fp && Math.abs(S.lookYaw) > 1.9) { ly = 0; lp *= 0.3; } // don't twist the head around backwards
+    if (this.w.rest > 0.01 && !S.fp) {
+      // at rest the gaze wanders over the horizon and the sky, and now and then turns to the companion
+      this.restT += dt;
+      const wander = Math.sin(this.restT * 0.13) * 0.28 + Math.sin(this.restT * 0.051 + 1.7) * 0.18;
+      const toComp = S.rest?.compYaw !== undefined && S.rest.compYaw !== null ? smoothstep(0.55, 0.85, 0.5 + 0.5 * Math.sin(this.restT * 0.21 - 1.2)) : 0;
+      const ry = lerp(wander, S.rest?.compYaw || 0, toComp), rp = lerp(0.22 + 0.08 * Math.sin(this.restT * 0.09), -0.25, toComp);
+      ly = lerp(ly, ry, this.w.rest); lp = lerp(lp, rp * (1 - this.lieW * 0.6), this.w.rest);
+    } else this.restT = 0;
     this.lookYaw.update(ly * lookW, dt); this.lookPitch.update(lp * lookW, dt);
     P.chest.y += this.lookYaw.x * 0.2; P.neck.y += this.lookYaw.x * 0.35; P.head.y += this.lookYaw.x * 0.45;
     P.neck.x -= this.lookPitch.x * 0.4; P.head.x -= this.lookPitch.x * 0.6;
@@ -282,6 +302,59 @@ export class Animator {
     this._ground(L, S, dt);
     L.hipsPos.y -= 0.3; L.spine.x += 0.25; L.chest.x += 0.1; L.head.x -= 0.3;
     L.footL.z += 0.08; L.footR.z -= 0.08;
+  }
+
+  _rest(L, S, dt) {
+    // sitting on the ground or on an edge, the way the creator's characters rest and look out over a view:
+    //   knees-up : feet planted ahead, forearms draped over the knees, back slightly rounded, head up
+    //   dangle   : sat on a ledge, legs hanging over the drop, hands planted beside the hips
+    //   lie      : lean back against the pack, hands folded behind the head, looking up at the sky
+    //   hug      : the near arm around the companion sitting at the left hip
+    const lie = this.lieW, dg = this.dangleW, hug = this.hugW;
+    const t = this.restT;
+    const breathe = Math.sin(this.breath) * 0.01;
+    L.sit = 1;
+    L.hipsPos.set(0, -0.81, -0.03);
+    L.hipsRot.x = -0.12 + 0.1 * dg;
+    L.spine.x = lerp(lerp(0.2, 0.08, dg), -0.1, lie) + breathe; L.chest.x = lerp(0.06, -0.05, lie) - breathe * 1.4;
+    L.neck.x = lerp(-0.12, 0.1, lie); L.head.x = lerp(-0.16, 0.28, lie);
+    L.spine.z = 0.03 * Math.sin(t * 0.07); L.chest.y = 0.04 * Math.sin(t * 0.05 + 1);
+    // lie back about the seat (the pack becomes a pillow)
+    L.pivot.set(0, 0.16, -0.03);
+    L.rootRot.x = -1.08 * lie;
+    // legs: knees up (group space, feet on the ground) ↔ hanging over the edge (feet ride the body)
+    _v.set(0.135, DIM.ankle, 0.43); _w.set(0.1, -0.36, 0.27);
+    L.footL.lerpVectors(_v, _w, dg);
+    _v.set(-0.12, DIM.ankle, 0.385); _w.set(-0.11, -0.4, 0.23);
+    L.footR.lerpVectors(_v, _w, dg);
+    // dangling feet swing slowly, out of phase
+    L.footL.z += dg * 0.05 * Math.sin(t * 0.9); L.footR.z += dg * 0.05 * Math.sin(t * 0.9 + 2.1);
+    // lying: the legs stretch out a little
+    L.footL.z += lie * 0.12 * (1 - dg); L.footR.z += lie * 0.2 * (1 - dg); L.footR.x -= lie * 0.04;
+    L.footRotL.set(lerp(0, -0.5, dg), 0.22, 0); L.footRotR.set(lerp(0, -0.45, dg), -0.18, 0);
+    L.kneeL.set(lerp(0.12, 0.05, dg), lerp(1, 0.2, dg), 0.5); L.kneeR.set(lerp(-0.1, -0.05, dg), lerp(1, 0.2, dg), 0.5);
+    L.terrain = 1 - dg;
+    // arms (group space): knees ↔ ledge ↔ behind the head; the near (left) arm around the companion
+    L.handG = 1;
+    _v.set(0.1, 0.44, 0.37); _w.set(0.25, 0.06, 0.02);
+    L.handGL.lerpVectors(_v, _w, dg);
+    _v.set(-0.085, 0.42, 0.355); _w.set(-0.25, 0.06, 0.0);
+    L.handGR.lerpVectors(_v, _w, dg);
+    if (hug > 0.001) {
+      // around the companion's back (it sits at the left hip, ~0.45 m out), palm resting on its far side
+      _v.set(0.43, 0.27 + 0.01 * Math.sin(t * 0.8), -0.02 + 0.015 * Math.sin(t * 0.37));
+      L.handGL.lerp(_v, hug);
+      L.chest.z += 0.1 * hug; L.spine.z += 0.06 * hug; L.chest.y += 0.12 * hug;
+    }
+    if (lie > 0.001) {
+      _v.set(0.11, 0.45, -0.74); _w.set(-0.11, 0.45, -0.74);
+      L.handGL.lerp(_v, lie * (1 - hug)); L.handGR.lerp(_w, lie);
+    }
+    L.elbowL.set(lerp(0.7, 1, lie), lerp(-0.5, 0.3, lie), lerp(-0.4, 0.2, lie));
+    L.elbowR.set(lerp(-0.7, -1, lie), lerp(-0.5, 0.3, lie), lerp(-0.4, 0.2, lie));
+    L.handRotL.set(lerp(-0.6, 0.2, dg), 0, 0.25); L.handRotR.set(lerp(-0.6, 0.2, dg), 0, -0.25);
+    L.fingers = lerp(0.35, 0.15, dg);
+    L.pack = 0.4;
   }
 
   _air(L, S, dt) {
@@ -546,7 +619,7 @@ export class Animator {
     // hips
     this.pelvisDrop.update(this._pelvisTarget ?? 0, dt);
     this.lp[B.hips].copy(REST_POS.hips).add(P.hipsPos);
-    this.lp[B.hips].y += this.pelvisDrop.x * P.terrain;
+    this.lp[B.hips].y += this.pelvisDrop.x * P.terrain * (1 - clamp(P.sit, 0, 1)); // a seated pelvis rests on its seat
     this._setLocalEuler(B.hips, P.hipsRot);
     this._setLocalEuler(B.spine, P.spine);
     this._setLocalEuler(B.chest, P.chest);
@@ -610,6 +683,11 @@ export class Animator {
     for (const side of ['L', 'R']) {
       const hand = side === 'L' ? P.handL : P.handR;
       _t.copy(hand).applyQuaternion(this.gq[B.chest]).add(this.gp[B.chest]);
+      if (P.handG > 1e-3) { // blend toward a group-space target (normalised by its accumulated weight)
+        const hg = clamp(P.handG, 0, 1);
+        _u.copy(side === 'L' ? P.handGL : P.handGR).divideScalar(P.handG);
+        _t.lerp(_u, hg);
+      }
       if (P.plant > 0.01 && this.H?.ray) this._plant(_t, 0.045, clamp(P.plant, 0, 1));
       const bu = side === 'L' ? B.upperArmL : B.upperArmR, bl = side === 'L' ? B.foreArmL : B.foreArmR, be = side === 'L' ? B.handL : B.handR;
       _z.copy(side === 'L' ? P.elbowL : P.elbowR);
@@ -636,6 +714,9 @@ export class Animator {
     const hs = this.headHidden ? 0.0001 : 1;
     bones[B.neck].scale.setScalar(hs); // collar ring + helmet collapse (first person)
     bones[B.antenna].scale.setScalar(this.headHidden ? 0.0001 : 1);
+    // first-person viewmodel draws its own hands: collapse the body's arms
+    const as = this.armsHidden ? 0.0001 : 1;
+    bones[B.shoulderL].scale.setScalar(as); bones[B.shoulderR].scale.setScalar(as);
   }
 
   /** Eye position in group space (after update) — for the first-person camera. */

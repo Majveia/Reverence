@@ -1,15 +1,19 @@
-// Player track — the Explorer: a procedurally modelled, skinned space-explorer character.
+// Player track — the Explorer: a procedurally modelled, skinned wayfarer.
+//
+// Season 2 redesign (the creator's Characters folder): the figure reads by SILHOUETTE first — one strong
+// cloaked shape (deep hood, shoulder mantle, long coat whose split skirt is simulated cloth in Coat.js), a
+// tall pack with a bedroll, a coil of rope, a tin mug and a small warm lantern, a walking staff strapped
+// diagonally across the back (topped by a little ring of light), and ONE saturated accent: the red scarf
+// wrapped up over the mouth (its tails are simulated in Cloth.js). Muted wool / canvas / leather tones
+// that wear the planet's dust; ~7 heads tall.
 //
 // One skeleton (24 bones, identity rest orientations, character space: +Y up, +Z forward, +X = left),
-// five skinned meshes (fabric · hard shell · metal · glow · visor) → 5 draw calls (+ shadow pass).
-// Suit design: armoured off-white plates with bevelled edges and panel grooves (normal atlas), dark
-// technical fabric with quilted weave, accent colour blocking derived from the world's art direction,
-// iridescent reflective visor, jetpack with twin thrusters, emissive trims, scarf wrap (cloth tails
-// are simulated in Cloth.js). Everything is generated in code — no assets.
+// five skinned meshes (wool · leather · metal · glow · skin) → 5 draw calls (+ shadow pass).
+// Everything is generated in code — no assets.
 import * as THREE from 'three';
 import {
   Assembler, loft, loftSurface, patch, ellipsoidSurface, ellipsoid, box, lathe, torus, cylinder, tube,
-  xf, mirrorX, rigid, blendY, bandsY, quad, flatUv,
+  xf, rigid, blendY, bandsY,
 } from './geo.js';
 import { getTextures } from './textures.js';
 import { bakeSurface } from './bake.js';
@@ -24,6 +28,8 @@ export const B = {
   thighR: 16, shinR: 17, footR: 18,
   pack: 19, fingersL: 20, fingersR: 21, antenna: 22, root: 23,
 };
+// `antenna` is now the LANTERN hook: a pendulum bone hanging off the pack's lower left corner (the animator's
+// spring drives its swing).
 const REST = {
   root: [null, 0, 0, 0],
   hips: ['root', 0, 0.965, 0],
@@ -40,7 +46,7 @@ const REST = {
   shinL: ['thighL', 0.092, 0.51, 0.008],
   footL: ['shinL', 0.092, 0.09, -0.005],
   pack: ['chest', 0, 1.25, -0.17],
-  antenna: ['head', 0.158, 1.70, -0.03],
+  antenna: ['pack', 0.18, 1.0, -0.35],
 };
 // mirror right side
 for (const k of ['shoulder', 'upperArm', 'foreArm', 'hand', 'fingers', 'thigh', 'shin', 'foot']) {
@@ -78,6 +84,7 @@ export function makeSkeleton() {
 // ------------------------------------------------------------------ art-directed hero palette
 const hex = (h) => new THREE.Color(h);
 const clamp01 = (x, a, b) => Math.min(b, Math.max(a, x));
+const sstep = (a, b, x) => { const t = clamp01((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
 /** Piping / seam cord running over a loft surface S at angle(s) a(y), from y0 to y1, lifted by `lift`. */
 function seam(S, a, y0, y1, lift, radius, n = 14) {
@@ -91,10 +98,14 @@ function seam(S, a, y0, y1, lift, radius, n = 14) {
   }
   return tube(pts, radius, n * 3, 5, false);
 }
+
+/**
+ * Muted wool / canvas / leather tones chosen against the world's dominant ground hue (the figure must
+ * separate from the land by value and hue), plus the one warm accent: the red scarf (VISION rule 2).
+ */
 export function heroPalette(body) {
   const pal = body?.art?.palette || {};
   const key = body?.art?.key || '';
-  // dominant environment hue from the ground palette
   const hsl = { h: 0, s: 0, l: 0 };
   let x = 0, y = 0, wsum = 0;
   for (const [c, w] of [[pal.grass, 1.2], [pal.grass2, 0.8], [pal.sand, 0.8], [pal.rock, 0.6]]) {
@@ -107,23 +118,33 @@ export function heroPalette(body) {
   if (envHue < 0) envHue += 1;
   const warm = envHue < 0.12 || envHue > 0.9;
   const P = {
-    shell: hex('#e9e4d9'), shell2: hex('#d3cdc0'), accent: hex('#d65f28'), accent2: hex('#a8431c'),
-    suit: hex('#2c323b'), suit2: hex('#3a424e'), glove: hex('#3b3531'), sole: hex('#1c1a19'), strap: hex('#453c34'),
-    metal: hex('#a2a8b0'), brass: hex('#b8935c'), dark: hex('#23252a'),
-    glow: hex('#8af4ff'), scarf: hex('#c3301f'), scarf2: hex('#e0a13a'), visorTint: hex('#0b0d12'),
+    // wool coat / hood / mantle: one strong, dark-ish shape
+    coat: hex('#3c4553'), coat2: hex('#2a3039'), mantle: hex('#465060'),
+    tunic: hex('#6b5d4c'), trousers: hex('#3a342e'), patch: hex('#5a4f42'), wrap: hex('#a29276'),
+    boot: hex('#4b3323'), sole: hex('#1d1915'), leather: hex('#6a4528'), strap: hex('#563a24'),
+    brass: hex('#b58c4e'), iron: hex('#5d5a56'), canvas: hex('#8e7a55'), canvas2: hex('#7a6748'),
+    blanket: hex('#6e3a2b'), blanket2: hex('#cdb68a'), rope: hex('#a88a5c'), wood: hex('#6b4a2e'),
+    skin: hex('#c4977a'), hair: hex('#3a2a20'), eye: hex('#14100e'), lens: hex('#2a2016'),
+    scarf: hex('#b8261d'), scarf2: hex('#e3b25a'),
+    lamp: hex('#ffb35a'), glow: hex('#ffd9a0'),
+    // legacy keys (glider canopy / FX)
+    shell: hex('#d9ccb0'), shell2: hex('#c2b597'), accent: hex('#b8743a'), accent2: hex('#8a5328'),
+    suit: hex('#3c4553'), suit2: hex('#2a3039'), dark: hex('#2a2622'), metal: hex('#8a8178'),
+    visorTint: hex('#0b0d12'),
   };
-  if (warm) {
-    P.accent = hex('#1f8ea0'); P.accent2 = hex('#176c7c'); P.scarf = hex('#1a6fa8'); P.scarf2 = hex('#e8d6a8');
-  } else if (envHue > 0.55 && envHue <= 0.9) {
-    P.accent = hex('#e0892a'); P.scarf = hex('#e07a1c'); P.scarf2 = hex('#fff1c8');
+  if (warm) { // deserts / red rock: deep indigo wool reads against the warm land
+    P.coat = hex('#353b55'); P.coat2 = hex('#262a3c'); P.mantle = hex('#41486a'); P.canvas = hex('#9a8a68');
+  } else if (envHue > 0.55 && envHue <= 0.9) { // blue / violet / magenta worlds: warm umber wool
+    P.coat = hex('#5a4535'); P.coat2 = hex('#3d2f25'); P.mantle = hex('#6a5241'); P.canvas = hex('#8a7a5a');
   }
   // world-specific flourishes
-  if (key === 'bladerunner') { P.glow = hex('#ff4fa8'); P.shell = hex('#d8dbe2'); P.scarf = hex('#d9263f'); }
-  if (key === 'kubrick') { P.shell = hex('#f2f2f0'); P.accent = hex('#c9321f'); P.scarf = hex('#b8231a'); }
-  if (key === 'rickmorty') { P.glow = hex('#7dff9a'); }
-  if (key === 'botw') { P.scarf = hex('#c8341f'); P.accent = hex('#2f6fd0'); P.accent2 = hex('#244f96'); }
-  if (key === 'outerwilds') { P.accent = hex('#d8702a'); P.scarf = hex('#b83a24'); }
-  // dust / grime colour from the world's ground (desaturated, mid value) — the suit wears the planet
+  if (key === 'bladerunner') { P.coat = hex('#25272c'); P.coat2 = hex('#18191c'); P.mantle = hex('#30333a'); P.lamp = hex('#ffa060'); }
+  if (key === 'kubrick') { P.coat = hex('#d9d6cf'); P.coat2 = hex('#b9b5ac'); P.mantle = hex('#e6e3dc'); }
+  if (key === 'rickmorty') { P.glow = hex('#c8ffb0'); }
+  if (key === 'botw') { P.coat = hex('#34507a'); P.coat2 = hex('#24364f'); P.mantle = hex('#3f5d88'); }
+  if (key === 'moebius') { P.coat = hex('#2f4a5c'); P.coat2 = hex('#22343f'); P.mantle = hex('#e8dfc8'); }
+  P.suit = P.coat; P.suit2 = P.coat2;
+  // dust / grime colour from the world's ground (desaturated, mid value) — the cloth wears the planet
   {
     const d = new THREE.Color(pal.sand || pal.rock || '#8a7a64');
     if (pal.rock) d.lerp(new THREE.Color(pal.rock), 0.35);
@@ -146,44 +167,48 @@ export const SUIT_LIGHT = {
   uWaterP: { value: new THREE.Vector3(0, -1e4, 0) },
   uWaterOn: { value: 0 },
   uWaterCol: { value: new THREE.Color(0.02, 0.07, 0.08) },
+  uLamp: { value: 0 },                                      // lantern glow 0..1 (night / rest), warms the cloth near it
 };
 
-function patchLighting(mat, { rim = 0.0, sky = 0.2, wear = 1, key = 'x' } = {}) {
-  // • stylised rim/back light so silhouettes read against bright skies (BotW / Journey look)
-  // • sky fresnel: grazing angles pick up the sky colour (ties the hero into the world's light)
+export function patchLighting(mat, { rim = 0.0, sky = 0.2, wear = 1, key = 'x', sunRim = 0.8 } = {}) {
+  // • sun-keyed back rim: when the sun is behind the figure, grazing surfaces facing the sun catch a warm
+  //   rim (the golden-hour halo that separates the silhouette from the land)
+  // • soft rim + sky fresnel: grazing angles pick up the sky colour (ties the figure into the world's light)
   // • ground bounce: the underside of the body is lit by the colour of the terrain below
-  // • per-vertex wear from the surface bake (bake.js): dirt roughens and kills the clearcoat,
-  //   chipped edges turn glossier / metallic
+  // • per-vertex wear from the surface bake (bake.js): dirt roughens, worn edges go glossier
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uRimStrength = { value: rim };
     sh.uniforms.uSkyRim = { value: sky };
+    sh.uniforms.uSunRimK = { value: sunRim };
     sh.uniforms.uWearK = { value: wear };
     sh.uniforms.uUpW = SUIT_LIGHT.uUpW; sh.uniforms.uBounce = SUIT_LIGHT.uBounce; sh.uniforms.uSkyAmb = G.uAmbientSky;
+    sh.uniforms.uSunDirW = G.uSunDir; sh.uniforms.uSunColW = G.uSunColor;
     sh.uniforms.uWaterN = SUIT_LIGHT.uWaterN; sh.uniforms.uWaterP = SUIT_LIGHT.uWaterP; sh.uniforms.uWaterOn = SUIT_LIGHT.uWaterOn; sh.uniforms.uWaterCol = SUIT_LIGHT.uWaterCol;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec2 aWear;\nvarying vec2 vWear;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWear = aWear;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uRimStrength; uniform float uSkyRim; uniform float uWearK; uniform vec3 uUpW; uniform vec3 uBounce; uniform vec3 uSkyAmb;\nuniform vec3 uWaterN; uniform vec3 uWaterP; uniform float uWaterOn; uniform vec3 uWaterCol;\nvarying vec2 vWear;')
+      .replace('#include <common>', '#include <common>\nuniform float uRimStrength; uniform float uSkyRim; uniform float uSunRimK; uniform float uWearK; uniform vec3 uUpW; uniform vec3 uBounce; uniform vec3 uSkyAmb; uniform vec3 uSunDirW; uniform vec3 uSunColW;\nuniform vec3 uWaterN; uniform vec3 uWaterP; uniform float uWaterOn; uniform vec3 uWaterCol;\nvarying vec2 vWear;')
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = clamp(roughnessFactor + vWear.x * 0.32 * uWearK - vWear.y * 0.22 * uWearK, 0.04, 1.0);`)
+        roughnessFactor = clamp(roughnessFactor + vWear.x * 0.2 * uWearK - vWear.y * 0.22 * uWearK, 0.04, 1.0);`)
       .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
-        metalnessFactor = clamp(metalnessFactor + vWear.y * 0.3 * uWearK, 0.0, 1.0);`)
-      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
-        #ifdef USE_CLEARCOAT
-          material.clearcoat *= 1.0 - clamp(vWear.x * 1.3, 0.0, 1.0);
-        #endif`)
+        metalnessFactor = clamp(metalnessFactor + vWear.y * 0.15 * uWearK, 0.0, 1.0);`)
       .replace('#include <opaque_fragment>', `
         {
-          vec3 V = normalize(vViewPosition);
-          float ndv = clamp(dot(normal, -V), 0.0, 1.0);
+          vec3 Vc = normalize(vViewPosition);            // fragment → camera (view space)
+          float ndv = clamp(dot(normal, Vc), 0.0, 1.0);
           float fr = pow(1.0 - ndv, 3.0);
-          float rimT = fr * uRimStrength;
-          outgoingLight += rimT * (totalDiffuse * 0.6 + diffuseColor.rgb * 0.08);
+          outgoingLight += fr * uRimStrength * (totalDiffuse * 0.35 + diffuseColor.rgb * 0.03);
           vec3 upV = normalize((viewMatrix * vec4(uUpW, 0.0)).xyz);
           float nu = dot(normal, upV);
           // sky fresnel on upward / sideways facing grazing surfaces
           outgoingLight += fr * uSkyRim * uSkyAmb * (0.35 + 0.65 * clamp(nu * 0.5 + 0.6, 0.0, 1.0)) * (0.2 + 0.8 * diffuseColor.rgb);
+          // sun back-rim (golden hour halo): sun behind the figure, normal turned toward the sun
+          vec3 sV = normalize((viewMatrix * vec4(uSunDirW, 0.0)).xyz);
+          float back = clamp(-dot(sV, Vc) * 0.8 + 0.2, 0.0, 1.0);
+          float facing = clamp(dot(normal, sV) * 0.7 + 0.3, 0.0, 1.0);
+          float sunUp = clamp(dot(normalize(uSunDirW), uUpW) * 4.0 + 0.2, 0.0, 1.0);
+          outgoingLight += uSunColW * pow(1.0 - ndv, 2.5) * back * back * facing * sunUp * uSunRimK * (0.25 + 0.75 * diffuseColor.rgb) * 0.35;
           // warm/cool bounce from the ground under the hero (BotW / Journey colour bleeding)
           float down = clamp(-nu * 0.6 + 0.4, 0.0, 1.0);
           outgoingLight += diffuseColor.rgb * uBounce * down * down;
@@ -193,70 +218,12 @@ function patchLighting(mat, { rim = 0.0, sky = 0.2, wear = 1, key = 'x' } = {}) 
             float depth = dot(wn, wp + vViewPosition); // > 0 below the surface
             float ab = 1.0 - exp(-max(depth, 0.0) * 3.2);
             outgoingLight = mix(outgoingLight, uWaterCol, clamp(ab * 0.9 + step(0.0, depth) * 0.25, 0.0, 0.95));
-            // wet meniscus line at the waterline
             outgoingLight += (uSkyAmb * 0.5 + 0.03) * smoothstep(0.035, 0.0, abs(depth)) * 0.8;
           }
         }
         #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'rv-suit2-' + key + '-' + rim + '-' + sky;
-  return mat;
-}
-
-/**
- * Gold-film astronaut visor: a procedural sky / horizon / ground / sun reflection (in the planet's local
- * frame) layered over the PBR env reflection, so the dome always reads as polished glass (Starfield/NMS).
- * `mat.userData.uUp` must be fed the player's local up each frame.
- */
-function patchVisor(mat, P) {
-  const uUp = { value: new THREE.Vector3(0, 1, 0) };
-  const tint = { value: P.visorGold || new THREE.Color(1.0, 0.7, 0.3) };
-  mat.userData.uUp = uUp;
-  mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uVUp = uUp; sh.uniforms.uVTint = tint;
-    sh.uniforms.uVSun = G.uSunColor; sh.uniforms.uVSunDir = G.uSunDir; sh.uniforms.uVSky = G.uAmbientSky; sh.uniforms.uVGround = G.uAmbientGround;
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uVUp; uniform vec3 uVTint; uniform vec3 uVSun; uniform vec3 uVSunDir; uniform vec3 uVSky; uniform vec3 uVGround;')
-      .replace('#include <opaque_fragment>', `
-        {
-          vec3 Vv = normalize(vViewPosition);
-          vec3 Rv = reflect(-Vv, normal);
-          vec3 Rw = normalize((vec4(Rv, 0.0) * viewMatrix).xyz);
-          float ndv = clamp(dot(normal, Vv), 0.0, 1.0);
-          float h = dot(Rw, uVUp);
-          float fres = 0.22 + 0.78 * pow(1.0 - ndv, 3.0);
-          // crisp "astronaut visor" reflection: bright hazy horizon, deep zenith, and a MID-tone ground (never a
-          // black cavity — a dark lower half read as an open mouth), soft horizon, sun glint. The PBR env map
-          // is only a faint layer (its terrain silhouettes read as teeth on a small dome).
-          vec3 skyZ = uVSky * 1.5 + 0.02;
-          vec3 skyH = uVSky * 3.2 + uVSun * 0.05 + 0.05;
-          vec3 sky = mix(skyH, skyZ, smoothstep(0.0, 0.75, h));
-          float Lh = dot(skyH, vec3(0.3333));
-          vec3 gHue = uVGround / max(dot(uVGround, vec3(0.3333)), 1e-3);
-          gHue = mix(vec3(1.0), clamp(gHue, 0.0, 2.0), 0.55);
-          vec3 grd = gHue * Lh * mix(0.6, 0.3, smoothstep(0.0, -0.8, h));
-          // soft horizon: a broad gradient (a crisp line across the small dome read as lips)
-          vec3 env = mix(grd, sky, smoothstep(-0.3, 0.12, h));
-          env += (uVSky * 0.5 + uVSun * 0.04) * exp(-abs(h + 0.02) * 9.0); // hazy horizon glow
-          float sd = max(dot(Rw, normalize(uVSunDir)), 0.0);
-          vec3 spec = uVSun * (pow(sd, 1600.0) * 60.0 + pow(sd, 90.0) * 0.8 + pow(sd, 8.0) * 0.05);
-          outgoingLight = outgoingLight * 0.05 + env * fres * uVTint * 0.95 + spec * mix(uVTint, vec3(1.0), 0.5);
-          // soft studio-window glint (reads as a curved glass dome at any distance)
-          vec3 Rvn = normalize(Rv);
-          float win = smoothstep(0.45, 0.8, Rvn.y) * smoothstep(0.5, 0.12, abs(Rvn.x + 0.3));
-          outgoingLight += uVTint * (uVSky * 1.6 + uVSun * 0.05) * win * 0.85;
-          // crisp curved highlight on the upper dome (the bright sky reflected by a tight curvature): the one cue
-          // that makes a small visor read as glass rather than a painted surface
-          float gl = dot(normal, normalize(vec3(-0.42, 0.55, 0.72)));
-          float streak = smoothstep(0.87, 0.935, gl) * 0.75;
-          outgoingLight += mix(uVTint, vec3(1.0), 0.7) * (uVSky * 4.0 + uVSun * 0.12 + 0.12) * streak;
-          // warm gold interference band near the rim of the dome
-          float rimG = pow(1.0 - ndv, 5.0);
-          outgoingLight += vec3(1.0, 0.6, 0.18) * rimG * (uVSky * 1.2 + uVSun * 0.1);
-        }
-        #include <opaque_fragment>`);
-  };
-  mat.customProgramCacheKey = () => 'rv-visor';
+  mat.customProgramCacheKey = () => 'rv-wayfarer-' + key + '-' + rim + '-' + sky + '-' + sunRim;
   return mat;
 }
 
@@ -264,33 +231,31 @@ export function makeMaterials(renderer, P, quality) {
   const tex = getTextures(renderer);
   const hi = quality?.tier !== 'low';
   const Std = hi ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial;
-  const fabric = new Std({ vertexColors: true, roughness: 0.86, metalness: 0.0, normalMap: tex.fabricNormal, normalScale: new THREE.Vector2(0.55, 0.55) });
-  if (hi) { fabric.sheen = 0.3; fabric.sheenRoughness = 0.6; fabric.sheenColor = new THREE.Color(P.suit).lerp(new THREE.Color(0.5, 0.52, 0.56), 0.35); }
-  if (tex.fabricNormal) tex.fabricNormal.repeat.set(9, 9);
-  const hard = new Std({ vertexColors: true, roughness: 0.52, metalness: 0.0, map: tex.panelAlbedo || null, normalMap: tex.panelNormal, normalScale: new THREE.Vector2(0.9, 0.9), roughnessMap: tex.wearRough });
-  if (hi) { hard.clearcoat = 0.22; hard.clearcoatRoughness = 0.4; }
+  const woolN = tex.woolNormal || tex.fabricNormal;
+  if (woolN) woolN.repeat.set(7, 7);
+  // felted wool / canvas: very rough, soft sheen in a lighter tone of the cloth
+  const fabric = new Std({ vertexColors: true, roughness: 0.95, metalness: 0.0, normalMap: woolN, normalScale: new THREE.Vector2(0.7, 0.7) });
+  if (hi) { fabric.sheen = 0.55; fabric.sheenRoughness = 0.75; fabric.sheenColor = new THREE.Color(P.coat).lerp(new THREE.Color(0.75, 0.72, 0.66), 0.45); }
+  // leather (boots, straps, belt, bracer): waxy, worn edges (bake convexity) go glossier
+  const hard = new Std({ vertexColors: true, roughness: 0.62, metalness: 0.0, normalMap: woolN, normalScale: new THREE.Vector2(0.25, 0.25), roughnessMap: tex.wearRough });
+  if (hi) { hard.clearcoat = 0.12; hard.clearcoatRoughness = 0.55; }
   if (tex.wearRough) tex.wearRough.repeat.set(3, 3);
-  const metal = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0.92, roughnessMap: tex.wearRough });
+  const metal = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.85, roughnessMap: tex.wearRough });
   const glow = new THREE.MeshBasicMaterial({ vertexColors: true, color: new THREE.Color(1, 1, 1).multiplyScalar(4.0) });
-  const visor = hi
-    ? new THREE.MeshPhysicalMaterial({
-      // gold-film sun visor: gold metal F0 under a glass clearcoat, thin-film sheen at grazing angles
-      color: new THREE.Color(0.42, 0.26, 0.08), roughness: 0.08, metalness: 1.0, clearcoat: 1, clearcoatRoughness: 0.03,
-      iridescence: 0.2, iridescenceIOR: 1.35, iridescenceThicknessRange: [300, 480], envMapIntensity: 0.45,
-    })
-    : new THREE.MeshStandardMaterial({ color: new THREE.Color(0.42, 0.26, 0.08), roughness: 0.08, metalness: 1.0, envMapIntensity: 0.45 });
-  patchVisor(visor, P);
-  patchLighting(fabric, { rim: 0.6, sky: 0.16, key: 'fabric' });
-  patchLighting(hard, { rim: 0.8, sky: 0.3, key: 'hard' });
-  patchLighting(metal, { rim: 0.3, sky: 0.12, key: 'metal', wear: 0.6 });
-  const mats = { fabric, hard, metal, glow, visor };
-  for (const m of Object.values(mats)) { m.name = 'rv-explorer-' + (m.type || ''); }
+  const skin = new Std({ vertexColors: true, roughness: 0.58, metalness: 0.0 });
+  if (hi) { skin.sheen = 0.25; skin.sheenRoughness = 0.5; skin.sheenColor = new THREE.Color(0.9, 0.55, 0.45); }
+  patchLighting(fabric, { rim: 0.35, sky: 0.14, key: 'wool', sunRim: 1.0 });
+  patchLighting(hard, { rim: 0.3, sky: 0.12, key: 'leather', sunRim: 0.7 });
+  patchLighting(metal, { rim: 0.2, sky: 0.1, key: 'metal', wear: 0.6, sunRim: 0.4 });
+  patchLighting(skin, { rim: 0.4, sky: 0.1, key: 'skin', sunRim: 1.0, wear: 0.3 });
+  const mats = { fabric, hard, metal, glow, skin };
+  for (const [k, m] of Object.entries(mats)) { m.name = 'rv-explorer-' + k; }
   return mats;
 }
 
 // ------------------------------------------------------------------ model
 /**
- * Build the explorer. Returns { group, root (bone), bones, skeleton, meshes, materials, palette, anchors }.
+ * Build the explorer. Returns { group, root (bone), bones, skeleton, meshes, materials, palette, triangles }.
  * `quality` scales tessellation.
  */
 export function buildExplorer(renderer, body, quality) {
@@ -298,334 +263,330 @@ export function buildExplorer(renderer, body, quality) {
   const lod = quality?.tier === 'low' ? 0.6 : quality?.tier === 'med' ? 0.8 : 1;
   const R = (n) => Math.max(6, Math.round(n * lod));
   const A = new Assembler();
-  const L = (name) => B[name + 'L'], Rt = (name) => B[name + 'R'];
 
-  // ---------------- torso (fabric)
+  // ================================================================ torso: wool coat body
   const torsoSecs = [
-    { y: 0.84, rx: 0.112, rz: 0.084 },
-    { y: 0.93, rx: 0.156, rz: 0.106, e: 2.3 },
-    { y: 1.00, rx: 0.158, rz: 0.104, e: 2.4 },
-    { y: 1.07, rx: 0.142, rz: 0.098, e: 2.4 },
-    { y: 1.15, rx: 0.149, rz: 0.104, e: 2.5 },
-    { y: 1.25, rx: 0.167, rz: 0.114, fz: 0.012, e: 2.6 },
-    { y: 1.34, rx: 0.178, rz: 0.12, fz: 0.018, e: 2.7 },
-    { y: 1.41, rx: 0.172, rz: 0.114, fz: 0.012, e: 2.8 },
-    { y: 1.46, rx: 0.128, rz: 0.092, e: 2.4 },
-    { y: 1.495, rx: 0.074, rz: 0.068 },
-    { y: 1.56, rx: 0.056, rz: 0.056 },
+    { y: 0.84, rx: 0.118, rz: 0.09 },
+    { y: 0.93, rx: 0.163, rz: 0.113, e: 2.3 },
+    { y: 1.00, rx: 0.166, rz: 0.11, e: 2.4 },
+    { y: 1.07, rx: 0.152, rz: 0.104, e: 2.4 },
+    { y: 1.15, rx: 0.158, rz: 0.11, e: 2.5 },
+    { y: 1.25, rx: 0.176, rz: 0.12, fz: 0.014, e: 2.6 },
+    { y: 1.34, rx: 0.186, rz: 0.126, fz: 0.02, e: 2.7 },
+    { y: 1.41, rx: 0.178, rz: 0.12, fz: 0.012, e: 2.8 },
+    { y: 1.46, rx: 0.132, rz: 0.098, e: 2.4 },
+    { y: 1.495, rx: 0.08, rz: 0.074 },
+    { y: 1.54, rx: 0.06, rz: 0.06 },
   ];
   const torsoSkin = bandsY([[B.hips, 0.95], [B.spine, 1.1], [B.chest, 1.27], [B.chest, 1.45], [B.neck, 1.52]]);
-  A.add('fabric', loft(torsoSecs, { radial: R(28), sub: 3, closeBottom: true }), P.suit, torsoSkin);
+  A.add('fabric', loft(torsoSecs, { radial: R(28), sub: 3, closeBottom: true }), P.coat, torsoSkin);
   const TS = loftSurface(torsoSecs);
-  // abdominal bellows
-  for (let i = 0; i < 4; i++) {
-    const y = 1.035 + i * 0.03;
-    const g = torus(0.146 + (i === 0 || i === 3 ? 0.002 : 0.006), 0.0105, R(8), R(28));
-    xf(g, 0, y, 0, Math.PI / 2, 0, 0, 1, 0.7, 1);
-    A.add('fabric', g, P.suit2, torsoSkin);
+  // wrap-over front closure (coat overlaps left over right): a dark fold line + toggles
+  A.add('fabric', seam(TS, (y) => 0.16 + (y - 1.0) * 0.5, 0.99, 1.43, 0.004, 0.0075, 16), P.coat2, torsoSkin);
+  for (let i = 0; i < 3; i++) {
+    const y = 1.1 + i * 0.1, a = 0.16 + (y - 1.0) * 0.5;
+    const p = new THREE.Vector3(); TS(a, y, p);
+    const g = box(0.024, 0.012, 0.012, 0.005); xf(g, p.x, p.y, p.z + 0.006, 0, a, 0); A.add('metal', g, P.brass, torsoSkin);
   }
-  // chest plate (shell) + yoke (accent) + back plate + side ribs
-  const chestSkin = bandsY([[B.spine, 1.16], [B.chest, 1.27]]);
-  A.add('hard', patch(TS, { u0: -1.2, u1: 1.2, v0: 1.17, v1: 1.37, nu: R(14), nv: R(10), off: 0.011, thick: 0.016, bevel: 0.009, round: 5, bulge: 0.01, uvRect: quad(1), taper: (t) => [-0.95 - 0.3 * t, 0.95 + 0.3 * t] }), P.shell, chestSkin);
-  A.add('hard', patch(TS, { u0: -1.42, u1: 1.42, v0: 1.378, v1: 1.452, nu: R(16), nv: R(5), off: 0.013, thick: 0.014, bevel: 0.008, round: 4, uvRect: quad(0) }), P.accent, rigid(B.chest));
-  A.add('hard', patch(TS, { u0: Math.PI - 1.05, u1: Math.PI + 1.05, v0: 1.13, v1: 1.43, nu: R(12), nv: R(10), off: 0.01, thick: 0.014, bevel: 0.008, round: 5, uvRect: quad(2) }), P.shell2, chestSkin);
-  for (const s of [1, -1]) {
-    const g = patch(TS, { u0: s * 1.45 - 0.28, u1: s * 1.45 + 0.28, v0: 1.08, v1: 1.24, nu: R(6), nv: R(8), off: 0.009, thick: 0.012, bevel: 0.006, round: 6, uvRect: quad(3) });
-    A.add('hard', g, P.shell2, bandsY([[B.spine, 1.1], [B.chest, 1.24]]));
+  // side + back seams (tailoring lines read at game distance)
+  for (const sd of [1, -1]) A.add('fabric', seam(TS, sd * Math.PI * 0.62, 0.9, 1.4, 0.002, 0.004, 14), P.coat2, torsoSkin);
+  A.add('fabric', seam(TS, Math.PI, 0.9, 1.44, 0.002, 0.004, 14), P.coat2, torsoSkin);
+  // belt + buckle + pouches + a small satchel on the right hip
+  { const g = torus(0.172, 0.022, R(8), R(32)); xf(g, 0, 0.978, 0.004, Math.PI / 2, 0, 0, 1, 0.7, 1); A.add('hard', g, P.leather, rigid(B.hips)); }
+  { const g = box(0.06, 0.05, 0.02, 0.006); xf(g, 0, 0.978, 0.124); A.add('metal', g, P.brass, rigid(B.hips)); }
+  { const g = box(0.034, 0.03, 0.022, 0.004); xf(g, 0, 0.978, 0.128); A.add('hard', g, P.leather, rigid(B.hips)); }
+  for (const [a, w, h] of [[1.85, 0.08, 0.085], [2.5, 0.065, 0.07]]) {
+    const g = box(w, h, 0.05, 0.014);
+    const x = Math.sin(a) * 0.18, z = Math.cos(a) * 0.125;
+    xf(g, x, 0.95, z, 0, a, 0);
+    A.add('hard', g, P.leather, rigid(B.hips));
+    const f = box(w * 1.04, 0.026, 0.054, 0.008); xf(f, x, 0.985, z, -0.1, a, 0); A.add('hard', f, P.strap, rigid(B.hips));
   }
-  // chest status light + accent stripe
-  { const g = box(0.035, 0.012, 0.01, 0.004); xf(g, -0.085, 1.325, 0.152, -0.2, -0.45, 0); A.add('glow', g, P.glow, rigid(B.chest)); }
-  { const g = box(0.012, 0.09, 0.012, 0.004); xf(g, 0.085, 1.28, 0.148, -0.18, 0.42, 0); A.add('hard', g, P.accent, rigid(B.chest)); }
+  { // satchel (right hip) on a cross-body strap
+    const g = box(0.05, 0.13, 0.16, 0.02); xf(g, -0.2, 0.9, 0.03, 0, 0, 0.06); A.add('fabric', g, P.canvas2, rigid(B.hips));
+    const f = box(0.056, 0.06, 0.165, 0.012); xf(f, -0.202, 0.945, 0.03, 0, 0, 0.06); A.add('hard', f, P.leather, rigid(B.hips));
+  }
 
-  // side seams (accent piping) + front zip on the undersuit
-  for (const sd of [1, -1]) A.add('fabric', seam(TS, sd * Math.PI / 2, 0.86, 1.43, 0.003, 0.0052, 16), P.accent2, torsoSkin);
-  A.add('metal', seam(TS, 0, 0.99, 1.17, 0.002, 0.0042, 10), P.metal, torsoSkin);
-  { const g = box(0.012, 0.022, 0.006, 0.002); xf(g, 0, 1.165, 0.118); A.add('metal', g, P.brass, rigid(B.chest)); }
-  // belt + buckle + pouches
-  { const g = torus(0.158, 0.021, R(8), R(32)); xf(g, 0, 0.978, 0.004, Math.PI / 2, 0, 0, 1, 0.69, 1); A.add('hard', g, P.strap, rigid(B.hips)); }
-  { const g = box(0.07, 0.05, 0.024, 0.008); xf(g, 0, 0.978, 0.113); A.add('metal', g, P.brass, rigid(B.hips)); }
-  { const g = box(0.036, 0.02, 0.012, 0.004); xf(g, 0, 0.978, 0.126); A.add('glow', g, P.glow, rigid(B.hips)); }
-  for (const [a, w, h] of [[1.95, 0.075, 0.07], [-1.95, 0.075, 0.07], [2.55, 0.06, 0.06], [-2.55, 0.06, 0.06]]) {
-    const g = box(w, h, 0.045, 0.012);
-    const x = Math.sin(a) * 0.17, z = Math.cos(a) * 0.115;
-    xf(g, x, 0.962, z, 0, a, 0);
-    A.add('hard', g, P.shell2, rigid(B.hips));
+  // ================================================================ mantle (short shoulder cape)
+  const mantleSecs = [
+    { y: 1.18, rx: 0.262, rz: 0.19, e: 2.15 },
+    { y: 1.25, rx: 0.268, rz: 0.183, e: 2.25 },
+    { y: 1.34, rx: 0.258, rz: 0.168, e: 2.4 },
+    { y: 1.42, rx: 0.21, rz: 0.146, e: 2.4 },
+    { y: 1.48, rx: 0.13, rz: 0.112 },
+    { y: 1.525, rx: 0.092, rz: 0.088 },
+  ];
+  const mantleSkin = (x, y, z, o) => {
+    // the sides ride a little with the upper arms so the cape lifts when the arms rise
+    const t = sstep(0.14, 0.27, Math.abs(x)) * sstep(1.44, 1.3, y) * 0.42;
+    o[0] = y > 1.47 ? B.neck : B.chest; o[1] = 1 - t; o[2] = x > 0 ? B.upperArmL : B.upperArmR; o[3] = t;
+    return o;
+  };
+  A.add('fabric', loft(mantleSecs, { radial: R(32), sub: 3, ripple: (y) => 1 + 0.012 * sstep(1.3, 1.18, y) }), P.mantle, mantleSkin);
+  { // thick hem (the cape has weight) + inner lining band seen from below
+    const s = mantleSecs[0];
+    const g = torus(s.rx + 0.004, 0.012, R(6), R(40)); xf(g, 0, s.y + 0.004, 0, Math.PI / 2, 0, 0, 1, (s.rz + 0.004) / (s.rx + 0.004), 1);
+    A.add('fabric', g, P.coat2, mantleSkin);
+    const inner = loft([{ y: 1.18, rx: s.rx - 0.006, rz: s.rz - 0.006, e: 2.15 }, { y: 1.27, rx: 0.25, rz: 0.17, e: 2.3 }], { radial: R(32), sub: 1 });
+    // flip winding: visible from inside
+    const ia = inner.index; for (let i = 0; i < ia.count; i += 3) { const b = ia.getX(i + 1); ia.setX(i + 1, ia.getX(i + 2)); ia.setX(i + 2, b); }
+    const na = inner.attributes.normal; for (let i = 0; i < na.count; i++) na.setXYZ(i, -na.getX(i), -na.getY(i), -na.getZ(i));
+    A.add('fabric', inner, P.coat2, mantleSkin);
   }
-  // hip guards (move with the thighs)
-  for (const s of [1, -1]) {
-    const g = patch(TS, { u0: s * 1.55 - 0.42, u1: s * 1.55 + 0.42, v0: 0.84, v1: 0.955, nu: R(8), nv: R(6), off: 0.028, thick: 0.012, bevel: 0.006, round: 5, back: true, uvRect: quad(0) });
-    A.add('hard', g, P.shell, rigid(s > 0 ? B.thighL : B.thighR));
+  // a stitched trim band near the hem
+  {
+    const pts = []; const p = new THREE.Vector3(); const MS = loftSurface(mantleSecs);
+    for (let i = 0; i <= 40; i++) { MS((i / 40) * Math.PI * 2, 1.205, p); const c = p.clone(); c.y = 0; const d = c.clone().normalize(); pts.push(p.clone().addScaledVector(d, 0.003)); }
+    A.add('fabric', tube(pts, 0.0045, R(80), 4, true), P.scarf2.clone().multiplyScalar(0.55), mantleSkin);
   }
-  // collar ring + scarf wrap
-  { const g = torus(0.079, 0.013, R(8), R(28)); xf(g, 0, 1.515, -0.004, Math.PI / 2); A.add('metal', g, P.metal, rigid(B.neck)); }
-  { const g = torus(0.104, 0.034, R(10), R(30)); xf(g, 0, 1.478, -0.01, Math.PI / 2 + 0.1, 0, 0, 1, 1, 0.9); A.add('fabric', g, P.scarf, bandsY([[B.chest, 1.45], [B.neck, 1.5]])); }
-  { const g = ellipsoid(0.07, 0.05, 0.05, R(12), R(8)); xf(g, 0.03, 1.47, 0.085, 0.3, 0.2, 0.3); A.add('fabric', g, P.scarf, rigid(B.chest)); }
 
-  // ---------------- arms (left built, mirrored for right)
+  // ================================================================ arms: coat sleeves + leather gloves
   const buildArm = (side) => {
     const x = 0.19 * side, z = -0.025;
     const ax = (b) => B[b + (side > 0 ? 'L' : 'R')];
     const secs = [
-      { y: 0.84, rx: 0.036, rz: 0.04, ox: x, oz: z },
-      { y: 0.88, rx: 0.039, rz: 0.043, ox: x, oz: z },
-      { y: 1.0, rx: 0.045, rz: 0.049, ox: x, oz: z },
-      { y: 1.1, rx: 0.046, rz: 0.049, ox: x, oz: z },
-      { y: 1.2, rx: 0.052, rz: 0.055, ox: x, oz: z },
-      { y: 1.33, rx: 0.058, rz: 0.06, ox: x, oz: z },
-      { y: 1.45, rx: 0.056, rz: 0.058, ox: x, oz: z },
+      { y: 0.85, rx: 0.046, rz: 0.05, ox: x, oz: z },
+      { y: 0.885, rx: 0.052, rz: 0.056, ox: x, oz: z },
+      { y: 0.95, rx: 0.054, rz: 0.058, ox: x, oz: z },
+      { y: 1.05, rx: 0.054, rz: 0.057, ox: x, oz: z },
+      { y: 1.15, rx: 0.056, rz: 0.06, ox: x, oz: z },
+      { y: 1.27, rx: 0.06, rz: 0.064, ox: x, oz: z },
+      { y: 1.38, rx: 0.064, rz: 0.066, ox: x, oz: z },
+      { y: 1.45, rx: 0.06, rz: 0.062, ox: x, oz: z },
     ];
-    for (const q of secs) { q.rx *= 1.13; q.rz *= 1.13; }
-    const skin = bandsY([[ax('hand'), 0.845], [ax('foreArm'), 0.875], [ax('foreArm'), 1.085], [ax('upperArm'), 1.14]]);
-    A.add('fabric', loft(secs, { radial: R(18), sub: 3 }), P.suit, skin);
+    const skin = bandsY([[ax('hand'), 0.85], [ax('foreArm'), 0.88], [ax('foreArm'), 1.085], [ax('upperArm'), 1.14]]);
+    A.add('fabric', loft(secs, { radial: R(18), sub: 3 }), P.coat, skin);
     const AS = loftSurface(secs);
     const outer = side > 0 ? Math.PI / 2 : -Math.PI / 2;
-    // outer piping + inner seam
-    A.add('fabric', seam(AS, outer, 0.9, 1.44, 0.002, 0.0045, 12), P.accent2, skin);
-    A.add('fabric', seam(AS, -outer, 0.9, 1.3, 0.001, 0.0032, 10), P.suit2, skin);
-    // gauntlet
-    A.add('hard', patch(AS, { u0: outer - 1.55, u1: outer + 1.55, v0: 0.885, v1: 1.06, nu: R(10), nv: R(8), off: 0.008, thick: 0.012, bevel: 0.006, round: 5, uvRect: quad(3) }), P.shell, rigid(ax('foreArm')));
-    // upper arm band (accent)
-    A.add('hard', patch(AS, { u0: outer - 1.7, u1: outer + 1.7, v0: 1.2, v1: 1.27, nu: R(10), nv: R(4), off: 0.007, thick: 0.01, bevel: 0.005, round: 4, uvRect: quad(0) }), P.accent, rigid(ax('upperArm')));
-    // shoulder pauldron (two layers)
-    const sc = new THREE.Vector3(x, 1.4, z);
-    const E1 = ellipsoidSurface(sc, new THREE.Vector3(0.082, 0.07, 0.085));
-    A.add('hard', patch(E1, { u0: outer - 1.25, u1: outer + 1.25, v0: -0.25, v1: 1.3, nu: R(12), nv: R(10), off: 0.012, thick: 0.012, bevel: 0.007, round: 5, back: true, uvRect: quad(0) }), P.shell, rigid(ax('upperArm')));
-    const E2 = ellipsoidSurface(sc.clone().add(new THREE.Vector3(0.004 * side, -0.05, 0)), new THREE.Vector3(0.078, 0.06, 0.08));
-    A.add('hard', patch(E2, { u0: outer - 1.1, u1: outer + 1.1, v0: -0.55, v1: 0.2, nu: R(10), nv: R(6), off: 0.014, thick: 0.01, bevel: 0.006, round: 5, back: true, uvRect: quad(0) }), P.accent, rigid(ax('upperArm')));
-    // pauldron light strip
-    { const g = box(0.008, 0.01, 0.05, 0.003); xf(g, x + side * 0.094, 1.39, z); A.add('glow', g, P.glow, rigid(ax('upperArm'))); }
-    // elbow pad
-    { const g = ellipsoid(0.038, 0.042, 0.022, R(12), R(8)); xf(g, x, 1.1, z - 0.045); A.add('hard', g, P.shell2, rigid(ax('upperArm'))); }
-    // wrist ring
-    { const g = torus(0.041, 0.008, R(6), R(18)); xf(g, x, 0.872, z, Math.PI / 2); A.add('metal', g, P.metal, rigid(ax('foreArm'))); }
-    // wrist device (left arm only): screen
+    A.add('fabric', seam(AS, outer + Math.PI * 0.2 * side, 0.9, 1.44, 0.002, 0.0035, 12), P.coat2, skin);
+    // turned-back cuff (lining colour)
+    { const g = torus(0.054, 0.011, R(6), R(18)); xf(g, x, 0.872, z, Math.PI / 2, 0, 0, 1, 1.05, 1); A.add('fabric', g, P.coat2, rigid(ax('foreArm'))); }
+    // patched elbow (patchwork: the coat carries the journey)
+    A.add('fabric', patch(AS, { u0: Math.PI - 0.9, u1: Math.PI + 0.9, v0: 1.06, v1: 1.17, nu: R(8), nv: R(6), off: 0.003, thick: 0.004, bevel: 0.003, round: 3 }), P.patch, rigid(ax('upperArm')));
+    // leather bracer on the left forearm, wrist wrap on the right
     if (side > 0) {
-      const g = box(0.022, 0.07, 0.048, 0.006); xf(g, x + 0.05, 0.96, z); A.add('hard', g, P.dark, rigid(ax('foreArm')));
-      const s = box(0.004, 0.052, 0.034, 0.002); xf(s, x + 0.061, 0.96, z); A.add('glow', s, P.glow, rigid(ax('foreArm')));
+      A.add('hard', patch(AS, { u0: outer - 1.6, u1: outer + 1.6, v0: 0.9, v1: 1.03, nu: R(10), nv: R(6), off: 0.006, thick: 0.008, bevel: 0.004, round: 5 }), P.leather, rigid(ax('foreArm')));
+      for (let i = 0; i < 2; i++) { const g = torus(0.06, 0.004, 4, R(16)); xf(g, x, 0.925 + i * 0.07, z, Math.PI / 2); A.add('hard', g, P.strap, rigid(ax('foreArm'))); }
+    } else {
+      for (let i = 0; i < 3; i++) { const g = torus(0.054, 0.006, 4, R(16)); xf(g, x, 0.9 + i * 0.022, z, Math.PI / 2 + (i % 2 ? 0.2 : -0.2)); A.add('fabric', g, P.wrap, rigid(ax('foreArm'))); }
     }
-    // glove: palm, fingers, thumb, knuckle guard
+    // glove: palm, fingers, thumb, cuff
     const hx = x, hz = z + 0.005;
-    { const g = box(0.044, 0.078, 0.078, 0.017); xf(g, hx, 0.802, hz); A.add('fabric', g, P.glove, rigid(ax('hand'))); }
-    { const g = box(0.038, 0.07, 0.072, 0.015); xf(g, hx - side * 0.004, 0.733, hz + 0.004, 0, 0, side * 0.06); A.add('fabric', g, P.glove, rigid(ax('fingers'))); }
-    { const g = ellipsoid(0.017, 0.035, 0.017, R(10), R(8)); xf(g, hx - side * 0.012, 0.78, hz + 0.05, 0.5, 0, -side * 0.25); A.add('fabric', g, P.glove, rigid(ax('hand'))); }
-    { const g = box(0.012, 0.05, 0.07, 0.005); xf(g, hx + side * 0.027, 0.805, hz); A.add('hard', g, P.shell2, rigid(ax('hand'))); }
-    // cuff
-    { const g = cylinder(0.043, 0.04, 0.032, R(16)); xf(g, hx, 0.852, hz); A.add('fabric', g, P.glove, rigid(ax('hand'))); }
+    { const g = box(0.042, 0.076, 0.076, 0.017); xf(g, hx, 0.802, hz); A.add('hard', g, P.leather, rigid(ax('hand'))); }
+    { const g = box(0.036, 0.07, 0.07, 0.015); xf(g, hx - side * 0.004, 0.733, hz + 0.004, 0, 0, side * 0.06); A.add('hard', g, P.leather, rigid(ax('fingers'))); }
+    { const g = ellipsoid(0.016, 0.034, 0.016, R(10), R(8)); xf(g, hx - side * 0.012, 0.78, hz + 0.05, 0.5, 0, -side * 0.25); A.add('hard', g, P.leather, rigid(ax('hand'))); }
+    { const g = cylinder(0.04, 0.038, 0.03, R(16)); xf(g, hx, 0.85, hz); A.add('hard', g, P.strap, rigid(ax('hand'))); }
   };
   buildArm(1); buildArm(-1);
 
-  // ---------------- legs
+  // ================================================================ legs: trousers, wrapped shins, boots
   const buildLeg = (side) => {
     const x = 0.092 * side;
     const lb = (b) => B[b + (side > 0 ? 'L' : 'R')];
     const secs = [
-      { y: 0.1, rx: 0.042, rz: 0.047, ox: x },
-      { y: 0.22, rx: 0.047, rz: 0.053, ox: x },
-      { y: 0.35, rx: 0.056, rz: 0.058, ox: x, bz: 0.012 },
-      { y: 0.46, rx: 0.052, rz: 0.056, ox: x },
-      { y: 0.52, rx: 0.056, rz: 0.06, ox: x },
-      { y: 0.63, rx: 0.068, rz: 0.07, ox: x },
-      { y: 0.78, rx: 0.079, rz: 0.083, ox: x },
-      { y: 0.9, rx: 0.087, rz: 0.089, ox: x },
-      { y: 0.99, rx: 0.08, rz: 0.08, ox: x - side * 0.01 },
+      { y: 0.1, rx: 0.046, rz: 0.05, ox: x },
+      { y: 0.22, rx: 0.052, rz: 0.058, ox: x },
+      { y: 0.35, rx: 0.062, rz: 0.065, ox: x, bz: 0.012 },
+      { y: 0.46, rx: 0.06, rz: 0.064, ox: x },
+      { y: 0.52, rx: 0.065, rz: 0.069, ox: x },
+      { y: 0.63, rx: 0.079, rz: 0.081, ox: x },
+      { y: 0.78, rx: 0.092, rz: 0.095, ox: x },
+      { y: 0.9, rx: 0.099, rz: 0.1, ox: x },
+      { y: 0.99, rx: 0.09, rz: 0.09, ox: x - side * 0.01 },
     ];
-    for (const q of secs) { if (q.y > 0.2) { q.rx *= 1.14; q.rz *= 1.14; } }
     const skin = bandsY([[lb('foot'), 0.09], [lb('shin'), 0.15], [lb('shin'), 0.475], [lb('thigh'), 0.555], [lb('thigh'), 0.9], [B.hips, 1.0]]);
-    A.add('fabric', loft(secs, { radial: R(20), sub: 3 }), P.suit, skin);
+    A.add('fabric', loft(secs, { radial: R(20), sub: 3 }), P.trousers, skin);
     const LS = loftSurface(secs);
-    const outer = side > 0 ? 0.7 : -0.7;
-    // outer piping + inner seam + knee quilting
-    A.add('fabric', seam(LS, side > 0 ? Math.PI / 2 : -Math.PI / 2, 0.27, 0.95, 0.002, 0.0055, 16), P.accent2, skin);
-    A.add('fabric', seam(LS, side > 0 ? -Math.PI / 2 : Math.PI / 2, 0.27, 0.86, 0.001, 0.0035, 12), P.suit2, skin);
-    // thigh plate
-    A.add('hard', patch(LS, { u0: outer - 1.15, u1: outer + 1.15, v0: 0.64, v1: 0.86, nu: R(10), nv: R(8), off: 0.009, thick: 0.013, bevel: 0.007, round: 5, uvRect: quad(1) }), P.shell, rigid(lb('thigh')));
-    // thigh pouch (right) / holster
-    if (side < 0) { const g = box(0.04, 0.09, 0.075, 0.014); xf(g, x - 0.085, 0.74, 0.0); A.add('hard', g, P.shell2, rigid(lb('thigh'))); }
-    else { const g = box(0.02, 0.1, 0.05, 0.006); xf(g, x + 0.083, 0.72, 0.0); A.add('hard', g, P.accent, rigid(lb('thigh'))); }
-    // shin guard
-    A.add('hard', patch(LS, { u0: -1.05, u1: 1.05, v0: 0.25, v1: 0.46, nu: R(10), nv: R(9), off: 0.009, thick: 0.013, bevel: 0.007, round: 5, uvRect: quad(3), taper: (t) => [-0.95 + 0.1 * t, 0.95 - 0.1 * t] }), P.shell, rigid(lb('shin')));
-    // knee pad
-    const KE = ellipsoidSurface(new THREE.Vector3(x, 0.515, 0.02), new THREE.Vector3(0.058, 0.066, 0.05));
-    A.add('hard', patch(KE, { u0: -1.15, u1: 1.15, v0: -0.95, v1: 0.95, nu: R(10), nv: R(10), off: 0.006, thick: 0.012, bevel: 0.006, round: 4, uvRect: quad(0) }), P.accent, rigid(lb('shin')));
-    // boot shaft
+    A.add('fabric', seam(LS, side > 0 ? Math.PI / 2 : -Math.PI / 2, 0.42, 0.95, 0.002, 0.0035, 12), P.coat2, skin);
+    // knee patch (patchwork) on the left knee, a darned square on the right thigh
+    if (side > 0) A.add('fabric', patch(LS, { u0: -0.85, u1: 0.85, v0: 0.45, v1: 0.6, nu: R(8), nv: R(6), off: 0.003, thick: 0.004, bevel: 0.003, round: 3 }), P.patch, rigid(lb('shin')));
+    else A.add('fabric', patch(LS, { u0: -0.3, u1: 0.5, v0: 0.7, v1: 0.8, nu: R(6), nv: R(5), off: 0.003, thick: 0.004, bevel: 0.003, round: 2.5 }), P.tunic, rigid(lb('thigh')));
+    // puttee wraps (oatmeal cloth bands spiralling up the shin)
+    for (let i = 0; i < 8; i++) {
+      const y = 0.13 + i * 0.04;
+      const p = new THREE.Vector3(); LS(Math.PI / 2, y, p);
+      const rx = Math.abs(p.x - x) + 0.006;
+      const q = new THREE.Vector3(); LS(0, y, q);
+      const rz = q.z + 0.006;
+      const g = torus(rx, 0.011, 4, R(18)); xf(g, x, y, 0, Math.PI / 2 + (i % 2 ? 0.22 : -0.22), 0, 0, 1, rz / rx, 1.4);
+      A.add('fabric', g, P.wrap.clone().multiplyScalar(i % 2 ? 1 : 0.93), rigid(lb('shin')));
+    }
+    // boots: low leather boots with a turned cuff
     const bootSecs = [
       { y: 0.035, rx: 0.058, rz: 0.075, ox: x, oz: 0.01 },
-      { y: 0.1, rx: 0.058, rz: 0.066, ox: x },
-      { y: 0.2, rx: 0.059, rz: 0.064, ox: x },
-      { y: 0.255, rx: 0.061, rz: 0.066, ox: x },
+      { y: 0.09, rx: 0.058, rz: 0.066, ox: x },
+      { y: 0.14, rx: 0.059, rz: 0.064, ox: x },
     ];
-    A.add('hard', loft(bootSecs, { radial: R(18), sub: 2 }), P.dark, bandsY([[lb('foot'), 0.17], [lb('shin'), 0.25]]));
-    { const g = torus(0.062, 0.009, R(6), R(20)); xf(g, x, 0.255, 0, Math.PI / 2, 0, 0, 1, 1.07, 1); A.add('hard', g, P.accent, rigid(lb('shin'))); }
-    // foot
-    { const g = box(0.104, 0.085, 0.262, 0.035, 3); xf(g, x, 0.052, 0.048); A.add('hard', g, P.dark, rigid(lb('foot'))); }
-    { const g = box(0.098, 0.03, 0.12, 0.012, 2); xf(g, x, 0.088, 0.11, 0.18, 0, 0); A.add('hard', g, P.shell2, rigid(lb('foot'))); }
-    { const g = box(0.114, 0.026, 0.278, 0.011, 2); xf(g, x, 0.013, 0.047); A.add('fabric', g, P.sole, rigid(lb('foot'))); }
-    { const g = box(0.05, 0.012, 0.008, 0.003); xf(g, x, 0.07, -0.084); A.add('glow', g, P.glow, rigid(lb('foot'))); }
+    A.add('hard', loft(bootSecs, { radial: R(18), sub: 2 }), P.boot, bandsY([[lb('foot'), 0.1], [lb('shin'), 0.14]]));
+    { const g = torus(0.06, 0.01, R(6), R(20)); xf(g, x, 0.142, 0, Math.PI / 2, 0, 0, 1, 1.08, 1); A.add('hard', g, P.boot.clone().multiplyScalar(0.85), rigid(lb('shin'))); }
+    { const g = box(0.104, 0.085, 0.262, 0.035, 3); xf(g, x, 0.052, 0.048); A.add('hard', g, P.boot, rigid(lb('foot'))); }
+    { const g = box(0.114, 0.026, 0.278, 0.011, 2); xf(g, x, 0.013, 0.047); A.add('hard', g, P.sole, rigid(lb('foot'))); }
+    // laces
+    for (let i = 0; i < 3; i++) { const g = box(0.06, 0.006, 0.008, 0.002); xf(g, x, 0.07 + i * 0.012, 0.13 - i * 0.03, 0.5); A.add('hard', g, P.strap, rigid(lb('foot'))); }
   };
   buildLeg(1); buildLeg(-1);
 
-  // ---------------- helmet
-  const hc = new THREE.Vector3(0, 1.668, 0.012);
-  const hr = new THREE.Vector3(0.148, 0.158, 0.163);
-  const helmetDeform = (v) => {
-    // flatter sides, chin forward, fuller back
-    const y = (v.y - hc.y) / hr.y, z = (v.z - hc.z) / hr.z;
-    if (y < -0.2 && z > 0) v.z += 0.018 * Math.min(1, -y - 0.2) * z;
-    if (z < 0) v.z -= 0.012 * (-z) * (1 - Math.abs(y));
-    v.x *= 1 - 0.05 * Math.max(0, 1 - Math.abs(y) * 1.4);
+  // ================================================================ head: face, hood, goggles, scarf wrap
+  const hc = new THREE.Vector3(0, 1.672, 0.016);
+  const hrd = new THREE.Vector3(0.082, 0.106, 0.096);
+  { const g = cylinder(0.046, 0.05, 0.12, R(14)); xf(g, 0, 1.55, 0.0); A.add('skin', g, P.skin, blendY(B.neck, B.head, 1.53, 1.6)); }
+  { // head (slightly long ellipsoid, jaw narrowed)
+    const g = ellipsoid(hrd.x, hrd.y, hrd.z, R(22), R(16), {
+      deform: (v) => { const ty = v.y / hrd.y; if (ty < 0) { v.x *= 1 - 0.22 * ty * ty; } v.z += 0.012 * Math.max(0, -ty) * Math.max(0, v.z / hrd.z); v.add(hc); },
+    });
+    A.add('skin', g, P.skin, rigid(B.head));
+  }
+  // nose bridge + eyes + brows (only the upper face shows between the scarf and the hood)
+  { const g = ellipsoid(0.012, 0.022, 0.016, 8, 6); xf(g, 0, 1.672, hc.z + hrd.z - 0.003, -0.25); A.add('skin', g, P.skin, rigid(B.head)); }
+  for (const s of [1, -1]) {
+    const g = ellipsoid(0.011, 0.0075, 0.006, 8, 6); xf(g, s * 0.031, 1.69, hc.z + hrd.z - 0.01, 0, s * 0.35, 0); A.add('metal', g, P.eye, rigid(B.head));
+    const b = box(0.03, 0.008, 0.012, 0.003); xf(b, s * 0.031, 1.705, hc.z + hrd.z - 0.012, 0.2, s * 0.3, -s * 0.12); A.add('fabric', b, P.hair, rigid(B.head));
+  }
+  // hair: a cap with a fringe swept to one side (shows under the hood brim)
+  {
+    const HS = ellipsoidSurface(hc, new THREE.Vector3(hrd.x + 0.006, hrd.y + 0.008, hrd.z + 0.006));
+    A.add('fabric', patch(HS, { u0: -1.4, u1: 1.4, v0: 0.42, v1: 1.45, nu: R(14), nv: R(8), off: 0.0, thick: 0.006, bevel: 0.004, round: 3, taper: (t) => [-1.4 - 1.5 * t, 1.4 + 1.5 * t] }), P.hair, rigid(B.head));
+    for (const [ax, len, bend] of [[0.25, 0.075, 0.6], [0.55, 0.06, 0.4], [-0.15, 0.05, -0.3], [0.85, 0.07, 0.5], [-0.8, 0.06, -0.5]]) {
+      const p0 = new THREE.Vector3(); HS(ax, 0.55, p0);
+      const pts = [p0.clone(), p0.clone().add(new THREE.Vector3(Math.sin(ax) * 0.01 + bend * 0.012, -len * 0.5, 0.012)), p0.clone().add(new THREE.Vector3(Math.sin(ax) * 0.012 + bend * 0.03, -len, 0.008))];
+      A.add('fabric', tube(pts, 0.006, 8, 4), P.hair, rigid(B.head));
+    }
+  }
+  // hood: a deep cowl with a soft peak at the back; double-sided (lining) shell; the face opening narrows
+  // toward the brow so the face sits in shadow
+  const hoodC = new THREE.Vector3(0, 1.695, -0.004);
+  const hoodR = new THREE.Vector3(0.122, 0.142, 0.136);
+  const hoodDeform = (v, az, el) => {
+    if (el < 0) { const k = 1 + 0.85 * Math.pow(-el, 1.35); v.x *= k; v.z *= k * 0.95; v.y -= 0.025 * -el; }
+    const backK = Math.max(0, -Math.cos(az)), top = Math.max(0, Math.sin(el));
+    v.z -= 0.055 * backK * top * top; v.y += 0.02 * backK * top * top * top;
+    const front = Math.max(0, Math.cos(az));
+    v.z += 0.018 * front * sstep(0.25, 0.9, el); // brim leans forward over the brow
   };
+  const HOOD = ellipsoidSurface(hoodC, hoodR, hoodDeform);
+  // face opening: wide at the cowl, arching closed over the brow (a → 0 = full ring above the forehead)
+  const hoodA = (t) => 0.98 * (1 - sstep(0.46, 0.66, t)) - 0.02 * sstep(0.6, 0.66, t);
+  const hoodTaper = (t) => { const a = hoodA(t); return [a, Math.PI * 2 - a]; };
+  const hoodSkin = (x, y, z, o) => { const t = sstep(1.6, 1.53, y); o[0] = B.head; o[1] = 1 - t; o[2] = B.neck; o[3] = t; return o; };
+  A.add('fabric', patch(HOOD, { u0: 0.98, u1: Math.PI * 2 - 0.98, v0: -1.18, v1: 1.5, nu: R(30), nv: R(20), off: 0, thick: 0.012, bevel: 0.007, round: 9, back: true, taper: hoodTaper }), P.mantle, hoodSkin);
+  // hood rim (a rolled edge framing the face)
   {
-    const g = ellipsoid(hr.x, hr.y, hr.z, R(40), R(28), { e: 2.25, deform: (v) => { v.add(hc); helmetDeform(v); } });
-    A.add('hard', g, P.shell, rigid(B.head));
+    const pts = []; const p = new THREE.Vector3(), c = new THREE.Vector3();
+    const n = 14;
+    const edge = (t, sgn) => { HOOD(sgn * Math.max(0, hoodA(t)), -1.18 + 2.68 * t, p); c.copy(p).sub(hoodC).normalize(); pts.push(p.clone().addScaledVector(c, 0.004)); };
+    for (let i = 0; i <= n; i++) edge(0.04 + (0.62 / n) * i, -1); // up the right edge
+    for (let i = n - 1; i >= 0; i--) edge(0.04 + (0.62 / n) * i, 1); // down the left edge
+    A.add('fabric', tube(pts, 0.011, R(60), 6), P.coat2, hoodSkin);
   }
-  // the shell is a super-ellipsoid (e = 2.25): lay the visor / frame on the SAME surface, or the shell
-  // bulges through the glass at the diagonals (it did — read as a white blotch inside the visor)
-  const spw0 = (x, k) => Math.sign(x) * Math.pow(Math.abs(x), k);
-  const HS = (az, el, out) => {
-    const ce = Math.cos(el), k = 2 / 2.25;
-    out.set(spw0(Math.sin(az) * ce, k) * hr.x, spw0(Math.sin(el), k) * hr.y, spw0(Math.cos(az) * ce, k) * hr.z).add(hc);
-    helmetDeform(out);
-    return out;
-  };
-  HS.inside = (az, el, out) => out.copy(hc);
-  // visor
-  const visorTaper = (t) => [-0.86 - 0.26 * t, 0.86 + 0.26 * t];
-  A.add('visor', patch(HS, { u0: -1.1, u1: 1.1, v0: -0.6, v1: 0.42, nu: R(40), nv: R(26), off: 0.006, thick: 0.01, bevel: 0.004, round: 3.2, taper: visorTaper }), P.visorTint, rigid(B.head));
-  // visor frame (tube following the outline)
+  // goggles pushed up onto the hood brim: strap + two brass-rimmed lenses
   {
-    const pts = [];
-    const tmp = new THREE.Vector3(), c2 = new THREE.Vector3();
-    const n = 40;
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
-      // squircle outline (round 3.2) in (s,t)
-      const ca = Math.cos(a), sa = Math.sin(a);
-      const k = Math.pow(Math.pow(Math.abs(ca), 3.2) + Math.pow(Math.abs(sa), 3.2), -1 / 3.2);
-      const s = ca * k * 1.04, t = sa * k * 1.05;
-      const tt = (t + 1) / 2;
-      const [ua, ub] = visorTaper(tt);
-      const u = ua + (ub - ua) * (s + 1) / 2, v = -0.6 + 1.02 * tt;
-      HS(u, v, tmp);
-      c2.copy(tmp).sub(hc).normalize();
-      pts.push(tmp.clone().addScaledVector(c2, 0.004));
+    const pts = []; const p = new THREE.Vector3(), c = new THREE.Vector3();
+    for (let i = 0; i <= 20; i++) { const az = -1.55 + (i / 20) * 3.1; HOOD(az, 0.78, p); c.copy(p).sub(hoodC).normalize(); pts.push(p.clone().addScaledVector(c, 0.006)); }
+    A.add('hard', tube(pts, 0.007, R(40), 5), P.strap, rigid(B.head));
+    for (const s of [1, -1]) {
+      HOOD(s * 0.36, 0.8, p); c.copy(p).sub(hoodC).normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), c);
+      const e = new THREE.Euler().setFromQuaternion(q);
+      const rim = cylinder(0.025, 0.027, 0.018, R(14)); xf(rim, 0, 0, 0, e.x, e.y, e.z); rim.translate(p.x + c.x * 0.012, p.y + c.y * 0.012, p.z + c.z * 0.012);
+      A.add('metal', rim, P.brass, rigid(B.head));
+      const lens = cylinder(0.019, 0.019, 0.004, R(14)); xf(lens, 0, 0, 0, e.x, e.y, e.z); lens.translate(p.x + c.x * 0.022, p.y + c.y * 0.022, p.z + c.z * 0.022);
+      A.add('metal', lens, P.lens, rigid(B.head));
     }
-    A.add('metal', tube(pts, 0.0065, R(80), 6, true), P.dark, rigid(B.head));
   }
-  // crest ridge
+  // the red scarf: wrapped up over the mouth and nose, a knot under the chin, a short front end
   {
-    const pts = [];
-    for (let i = 0; i <= 10; i++) {
-      const el = 0.5 + (i / 10) * 2.1; // front-top over to the back
-      const v = new THREE.Vector3(0, Math.sin(el) * hr.y, Math.cos(el) * hr.z).add(hc);
-      helmetDeform(v);
-      pts.push(v.add(new THREE.Vector3(0, 0.004, 0).add(v.clone().sub(hc).normalize().multiplyScalar(0.004))));
-    }
-    const g = tube(pts, 0.012, R(40), 8, false);
-    const pa = g.attributes.position;
-    for (let i = 0; i < pa.count; i++) pa.setX(i, pa.getX(i) * 1.7);
-    g.computeVertexNormals();
-    A.add('hard', g, P.accent, rigid(B.head));
-  }
-  // shell panel seams (dark inset lines that read at game distance) + temple lamp
-  {
-    const spw = (x, k) => Math.sign(x) * Math.pow(Math.abs(x), k);
-    const HP = (ux, uy, uz, lift) => { // unit-sphere direction → point on the (super-ellipsoid) shell
-      const k = 2 / 2.25;
-      const v = new THREE.Vector3(spw(ux, k) * hr.x, spw(uy, k) * hr.y, spw(uz, k) * hr.z).add(hc);
-      helmetDeform(v);
-      return v.addScaledVector(v.clone().sub(hc).normalize(), lift);
-    };
-    const line = (fn, t0, t1, n, r = 0.0026) => {
-      const pts = [];
-      for (let i = 0; i <= n; i++) pts.push(fn(t0 + (t1 - t0) * (i / n)));
-      A.add('metal', tube(pts, r, R(n * 3), 5, false), P.dark, rigid(B.head));
-    };
-    const sph = (az, el) => [Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)];
-    // brow seam over the visor, and the ring around the back of the skull above the ear pods
-    line((a) => HP(...sph(a, 0.64), 0.0012), -1.32, 1.32, 16);
-    line((a) => HP(...sph(a, 0.3), 0.0012), 1.32, Math.PI * 2 - 1.32, 18);
-    // two seams parallel to the crest, splitting the dome into panels
-    for (const xo of [0.44, -0.44]) {
-      const c = Math.sqrt(1 - xo * xo);
-      line((t) => HP(xo, Math.sin(t) * c, Math.cos(t) * c, 0.0012), 0.72, 2.75, 16);
-    }
-    // temple lamp (right side): housing + lens
-    const lp = HP(...sph(-1.2, 0.36), 0.0);
-    const hous = box(0.028, 0.024, 0.05, 0.007); xf(hous, lp.x - 0.004, lp.y, lp.z + 0.012, 0, -0.35, 0);
-    A.add('metal', hous, P.dark, rigid(B.head));
-    const lens = cylinder(0.0085, 0.0085, 0.004, R(12)); xf(lens, lp.x + 0.004, lp.y, lp.z + 0.038, Math.PI / 2, 0, 0);
-    A.add('glow', lens, new THREE.Color(1.0, 0.95, 0.85), rigid(B.head));
-  }
-  // ear pods + glow rings + antenna
-  for (const s of [1, -1]) {
-    const px = s * 0.147;
-    { const g = cylinder(0.047, 0.05, 0.036, R(20)); xf(g, px, 1.655, -0.01, 0, 0, Math.PI / 2); A.add('hard', g, P.shell2, rigid(B.head)); }
-    // (dim: two bright rings + a lit rear slot read as a face from behind — keep them subtle)
-    { const g = torus(0.033, 0.0045, R(6), R(22)); xf(g, px + s * 0.019, 1.655, -0.01, 0, Math.PI / 2, 0); A.add('glow', g, P.glow.clone().multiplyScalar(0.35), rigid(B.head)); }
-    { const g = cylinder(0.024, 0.028, 0.012, R(16)); xf(g, px + s * 0.02, 1.655, -0.01, 0, 0, Math.PI / 2); A.add('metal', g, P.metal, rigid(B.head)); }
-  }
-  {
-    const g = cylinder(0.0035, 0.005, 0.2, 6);
-    xf(g, 0, 0.1, 0);
-    xf(g, 0.166, 1.69, -0.035, -0.28, 0, -0.12);
-    A.add('metal', g, P.metal, blendY(B.head, B.antenna, 1.71, 1.76));
-    const t = ellipsoid(0.009, 0.009, 0.009, 8, 6); xf(t, 0.166 + Math.sin(0.12) * 0.2, 1.69 + Math.cos(0.28) * 0.2, -0.035 - Math.sin(0.28) * 0.2);
-    A.add('glow', t, P.glow, rigid(B.antenna));
-  }
-  // rear helmet vent: slatted grille (no light — it read as a mouth under the two ear rings)
-  { const g = box(0.074, 0.036, 0.02, 0.008); xf(g, 0, 1.64, -0.158, -0.25); A.add('hard', g, P.shell2, rigid(B.head)); }
-  for (let i = 0; i < 3; i++) { const g = box(0.056, 0.0045, 0.008, 0.002); xf(g, 0, 1.629 + i * 0.011, -0.167 + i * 0.0028, -0.25); A.add('metal', g, P.dark, rigid(B.head)); }
-
-  // ---------------- backpack / jetpack
-  const pk = rigid(B.pack);
-  {
-    const bx = box(0.3, 0.4, 0.15, 0.045, 3);
-    // panel detail on the back face: map uv into atlas quadrant 2 (vents)
-    const pa = bx.attributes.position, uva = bx.attributes.uv;
-    const q = quad(2);
-    for (let i = 0; i < pa.count; i++) {
-      const u = (pa.getX(i) / 0.3) + 0.5, v = (pa.getY(i) / 0.4) + 0.5;
-      uva.setXY(i, q[0] + (q[2] - q[0]) * u, q[1] + (q[3] - q[1]) * v);
-    }
-    xf(bx, 0, 1.235, -0.228);
-    A.add('hard', bx, P.shell2, pk);
-  }
-  { const g = cylinder(0.058, 0.058, 0.31, R(20)); xf(g, 0, 1.455, -0.205, 0, 0, Math.PI / 2); A.add('hard', g, P.accent, pk); }
-  for (const s of [1, -1]) {
-    { const g = cylinder(0.062, 0.062, 0.012, R(20)); xf(g, s * 0.158, 1.455, -0.205, 0, 0, Math.PI / 2); A.add('metal', g, P.metal, pk); }
-    { const g = cylinder(0.036, 0.036, 0.27, R(16)); xf(g, s * 0.168, 1.215, -0.215); A.add('hard', g, P.shell, pk); }
-    { const g = torus(0.037, 0.006, R(6), R(16)); xf(g, s * 0.168, 1.3, -0.215, Math.PI / 2); A.add('metal', g, P.metal, pk); }
-    { const g = torus(0.037, 0.006, R(6), R(16)); xf(g, s * 0.168, 1.13, -0.215, Math.PI / 2); A.add('metal', g, P.metal, pk); }
-    // thruster nozzle
-    const nz = lathe([[0.03, 0.0], [0.036, -0.012], [0.046, -0.045], [0.05, -0.07], [0.046, -0.074], [0.036, -0.05], [0.028, -0.02]], R(20));
-    xf(nz, s * 0.085, 1.04, -0.245, -0.18, 0, 0);
-    A.add('metal', nz, P.metal, pk);
-    // idle pilot glow only (the FX jets draw the thrust): full-bright discs read as a pair of eyes when
-    // the explorer lies prone swimming away from the camera
-    const gl = cylinder(0.032, 0.036, 0.004, R(16)); xf(gl, s * 0.085, 0.976, -0.257, -0.18, 0, 0);
-    A.add('glow', gl, P.glow.clone().multiplyScalar(0.1), pk);
-  }
-  // pack face details: status strip, grab handle, badge
-  { const g = box(0.012, 0.16, 0.006, 0.003); xf(g, 0.1, 1.24, -0.306); A.add('glow', g, P.glow, pk); }
-  { const g = tube([new THREE.Vector3(-0.07, 1.4, -0.29), new THREE.Vector3(-0.04, 1.43, -0.31), new THREE.Vector3(0.04, 1.43, -0.31), new THREE.Vector3(0.07, 1.4, -0.29)], 0.008, 16, 6); A.add('metal', g, P.dark, pk); }
-  { const g = box(0.08, 0.05, 0.012, 0.01); xf(g, -0.06, 1.15, -0.304); A.add('hard', g, P.accent, pk); }
-  // straps (over the shoulders to the chest plate)
-  for (const s of [1, -1]) {
-    const pts = [
-      new THREE.Vector3(s * 0.11, 1.40, -0.16), new THREE.Vector3(s * 0.125, 1.47, -0.08),
-      new THREE.Vector3(s * 0.13, 1.47, 0.03), new THREE.Vector3(s * 0.12, 1.41, 0.125), new THREE.Vector3(s * 0.11, 1.33, 0.152),
+    const wrapSecs = [
+      { y: 1.465, rx: 0.118, rz: 0.112 },
+      { y: 1.52, rx: 0.102, rz: 0.103, fz: 0.012 },
+      { y: 1.585, rx: 0.088, rz: 0.098, fz: 0.022 },
+      { y: 1.64, rx: 0.087, rz: 0.1, fz: 0.02 },
+      { y: 1.668, rx: 0.086, rz: 0.098, fz: 0.014 },
     ];
-    const g = tube(pts, 0.014, R(24), 6);
+    for (const s of wrapSecs) s.oz = 0.012;
+    const wrapSkin = bandsY([[B.chest, 1.46], [B.neck, 1.52], [B.head, 1.6]]);
+    A.add('fabric', loft(wrapSecs, { radial: R(28), sub: 3, ripple: (y) => 1 + 0.035 * Math.pow(Math.abs(Math.sin((y - 1.46) * 46)), 2) }), P.scarf, wrapSkin);
+    { const g = ellipsoid(0.05, 0.04, 0.035, R(12), R(8)); xf(g, 0.03, 1.49, 0.12, 0.2, 0.2, 0.4); A.add('fabric', g, P.scarf, rigid(B.chest)); }
+    { const g = box(0.06, 0.16, 0.014, 0.01); xf(g, 0.045, 1.4, 0.142, 0.18, 0.15, 0.12); A.add('fabric', g, P.scarf.clone().multiplyScalar(0.9), rigid(B.chest)); }
+  }
+
+  // ================================================================ pack: canvas rucksack, bedroll, rope, mug, lantern, staff
+  const pk = rigid(B.pack);
+  { // main bag (rounded, slightly bulging) + top flap + front pocket + straps
+    const g = box(0.33, 0.47, 0.2, 0.06, 4);
     const pa = g.attributes.position;
-    for (let i = 0; i < pa.count; i++) { const xx = pa.getX(i); pa.setX(i, s * 0.12 + (xx - s * 0.12) * 1.9); }
+    for (let i = 0; i < pa.count; i++) { const y = pa.getY(i) / 0.235; const z = pa.getZ(i); if (z < 0) pa.setZ(i, z * (1 + 0.18 * (1 - y * y))); }
     g.computeVertexNormals();
-    A.add('fabric', g, P.strap, rigid(B.chest));
-    const bk = box(0.034, 0.028, 0.016, 0.005); xf(bk, s * 0.11, 1.33, 0.158, -0.25); A.add('metal', bk, P.brass, rigid(B.chest));
+    xf(g, 0, 1.215, -0.27); A.add('fabric', g, P.canvas, pk);
+    const flap = box(0.34, 0.07, 0.22, 0.03, 3); xf(flap, 0, 1.43, -0.278, 0.08, 0, 0); A.add('fabric', flap, P.canvas2, pk);
+    const pocket = box(0.2, 0.15, 0.06, 0.03, 3); xf(pocket, 0, 1.1, -0.39); A.add('fabric', pocket, P.canvas2, pk);
+    for (const s of [1, -1]) {
+      const st = box(0.03, 0.3, 0.008, 0.003); xf(st, s * 0.085, 1.29, -0.392, -0.12); A.add('hard', st, P.strap, pk);
+      const bk = box(0.034, 0.024, 0.012, 0.004); xf(bk, s * 0.085, 1.2, -0.405); A.add('metal', bk, P.brass, pk);
+    }
+    // side pocket (left) and two thin brass vents underneath (the little aether thrusters of the double jump)
+    { const sp = box(0.06, 0.18, 0.13, 0.025, 3); xf(sp, 0.19, 1.13, -0.27); A.add('fabric', sp, P.canvas2, pk); }
+    for (const s of [1, -1]) {
+      const nz = lathe([[0.02, 0.0], [0.026, -0.012], [0.032, -0.035], [0.028, -0.04], [0.02, -0.02]], R(14));
+      xf(nz, s * 0.085, 0.99, -0.26, -0.18, 0, 0); A.add('metal', nz, P.brass, pk);
+    }
+    // shoulder straps (over the shoulders, under the mantle → visible at the chest)
+    for (const s of [1, -1]) {
+      const pts = [new THREE.Vector3(s * 0.11, 1.40, -0.16), new THREE.Vector3(s * 0.125, 1.46, -0.09), new THREE.Vector3(s * 0.13, 1.46, 0.03), new THREE.Vector3(s * 0.12, 1.4, 0.13), new THREE.Vector3(s * 0.11, 1.28, 0.15), new THREE.Vector3(s * 0.12, 1.15, 0.13)];
+      const g = tube(pts, 0.013, R(24), 6);
+      const pa = g.attributes.position;
+      for (let i = 0; i < pa.count; i++) { const xx = pa.getX(i); pa.setX(i, s * 0.12 + (xx - s * 0.12) * 1.9); }
+      g.computeVertexNormals();
+      A.add('hard', g, P.strap, rigid(B.chest));
+    }
+  }
+  { // bedroll across the top (striped wool blanket) + two straps
+    const g = cylinder(0.074, 0.074, 0.5, R(18)); xf(g, 0, 1.52, -0.26, 0, 0, Math.PI / 2); A.add('fabric', g, P.blanket, pk);
+    for (const s of [1, -1]) {
+      const band = cylinder(0.076, 0.076, 0.035, R(18), true); xf(band, s * 0.17, 1.52, -0.26, 0, 0, Math.PI / 2); A.add('fabric', band, P.blanket2, pk);
+      const end = torus(0.05, 0.022, 6, R(16)); xf(end, s * 0.252, 1.52, -0.26, 0, Math.PI / 2, 0); A.add('fabric', end, P.blanket.clone().multiplyScalar(0.8), pk);
+      const st = torus(0.077, 0.006, 4, R(18)); xf(st, s * 0.1, 1.52, -0.26, 0, Math.PI / 2, 0); A.add('hard', st, P.strap, pk);
+    }
+  }
+  { // coil of rope on the right flank (three loops) + a tie
+    for (let i = 0; i < 3; i++) {
+      const g = torus(0.088 - i * 0.004, 0.013, 6, R(22)); xf(g, -0.205 - i * 0.022, 1.2 + i * 0.006, -0.27, 0, Math.PI / 2, 0.15 * i);
+      A.add('fabric', g, P.rope.clone().multiplyScalar(1 - i * 0.05), pk);
+    }
+    const tie = torus(0.024, 0.006, 4, 10); xf(tie, -0.225, 1.29, -0.27, Math.PI / 2, 0, 0); A.add('hard', tie, P.strap, pk);
+  }
+  { // tin mug hanging off the right lower corner
+    const g = cylinder(0.03, 0.028, 0.06, R(12)); xf(g, -0.17, 0.97, -0.34, 0.25, 0, 0.1); A.add('metal', g, P.iron, pk);
+    const h = torus(0.016, 0.004, 4, 10, Math.PI); xf(h, -0.205, 0.975, -0.34, 0, 0, Math.PI / 2); A.add('metal', h, P.iron, pk);
+  }
+  { // walking staff strapped diagonally across the back (top over the left shoulder), a ring of light on top
+    const ang = 0.5, L = 1.62, cx = 0, cy = 1.22, cz = -0.4;
+    const dx = Math.sin(ang), dy = Math.cos(ang);
+    const g = cylinder(0.016, 0.019, L, R(10)); xf(g, cx, cy, cz, 0, 0, -ang); A.add('hard', g, P.wood, pk);
+    const top = new THREE.Vector3(cx + dx * L / 2, cy + dy * L / 2, cz);
+    // carved head: a brass ring with a soft glowing core (the sign of the source, carried)
+    const ring = torus(0.05, 0.009, 6, R(22)); xf(ring, top.x + dx * 0.055, top.y + dy * 0.055, cz, 0, 0, -ang); A.add('metal', ring, P.brass, pk);
+    const core = ellipsoid(0.014, 0.014, 0.014, 8, 6); xf(core, top.x + dx * 0.055, top.y + dy * 0.055, cz); A.add('glow', core, P.glow.clone().multiplyScalar(0.7), pk);
+    const fer = cylinder(0.021, 0.021, 0.03, R(10)); xf(fer, cx - dx * (L / 2 - 0.02), cy - dy * (L / 2 - 0.02), cz, 0, 0, -ang); A.add('metal', fer, P.iron, pk);
+    for (const t of [-0.12, 0.14]) { // lashings to the pack
+      const s = torus(0.024, 0.006, 4, 10); xf(s, cx + dx * t, cy + dy * t, cz, Math.PI / 2, 0, -ang); A.add('hard', s, P.strap, pk);
+    }
+  }
+  { // the lantern, hanging from its pendulum hook (antenna bone) at the pack's lower left corner
+    const h = REST_POS.antenna;
+    const lk = rigid(B.antenna);
+    const bail = torus(0.022, 0.003, 4, 12, Math.PI); xf(bail, h.x, h.y - 0.022, h.z); A.add('metal', bail, P.brass, lk);
+    const cap = lathe([[0.04, 0], [0.036, 0.012], [0.018, 0.03], [0.006, 0.04]], R(14)); xf(cap, h.x, h.y - 0.1, h.z); A.add('metal', cap, P.brass, lk);
+    const glass = cylinder(0.03, 0.032, 0.07, R(14)); xf(glass, h.x, h.y - 0.137, h.z); A.add('glow', glass, P.lamp.clone().multiplyScalar(0.55), lk);
+    const base = cylinder(0.04, 0.036, 0.018, R(14)); xf(base, h.x, h.y - 0.18, h.z); A.add('metal', base, P.brass, lk);
+    for (let i = 0; i < 4; i++) {
+      const a = i * Math.PI / 2 + Math.PI / 4;
+      const bar = box(0.006, 0.075, 0.006, 0.002); xf(bar, h.x + Math.sin(a) * 0.034, h.y - 0.137, h.z + Math.cos(a) * 0.034); A.add('metal', bar, P.brass, lk);
+    }
   }
 
   // ---------------- assemble
   const geos = A.build();
-  try { bakeSurface(geos, P, lod); } catch (e) { console.warn('[player] suit bake skipped', e); }
+  try { bakeSurface(geos, P, 'wayfarer-' + lod); } catch (e) { console.warn('[player] surface bake skipped', e); }
   const { bones, skeleton, root } = makeSkeleton();
   const mats = makeMaterials(renderer, P, quality);
   const group = new THREE.Group();
@@ -637,7 +598,7 @@ export function buildExplorer(renderer, body, quality) {
     m.name = 'explorer-' + slot;
     m.frustumCulled = false;
     m.castShadow = slot !== 'glow';
-    m.receiveShadow = slot !== 'glow' && slot !== 'visor';
+    m.receiveShadow = slot !== 'glow';
     group.add(m);
     m.bind(skeleton, new THREE.Matrix4());
     meshes[slot] = m;

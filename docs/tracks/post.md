@@ -23,6 +23,40 @@ scene (Halton-jittered projection on TAA tiers) → HDR sceneRT (RGBA16F + Float
   → triangular dither → fade → screen
 ```
 
+### Season 2 art direction (system mode; cosmic/galaxy untouched — verified bit-identical cosmic capture)
+* **Two hues + one warm accent** (`src/post/looks.js` `harmonyFromArt`, baked into the 3D LUT in `grade.js`): from
+  `body.art.palette` the pipeline derives a sky hue A and a land hue B (chroma-weighted grass/rock/sand). In YIQ
+  (luma-exact) every hue is pulled toward the nearer anchor (`harmonyStrength` 0.56), chroma × 0.8, and a split tone
+  leans shadows toward the sky hue and highlights toward a warm light (zero at black). Strongly saturated reds (the
+  scarf, lanterns, windows — hue window × chroma gate, so pink sand/rock is NOT exempt) stay out of the pull and get ×1.2.
+* **Depth-layered aerial perspective** (rule 4): each layer back drifts toward the metered colour of the lower sky
+  (`SkyMeter`, 4 tiny GPU passes), paler and a touch cooler; when no sky is in frame the haze colour falls back to
+  `G.uAmbientSky × 1.1` (sky radiance ≈ irradiance / π, horizon brighter). `haze: { enabled, strength 0.34, distance }`.
+* **Night** (rule 3): indigo Purkinje on dim tones + multiplicative lift of the land's dim tones (`night.lift`), black
+  stays 0, the sky is not lifted.
+* **Blue hour / dusk** (`atmosphere.twilight`): exposure meters for the sky (key × (1 − 0.42·twilight)) and the land
+  loses its colour toward the sky's hue (`dusk.desat` 0.5, hue pushed ×1.7 so it reads blue/violet, not grey).
+* **Overcast** lowers the key (`× (1 − 0.35·overcast·storm)`); **eclipse** (`space.eclipse`) darker, cooler, harder.
+* **Space**: above the air the sun probe trusts depth alone (no cloud can sit in front of a star), so starburst, halo
+  and ghosts show from orbit even when the star disc is too small/dim to meter; the star tints a wide patch of space
+  around it (`flare.spaceGlow`, default 1).
+
+### Photo looks (UI photo mode)
+`pipeline.setPhotoLook(name, opts?)`, `pipeline.cyclePhotoLook(dir)`, `pipeline.photoLooks` (names), URL `&look=name`.
+The look survives `resetLook()` (it is the player's choice). Applied after the LUT, so the output is exactly the look's
+colours (plus the accent where enabled).
+
+| name | what | creator checklist |
+|---|---|---|
+| `twotone` | black → magenta → pale-pink gradient map, land pushed to silhouette | "Two colours: magenta and black" |
+| `bw` | high-key black and white with halation from the wide bloom | "High-key black and white" |
+| `poster` | 3 flat value bands (banding a 12-tap smoothed luminance so grass/leaves merge into shapes) → navy / world sky hue / cream, depth ink lines, red accent kept | "Poster flatness: hard shapes, three colours" |
+| `candy` | sky remapped to a rose → coral → pale-gold ramp, land near black, red accent | "A candy sky over a near-black foreground" |
+| `woodcut` | stepped two-colour sky, engraved cross-hatched land, ink lines | "A two-colour sky with black line-work in front" |
+
+`opts` overrides: `{ toneA, toneB, toneC, toneD (css colours), land, accent, ink, bands, sat, grain, inkWidth }`,
+e.g. `setPhotoLook('twotone', { toneB: '#2a6cff' })` for a blue/black two-tone.
+
 ### Per-mode profiles (`'auto'` settings)
 | | system (planets/space) | cosmic / galaxy |
 |---|---|---|
@@ -66,27 +100,51 @@ ssao: { enabled, radius (m), intensity, fadeFar (m), debug },
 autoExposure: { enabled, key, strength, min, max, spaceMax, nightDrop, speedUp, speedDown, floor },
 flare: { enabled, intensity, ghosts, starburst, halo, streak, dirt, ssGhosts },
 purkinje, motionBlur: { enabled, strength }, dof: { enabled: true|false|'photo', focus (m, 0 = auto), aperture, maxCoc },
+harmony: 'auto'|false|{hueA, hueB, strength, splitShadow, splitHigh, warmHue, accentHue, accentWidth, accentSat, otherSat},
+harmonyStrength, haze: { enabled, strength, distance, fallback }, night: { lift }, dusk: { desat, keyDrop },
+eclipse: 'auto'|0..1, photoLook, photoLookOpts, flare.spaceGlow,
 debugView: 'scene'   // composite the raw scene target (bisecting)
 ```
 The grade LUT is rebuilt only when grade-relevant settings change (`gradeSignature`).
 
-Debug: `window.__rvPost.stats`, `__rvPost.meter()` (adapted luminance), `__rvPost.sun()` (probe),
+`stats.avgLum` (ui request): display-referred mean frame brightness 0..1, from one 1×1 readback every ~0.5 s
+(system mode with eye adaptation; `null` elsewhere).
+
+Debug: `window.__rvPost.stats`, `__rvPost.meter()` (adapted luminance), `__rvPost.sun()` (probe), `__rvPost.skyColor()`
+(metered haze colour vs ambient),
 `&post=legacy` renders through the original scaffold pipeline for A/B comparisons.
 
 ## Capture URLs
 
-* Surface, day (TAA + GTAO + grade): `/?mode=system&galaxy=0&star=6&planet=1&tod=0.3` steps `[{"advance":1}]`
+Season 2 (best views, composed sky-first):
+* Diamond ring from orbit (black disc, thin bright coloured edge, corona, star-tinted space):
+  `/?mode=system&galaxy=0&star=6&planet=1&view=orbit` steps
+  `[{"advance":0.5},{"eval":"__rv.world.space.orbitLimbShot(0.8, 35)"},{"advance":0.5}]`
+* Sun, starburst and ghosts from orbit: same URL, steps
+  `[{"advance":0.5},{"eval":"__rv.world.space.orbitSunShot(31, 35)"},{"advance":0.5}]` (23° hides the sun behind the limb)
+* Photo looks over the W3 dunes at sunset (sky two thirds, the explorer on the join):
+  `/?mode=system&galaxy=0&star=9&planet=2&tod=0.745&look=candy` (or `twotone`, `poster`, `bw`, `woodcut`, none) steps
+  `[{"advance":1},{"eval":"__rv.world.space.look('sun', 28, 14)"},{"advance":0.3}]`
+* Night, indigo readable ground + emissive flora: `/?mode=system&galaxy=0&star=2&planet=0&tod=0.9` steps `[{"advance":1}]`
+* Day grade (two hues + red accent, haze layers): `/?mode=system&galaxy=0&star=6&planet=1&tod=0.3` steps `[{"advance":1}]`
+* Blue hour (land takes the sky's hue): `/?mode=system&galaxy=0&star=6&planet=1&tod=0.76` steps
+  `[{"advance":1},{"eval":"__rv.world.space.look('sun', 25, 9)"},{"advance":0.3}]`
+* A/B: `{"eval":"(__rvPost.pipeline.settings.harmony=false,__rvPost.pipeline.settings.haze.enabled=false,__rv.render(),1)"}`
+* Fast iteration: add `&taas=1` (one shot sub-frame).
+
+Earlier:
 * Forest (BotW grade, saturation): `/?mode=system&galaxy=0&star=11&planet=0&tod=0.35` steps `[{"advance":1}]`
-* Sun flare from orbit: `/?mode=system&galaxy=0&star=6&planet=1&view=orbit` steps
-  `[{"advance":0.5},{"eval":"__rv.world.space.orbitSunShot(23, 35)"},{"advance":0.5}]`
-* Sunset toward the sun: `/?mode=system&galaxy=0&star=6&planet=1&tod=0.72` steps
-  `[{"advance":0.5},{"eval":"__rv.world.space.look('sun', 22, 4)"},{"advance":0.5}]`
-* Night, emissive glow + OLED sky: `/?mode=system&galaxy=0&star=2&planet=0&tod=0.9` steps `[{"advance":1}]`
 * Photo-mode depth of field: `/?mode=system&galaxy=0&star=6&planet=1&tod=0.3` steps
   `[{"eval":"(__rvPost.pipeline.settings.dof.enabled=true,1)"},{"advance":1}]`
 * AO only: add `{"eval":"(__rvPost.pipeline.settings.ssao.debug=true,__rv.render(),1)"}`.
 
 ## Known issues
+* The hard green ring around the night side of planets from orbit is drawn by the atmosphere effect (order 100):
+  it disappears with that effect disabled, and is unchanged by harmony / chromatic aberration (bisected, see Requests).
+* The jagged lit crescent from orbit is the coarse terrain LOD at the limb (terrain), not post.
+* The woodcut hatching is screen-space (fixed pitch ∝ resolution); on large flat cliffs it can read as a screen pattern.
+* The haze fallback (no sky in frame) estimates sky radiance from `G.uAmbientSky`; it is a little darker and bluer than
+  the metered horizon at sunset.
 * The sun probe's cloud test compares the solar disc with a ring around it; a sun that is only a diffuse glow
   (thick haze) correctly gets no hard flare, but a disc drawn smaller than ~2 px is judged by depth alone.
 * SwiftShader captures of shot sub-frames cost ~N× a frame (4 × 10–25 s at 960×540 on busy machines).
@@ -94,8 +152,15 @@ Debug: `window.__rvPost.stats`, `__rvPost.meter()` (adapted luminance), `__rvPos
   resolves it better.
 
 ## Requests
-* **space** — draw the star disc into the HDR target (far depth) from orbit too: from `view=orbit` the probe reads
-  ~0 luminance at `world.space.sun.screen`; the flare core currently stands in for the disc.
+* **atmosphere** — from orbit, a 3–4 px saturated green ring outlines the whole night side of W1 (`view=orbit`,
+  `orbitSunShot(23, 35)`); bisected to the atmosphere effect (order 100). If it is airglow, make it far fainter and
+  thinner (a hairline at ~1–2 % of the day limb), or tint the limb from the sun side: `pow(1 − mu, 5) · mix(sunTint,
+  skyBlue, …)` fading to ~0 on the night side.
+* **ui** — photo mode looks: a selector (or one button / key cycling) calling `engine.pipeline.setPhotoLook(name)` /
+  `cyclePhotoLook(±1)`; names in `engine.pipeline.photoLooks` (`none, twotone, bw, poster, candy, woodcut`). Show the
+  look name briefly when it changes. `stats.avgLum` is now available for the HUD contrast shades.
+* **space** — (still open) draw the star disc into the HDR target (far depth) from orbit too: the probe now trusts depth
+  in space, but the disc itself is not visible, only the flare core stands in for it.
 * **flora** — alpha-tested leaf cards: with TAA available (`engine.pipeline.stats.taa`), consider alpha-to-coverage
   style dithered alpha (IGN keyed to `G.uFrame`) so TAA resolves soft canopy edges instead of hard stipple.
 * **core** — optional: set `engine.pipeline.settings.dof = { enabled: true, focus }` during cinematic transitions.

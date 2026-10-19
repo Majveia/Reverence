@@ -8,41 +8,47 @@ import { clamp, noise1 } from './util.js';
 import { heightToNormal } from './textures.js';
 
 function scarfTexture(c1, c2) {
-  const W = 64, H = 256;
+  const W = 128, H = 512;
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d');
   const hex = (c) => '#' + c.getHexString(THREE.SRGBColorSpace);
   ctx.fillStyle = hex(c1); ctx.fillRect(0, 0, W, H);
-  // slow lengthwise dye variation (hand-dyed wool)
-  for (let y = 0; y < H; y += 4) {
-    const k = 0.5 + 0.5 * Math.sin(y * 0.071) * Math.sin(y * 0.023 + 1.3);
-    ctx.fillStyle = `rgba(0,0,0,${0.1 * k})`; ctx.fillRect(0, y, W, 4);
+  // hand-dyed wool: slow, irregular lengthwise dye clouds (no regular stripes — they read as banding)
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  for (let i = 0; i < 70; i++) {
+    const x = rnd() * W, y = rnd() * H, rx = 20 + rnd() * 50, ry = 30 + rnd() * 90, d = rnd() < 0.5;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(rx, ry));
+    g.addColorStop(0, d ? 'rgba(40,0,0,0.12)' : 'rgba(255,120,90,0.07)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.save(); ctx.translate(x, y); ctx.scale(rx / Math.max(rx, ry), ry / Math.max(rx, ry)); ctx.translate(-x, -y);
+    ctx.fillStyle = g; ctx.fillRect(x - Math.max(rx, ry), y - Math.max(rx, ry), Math.max(rx, ry) * 2, Math.max(rx, ry) * 2);
+    ctx.restore();
   }
-  // fine woven texture
-  for (let y = 0; y < H; y += 2) { ctx.fillStyle = `rgba(0,0,0,${0.05 + 0.04 * ((y >> 1) & 1)})`; ctx.fillRect(0, y, W, 1); }
-  for (let x = 0; x < W; x += 2) { ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fillRect(x, 0, 1, H); }
-  // glyph band and stripes toward the tip (v → 1)
+  // fibre noise (per pixel, fine enough to vanish into the weave normal map at any distance)
+  const img = ctx.getImageData(0, 0, W, H), d = img.data;
+  for (let i = 0; i < d.length; i += 4) { const k = 0.93 + rnd() * 0.12; d[i] *= k; d[i + 1] *= k; d[i + 2] *= k; }
+  ctx.putImageData(img, 0, 0);
+  // woven glyph band toward the tip (v → 1): a few small motifs in the gold thread
   ctx.fillStyle = hex(c2);
-  ctx.fillRect(0, H * 0.72, W, 3); ctx.fillRect(0, H * 0.88, W, 3);
-  ctx.globalAlpha = 0.9;
-  for (let i = 0; i < 5; i++) {
-    const y = H * 0.75 + i * 7;
-    const x = 10 + (i % 2) * 8;
-    ctx.fillRect(x, y, 6, 3); ctx.fillRect(x + 14, y, 3, 6); ctx.fillRect(x + 24, y + 2, 8, 2); ctx.fillRect(x + 36, y, 3, 5);
+  ctx.fillRect(0, H * 0.78, W, 3);
+  ctx.globalAlpha = 0.85;
+  for (let i = 0; i < 4; i++) {
+    const y = H * 0.8 + i * 10, x = 18 + (i % 2) * 14;
+    ctx.fillRect(x, y, 10, 4); ctx.fillRect(x + 24, y, 4, 8); ctx.fillRect(x + 44, y + 2, 12, 3); ctx.fillRect(x + 66, y, 4, 7);
   }
   ctx.globalAlpha = 1;
   // edge hems
-  ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(0, 0, 3, H); ctx.fillRect(W - 3, 0, 3, H);
-  // fringe: the last 8% are loose threads (alpha-tested), knotted in bundles
-  const f0 = Math.round(H * 0.92);
+  ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(0, 0, 4, H); ctx.fillRect(W - 4, 0, 4, H);
+  // fringe: the last 7 % are loose threads (alpha-tested), knotted in bundles
+  const f0 = Math.round(H * 0.93);
   ctx.clearRect(0, f0, W, H - f0);
-  for (let x = 1; x < W - 1; x += 3) {
+  for (let x = 2; x < W - 2; x += 4) {
     const len = (H - f0) * (0.55 + 0.45 * Math.abs(Math.sin(x * 12.9898) * 43758.5453 % 1));
-    ctx.fillStyle = hex(c1); ctx.fillRect(x, f0, 2, len);
-    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(x + 1, f0, 1, len);
+    ctx.fillStyle = hex(c1); ctx.fillRect(x, f0, 3, len);
+    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(x + 2, f0, 1, len);
   }
-  ctx.fillStyle = hex(c2); ctx.fillRect(0, f0 - 3, W, 3); // knot band
+  ctx.fillStyle = hex(c2); ctx.fillRect(0, f0 - 4, W, 4); // knot band
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
@@ -51,14 +57,17 @@ function scarfTexture(c1, c2) {
 
 /** Wool weave + soft lengthwise creases → normal map (tangent space, uv of the strip). */
 function scarfNormal() {
-  const W = 64, H = 256;
+  const W = 128, H = 512;
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d', { willReadFrequently: true });
   const img = ctx.createImageData(W, H), d = img.data;
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const weave = 0.5 + 0.18 * Math.sin(x * Math.PI) * Math.sin(y * Math.PI * 0.5) + 0.12 * Math.sin((x + y) * Math.PI * 0.5);
-    const crease = 0.2 * Math.sin(x / W * Math.PI * 3 + Math.sin(y * 0.05) * 1.5) * (0.6 + 0.4 * Math.sin(y * 0.03));
+    // knit: V-shaped stitches in columns (fine), plus soft lengthwise creases
+    const col = (x % 4) / 4, row = (y % 4) / 4;
+    const vst = 1 - Math.abs((col - 0.5) * 2 - (row - 0.5) * (x % 8 < 4 ? 1 : -1));
+    const weave = 0.5 + 0.16 * vst + 0.05 * Math.sin((x * 0.7 + y * 0.31));
+    const crease = 0.2 * Math.sin(x / W * Math.PI * 3 + Math.sin(y * 0.025) * 1.5) * (0.6 + 0.4 * Math.sin(y * 0.015));
     const v = Math.max(0, Math.min(255, (weave + crease) * 200)) | 0;
     const i = (y * W + x) * 4; d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
   }
@@ -100,11 +109,12 @@ export class Scarf {
   constructor(world, palette, quality) {
     this.world = world;
     const q = quality?.tier === 'low' ? 0.7 : 1;
-    this.strips = [new Strip(3, Math.round(18 * q), 0.165, 1.05, 0.45), new Strip(3, Math.round(12 * q), 0.12, 0.7, 0.45)]; // tapered to ~55 % at the tip
-    // anchors in chest space (back of the neck wrap)
+    // two generous wool tails (the one warm accent of the silhouette): 0.2 m wide, 1.35 m long, tapering to 60 %
+    this.strips = [new Strip(3, Math.round(18 * q), 0.2, 1.35, 0.4), new Strip(3, Math.round(13 * q), 0.15, 0.9, 0.4)];
+    // anchors in chest space (back of the neck wrap, over the hood's cowl)
     this.anchorsC = [
-      [new THREE.Vector3(-0.02, 0.215, -0.1), new THREE.Vector3(0.05, 0.22, -0.095), new THREE.Vector3(0.12, 0.215, -0.07)],
-      [new THREE.Vector3(-0.1, 0.205, -0.085), new THREE.Vector3(-0.05, 0.215, -0.1), new THREE.Vector3(0.0, 0.21, -0.105)],
+      [new THREE.Vector3(-0.03, 0.235, -0.125), new THREE.Vector3(0.05, 0.24, -0.12), new THREE.Vector3(0.13, 0.232, -0.095)],
+      [new THREE.Vector3(-0.12, 0.225, -0.105), new THREE.Vector3(-0.06, 0.235, -0.122), new THREE.Vector3(0.0, 0.232, -0.128)],
     ];
     this.origin = new THREE.Vector3();
     this.group = new THREE.Group();
@@ -146,7 +156,7 @@ export class Scarf {
       this.meshes.push(m);
     }
     this.spheres = []; // {c: Vector3, r}
-    for (let i = 0; i < 7; i++) this.spheres.push({ c: new THREE.Vector3(), r: 0.1 });
+    for (let i = 0; i < 10; i++) this.spheres.push({ c: new THREE.Vector3(), r: 0.1 });
     this.initialized = false;
     this._a = new THREE.Vector3(); this._b = new THREE.Vector3(); this._n = new THREE.Vector3();
     this.t = 0;
@@ -207,7 +217,7 @@ export class Scarf {
           // pressure along the normal + tangential drag (ribbons stream downwind), flutter
           const nx = N[o], ny = N[o + 1], nz = N[o + 2];
           const vn = rx * nx + ry * ny + rz * nz;
-          const kN = 1.6, kT = 0.28, flK = 0.7 + 0.055 * Math.min(rl, 25); // livelier flutter at speed
+          const kN = 1.6, kT = 0.36, flK = 0.7 + 0.055 * Math.min(rl, 25); // livelier flutter at speed
           let ax = gx + (vn * nx * kN + rx * kT) * Math.min(rl, 30) * 0.3 + nx * fl * Math.min(rl, 25) * flK;
           let ay = gy + (vn * ny * kN + ry * kT) * Math.min(rl, 30) * 0.3 + ny * fl * Math.min(rl, 25) * flK;
           let az = gz + (vn * nz * kN + rz * kT) * Math.min(rl, 30) * 0.3 + nz * fl * Math.min(rl, 25) * flK;
