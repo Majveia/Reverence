@@ -112,6 +112,16 @@ export default class GalaxyMode extends Mode {
     this._startGlobalGeneration(n);
 
     this.blackHole = safe(() => new BlackHole(e, S));
+    // black-hole art-direction overrides: &gx=Jet:0.1,Torn:0.05,DiskGain:4,Ring:1.2,DiskOut:20
+    if (params.gx && this.blackHole) {
+      for (const kv of String(params.gx).split(',')) {
+        const [k, v] = kv.split(':');
+        if (!Number.isFinite(+v)) continue;
+        if (k === 'Jet') this.blackHole.jet = +v;
+        else if (k === 'Torn') this.blackHole.torn = +v;
+        else if (/^(DiskGain|DiskT|DiskOut|Ring)$/.test(k)) this.blackHole.material.uniforms['u' + k].value = +v;
+      }
+    }
     this.nebulae = safe(() => new Nebulae(e, gal, S, this.volume.uniforms));
     if (this.nebulae) this.scene.add(this.nebulae.group);
     this.reticle = new Reticle();
@@ -549,6 +559,9 @@ export default class GalaxyMode extends Mode {
         let bk = 1;
         if (this.blackHole) bk = smoothstep(2.4, 4.4, Math.log10(Math.max(1, this.blackHole.distanceRs(this.camera))));
         this._bk = bk;
+        // next to the hole the bloom must not fog the shadow: a black disc keeps a thin, bright edge
+        const bs = e.pipeline.settings.bloom;
+        if (bs && this.look.bloom) bs.strength = this.look.bloom.strength * (0.3 + 0.7 * bk);
         this.volume.compositeMat.uniforms.uGain.value = (0.3 + 0.7 * k * k * (3 - 2 * k)) * (1 - 0.85 * nf) * (0.02 + 0.98 * bk);
       }
       this.volume.update(this.camera, this.pat);

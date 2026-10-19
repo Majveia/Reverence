@@ -36,6 +36,19 @@ Only the cosmic track changes `src/modes/cosmic/**`, and every one of its fixes 
 judge on fixed views and reverted unless the new look wins. Global changes (post-processing, UI, engine, shared
 shaders) must leave the cosmic view unchanged.
 
+## The explorer: a cosmic mystic
+
+In the creator's words (19 Oct): "The look of my character should be a cosmic mystic explorer, not a spacesuit. We need
+something minimal, effortless steez, elegant, and beautiful. I should also have cosmic mystic abilities."
+
+* **Look.** No suit, helmet, visor or jetpack. A tall, graceful figure in a long flowing robe or coat of one deep night
+  colour with a fine gold thread, wind-blown hair or a soft hood, and the long red scarf as the one warm accent. Few
+  shapes, a clean silhouette, faint woven star patterns that glow at night and when an ability is used.
+* **Movement.** Unhurried, confident, effortless: a gliding walk, a light jump, a slow float.
+* **Abilities.** Drift (levitate and glide on a ring of light), Lumen (an orb of light that follows and can be sent
+  ahead), Resonance (a pulse that makes nearby life, paths and sacred sites glow), Blink (a step through light that
+  leaves stardust), Commune (meditate, and the sky answers).
+
 ## Art direction rules (apply everywhere)
 
 1. The sky takes two thirds of the frame. The figure is small, near the bottom, there for scale.

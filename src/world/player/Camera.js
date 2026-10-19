@@ -138,7 +138,7 @@ export class CameraRig {
       const rw = ctx.rest;
       _a.copy(ctx.forward).applyAxisAngle(up, (ctx.restSide || 1) * (0.78 + 0.05 * Math.sin(this.t * 0.11)));
       this.recenter(up, _a, (this.restSnap ? 60 : 0.55) * rw, dt, 3.14);
-      const tgtP = (ctx.restLie ? -0.62 : 0.15) + 0.015 * Math.sin(this.t * 0.17); // lying: look down onto the figure in the flowers (from above the grass, not through it)
+      const tgtP = (ctx.restLie ? -0.5 : 0.15) + 0.015 * Math.sin(this.t * 0.17); // lying: look down onto the figure in the flowers (from above the grass, not through it)
       this.pitch = this.restSnap ? tgtP : damp(this.pitch, tgtP, 0.6 * rw, dt);
     } else if ((ctx.overlook || 0) > 0.01 && this.idleLook > 2 && st === 'ground') {
       // OVERLOOK: standing still at a drop — the lens pulls back, drops to chest height and tilts a touch up:
@@ -161,7 +161,7 @@ export class CameraRig {
     const restW = st === 'ground' ? (ctx.rest || 0) : 0;
     const ovW = st === 'ground' ? (ctx.overlook || 0) * (1 - restW) : 0;
     arm *= 1 - (0.35 + 0.2 * smoothstep(0.5, 1.0, this.pitch)) * smoothstep(0.05, 0.9, this.pitch) * (1 - Math.max(restW, ovW));
-    arm = lerp(arm, 5.3 + 0.12 * Math.sin(this.t * 0.13), restW);
+    arm = lerp(arm, (ctx.restLie ? 3.3 : 5.3) + 0.12 * Math.sin(this.t * 0.13), restW);
     arm = lerp(arm, 9.0, ovW);
     // framing presets (on foot / swimming; rest keeps its own composition)
     const onFoot = st === 'ground' || st === 'swim' || st === 'slide' ? 1 : 0;
@@ -261,7 +261,7 @@ export class CameraRig {
     const rollJ = tr > 1e-4 ? fbm1(this.t * 19, 3) * 0.018 * tr : 0;
     // tilt down to keep the hero framed when the lens rose over terrain
     // (looking up: keep the upward tilt — the lens sits low behind the explorer rather than re-aiming down)
-    const liftK = (st === 'slide' ? 0.5 : 0.95) * (1 - smoothstep(0.25, 0.7, this.pitch)) * (1 - 0.6 * restW) * (1 - pL);
+    const liftK = (st === 'slide' ? 0.5 : 0.95) * (1 - smoothstep(0.25, 0.7, this.pitch)) * (1 - 0.25 * restW) * (1 - pL);
     const look = this.lift > 0.02 ? _d.copy(camF).addScaledVector(up, -this.lift * liftK / Math.max(this.dist, 1)).normalize() : camF; // surfing: let the rider sit low so the run-out + horizon stay in frame
     quatLookDir(look, up, this.cam.quaternion);
     if (this.roll || rollJ) { _q.setFromAxisAngle(_u.set(0, 0, 1), this.roll + rollJ); this.cam.quaternion.multiply(_q); }
