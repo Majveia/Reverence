@@ -146,13 +146,15 @@ export class Coat {
       map, color: map ? 0xffffff : palette.coat, roughness: 0.82, side: THREE.DoubleSide,
       normalMap: tex.fabricNormal || tex.woolNormal || null, normalScale: new THREE.Vector2(0.45, 0.45), alphaTest: map ? 0.5 : 0,
     });
-    if (hi) { mat.sheen = 0.7; mat.sheenRoughness = 0.45; mat.sheenColor = new THREE.Color(palette.coat).lerp(new THREE.Color(0.62, 0.64, 0.8), 0.55); }
+    if (hi) { mat.sheen = 0.7; mat.sheenRoughness = 0.45; mat.sheenColor = new THREE.Color(palette.coat).lerp(new THREE.Color(0.62, 0.64, 0.8), 0.42); }
     patchLighting(mat, { rim: 0.32, sky: 0.16, key: 'coat', sunRim: 1.15, stars: 1, starUv: true });
     // darker lining on the inside faces
     const prev = mat.onBeforeCompile;
     mat.onBeforeCompile = (sh, r) => {
       prev(sh, r);
-      sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\n  if (!gl_FrontFacing) diffuseColor.rgb *= 0.5;');
+      sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\n  if (!gl_FrontFacing) diffuseColor.rgb *= 0.5;')
+        // the lining is matte: no silk sheen on the inside faces (a flapping hem read as pale patches at the shins)
+        .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n  #ifdef USE_SHEEN\n  if (!gl_FrontFacing) material.sheenColor *= 0.15;\n  #endif');
     };
     this.material = mat;
     this.mesh = new THREE.Mesh(g, mat);

@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { clamp, dampF, damp, lerp, smoothstep, saturate, Spring3, Spring, projectOnPlane, orthoForward, quatLookDir, fbm1, wrapPi } from './util.js';
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3();
+const _sa = new THREE.Vector3();
 const _r = new THREE.Vector3(), _f = new THREE.Vector3(), _u = new THREE.Vector3(), _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 
@@ -144,7 +145,20 @@ export class CameraRig {
       // STANDOFF: the iaido stance — the lens swings to a low ¾ front-side angle (Ghost-style duel framing),
       // the figure against the sky, held through the flash cut and the slow sheathe
       const sw = ctx.stance;
-      _a.copy(ctx.forward).applyAxisAngle(up, 2.25); // the lens looks back at her from the front-left
+      if (!this.stanceSide && ctx.heights) {
+        // pick the side where the land is lower (the lens stays low; on a slope the high side lifts it into a top-down view)
+        const H = ctx.heights, A = ctx.stanceAnchor || ctx.pos;
+        let best = 1, bh = Infinity;
+        for (const sd of [1, -1]) {
+          _sa.copy(ctx.forward).applyAxisAngle(up, sd * 2.25);
+          let hmax = -Infinity;
+          for (let k = 1; k <= 3; k++) { _b.copy(A).addScaledVector(_sa, -1.5 * k); hmax = Math.max(hmax, H.groundR(_b)); }
+          const hh = hmax - H.groundR(A) + (sd === 1 ? 0 : 0.15);
+          if (hh < bh) { bh = hh; best = sd; }
+        }
+        this.stanceSide = best;
+      }
+      _a.copy(ctx.forward).applyAxisAngle(up, 2.25 * (this.stanceSide || 1)); // the lens looks back at her from the front side
       this.recenter(up, _a, 1.6 * sw, dt, 3.14);
       this.pitch = damp(this.pitch, 0.1, 1.4 * sw, dt);
     } else if ((ctx.overlook || 0) > 0.01 && this.idleLook > 2 && st === 'ground') {
@@ -165,13 +179,14 @@ export class CameraRig {
     let arm = 4.3 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (2.9 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? 0.35 : st === 'slide' ? -0.15 : 0) + (st === 'climb' ? 0.2 + 0.7 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
     // looking up from low: shorten the arm so the camera sits low behind the explorer and can tilt up past 45°
     // to frame a giant planet / the sky overhead (BotW; space request)
+    if (!((ctx.stance || 0) > 0.01)) this.stanceSide = 0;
     const restW = st === 'ground' ? (ctx.rest || 0) : 0;
     const ovW = st === 'ground' ? (ctx.overlook || 0) * (1 - restW) : 0;
     arm *= 1 - (0.35 + 0.2 * smoothstep(0.5, 1.0, this.pitch)) * smoothstep(0.05, 0.9, this.pitch) * (1 - Math.max(restW, ovW));
     arm = lerp(arm, (ctx.restLie ? 3.3 : 5.3) + 0.12 * Math.sin(this.t * 0.13), restW);
     arm = lerp(arm, 9.0, ovW);
     const stW = st === 'ground' ? (ctx.stance || 0) * (1 - restW) : 0;
-    arm = lerp(arm, 3.6, stW);
+    arm = lerp(arm, 4.4, stW);
     // framing presets (on foot / swimming; rest keeps its own composition)
     const onFoot = st === 'ground' || st === 'swim' || st === 'slide' ? 1 : 0;
     const fk = this.snapFrame ? 60 : 2.2;
@@ -193,8 +208,13 @@ export class CameraRig {
     const vy = st === 'slide' || st === 'ground' ? vyC : ctx.vel.dot(up);
     const ff = 2 / this.pivot.omega;
     const tgt = _a.copy(ctx.pos).addScaledVector(up, pivotH);
+    if (ctx.stanceAnchor && stW > 0.001) { // the duel frame: pivot on the middle of the dash line
+      _sa.copy(ctx.stanceAnchor).addScaledVector(up, pivotH);
+      _sa.addScaledVector(up, (ctx.pos.length() - ctx.stanceAnchor.length()) * 0.5); // follow slopes halfway
+      tgt.lerp(_sa, smoothstep(0, 0.6, stW));
+    }
     if (st === 'slide') tgt.addScaledVector(this.mvel, ff); // steady fall-line motion: cancel the whole 3D lag (else the pivot trails uphill and the rider drops out of the bottom of the frame)
-    else tgt.addScaledVector(vt, 0.1 + ff * 0.85).addScaledVector(up, vy * ff * smoothstep(4, 12, Math.abs(vy)));
+    else tgt.addScaledVector(vt, (0.1 + ff * 0.85) * (1 - stW)).addScaledVector(up, vy * ff * smoothstep(4, 12, Math.abs(vy)));
     if (st === 'climb' && ctx.climbN) { // chest height along the wall, pulled off the rock
       tgt.copy(ctx.pos).addScaledVector(ctx.climbUp, 1.2).addScaledVector(ctx.climbN, 0.55);
     }
@@ -271,7 +291,7 @@ export class CameraRig {
     const rollJ = tr > 1e-4 ? fbm1(this.t * 19, 3) * 0.018 * tr : 0;
     // tilt down to keep the hero framed when the lens rose over terrain
     // (looking up: keep the upward tilt — the lens sits low behind the explorer rather than re-aiming down)
-    const liftK = (st === 'slide' ? 0.5 : 0.95) * (1 - smoothstep(0.25, 0.7, this.pitch)) * (1 - 0.25 * restW) * (1 - pL);
+    const liftK = (st === 'slide' ? 0.5 : 0.95) * (1 - smoothstep(0.25, 0.7, this.pitch)) * (1 - 0.25 * restW) * (1 - pL) * (1 - 0.5 * stW);
     const look = this.lift > 0.02 ? _d.copy(camF).addScaledVector(up, -this.lift * liftK / Math.max(this.dist, 1)).normalize() : camF; // surfing: let the rider sit low so the run-out + horizon stay in frame
     quatLookDir(look, up, this.cam.quaternion);
     if (this.roll || rollJ) { _q.setFromAxisAngle(_u.set(0, 0, 1), this.roll + rollJ); this.cam.quaternion.multiply(_q); }

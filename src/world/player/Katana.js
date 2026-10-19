@@ -300,6 +300,8 @@ export class Katana {
     const fl = world?.body?.art?.palette?.flora;
     if (Array.isArray(fl)) for (const c of fl) { try { this.petalCols.push(new THREE.Color(c)); } catch (_) { /* skip */ } }
     if (!this.petalCols.length) this.petalCols.push(new THREE.Color('#6cb04a'), new THREE.Color('#f4c6dc'), new THREE.Color('#ffe08a'));
+    // the cut always opens a few blossoms too (pink, white, gold): the bloom reads against any meadow
+    for (const c of ['#f7cfe0', '#fbf3ec', '#f2c34e', '#e8a2bd', '#fbf3ec']) this.petalCols.push(new THREE.Color(c));
   }
 
   get busy() { return !!this.act; }
@@ -435,7 +437,7 @@ export class Katana {
       _b.copy(_c).multiplyScalar(sweep * (1.5 + r.next() * 3)).addScaledVector(up, 1.6 + r.next() * 3.2).addScaledVector(fwd, (r.next() - 0.3) * 2.2);
       const col = this.petalCols[(r.next() * this.petalCols.length) | 0];
       _col.copy(col).multiplyScalar(0.75 + r.next() * 0.4);
-      fx.emit(_a, _b, { kind: 3, size: 0.035 + r.next() * 0.035, size1: 0.03 + r.next() * 0.03, life: 2.2 + r.next() * 2.4, color: _col, alpha: 0.95, drag: 2.4, grav: 0.07, spin: 9 });
+      fx.emit(_a, _b, { kind: 3, size: 0.05 + r.next() * 0.05, size1: 0.045 + r.next() * 0.04, life: 2.2 + r.next() * 2.4, color: _col, alpha: 0.95, drag: 2.4, grav: 0.07, spin: 9 });
     }
     // grass cuttings (small, fast, green-gold)
     for (let i = 0; i < n * 0.6; i++) {

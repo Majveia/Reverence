@@ -54,6 +54,7 @@ const CLIMB_PROBES = [0.08, 0.2, 0.3, 0.12, 0.5, 0.16, 0.92, 0.14, 1.1, 0.15, 1.
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3();
 const _e = new THREE.Vector3(), _n = new THREE.Vector3(), _t = new THREE.Vector3(), _w = new THREE.Vector3();
 const _v = new THREE.Vector3(), _x = new THREE.Vector3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+const _pa = new THREE.Vector3(), _pb = new THREE.Vector3(), _pc = new THREE.Vector3(), _pd = new THREE.Vector3(), _pcol = new THREE.Color();
 const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _col = new THREE.Color(), _col2 = new THREE.Color();
 const WHITE = new THREE.Color(1, 1, 1);
 
@@ -717,7 +718,10 @@ export class Player {
     const wasAct = K.act;
     safe(() => K.tick(dt, ctl, (type, data) => this._swordEvent(type, data)));
     // a new cut faces where you look (or where the stick points)
-    if (K.act && K.act !== wasAct && K.act !== 'sheathe' && K.act !== 'draw') {
+    // (not the flash cut out of the stance: the standoff lens is in front of her by then, so "where you look"
+    //  would turn her round and send her dashing into the camera — she cuts the way she stands)
+    const fromStance = (K.act === 'iai' || (this._stance || 0) > 0.3) && I.mag <= 0.15;
+    if (K.act && K.act !== wasAct && K.act !== 'sheathe' && K.act !== 'draw' && !fromStance) {
       this._swordFace = I.mag > 0.15 ? _v.copy(I.wish) : _v.copy(this.cam.fwd);
       this._swordFaceT = 0.18;
       this._swordFaceDir = (this._swordFaceDir || new THREE.Vector3()).copy(this._swordFace);
@@ -971,10 +975,12 @@ export class Player {
       const step = Math.min(K.dash, 34 * dt);
       K.dash -= step;
       this.vel.copy(this.forward).multiplyScalar(step / dt);
-      if (this.fx) for (let i = 0; i < 3; i++) {
-        _b.copy(this.pos).addScaledVector(this.up, 0.5 + this.fx.rand.next() * 1.1).addScaledVector(this.forward, -this.fx.rand.next() * step);
-        _c.copy(this.forward).multiplyScalar(-1.5).addScaledVector(this.up, 0.3);
-        this.fx.emit(_b, _c, { kind: 2, size: 0.05, size1: 0.01, life: 0.6 + this.fx.rand.next() * 0.6, color: _col.setRGB(3.0, 2.6, 2.0), alpha: 0.85, drag: 2 });
+      if (this.fx) for (let i = 0; i < 10; i++) {
+        // a streak of light along the dash line: a dense core at sword height + looser stardust around it
+        const r = this.fx.rand, core = i < 6;
+        _b.copy(this.pos).addScaledVector(this.up, core ? 1.0 + (r.next() - 0.5) * 0.25 : 0.4 + r.next() * 1.3).addScaledVector(this.forward, -r.next() * step);
+        _c.copy(this.forward).multiplyScalar(core ? -0.4 : -1.5).addScaledVector(this.up, core ? 0.05 : 0.3);
+        this.fx.emit(_b, _c, { kind: 2, size: core ? 0.09 : 0.05, size1: 0.012, life: core ? 0.9 + r.next() * 0.5 : 0.6 + r.next() * 0.6, color: core ? _col.setRGB(3.4, 2.7, 1.7) : _col.setRGB(2.2, 2.4, 3.0), alpha: 0.9, drag: core ? 3 : 2 });
       }
       if (K.dash <= 0) this.vel.multiplyScalar(0.05);
     }
@@ -1650,6 +1656,46 @@ export class Player {
     if (this.hair) this.hair.group.visible = vis && this.view !== 'fp';
   }
 
+  /** The world is alive: petals and leaves (the world's flora colours) ride the wind past her — the guiding wind. */
+  _windPetals(dt, fx) {
+    if (!this._petalCols) {
+      // blossom pink, white, ginkgo gold, a maple red — plus the world's own bright flora colours
+      this._petalCols = ['#f7cfe0', '#fbf3ec', '#f2c34e', '#e8a2bd', '#d9542e', '#f6dd8a'].map((c) => new THREE.Color(c));
+      for (const c of this.katana?.petalCols || []) { const hsl = c.getHSL({}); if (hsl.l > 0.45 || hsl.s > 0.55) this._petalCols.push(c); }
+    }
+    const cols = this._petalCols;
+    if (!(this.air?.density > 0) || this.state === 'swim' || this.speed > 9 || !fx?.rand || this.params.petals === '0') return;
+    const ws = G.uWindStrength?.value ?? 0.3;
+    const q = this.quality || {};
+    const rate = (7 + 20 * clamp(ws, 0, 1.2)) * (q.particleScale ?? 1) * (q.tier === 'low' ? 0.35 : q.tier === 'med' ? 0.7 : 1) * (+this.params.petals || 1);
+    this._petalT = (this._petalT || 0) + dt * rate;
+    if (this._petalT < 1) return;
+    const up = this.up, w = this.windV, r = fx.rand;
+    const wl = w.length();
+    const wd = _pa.copy(wl > 0.3 ? w : this.forward).normalize();
+    const side = _pb.crossVectors(up, wd).normalize();
+    const cp = this.cam?.cam?.position, cf = this.cam?.camF;
+    let n = 0;
+    while (this._petalT >= 1 && n++ < 6) {
+      this._petalT -= 1;
+      const near = cp && cf && r.next() < 0.5;
+      const p = _pc;
+      if (near) {
+        // some drift right past the lens (big, soft, in front of the view)
+        p.copy(cp).addScaledVector(cf, 1.8 + r.next() * 5).addScaledVector(side, (r.next() - 0.5) * 6).addScaledVector(up, (r.next() - 0.6) * 2.2).addScaledVector(wd, -2.5);
+      } else {
+        p.copy(this.pos).addScaledVector(wd, -(4 + r.next() * 8)).addScaledVector(side, (r.next() - 0.5) * 14)
+          .addScaledVector(this.cam?.fwd || this.forward, 1 + r.next() * 4).addScaledVector(up, 0.2 + r.next() * r.next() * 2.6);
+      }
+      const gr = this.heights ? this.heights.groundR(p) : p.length();
+      if (p.length() < gr + 0.15) p.setLength(gr + 0.15 + r.next() * 0.8);
+      const v = _pd.copy(w).multiplyScalar(0.75 + r.next() * 0.4).addScaledVector(up, (r.next() - 0.35) * 0.7).addScaledVector(side, (r.next() - 0.5) * 1.2);
+      _pcol.copy(cols[(r.next() * cols.length) | 0]).multiplyScalar(0.85 + r.next() * 0.35);
+      const sz = 0.045 + r.next() * 0.045;
+      fx.emit(p, v, { kind: 3, size: sz, size1: sz * 0.85, life: 4 + r.next() * 3.5, color: _pcol, alpha: 0.95, drag: 1.1, grav: 0.025, spin: 6 });
+    }
+  }
+
   _camera(dt) {
     if (this.view === 'orbit') { this.cam.orbitView(dt, this.input, this.R); return; }
     const ctx = this._camCtx || (this._camCtx = {});
@@ -1664,6 +1710,13 @@ export class Player {
     const stanceT = K && (K.charging || K.act === 'iai' || (K.act === 'sheathe' && K.fromSheath && K.dur > 1)) ? 1 : 0;
     this._stance = damp(this._stance || 0, stanceT, stanceT ? 3 : 1.2, dt);
     ctx.stance = this._stance;
+    // the duel frame is anchored on the middle of the coming dash (not on her): she cuts ACROSS a still frame
+    // instead of running into the lens
+    if (!this._stanceA) this._stanceA = new THREE.Vector3();
+    if (K?.charging && !this._stanceHeld) { this._stanceA.copy(this.pos).addScaledVector(this.forward, 1.6 + 0.8 * (K.charge || 0)); }
+    this._stanceHeld = !!(K && (K.act === 'iai' || (K.act === 'sheathe' && K.fromSheath)) && this._stance > 0.05);
+    if (!stanceT && this._stance < 0.05) this._stanceHeld = false;
+    ctx.stanceAnchor = this._stance > 0.01 ? this._stanceA : null;
     if (this.state === 'climb') { // height above the ground at the foot of the wall (camera composition)
       _a.copy(this.pos).addScaledVector(this.climbS.n, 2.5);
       ctx.climbAgl = this.pos.length() - this.heights.groundR(_a);
@@ -1854,6 +1907,8 @@ export class Player {
       ctx.wake = this._wakeCtx || null;
       if (this._grooveCtx && !(this.state === 'slide' && this.speed > 1.5)) this._grooveCtx.on = false;
       ctx.groove = this._grooveCtx || null;
+      ctx.wind = this.windV;
+      safe(() => this._windPetals(dt, fx));
       fx.rebase(this.pos);
       safe(() => fx.update(dt, ctx));
     }

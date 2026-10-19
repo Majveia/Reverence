@@ -37,7 +37,7 @@ varying vec3 vRvW;
 varying vec3 vRvN;
 varying vec4 vRvMat;
 varying vec4 vRvMat2;
-varying vec2 vRvM3;
+varying vec4 vRvM3;
 `;
 
 const VERT_NORMAL = /* glsl */`
@@ -47,7 +47,7 @@ vec3 objectNormal = normalize( mix( normal, aMorphN.xyz, rvK ) );
 vRvN = objectNormal;
 vRvMat = aMat;
 vRvMat2 = aMat2;
-vRvM3 = aMat3.xy;
+vRvM3 = aMat3;
 vRvUV = vec3( aUV.xy, aUV.z + dot( aMorph.xyz, normalize( rvW0.xyz - uRvPlanetC ) ) * rvK );
 `;
 
@@ -83,11 +83,12 @@ uniform float uRvDebug;
 uniform int uRvOff;   // debug A/B (URL tfoff=<bits>): 1 no 8 m rock layer, 2 no 32 m, 4 no macro, 8 no detail-height occlusion, 16 no near layers
 uniform float uRvLite; // 1 = software-GL budget: no micro layer, single-fetch tiling
 uniform vec4 uRvF;   // detail fade distances: mid start/end, far start/end (scaled by quality)
+uniform vec4 uRvSeason; // x = season-region strength (1 = full painterly fields)
 varying vec3 vRvW;
 varying vec3 vRvN;
 varying vec4 vRvMat;
 varying vec4 vRvMat2;
-varying vec2 vRvM3;
+varying vec4 vRvM3;
 varying vec3 vRvUV;
 
 vec3 rvN; float rvRough; float rvAO; vec3 rvEmis; bool rvStoch;
@@ -603,6 +604,29 @@ void rvTerrain( inout vec3 albedo ) {
   grassC = mix( grassC, uRvForest * 0.85, smoothstep( 0.45, 0.85, mC.g * 0.5 + mA.g * 0.5 + 0.3 * n3 ) * 0.35 );
   grassC = mix( grassC, vec3( rvLum( grassC ) ), 0.26 );
   grassC *= 0.78 + 0.44 * mA.b + 0.2 * n4;
+  // ---- season regions (Ghost of Yotei): broad, saturated one-hue fields from the generator's season map
+  //      (0 spring green · 1/3 blossom petal carpets · 2/3 gold pampas · 1 crimson lilies / maple litter),
+  //      painterly drifts inside each region; cold ground keeps its tundra / snow
+  // (near the camera the flora track's blades and flowers carry the hue; the ground under them stays an
+  //  earthy, darker version so it never reads as painted soil)
+  float sAmt = vRvM3.w * uRvSeason.x * ( 1.0 - smoothstep( 0.05, 0.25, coldness ) ) * mix( 0.35, 1.0, smoothstep( 20.0, 160.0, dist ) );
+  vec3 seasonC = vec3( 0.0 );
+  if ( sAmt > 0.01 ) {
+    float sq = clamp( vRvM3.z, 0.0, 1.0 ) * 3.0;
+    // painterly drifts (20-200 m) and flower / petal patches inside each region
+    float drift = mC.g + 0.35 * n4 + 0.25 * ( mA.r - 0.5 );
+    float patchF = smoothstep( 0.5, 0.68, mC.b * 0.6 + mA.g * 0.25 + 0.3 * n4 + 0.15 * ( dGround.a - 0.5 ) );
+    vec3 green = mix( vec3( 0.055, 0.15, 0.028 ), vec3( 0.11, 0.21, 0.035 ), smoothstep( 0.3, 0.7, drift ) );
+    vec3 cG = green;
+    vec3 cB = mix( green * 1.15 + vec3( 0.02, 0.01, 0.0 ), vec3( 0.58, 0.29, 0.37 ), 0.1 + 0.6 * patchF );
+    vec3 cO = mix( vec3( 0.33, 0.22, 0.06 ), vec3( 0.50, 0.35, 0.10 ), smoothstep( 0.3, 0.75, drift ) );
+    vec3 cR = mix( mix( vec3( 0.30, 0.18, 0.05 ), vec3( 0.36, 0.15, 0.04 ), smoothstep( 0.35, 0.65, drift ) ), vec3( 0.40, 0.035, 0.045 ), 0.55 * patchF );
+    float i0 = floor( min( sq, 2.999 ) ), fs = sq - i0;
+    vec3 ca = i0 < 0.5 ? cG : i0 < 1.5 ? cB : cO;
+    vec3 cb = i0 < 0.5 ? cB : i0 < 1.5 ? cO : cR;
+    seasonC = mix( ca, cb, smoothstep( 0.0, 1.0, fs ) ) * ( 0.86 + 0.26 * mA.b );
+    grassC = mix( grassC, seasonC, sAmt * 0.85 );
+  }
   // meadows (where the flora track grows dense grass): from mid distance the ground takes the grass
   // blade colour and loses soil patches, so meadows read dense where individual blades fade out
   float meadow = ( 1.0 - wRock ) * ( 1.0 - wSand ) * smoothstep( 0.3, 0.55, moist + 0.1 * n3 ) * smoothstep( 0.1, 0.3, temp ) * uRvS2.x * ( 1.0 - bareV );
@@ -612,6 +636,7 @@ void rvTerrain( inout vec3 albedo ) {
   vec3 bladeC = uRvBlade * ( 0.84 + 0.2 * mA.b + 0.22 * ( mC.g - 0.5 ) );
   bladeC = mix( bladeC, bladeC * vec3( 1.18, 1.06, 0.62 ), smoothstep( 0.52, 0.78, mC.r + 0.25 * n3 ) * 0.7 );
   bladeC = mix( bladeC, bladeC * vec3( 0.72, 0.86, 0.78 ), smoothstep( 0.55, 0.8, mC.b * 0.6 + max( curv, 0.0 ) * 0.6 + 0.2 * n1 ) * 0.6 );
+  if ( sAmt > 0.01 ) bladeC = mix( bladeC, seasonC, sAmt * 0.85 );
   grassC = mix( grassC, bladeC, meadow * mix( 0.25, 0.6, smoothstep( 15.0, 90.0, dist ) ) );
   soilM = max( soilM, bareV * 0.85 );
   vec3 groundC = mix( grassC, uRvSoil, soilM * 0.55 + bareV * 0.3 );
@@ -620,7 +645,7 @@ void rvTerrain( inout vec3 albedo ) {
   groundC = mix( groundC, screeC, clamp( wScree * mix( 0.8, 0.3 + 0.7 * smoothstep( 0.15, 0.55, dPeb.b ), fMid ), 0.0, 1.0 ) );
 
   // rock tone: palette rock pulled toward neutral grey, strata bands only where the style asks for it
-  vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ), 0.14 );
+  vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ), 0.05 );
   float sk = uRvS.x * uRvS.x;
   // colour bands only on real faces: on gentle slopes altitude-locked bands become contour rings
   // (the "wood grain" look)
@@ -810,6 +835,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
     uRvS: { value: new THREE.Vector4(st.strata, st.snowBias, st.volcanic, st.crystal) },
     uRvS2: { value: new THREE.Vector4(st.lush, st.forest, 0, 0) },
     uRvLite: { value: opts.lite ? 1 : 0 },
+    uRvSeason: { value: new THREE.Vector4((() => { try { const v = new URLSearchParams(globalThis.location?.search || '').get('tseason'); return v !== null && v !== '' ? +v : 1; } catch (_) { return 1; } })(), 0, 0, 0) },
     uRvF: { value: opts.lite ? new THREE.Vector4(160, 700, 2500, 7000) : new THREE.Vector4(250, 1400, 6000, 20000) },
   };
 
@@ -842,7 +868,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v38' + (opts.lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-v39' + (opts.lite ? 'L' : '');
   return mat;
 }
 

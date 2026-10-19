@@ -470,6 +470,7 @@ export class FX {
     const P = this.P;
     const up = ctx.up;
     const g = ctx.gravity ?? 9.8;
+    const wv = ctx.wind && ctx.wind.isVector3 ? ctx.wind : null;
     // particles
     let w = 0;
     const ip = this.iPos.array, iv = this.iVel.array, ic = this.iCol.array, im = this.iMisc.array;
@@ -478,9 +479,17 @@ export class FX {
       if (P.age[i] >= P.life[i]) continue;
       const o = i * 3;
       const d = Math.exp(-P.drag[i] * dt);
-      P.vel[o] = P.vel[o] * d - up.x * g * P.grav[i] * dt;
-      P.vel[o + 1] = P.vel[o + 1] * d - up.y * g * P.grav[i] * dt;
-      P.vel[o + 2] = P.vel[o + 2] * d - up.z * g * P.grav[i] * dt;
+      if (P.kind[i] === 3 && wv) {
+        // petals and leaves ride the wind (relax toward it, not to rest) and flutter as they fall
+        const fl = Math.sin(P.age[i] * 3.7 + P.seed[i] * 61) * 1.4 * dt, gk = g * P.grav[i] * dt;
+        P.vel[o] = wv.x + (P.vel[o] - wv.x) * d + up.x * (fl - gk);
+        P.vel[o + 1] = wv.y + (P.vel[o + 1] - wv.y) * d + up.y * (fl - gk);
+        P.vel[o + 2] = wv.z + (P.vel[o + 2] - wv.z) * d + up.z * (fl - gk);
+      } else {
+        P.vel[o] = P.vel[o] * d - up.x * g * P.grav[i] * dt;
+        P.vel[o + 1] = P.vel[o + 1] * d - up.y * g * P.grav[i] * dt;
+        P.vel[o + 2] = P.vel[o + 2] * d - up.z * g * P.grav[i] * dt;
+      }
       P.pos[o] += P.vel[o] * dt; P.pos[o + 1] += P.vel[o + 1] * dt; P.pos[o + 2] += P.vel[o + 2] * dt;
       P.rot[i] += P.spin[i] * dt;
       // compact into slot w (keeps arrays dense)

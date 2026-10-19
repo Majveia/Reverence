@@ -29,14 +29,16 @@ function makeFootRing() {
   g.rotateX(-Math.PI / 2);
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-    uniforms: { uA: { value: 0 }, uT: G.uTime, uCol: { value: new THREE.Color(2.6, 2.2, 1.5) }, uCol2: { value: new THREE.Color(0.8, 1.3, 2.8) } },
+    uniforms: { uA: { value: 0 }, uT: G.uTime, uCol: { value: new THREE.Color(3.0, 2.0, 0.85) }, uCol2: { value: new THREE.Color(0.8, 1.3, 2.8) } },
     vertexShader: /* glsl */`varying vec2 vP; void main(){ vP = position.xz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
     fragmentShader: /* glsl */`
       uniform float uA; uniform float uT; uniform vec3 uCol; uniform vec3 uCol2; varying vec2 vP;
       void main(){
         float r = length(vP);
         float ang = atan(vP.y, vP.x);
-        float ring = exp(-pow((r - 0.82) / 0.035, 2.0)) * 1.2;                      // the bright rim
+        float ring = exp(-pow((r - 0.82) / 0.03, 2.0)) * 1.35;                      // the bright rim
+        ring += exp(-pow((r - 0.82) / 0.11, 2.0)) * 0.3;                             // its soft halo (reads at a distance)
+        ring += exp(-pow((r - 0.9) / 0.008, 2.0)) * 0.35 * (0.7 + 0.3 * sin(ang * 3.0 - uT * 0.9)); // a fine outer thread
         ring += exp(-pow((r - 0.62) / 0.012, 2.0)) * 0.55 * (0.6 + 0.4 * sin(ang * 12.0 + uT * 1.5));
         ring += exp(-pow((r - 0.42) / 0.01, 2.0)) * 0.35 * (0.5 + 0.5 * sin(-ang * 7.0 + uT * 2.2));
         float glyph = step(0.92, fract(ang / 6.2831 * 24.0 + uT * 0.05)) * smoothstep(0.74, 0.7, r) * smoothstep(0.66, 0.7, r);
@@ -305,7 +307,7 @@ export class Abilities {
         fr.position.copy(_a);
         fr.quaternion.copy(ctx.quat);
         fr.rotateY(p.time * 0.35);
-        const s = 0.75 + 0.15 * (ctx.drift || 0) + this.ringFlash * 0.5;
+        const s = 0.8 + 0.3 * (ctx.drift || 0) + this.ringFlash * 0.5;
         fr.scale.setScalar(s);
         fr.material.uniforms.uA.value = this.ringA * (0.8 + 0.2 * Math.sin(p.time * 2.3));
       }

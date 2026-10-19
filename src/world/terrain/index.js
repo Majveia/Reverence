@@ -14,6 +14,8 @@ import { surfaceConfig } from '../planet/SurfaceGen.js';
 import { buildChunk, buildIndices, cubeDir, FACES } from './chunkBuild.js';
 import { bakeDetail, DETAIL_SIZE, DETAIL_LAYERS } from './detailTex.js';
 import { createTerrainMaterial, createTerrainDepthMaterial, updateOriginMod } from './material.js';
+import { decorateLandmarks } from '../planet/index.js';
+import { LandmarkFeatures } from './features.js';
 
 const RES_DEFAULT = 64;
 const _dir = new Float64Array(3), _dir2 = new Float64Array(3);
@@ -48,6 +50,8 @@ class Terrain {
     this.surface = world.surface;
     this.body = world.body;
     this.R = world.body.radius;
+    // season 2 landmarks (great mountain + sacred sites): deterministic, from the generator (see planet/index.js)
+    this.landmarks = (() => { try { return decorateLandmarks(this.surface); } catch (_) { return null; } })();
     const q = world.quality || {};
     this.q = q;
     this.group = new THREE.Group();
@@ -104,6 +108,12 @@ class Terrain {
     this._offFlat = this.surface.onFlattenChange?.((f, all) => this._onFlatten(f, all));
     this.ms = 0; this.msMax = 0;
     this._t0 = performance.now(); this.readyMs = 0; this.builds = 0; this.buildMs = 0;
+    // floating isles + natural arch at the sacred sites (non-heightfield landforms)
+    try { if (this.landmarks?.mountain) this.features = new LandmarkFeatures(world, this); } catch (e) { console.warn('[terrain] landmark features', e); this.features = null; }
+  }
+
+  update(dt) {
+    if (this.features) { try { this.features.update(dt); } catch (e) { if (!this._fw) { console.warn('[terrain] features', e); this._fw = true; } } }
   }
 
   // ------------------------------------------------------------------ workers
@@ -497,7 +507,8 @@ class Terrain {
   getState() {
     const hist = {}; let iv = 0;
     for (const n of this.desired) { hist[n.level] = (hist[n.level] || 0) + 1; if (n.inView) iv++; }
-    return { chunks: this.meshCount, casters: this.casters, desired: this.desired.length, inflight: this.inflight, uploads: this.uploads.length, maxLevel: this.maxLevel, K: +this.K.toFixed(2), workers: this.workers.length, tex: this.texReady, inView: iv, levels: hist, ms: +this.ms.toFixed(2), msMax: +this.msMax.toFixed(1), readyMs: this.readyMs, builds: this.builds };
+    const lm = this.landmarks?.mountain;
+    return { mountain: lm ? { lat: lm.lat, lon: lm.lon, h: Math.round(lm.height) } : null, chunks: this.meshCount, casters: this.casters, desired: this.desired.length, inflight: this.inflight, uploads: this.uploads.length, maxLevel: this.maxLevel, K: +this.K.toFixed(2), workers: this.workers.length, tex: this.texReady, inView: iv, levels: hist, ms: +this.ms.toFixed(2), msMax: +this.msMax.toFixed(1), readyMs: this.readyMs, builds: this.builds };
   }
 
   onOriginShift() { /* chunk transforms are planet-local under world.root: nothing to do */ }
@@ -508,6 +519,7 @@ class Terrain {
     try { this._offFlat?.(); } catch (_) { /* */ }
     const walk = (n) => { if (n.mesh) { n.mesh.geometry.dispose(); n.mesh = null; } n.dead = true; if (n.children) n.children.forEach(walk); };
     this.roots.forEach(walk);
+    try { this.features?.dispose(); } catch (_) { /* */ }
     this.material.dispose();
     this.depthMaterial.dispose();
     this.detailTex?.dispose();
