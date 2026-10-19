@@ -129,9 +129,12 @@ class Trail {
         uniform float uGlow; uniform vec3 uColA; uniform vec3 uColB; varying vec2 vT;
         void main() {
           float age = clamp(vT.x, 0.0, 1.0), across = vT.y;      // across: 0 at the hilt side, 1 at the tip
-          float a = (1.0 - age) * (1.0 - age) * smoothstep(0.0, 0.35, across) * (0.35 + 0.65 * across);
-          a *= smoothstep(1.0, 0.92, across) * 0.7 + 0.3;
-          float core = smoothstep(0.55, 1.0, across) * (1.0 - age);
+          // a crescent of light: a thin bright line along the edge's path, a soft veil toward the hilt
+          float fade = (1.0 - age) * (1.0 - age);
+          float edge = exp(-pow((0.95 - across) / 0.075, 2.0));
+          float veil = across * across * 0.55;
+          float a = fade * (edge * 1.1 + veil) * smoothstep(1.0, 0.985, across);
+          float core = edge * (1.0 - age);
           vec3 c = mix(uColB, uColA, core) * uGlow;
           if (a < 0.002) discard;
           gl_FragColor = vec4(c * a, a);

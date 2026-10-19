@@ -2,6 +2,32 @@
 
 Owner paths: `src/world/player/**`, this file.
 
+## Season 2 round 4 — polish toward the frames (19 Oct, later)
+
+* **The white wolf, rebuilt** (`Companion.js`): a lofted wolf instead of ellipsoid "balloon" parts — high rump, tucked
+  waist, a deep keel of a chest, a darker silver saddle, a thick neck ruff, a long skull with a tapering muzzle, tall
+  pointed ears, long lean legs with the hock angle, a full brush of a tail that hangs (lifts at a lope), soft fur locks
+  at the cheeks / bib / tail, vertex-colour mottling. Scale 1.85 (shoulder ≈ 0.62 m). The sit pose was rebuilt (rump
+  down, fore legs straight, hind legs folded under — before they stuck out forward), it sits a little further out
+  (0.66 m) so the two silhouettes read apart, the tail curls AWAY from her, and her arm reaches its shoulders.
+* **The guiding wind** (`Player._windPetals`, FX kind 3): the world is alive — blossom petals (pink, white, ginkgo gold,
+  a maple red, plus the world's bright flora colours) ride the wind past her all the time; half spawn right in front of
+  the lens (big, soft), half around her, rate scaled by `G.uWindStrength`, quality tier and `particleScale`
+  (`petals=0` off, `petals=<k>` multiplier). Petals and leaves now **relax toward the wind** (instead of to rest) and
+  flutter as they fall, so the katana's cut petals drift away downwind too.
+* **Iaido standoff fixed**: the flash cut used to turn her toward "where you look" — the standoff lens, which is in front
+  of her — so she dashed straight into the camera (frames full of glove and scarf). Now a cut out of the stance keeps
+  her facing (the stick still steers), the duel frame is **anchored on the middle of the dash line** (she cuts ACROSS a
+  still frame), the lens takes the side where the land is lower (no top-down view on slopes), the velocity
+  feed-forward is off during the stance, arm 4.4 m.
+* **Blade trails** are now a thin bright crescent along the edge's path with a soft veil toward the hilt (the old trail
+  was a flat translucent slab — during the dash it read as a white card). The iai dash leaves a dense streak of gold
+  light at sword height plus stardust. Cut petals are bigger (5–10 cm) and always include blossoms.
+* **Drift ring**: saturated gold rim with a soft halo and a fine outer thread; larger while drifting (reads from 10 m).
+* **Coat lining**: no silk sheen on the inside faces (a flapping hem read as pale patches at the shins when running).
+* Capture note: `{"hold":"primary"}` does NOT reach the game (core `simHold('primary')` adds the `Mouse0` code to
+  `keys`, but `_codeHeld` reads mouse buttons for `Mouse*` codes) — use `{"hold":"KeyJ","sec":1.8}` for the iaido.
+
 ## Season 2 round 3 — the cosmic mystic swordswoman (the creator, 19 Oct)
 
 "Ghost of Yotei like figure and feel, she needs to look badass, sexy, and cool with katana on her back that you can
