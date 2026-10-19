@@ -221,7 +221,22 @@ the frame shows the drop and the vista. First person (V) from the animated eye (
 * `act=meditate` (Commune at spawn), `act=rest|sit|lie`; `glider=1` (the old paraglider instead of Drift); `lumen=0`.
 * Surface/fp spawns snap to the nearest walkable spot within 45 m (`flat=0` disables).
 
-## Best captures — season 2 (verified; 1280x720)
+## Best captures — season 2 round 3, the swordswoman (verified at 960x540 unless noted)
+
+| view | URL | steps |
+|---|---|---|
+| W2 Drift: on the ring of light over the valley, the sea and the sky | `/?mode=system&galaxy=0&star=11&planet=0&view=surface&alt=60&lat=18.18&lon=-50.80&yaw=22&pitch=-14&tod=0.3` | `[{"advance":1.5},{"move":[0.7,0.6],"sec":2},{"advance":1.4}]` |
+| W1 rest on a ridge with the white wolf, katana laid beside her | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.27&props=0&lat=14.916&lon=27.55&yaw=180&act=rest&flat=0` | `[{"advance":4}]` |
+| W3 first person: the Lumen above the open left palm (add `{"hold":"KeyG","sec":0.15}` to draw the katana low right) | `/?mode=system&galaxy=0&star=9&planet=2&view=fp&props=0&lat=22.65&lon=56.2&yaw=240&pitch=-6&tod=0.7&flat=0` | `[{"advance":1},{"hold":"KeyG","sec":0.15},{"advance":1.6}]` |
+| W1 iaido in the meadow: stance, flash cut, slow sheathe, petals | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.28&props=0&lat=14.2065&lon=27.1184&yaw=200&flat=0&pitch=-6` | `[{"advance":2},{"hold":"primary","sec":1.8},{"advance":4.4}]` |
+| W9 meditating under the ringed giant at dusk | `/?mode=system&galaxy=0&star=2&planet=2.1&view=surface&tod=0.76&time=60000&weather=clear&act=meditate&camlock=1&zoom=1.4` | `[{"advance":0.3},{"eval":"__rv.world.space.look('parent',0,-12)"},{"eval":"var p=__rv.world.player;p.forward.copy(p.cam.fwd)"},{"advance":3}]` |
+| W1 resonance pulse at dusk | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.755&props=0&lat=14.916&lon=27.55&yaw=180&flat=0&frame=wide` | `[{"advance":2.5},{"hold":"KeyR","sec":0.15},{"advance":1.1}]` |
+| Explorer Lab: her front ¾ / back / draw / stance / meditate / drift / FP | `/src/world/player/lab/?camyaw=160&zoom=0.3&pitch=4&yaw=20&sunaz=200&sunel=20` · `?camyaw=25&zoom=0.4&…` · `+[{"hold":"KeyG","sec":0.1},{"advance":0.3}]` · `[{"hold":"primary","sec":3}…]` · `?act=meditate&yaw=200` · `?alt=30` · `?view=fp` | `[{"advance":2}]` |
+
+Note: use `hold` (≥ 0.1 s) rather than `press` for G / R / Q / L / Z in captures — a 1-frame simulated tap can fall
+between two player updates.
+
+## Best captures — season 2 round 2 (the wayfarer, superseded; 1280x720)
 
 | view | URL | steps |
 |---|---|---|
