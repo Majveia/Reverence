@@ -159,7 +159,9 @@ the frame shows the drop and the vista. First person (V) from the animated eye (
   target, body + camera, e.g. fauna showcases)
   (`ground|air|glide|slide|swim|climb|fly`) `.grounded` `.teleport(pos)` `.physics {heights, colliders, air}`
   `.onControlLost()` / `.onControlGained()` (hide / show the body for vehicles), `.inputScheme='character'`.
-* Events: `player:jump {pos, speed, double?}`, `player:land {pos, speed, hard}`.
+* Season 2: `.resting` (0..1), `.restS {on, lie, dangle, hug}`, `.companion` (own fallback fox, may be null),
+  `.viewmodel` (FP hands), `.coat` (cloth skirt); `getState()` adds `resting`, `rest` ('sit'|'edge'|'lie'|null).
+* Events: `player:jump {pos, speed, double?}`, `player:land {pos, speed, hard}`, `player:rest {on, pos}`.
 * Audio: `setParam('speed'|'altitude'|'wind'|'glide'|'swim'|'boost')`,
   `play('step'|'jump'|'land'|'boost'|'glider'|'splash', {surface, intensity…})`.
 * UI: one contextual prompt id `'player'` (Glide / Dive·Drop / Slide / Jump off).
@@ -180,8 +182,22 @@ the frame shows the drop and the vista. First person (V) from the animated eye (
 * no `yaw` → faces `world.civ.spawnTarget` (the capital) when it is < 9 km away.
 * `fov=` applies to first person too (telephoto sky shots).
 * spawns step away from tree / boulder colliders during the first frames (flora request).
+* `act=rest` / `act=lie` → sit (or lie back) at spawn with the rest composition snapped; `companion=0` → no fox;
+  `view=fp` spawns at sea step ashore to the nearest dry ground within ~4 km (`dry=0` disables).
 * `zoom=<k>` arm multiplier (0.5 = close-up), `fov=<deg>`.
 * Surface/fp spawns snap to the nearest walkable spot within 45 m (`flat=0` disables).
+
+## Best captures — season 2 (verified; 1280x720)
+
+| view | URL | steps |
+|---|---|---|
+| W1 rest on a ridge with the companion (sky ~2/3, valley + peaks) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.27&props=0&lat=14.916&lon=27.55&yaw=180&act=rest&flat=0` | `[{"advance":4}]` |
+| W1 first person: lantern low right, staff with its ring of light upper left | `/?mode=system&galaxy=0&star=6&planet=1&view=fp&tod=0.27&props=0&lat=14.916&lon=27.55&yaw=180&flat=0&pitch=-2` | `[{"advance":1.5}]` |
+| W1 first person, reach toward the view | same | `[{"advance":1},{"hold":"KeyR","sec":2.5},{"advance":2}]` |
+| W1 lie back in the meadow, looking at the sky | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.27&props=0&lat=14.2065&lon=27.1184&yaw=180&act=lie&flat=0` | `[{"advance":4}]` |
+| W1 overlook framing (stand still at a drop; the lens pulls back) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.27&props=0&lat=14.916&lon=27.55&yaw=180&flat=0&pitch=-4` | `[{"advance":5}]` |
+| sit down / stand up in play | any surface URL | `[{"advance":1},{"hold":"KeyX","sec":0.15},{"advance":8}]` (or `{"hold":"KeyC","sec":1}` while still) |
+| Explorer Lab: wayfarer front ¾ / back / rest / FP | `/src/world/player/lab/?camyaw=140&zoom=0.4&pitch=3&yaw=20&sunaz=240&sunel=14` · `?camyaw=25&zoom=0.55&…` · `?yaw=200&act=rest` · `?view=fp&yaw=300&pitch=-4` | `[{"advance":2}]` |
 
 ## Best captures (round 4, verified at 1280x720 unless noted; `props=0` keeps parked vehicles out of frame)
 
@@ -213,6 +229,15 @@ Suit bake: one-time at build (voxel grid 0.7 MB, AO cached per tessellation leve
 Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (a few hundred lookups).
 
 ## Known issues
+* Season 2: the coat skirt is a single-sided cloth sheet (darker lining on back faces); seated on the ground it
+  spreads flat around the hips. Large / fast teleports re-drape it (one frame).
+* The FP viewmodel is drawn in the world pass (children of the camera): it can poke into a wall the explorer
+  is pressed against. Sleeves are plain tapered tubes (no folds).
+* The lantern fox is the player track's own fallback companion: a simple 11-bone rig (no IK), it walks
+  through small props, swims by floating at the surface, and its idle sit reads stiff from behind.
+* Rest: lying back is disabled when sitting on an edge (legs over the drop). The edge seat search only looks
+  1.45 m straight ahead (face the drop before sitting).
+* The lantern's point light adds one light to every lit material (constant, no recompiles; off on `low`).
 * The W4 `view=surface` spawn lands in tall grass (flora); use `zoom` / `pitch` or a nearby lat/lon for clean captures.
 * Large fauna can walk through the explorer (no creature colliders yet) — see Requests.
 * Climbing works on the heightfield only (not on building / boulder colliders); the mantle is a hop,
@@ -230,6 +255,18 @@ Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (
   heavily weathered Starfield look; there is no fabric wrinkle simulation.
 
 ## Requests
+* **ui** (season 2) — `world.player.resting` (0..1, smoothed) is live: fade the HUD with it (the player already
+  clears its prompt while resting). Events `player:rest {on, pos}`. Keys: hold **C** still / tap **X** = sit,
+  hold C again = lie back, **R** (or primary) in first person = reach. Touch: a "rest" button can map to `descend`
+  (hold) — no extra action needed.
+* **audio** (season 2) — `setParam('rest', 0..1)` while seated / lying (a swell, a quieter wind bed); the lantern
+  could have a faint flame crackle when `resting > 0.5`.
+* **fauna** (season 2) — the player builds its own small companion (lantern fox) only while
+  `world.get('fauna').companion` is absent; if fauna ships one, expose `.pos` (planet-local Vector3) and
+  optionally `.headPos`, and make it sit ~0.5 m left of `world.player.pos` when `world.player.restS.on` — the
+  explorer's arm goes around anything within 0.85 m.
+* **civ / terrain** (season 2) — natural arches or doorways near spawn points would let the camera frame "a small
+  figure under an arch" (the player camera already treats large box colliders as walls).
 * **flora** (new, round 4) — W3 at `lat=22.65&lon=56.2` has a giant smooth brown trunk/pillar (~15 m wide, no bark
   texture, strata or normal detail) right next to the spawn; the critic read it as a bug. Please give large trunks /
   spires bark or strata detail, or keep them out of open dune fields. The player captures moved to `22.62/56.68`.
