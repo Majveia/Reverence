@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { B, REST_POS, PARENT, BONE_NAMES, DIM } from './Explorer.js';
 import { clamp, lerp, smoothstep, saturate, dampF, Spring, noise1 } from './util.js';
+import { ACTS, SHEATH, READY_POSE, READY_RUN_POSE, evalAct, evalKey, makeSwordPose } from './SwordAnim.js';
 
 const TAU = Math.PI * 2;
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _u = new THREE.Vector3(), _t = new THREE.Vector3();
@@ -116,6 +117,20 @@ export class Animator {
     this.gpos = new THREE.Vector3(); this.gquat = new THREE.Quaternion(); this.gup = new THREE.Vector3();
     this.headHidden = false;
     this.footWorld = { L: new THREE.Vector3(), R: new THREE.Vector3() };
+    // ---- katana (SwordAnim.js): overlay pose, smoothed blade frame (chest space), resolved sword transform (group)
+    this.sw = makeSwordPose(); this.swRun = makeSwordPose();
+    this.swW = 0; this.swIn = 0; this.swHandLw = 0; this.swCrouch = 0;
+    this.swDir = new THREE.Vector3(0, -1, 0); this.swPrevDir = new THREE.Vector3(0, -1, 0); this.swEdge = new THREE.Vector3(0, 0, -1);
+    this.swordGP = new THREE.Vector3(); this.swordGQ = new THREE.Quaternion(); this.swordSpeed = 0;
+    this.sheathGP = new THREE.Vector3(); this.sheathGQ = new THREE.Quaternion();
+    this.restMode = 'sit';
+    // the scabbard's frame relative to the pack bone (the bone carries it; it is set down beside her at rest)
+    {
+      const Y = SHEATH.axis.clone(), Z = SHEATH.edge.clone().addScaledVector(SHEATH.axis, -SHEATH.edge.dot(SHEATH.axis)).normalize();
+      const X = new THREE.Vector3().crossVectors(Y, Z);
+      this.sheathLQ = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
+      this.sheathLP = SHEATH.mouth.clone().sub(REST_POS.pack.clone().sub(REST_POS.chest));
+    }
   }
 
   /**
@@ -136,7 +151,8 @@ export class Animator {
     if (S.rest) {
       this.lieW += ((restOn && S.rest.lie ? 1 : 0) - this.lieW) * dampF(1.1, dt);
       this.dangleW += ((S.rest.dangle ? 1 : 0) - this.dangleW) * dampF(3, dt);
-      this.hugW += ((restOn && S.rest.hug ? 1 : 0) - this.hugW) * dampF(1.4, dt);
+      this.hugW += ((restOn && S.rest.hug && !S.rest.med ? 1 : 0) - this.hugW) * dampF(1.4, dt);
+      this.medW = (this.medW || 0) + ((restOn && S.rest.med ? 1 : 0) - (this.medW || 0)) * dampF(1.2, dt);
     }
     this.exertion = clamp(this.exertion + dt * (S.speed > 8 ? 0.12 : S.speed > 4 ? 0.02 : -0.06), 0, 1);
     this.breath += dt * (1.6 + this.exertion * 3.5 - this.w.rest * 0.6);
@@ -172,6 +188,8 @@ export class Animator {
     }
     // ---- hard landing overlay
     if (S.hardLand > 0.001) this._hardLand(P, S.hardLand);
+    // ---- katana overlay (draw / ready / cuts / iaido / sheathe)
+    this._swordOverlay(P, S, dt);
 
     // ---- additive: squash, lean, breathing, look
     if (S.landImpact > 0) { this.squash.v -= Math.min(S.landImpact, 22) * 0.16; S.landImpact = 0; }
@@ -220,16 +238,16 @@ export class Animator {
     const stride = v / cadence;
     const ph = this.phase;
     const lift = lerp(lerp(0.1, 0.24, runT), 0.36, sprintT);
-    const width = lerp(0.105, 0.085, runT);
-    const bobWalk = -0.025 * Math.cos(ph * TAU * 2) * walkT * (1 - runT);
+    const width = lerp(0.06, 0.08, runT); // a gliding walk: the feet fall close to one line, the hips sway
+    const bobWalk = -0.012 * Math.cos(ph * TAU * 2) * walkT * (1 - runT);
     const bobRun = 0.035 * Math.cos(ph * TAU * 2) * runT;
     L.hipsPos.y = (bobWalk + bobRun) - 0.02 * runT - 0.03 * sprintT;
-    L.hipsPos.x = Math.sin(ph * TAU) * 0.014 * walkT * (1 - runT * 0.6);
+    L.hipsPos.x = Math.sin(ph * TAU) * 0.022 * walkT * (1 - runT * 0.6);
     // idle weight shift
     this.idleT += dt;
     const idle = 1 - walkT;
     L.hipsPos.x += idle * 0.012 * Math.sin(this.idleT * 0.45);
-    L.hipsRot.z = idle * 0.025 * Math.sin(this.idleT * 0.45) + walkT * 0.045 * Math.sin(ph * TAU + Math.PI / 2) * (1 - runT * 0.5);
+    L.hipsRot.z = idle * 0.025 * Math.sin(this.idleT * 0.45) + walkT * 0.07 * Math.sin(ph * TAU + Math.PI / 2) * (1 - runT * 0.5);
     L.hipsRot.y = 0.16 * Math.sin(ph * TAU) * walkT * (1 - sprintT * 0.3);
     L.spine.x = 0.035 * walkT + 0.08 * runT + 0.07 * sprintT;
     L.chest.x = 0.02 * walkT + 0.05 * runT + 0.04 * sprintT - idle * 0.03;
@@ -276,7 +294,7 @@ export class Animator {
     }
     L.terrain = 1;
     // arms: counter-swing to legs
-    const armAmp = lerp(lerp(0.05, 0.32, walkT), 0.62, runT) + 0.2 * sprintT;
+    const armAmp = lerp(lerp(0.05, 0.22, walkT), 0.6, runT) + 0.2 * sprintT;
     const elbow = lerp(lerp(0.42, 0.3, walkT), 1.45, runT) + 0.25 * sprintT;
     for (const [side, off] of [['L', 0.5], ['R', 0]]) {
       const p = ph + off;
@@ -342,7 +360,7 @@ export class Animator {
     L.handGR.lerpVectors(_v, _w, dg);
     if (hug > 0.001) {
       // around the companion's back (it sits at the left hip, ~0.45 m out), palm resting on its far side
-      _v.set(0.45, 0.31 + 0.01 * Math.sin(t * 0.8), -0.03 + 0.015 * Math.sin(t * 0.37));
+      _v.set(0.5, 0.44 + 0.01 * Math.sin(t * 0.8), -0.06 + 0.015 * Math.sin(t * 0.37)); // over the wolf's shoulders
       L.handGL.lerp(_v, hug);
       L.chest.z += 0.1 * hug; L.spine.z += 0.06 * hug; L.chest.y += 0.12 * hug;
     }
@@ -355,6 +373,28 @@ export class Animator {
     L.handRotL.set(lerp(-0.6, 0.2, dg), 0, 0.25); L.handRotR.set(lerp(-0.6, 0.2, dg), 0, -0.25);
     L.fingers = lerp(0.35, 0.15, dg);
     L.pack = 0.4;
+    const med = this.medW || 0;
+    if (med > 0.001) {
+      // Commune: cross-legged, spine tall, hands resting on the knees palms up — and she rises a hand's breadth
+      // off the ground on the ring of light, breathing slowly
+      const lift = (0.2 + 0.025 * Math.sin(t * 0.8)) * smoothstep(0.3, 1, med);
+      const m = med;
+      L.hipsPos.y = lerp(L.hipsPos.y, -0.8 + lift, m); L.hipsPos.z = lerp(L.hipsPos.z, -0.02, m);
+      L.hipsRot.x = lerp(L.hipsRot.x, 0.02, m);
+      L.rootRot.x *= 1 - m;
+      L.spine.x = lerp(L.spine.x, -0.02 + breathe, m); L.chest.x = lerp(L.chest.x, -0.05 - breathe, m);
+      L.neck.x = lerp(L.neck.x, -0.02, m); L.head.x = lerp(L.head.x, -0.1 + 0.03 * Math.sin(t * 0.11), m);
+      _v.set(-0.11, DIM.ankle + 0.035 + lift, 0.2); L.footL.lerp(_v, m);
+      _v.set(0.12, DIM.ankle + 0.06 + lift, 0.25); L.footR.lerp(_v, m);
+      L.footRotL.lerp(_v.set(0.2, -1.1, 0.4), m); L.footRotR.lerp(_v.set(0.2, 1.1, -0.4), m);
+      L.kneeL.lerp(_v.set(1, 0.25, 0.5), m); L.kneeR.lerp(_v.set(-1, 0.25, 0.5), m);
+      L.terrain *= 1 - m;
+      _v.set(0.21, 0.31 + lift, 0.27); L.handGL.lerp(_v, m);
+      _v.set(-0.21, 0.31 + lift, 0.27); L.handGR.lerp(_v, m);
+      L.elbowL.lerp(_v.set(1, -0.2, -0.4), m); L.elbowR.lerp(_v.set(-1, -0.2, -0.4), m);
+      L.handRotL.lerp(_v.set(-0.3, 0, 1.4), m); L.handRotR.lerp(_v.set(-0.3, 0, -1.4), m);
+      L.fingers = lerp(L.fingers, 0.25, m);
+    }
   }
 
   _air(L, S, dt) {
@@ -392,6 +432,7 @@ export class Animator {
   }
 
   _glide(L, S, dt) {
+    if (S.drift) { this._drift(L, S, dt); return; }
     const g = S.glide;
     const t = S.time;
     // hands on the glider bar (chest space), body hangs below with a pendulum
@@ -412,6 +453,33 @@ export class Animator {
     L.rootRot.x = -g.pitch * 0.25 + g.swayX;
     L.spine.x = 0.05; L.chest.x = -0.05; L.head.x = 0.1 + g.pitch * 0.2;
     L.shoulderL.z = 0.12; L.shoulderR.z = -0.12;
+    L.pack = 1;
+  }
+
+  /** Drift: standing on a ring of light — upright, knees soft, one foot a little ahead, arms open and low like
+   *  wings (palms down), the body banks into the turn; a slow breathing float. */
+  _drift(L, S, dt) {
+    const g = S.glide;
+    const t = S.time;
+    const bob = Math.sin(t * 1.4) * 0.02;
+    L.hipsPos.y = -0.08 + bob;
+    legTarget('L', 0.22 - g.pitch * 0.2, 0.42, 0.04, -0.08, L.footL);
+    legTarget('R', -0.1 - g.pitch * 0.2, 0.3, 0.03, -0.08, L.footR);
+    L.footRotL.set(-0.25, 0.12, 0); L.footRotR.set(-0.35, -0.2, 0);
+    L.kneeL.set(0.2, 0, 1); L.kneeR.set(-0.25, 0, 1);
+    // arms: open, low, a little behind — they lift on the outside of a turn
+    const bk = g.bank;
+    armTarget('L', -0.22 - g.pitch * 0.3, 0.25, 0.85 + 0.35 * Math.max(0, -bk) + Math.sin(t * 1.1) * 0.05, L.handL);
+    armTarget('R', -0.22 - g.pitch * 0.3, 0.25, 0.85 + 0.35 * Math.max(0, bk) + Math.sin(t * 1.1 + 1.3) * 0.05, L.handR);
+    L.elbowL.set(0.6, -0.3, -1); L.elbowR.set(-0.6, -0.3, -1);
+    L.handRotL.set(0, 0, 0.6); L.handRotR.set(0, 0, -0.6);
+    L.fingers = 0.15;
+    // bank about the feet (the ring), lean into the dive
+    L.pivot.set(0, 0.0, 0);
+    L.rootRot.z = -bk * 0.55 + g.swayZ * 0.5;
+    L.rootRot.x = g.pitch * 0.35 + g.swayX * 0.5 + 0.08;
+    L.spine.x = -0.04; L.chest.x = -0.08; L.head.x = 0.04 + g.pitch * 0.15;
+    L.chest.z = bk * 0.12;
     L.pack = 1;
   }
 
@@ -553,6 +621,111 @@ export class Animator {
     return true;
   }
 
+  _swordOverlay(P, S, dt) {
+    const sw = S.sword;
+    const pose = this.sw;
+    let target = 0;
+    const body = clamp(this.w.ground + this.w.crouch + this.w.air * 0.8, 0, 1);
+    if (sw && sw.act && ACTS[sw.act]) { evalAct(ACTS[sw.act].keys, clamp(sw.u, 0, 1), pose); target = pose.w; }
+    else if (sw && sw.drawn) {
+      evalKey(READY_POSE, pose);
+      const run = smoothstep(2.5, 6, S.speed);
+      if (run > 0.001) {
+        evalKey(READY_RUN_POSE, this.swRun);
+        pose.hand.lerp(this.swRun.hand, run); pose.dir.lerp(this.swRun.dir, run).normalize(); pose.lean += this.swRun.lean * run;
+      }
+      target = 1;
+    } else { pose.inHand = 0; target = 0; }
+    target *= body;
+    // weight: the keys carry their own ramps during actions; plain transitions are smoothed
+    this.swW = sw && sw.act ? lerp(this.swW, target, dampF(30, dt)) : lerp(this.swW, target, dampF(9, dt));
+    const inT = pose.inHand && this.swW > 0.02 ? 1 : 0;
+    this.swIn = lerp(this.swIn, inT, dampF(inT > this.swIn ? 40 : 30, dt));
+    if (!(sw && (sw.act || sw.drawn))) this.swIn = Math.min(this.swIn, this.swW);
+    // blade direction (chest space): follow the pose, measure the angular speed (trails / edge)
+    this.swPrevDir.copy(this.swDir);
+    this.swDir.copy(pose.dir);
+    const ang = Math.acos(clamp(this.swDir.dot(this.swPrevDir), -1, 1));
+    this.swordSpeed = dt > 0 ? lerp(this.swordSpeed, ang / dt, dampF(25, dt)) : 0;
+    // the edge leads the cut; at rest it faces down (or forward when the blade is vertical)
+    _u.subVectors(this.swDir, this.swPrevDir);
+    if (ang / Math.max(dt, 1e-4) > 2.5) _t.copy(_u).addScaledVector(this.swDir, -_u.dot(this.swDir));
+    else if (Math.abs(this.swDir.y) < 0.85) _t.set(0, -1, 0).addScaledVector(this.swDir, this.swDir.y);
+    else _t.set(0, 0, 1).addScaledVector(this.swDir, -this.swDir.z);
+    if (pose.inHand < 0.5) _t.copy(SHEATH.edge).addScaledVector(this.swDir, -SHEATH.edge.dot(this.swDir));
+    if (_t.lengthSq() > 1e-8) { _t.normalize(); this.swEdge.lerp(_t, dampF(28, dt)); }
+    this.swEdge.addScaledVector(this.swDir, -this.swEdge.dot(this.swDir));
+    if (this.swEdge.lengthSq() < 1e-6) this.swEdge.set(0, -1, 0).addScaledVector(this.swDir, this.swDir.y);
+    this.swEdge.normalize();
+    const w = this.swW;
+    if (w < 1e-3) { this.swCrouch = 0; this.swHandLw = 0; return; }
+    // right arm on the sword; elbow out to the side and down (overhead: out)
+    P.handR.lerp(pose.hand, w);
+    // reaching back over the shoulder to the hilt, the elbow rises up and forward (not out like a wing)
+    const over = smoothstep(0.05, 0.22, pose.hand.y) * smoothstep(0.12, -0.08, pose.hand.z);
+    _v.set(lerp(-1, -0.35, over), lerp(lerp(-0.6, 0.1, smoothstep(0.0, 0.4, pose.hand.y)), 1, over), lerp(-0.25, 0.7, over));
+    P.elbowR.lerp(_v, w);
+    P.handRotR.multiplyScalar(1 - w);
+    // left hand: guard / balance targets from the keys
+    this.swHandLw = pose.handLw * w;
+    if (this.swHandLw > 1e-3) {
+      P.handL.lerp(pose.handL, this.swHandLw);
+      _v.set(0.9, -0.3, -0.3); P.elbowL.lerp(_v, this.swHandLw);
+    }
+    // torso: the cut is thrown from the hips; the head keeps its eyes on the line
+    const yw = pose.yaw * w;
+    P.hipsRot.y += yw * 0.2; P.spine.y += yw * 0.3; P.chest.y += yw * 0.55;
+    P.neck.y -= yw * 0.35; P.head.y -= yw * 0.5;
+    P.spine.x += pose.lean * w; P.head.x -= pose.lean * w * 0.6;
+    // stance: low, feet wide (front foot forward, back foot turned out) — only on the ground
+    const gnd = clamp(this.w.ground + this.w.crouch, 0, 1);
+    this.swCrouch = pose.crouch * w * gnd;
+    if (this.swCrouch > 1e-4) {
+      const st = clamp(this.swCrouch / 0.17, 0, 1.3);
+      P.hipsPos.y -= this.swCrouch; P.hipsPos.z -= 0.03 * st;
+      P.footL.z += 0.19 * st; P.footL.x += 0.05 * st;
+      P.footR.z -= 0.2 * st; P.footR.x -= 0.05 * st;
+      P.footRotR.y -= 0.7 * st; P.footRotL.y += 0.15 * st;
+      P.kneeL.x += 0.3 * st; P.kneeR.x -= 0.4 * st;
+    }
+    P.fingers = lerp(P.fingers, 1.05, w * this.swIn);
+  }
+
+  /** After the arm IK: turn the right hand around the grip and resolve the sword / scabbard transforms (group). */
+  _swordSolve() {
+    const lq = this.lq;
+    // scabbard: rides the pack bone
+    this.sheathGQ.multiplyQuaternions(this.gq[B.pack], this.sheathLQ);
+    this.sheathGP.copy(this.sheathLP).applyQuaternion(this.gq[B.pack]).add(this.gp[B.pack]);
+    // blade frame in group space
+    const cq = this.gq[B.chest];
+    _z.copy(this.swDir).applyQuaternion(cq).normalize();          // blade (tsuba → tip)
+    _n2.copy(this.swEdge).applyQuaternion(cq);                     // edge
+    _n2.addScaledVector(_z, -_n2.dot(_z)).normalize();
+    // hand: grip axis along the blade, fingers wrap toward the edge, the back of the hand toward the elbow
+    const hw = this.swW * this.swIn;
+    if (hw > 1e-3) {
+      _u.copy(this.gp[B.foreArmR]).sub(this.gp[B.handR]).normalize();
+      _u.addScaledVector(_z, -_u.dot(_z));
+      _y.copy(_n2).negate().lerp(_u.lengthSq() > 1e-6 ? _u.normalize() : _y.copy(_n2).negate(), 0.35);
+      _y.addScaledVector(_z, -_y.dot(_z)).normalize();
+      _x.crossVectors(_y, _z);
+      _m.makeBasis(_x, _y, _z);
+      _q.setFromRotationMatrix(_m);
+      _q2.copy(this.gq[B.handR]).slerp(_q, hw);
+      _qi.copy(this.gq[B.foreArmR]).invert();
+      lq[B.handR].multiplyQuaternions(_qi, _q2);
+      this._fk(B.handR); this._fk(B.fingersR);
+    }
+    // sword in the hand: tsuba just beyond the fist
+    _m.makeBasis(_x.crossVectors(_z, _n2), _z, _n2); // (X = Y × Z with Y = blade, Z = edge)
+    _q.setFromRotationMatrix(_m);
+    _t.set(0, -0.052, 0.004).applyQuaternion(this.gq[B.handR]).add(this.gp[B.handR]).addScaledVector(_z, 0.05);
+    const s = this.swIn;
+    this.swordGP.copy(this.sheathGP).lerp(_t, s);
+    this.swordGQ.copy(this.sheathGQ).slerp(_q, s);
+  }
+
   _hardLand(P, w) {
     // superhero landing: deep crouch, one knee down, right hand to the ground
     const T = this.layers.crouch; // reuse storage
@@ -636,20 +809,23 @@ export class Animator {
     for (const b of [B.root, B.hips, B.spine, B.chest, B.neck, B.head, B.shoulderL, B.shoulderR, B.pack, B.antenna]) this._fk(b);
     // seated: the pack comes off and is set down at the right hip (a pillow behind the head when lying back),
     // and the lantern is put on the ground in front, a small hearth
+    // seated: the katana comes off her back and is laid on the ground beside her right hip, tip forward (across
+    // her knees' line in front of her when she meditates)
     const sitK = smoothstep(0.35, 0.95, clamp(P.sit, 0, 1));
     if (sitK > 1e-3) {
-      const lie = this.lieW;
-      _v.set(lerp(-0.5, -0.05, lie), 0, lerp(-0.1, -0.86, lie));
-      _v.y = 0.27 + this._groundDh(_v.x, _v.z) - lie * 0.12;
-      _e.set(lerp(0.05, -1.45, lie), lerp(2.64, 0, lie), lerp(0.04, 0, lie), 'YXZ'); _q.setFromEuler(_e);
+      const med = this.medW || 0;
+      // target scabbard frame (group): axis along the ground, edge up
+      _y.set(lerp(0, -1, med), 0, lerp(1, 0.08, med)).normalize();
+      _z.set(0, 1, 0);
+      _x.crossVectors(_y, _z);
+      _m.makeBasis(_x, _y, _z);
+      _q2.setFromRotationMatrix(_m);                     // scabbard quat (group)
+      _q.copy(_q2).multiply(_qi.copy(this.sheathLQ).invert()); // → pack bone quat
+      _v.set(lerp(-0.36, 0.38, med), 0, lerp(-0.3, 0.44, med));
+      _v.y = 0.03 + this._groundDh(_v.x + _y.x * 0.4, _v.z + _y.z * 0.4);
+      _v.sub(_t.copy(this.sheathLP).applyQuaternion(_q));  // mouth at _v → pack bone origin
       this._placeChild(B.pack, B.chest, _v, _q, sitK);
       this._fk(B.pack);
-      const dg = this.dangleW;
-      _v.set(lerp(0.36, 0.42, dg), 0, lerp(0.34, -0.05, dg));
-      _v.y = 0.195 + this._groundDh(_v.x, _v.z);
-      _q.identity();
-      this._placeChild(B.antenna, B.pack, _v, _q, sitK);
-      this._fk(B.antenna);
     }
     this._fk(B.upperArmL); this._fk(B.upperArmR); this._fk(B.thighL); this._fk(B.thighR);
 
@@ -722,6 +898,8 @@ export class Animator {
       this._fk(be); this._fk(side === 'L' ? B.fingersL : B.fingersR);
     }
 
+    safeSolve(this);
+
     // ---- write bones
     const bones = this.bones;
     for (let i = 0; i < bones.length; i++) {
@@ -764,5 +942,7 @@ export class Animator {
   boneGroup(b, pos, quat) { if (pos) pos.copy(this.gp[b]); if (quat) quat.copy(this.gq[b]); }
   finishFK() { for (const b of this.order) this._fk(b); }
 }
+
+function safeSolve(an) { try { an._swordSolve(); } catch (e) { /* never break the frame */ } }
 
 function depth(i, parents) { let d = 0; for (let p = parents[i]; p >= 0; p = parents[p]) d++; return d; }

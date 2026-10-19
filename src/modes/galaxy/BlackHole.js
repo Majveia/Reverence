@@ -26,7 +26,7 @@ uniform mat3 uBhToView;     // BH frame dir → view
 uniform mat4 uProj, uInvProj;
 uniform float uTime, uDiskIn, uDiskOut, uDiskT, uDiskGain, uSeed, uBgGain, uStarF;
 uniform float uPixAng;      // radians per pixel
-uniform float uRing, uJet, uTorn, uDiskK;
+uniform float uRing, uJet, uTorn, uDiskK, uDiskBase;
 uniform int uSteps;
 varying vec2 vUv;
 
@@ -67,16 +67,15 @@ vec3 tornSky(vec3 d){
 
 vec3 background(vec3 dirBH){
   vec3 dv = uBhToView * dirBH;
-  vec3 extra = uTorn > 0.0 ? tornSky(dirBH) * uTorn : vec3(0.0);
   if (dv.z < -1e-4) {
     vec4 c = uProj * vec4(dv, 1.0);
     vec2 uv = c.xy / c.w * 0.5 + 0.5;
-    if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) return textureLod(tInput, uv, 0.0).rgb + extra;
+    if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) return textureLod(tInput, uv, 0.0).rgb;
     vec2 e = clamp(uv, 0.002, 0.998);
     float f = exp(-length(uv - e) * 2.5);
-    return textureLod(tInput, e, 0.0).rgb * f + starfield(dirBH) + extra;
+    return textureLod(tInput, e, 0.0).rgb * f + starfield(dirBH);
   }
-  return textureLod(tInput, vec2(0.5), 3.0).rgb * 0.15 + starfield(dirBH) + extra;
+  return textureLod(tInput, vec2(0.5), 3.0).rgb * 0.15 + starfield(dirBH);
 }
 
 // emitted colour of the disk gas: a gold "ring of fire" ramp (deep red outer gas → orange → gold → warm
@@ -84,7 +83,7 @@ vec3 background(vec3 dirBH){
 vec3 fireRamp(float t){
   vec3 c = mix(vec3(0.30, 0.035, 0.008), vec3(1.0, 0.26, 0.035), smoothstep(0.05, 0.38, t));
   c = mix(c, vec3(1.0, 0.55, 0.12), smoothstep(0.32, 0.62, t));
-  c = mix(c, vec3(1.0, 0.80, 0.42), smoothstep(0.58, 0.9, t));
+  c = mix(c, vec3(1.0, 0.72, 0.24), smoothstep(0.58, 0.9, t));
   c = mix(c, vec3(1.0, 0.95, 0.86), smoothstep(0.9, 1.35, t));
   return c;
 }
@@ -109,7 +108,7 @@ float arcs(float u, float ph, float fu, float layer){
   float sd = clamp(fract(v) / L, 0.0, 1.0);
   float dash = sqrt(4.0 * sd * (1.0 - sd)) * step(0.28, h3) * (0.35 + 0.65 * fract(h3 * 3.71));
   // unresolved dashes blur into their mean along the arc too
-  return line * mix(dash, 0.45, smoothstep(0.4, 1.2, fu));
+  return line * mix(dash, 0.22, smoothstep(0.4, 1.2, fu)) * (1.0 - 0.5 * smoothstep(0.3, 1.5, fu));
 }
 
 // thin disk sample at crossing point p (BH frame, y≈0) seen along photon direction ph (toward camera);
@@ -141,7 +140,7 @@ vec4 disk(vec3 p, vec3 ph, float foot){
   }
   st /= ws;
   float fil = clamp(st * (1.0 + 0.3 * cl), 0.0, 1.5);
-  float filB = 0.03 + 2.8 * fil;
+  float filB = 0.03 + 3.6 * pow(fil, 1.3);
   // a few compact hot spots (flares) riding the flow at their own Keplerian rate
   float hot = 0.0;
   for (int k = 0; k < 3; k++) {
@@ -163,7 +162,7 @@ vec4 disk(vec3 p, vec3 ph, float foot){
   // relativistic beaming I ∝ g³ (+ gravitational redshift) with a soft knee on the approaching side
   float gb = pow(g, 3.0);
   gb = gb <= 1.0 ? gb : 1.0 + (gb - 1.0) / (1.0 + 0.45 * (gb - 1.0));
-  float I = uDiskGain * gb * (pow(prof, 3.8) * filB * (1.0 + 0.25 * cl) + 0.4 * pow(prof, 6.0)) * (1.0 + 2.5 * hot * min(1.0, fil * 2.0)) * uDiskK;
+  float I = uDiskGain * gb * (pow(prof, 3.8) * filB * (1.0 + 0.25 * cl) + uDiskBase * (pow(prof, 9.0) + 0.5 * pow(prof, 4.0))) * (1.0 + 2.5 * hot * min(1.0, fil * 2.0)) * uDiskK;
   return vec4(col * I / max(a, 0.05), a);
 }
 
@@ -177,6 +176,8 @@ void main(){
   vec3 cp = ro + rd * tca;
   float b = length(cp);
   float bw = max(fwidth(b), 1e-4);              // impact-parameter change per pixel (before any branch)
+  // the torn red / teal gas is concentrated around the hole's direction (a halo of torn space)
+  float tw = uTorn / (1.0 + pow(b / (0.32 * R0), 2.0));
   const float B_FULL = 320.0;
   if (b > B_FULL || (tca < 0.0 && R0 > 60.0)) {
     // weak field: deflect toward the hole (partial if the hole is behind)
@@ -184,7 +185,7 @@ void main(){
     float alpha = 2.0 / max(b, 1.0) * part;
     if (alpha < 2e-5) { gl_FragColor = vec4(base * uBgGain, 1.0); return; }
     vec3 d = normalize(rd - (cp / b) * alpha);
-    gl_FragColor = vec4(background(d) * uBgGain, 1.0);
+    gl_FragColor = vec4(background(d) * uBgGain + (tw > 1e-4 ? tornSky(d) * tw : vec3(0.0)), 1.0);
     return;
   }
   // strong field: start on a sphere around the hole
@@ -249,7 +250,8 @@ void main(){
   }
   if (TrRing < 0.0) TrRing = Tr;
   // near the hole the nucleus glow is exposed down; a procedural sky of sharp stars stays (lensed by direction)
-  vec3 bg = captured ? vec3(0.0) : background(normalize(v)) * uBgGain + starfield(normalize(v)) * uStarF;
+  vec3 vN = normalize(v);
+  vec3 bg = captured ? vec3(0.0) : background(vN) * uBgGain + starfield(vN) * uStarF + (tw > 1e-4 ? tornSky(vN) * tw : vec3(0.0));
   // photon ring: light that orbited the photon sphere (n ≥ 2 images of the disk) piles up at b → b_c.
   // Drawn analytically at pixel scale (the n ≥ 2 crossings are thinner than a pixel): a thin blazing
   // gold-white line with a soft outer glow, Doppler-brighter on the approaching side, black inside.
@@ -289,11 +291,11 @@ export class BlackHole {
       uTime: { value: 0 }, uDiskIn: { value: isco }, uDiskOut: { value: 20 },
       uDiskT: { value: 5000 + 1800 * bh.spin }, uDiskGain: { value: 5.0 }, uSeed: { value: (S.seed % 997) * 0.37 },
       uSteps: { value: steps }, uBgGain: { value: 1 }, uStarF: { value: 0 },
-      uPixAng: { value: 0.001 }, uRing: { value: 1 }, uJet: { value: 0.0 }, uTorn: { value: 0 }, uDiskK: { value: 1 },
+      uPixAng: { value: 0.001 }, uRing: { value: 1 }, uJet: { value: 0.0 }, uTorn: { value: 0 }, uDiskK: { value: 1 }, uDiskBase: { value: 0.3 },
     });
     this.jet = 0.06;      // jet brightness (×uDiskGain units); &gx=Jet:… overrides
-    this.torn = 0.06;     // torn-space nebula brightness
-    this.diskK = 1.6;     // disk exposure multiplier (&gx=DiskK:…)
+    this.torn = 0.1;      // torn-space nebula brightness (&gx=Torn:…)
+    this.diskK = 2.2;     // disk exposure multiplier (&gx=DiskK:…)
     this.quad = new FullscreenQuad(this.material);
     this._m3 = new THREE.Matrix3();
     this._v = new THREE.Vector3();
@@ -333,7 +335,9 @@ export class BlackHole {
     // so it stays a gold ring of fire with dark gaps instead of a white-out (u_14)
     const dr = this.distanceRs(cam);
     const ek = Math.min(1, Math.max(0, (Math.log10(Math.max(1, dr)) - 0.9) / (1.9 - 0.9)));
-    u.uDiskK.value = this.diskK * (0.42 + 0.58 * ek);
+    u.uDiskK.value = this.diskK * (0.34 + 0.66 * ek);
+    // unresolved, the inner disk reads as one white-hot heart; resolved up close, its arcs carry the light
+    u.uDiskBase.value = 0.04 + 0.3 * ek * ek;
     u.uTorn.value = this.torn * near;
     this.quad.render(renderer, io.output);
   }

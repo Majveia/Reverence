@@ -1,12 +1,10 @@
 // Player track — first-person body: the explorer's own hands at the edges of the frame.
 //
-//   right hand : holds the small lantern by its bail, low right in the frame (the warm accent, a real light);
-//                the lantern hangs plumb (it follows gravity, not the camera's pitch) and swings with the gait
-//   left hand  : grips the walking staff low left; the staff rises away into the frame and its little ring of
-//                light stands in the upper-left third (the source's sign, carried)
-//   reach      : hold R / primary (mouse / RB) — the staff is lowered out of frame and the left arm reaches out
-//                from the lower-left corner toward the view, palm down, fingers relaxed and spread (the
-//                creator's "the body in frame tells the scale and the intent" frames)
+//   right hand : the katana when drawn, low right, the blade rising away into the view (the held tool sits low
+//                right); it sweeps across the frame on a cut. Sheathed: a relaxed hand at the lower-right edge.
+//   left hand  : open and cupped, palm up, low left — the Lumen floats a hand's breadth above it (the light in
+//                hand; its point light rides with it in first person)
+//   reach      : R (the resonance pulse) — the left arm reaches out from the lower-left corner toward the view
 //
 // Built for the frame edges, like the reference frames: a long forearm in a folded wool sleeve with a turned-back
 // cuff and a wrapped wrist, a fingerless leather glove, articulated fingers (3 joints each + thumb) blended between
@@ -19,6 +17,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { clamp, lerp, damp, smoothstep, Spring } from './util.js';
 import { getTextures } from './textures.js';
 import { box } from './geo.js';
+import { buildSwordGroup } from './Katana.js';
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _qr = new THREE.Quaternion(), _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
@@ -40,6 +39,9 @@ function basisQuat(f, xHint, roll, out, xExact = false) {
   if (roll) out.multiply(_qr.setFromAxisAngle(ZA, roll));
   return out;
 }
+
+/** The fist's local X (the grip axis) in camera space. */
+function _swDirFrom(out, q) { return out.set(1, 0, 0).applyQuaternion(q).normalize(); }
 
 /** Strip to position / normal / uv, non-indexed (so parts can be merged). */
 function clean(g) {
@@ -176,6 +178,7 @@ function poseHand(H, side, w) { // w: 0 grip → 1 open
 export class Viewmodel {
   constructor(palette, quality) {
     const P = palette;
+    this.quality = quality;
     this.group = new THREE.Group();
     this.group.name = 'viewmodel';
     this.group.visible = false;
@@ -210,74 +213,54 @@ export class Viewmodel {
     poseHand(this.handL, -1, 0);
     this.grip = new THREE.Vector3(0, -0.032, -0.085); // rod centre inside a closed fist (hand space)
 
-    // ---------------------------------------------------------------- lantern (pivot = the bail's top, in the fist)
-    this.lamp = new THREE.Group(); this.group.add(this.lamp);
-    {
-      const L = this.lamp, brass = [];
-      const bail = new THREE.TorusGeometry(0.032, 0.0032, 5, 16, Math.PI); bail.rotateZ(Math.PI); bail.translate(0, 0.0, 0); brass.push(bail);
-      const ring = new THREE.TorusGeometry(0.008, 0.003, 5, 10); ring.translate(0, 0.0, 0); brass.push(ring);
-      const cap = new THREE.LatheGeometry([new THREE.Vector2(0.004, 0.012), new THREE.Vector2(0.012, 0.004), new THREE.Vector2(0.024, -0.006), new THREE.Vector2(0.043, -0.024), new THREE.Vector2(0.047, -0.03)], 16); cap.translate(0, -0.034, 0); brass.push(cap);
-      const vent = new THREE.CylinderGeometry(0.009, 0.012, 0.012, 10); vent.translate(0, -0.026, 0); brass.push(vent);
-      for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + Math.PI / 4; const b = new THREE.BoxGeometry(0.0065, 0.092, 0.0065); b.translate(Math.sin(a) * 0.04, -0.112, Math.cos(a) * 0.04); brass.push(b); }
-      for (const y of [-0.072, -0.152]) { const t = new THREE.TorusGeometry(0.041, 0.003, 4, 20); t.rotateX(Math.PI / 2); t.translate(0, y, 0); brass.push(t); }
-      const base = new THREE.CylinderGeometry(0.046, 0.04, 0.022, 16); base.translate(0, -0.168, 0); brass.push(base);
-      add(L, merge(brass), M.brass);
-      const gl = new THREE.CylinderGeometry(0.035, 0.037, 0.08, 16, 1, true); gl.translate(0, -0.112, 0); add(L, gl, M.glass);
-      const fl = new THREE.SphereGeometry(0.012, 10, 8); fl.scale(1, 1.7, 1); fl.translate(0, -0.115, 0); add(L, fl, M.core);
-      const wick = new THREE.CylinderGeometry(0.009, 0.011, 0.02, 8); wick.translate(0, -0.142, 0); add(L, wick, M.brass);
-      this.lightAnchor = new THREE.Object3D(); this.lightAnchor.position.set(0, -0.112, 0.03); L.add(this.lightAnchor);
-    }
+    // ---------------------------------------------------------------- the katana (right fist) — when drawn
+    this.uGlow = { value: 0 }; this.uGlowCol = { value: new THREE.Color(1.0, 0.85, 0.6) };
+    this.sword = buildSwordGroup(P, quality, this.uGlow, this.uGlowCol);
+    this.group.add(this.sword);
+    for (const m of this.sword.userData.mats) this.materials.push(m);
 
-    // ---------------------------------------------------------------- staff (along its local +Y; origin = grip point)
-    this.staff = new THREE.Group(); this.group.add(this.staff);
+    // ---------------------------------------------------------------- the Lumen held above the open left palm
+    this.orb = new THREE.Group(); this.group.add(this.orb);
     {
-      const S = this.staff;
-      const shaft = new THREE.CylinderGeometry(0.0155, 0.019, 1.95, 10); shaft.translate(0, 0.975 - 1.0, 0);
-      // a gentle bend + knots: displace the shaft so it reads as a branch, not a pole
-      const sp = shaft.attributes.position;
-      for (let i = 0; i < sp.count; i++) {
-        const y = sp.getY(i);
-        sp.setX(i, sp.getX(i) + 0.012 * Math.sin(y * 2.1 + 0.7)); sp.setZ(i, sp.getZ(i) + 0.008 * Math.sin(y * 3.3));
-      }
-      shaft.computeVertexNormals();
-      add(S, shaft, M.wood);
-      const lash = []; // leather wraps above / below the hand
-      for (const y of [0.075, 0.1, -0.075, 0.82]) { const t = new THREE.TorusGeometry(0.019, 0.0055, 5, 14); t.rotateX(Math.PI / 2); t.translate(0.012 * Math.sin(y * 2.1 + 0.7), y, 0.008 * Math.sin(y * 3.3)); lash.push(t); }
-      add(S, merge(lash), M.strap);
-      // carved head: a brass ring of light standing on the tip, a glowing core in its centre
-      const top = 0.95 + 0.05;
-      const tipX = 0.012 * Math.sin(top * 2.1 + 0.7);
-      const fork = new THREE.CylinderGeometry(0.006, 0.012, 0.05, 8); fork.translate(tipX, top - 0.02, 0);
-      const ring = new THREE.TorusGeometry(0.052, 0.0075, 6, 28); ring.translate(tipX, top + 0.055, 0);
-      add(S, merge([fork, ring]), M.brass);
-      const c = new THREE.SphereGeometry(0.014, 10, 8); c.translate(tipX, top + 0.055, 0); add(S, c, M.core);
+      const core = new THREE.Mesh(new THREE.SphereGeometry(0.016, 14, 10), new THREE.MeshBasicMaterial({ color: new THREE.Color(P.glow).multiplyScalar(5) }));
+      core.frustumCulled = false; this.orb.add(core); this.materials.push(core.material);
+      const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+      const c2 = cv.getContext('2d'); const gr = c2.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gr.addColorStop(0, 'rgba(255,248,230,1)'); gr.addColorStop(0.15, 'rgba(255,228,180,0.7)'); gr.addColorStop(0.45, 'rgba(255,200,150,0.15)'); gr.addColorStop(1, 'rgba(255,190,140,0)');
+      c2.fillStyle = gr; c2.fillRect(0, 0, 64, 64);
+      const tx = new THREE.CanvasTexture(cv); tx.colorSpace = THREE.SRGBColorSpace;
+      this.orbHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: tx, color: new THREE.Color(1.5, 1.3, 1.0), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+      this.orbHalo.scale.setScalar(0.16); this.orb.add(this.orbHalo); this.materials.push(this.orbHalo.material);
+      this.lightAnchor = new THREE.Object3D(); this.orb.add(this.lightAnchor);
     }
 
     // ---- poses (camera space): wrist position, forearm direction, palm axis hint, roll
     this.P = {
-      // lantern hand: low right, forearm rising in from the lower-right corner, bail across the fist
-      lampWrist: new THREE.Vector3(0.335, -0.165, -0.54), lampFore: new THREE.Vector3(-0.42, 0.42, -0.8).normalize(), lampX: new THREE.Vector3(1, 0.1, 0.25),
-      // staff hand: low left, forearm going forward into the frame, staff upright and leaning away
-      staffWrist: new THREE.Vector3(-0.35, -0.265, -0.56), staffFore: new THREE.Vector3(0.52, 0.12, -0.85).normalize(), staffDir: new THREE.Vector3(0.1, 1, -0.9).normalize(),
-      // reach: the whole left arm out from the lower-left corner toward the view, palm down
+      // sword hand: low right, forearm rising in from the lower-right corner, the blade up and away into the view
+      swordWrist: new THREE.Vector3(0.29, -0.25, -0.5), swordFore: new THREE.Vector3(-0.5, 0.2, -0.84).normalize(), swordDir: new THREE.Vector3(-0.3, 0.7, -0.64).normalize(),
+      // relaxed right hand (sheathed): lower, loosely closed
+      restWrist: new THREE.Vector3(0.36, -0.3, -0.5), restFore: new THREE.Vector3(-0.3, 0.38, -0.87).normalize(), restX: new THREE.Vector3(1, 0.2, 0.2),
+      // light hand: low left, palm up and cupped, the Lumen hovering above it
+      lightWrist: new THREE.Vector3(-0.29, -0.235, -0.5), lightFore: new THREE.Vector3(0.42, 0.3, -0.86).normalize(), lightX: new THREE.Vector3(-1, 0.1, -0.45),
+      // reach: the whole left arm out from the lower-left corner toward the view, palm forward (the pulse goes out)
       reachWrist: new THREE.Vector3(-0.255, -0.15, -0.62), reachFore: new THREE.Vector3(0.6, 0.36, -0.72).normalize(), reachX: new THREE.Vector3(1, -0.15, 0.15),
     };
-    this._qLamp = new THREE.Quaternion(); this._qStaff = new THREE.Quaternion(); this._qReach = new THREE.Quaternion();
-    basisQuat(this.P.lampFore, this.P.lampX, 0.25, this._qLamp);
-    basisQuat(this.P.staffFore, this.P.staffDir, 0, this._qStaff, true);
+    this._qSword = new THREE.Quaternion(); this._qRest = new THREE.Quaternion(); this._qLight = new THREE.Quaternion(); this._qReach = new THREE.Quaternion();
+    basisQuat(this.P.swordFore, this.P.swordDir, 0, this._qSword, true);
+    basisQuat(this.P.restFore, this.P.restX, 0.2, this._qRest);
+    basisQuat(this.P.lightFore, this.P.lightX, 0, this._qLight);
     basisQuat(this.P.reachFore, this.P.reachX, -0.42, this._qReach);
-    // the staff lies along the fist's local X (orthogonalised staff direction)
-    this._staffQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0).applyQuaternion(this._qStaff));
+    this._swDir = new THREE.Vector3(); this._swEdge = new THREE.Vector3();
 
     // ---- motion state
-    this.t = 0; this.reach = 0;
+    this.t = 0; this.reach = 0; this.drawnW = 0;
     this.lagX = new Spring(0, 9, 0.7); this.lagY = new Spring(0, 9, 0.7);
-    this.lampSwing = new Spring(0, 6.5, 0.22); this.lampSwingZ = new Spring(0, 6.5, 0.22);
     this.depthK = 1;
   }
 
   /**
-   * @param ctx { visible, speed, phase (gait 0..1), lookX, lookY (rad this frame), reach (bool), state, aspect, pitch, fov }
+   * @param ctx { visible, speed, phase (gait 0..1), lookX, lookY (rad this frame), reach (bool), state, aspect, pitch, fov,
+   *              drawn (bool), act (katana action or null), u (0..1), glow, light (0..1) }
    */
   update(dt, ctx) {
     const show = !!ctx.visible;
@@ -288,54 +271,81 @@ export class Viewmodel {
     const walk = smoothstep(0.2, 2, sp), run = smoothstep(4, 9, sp);
     const ph = (ctx.phase || 0) * TAU;
     const swim = ctx.state === 'swim' ? 1 : 0, air = ctx.state === 'glide' || ctx.state === 'air' ? 1 : 0;
-    // keep the layout at any fov: push the whole rig deeper for telephoto (screen positions unchanged)
     const fov = ctx.fov || 72;
     const k = Math.tan(36 * Math.PI / 180) / Math.tan(clamp(fov, 20, 110) * Math.PI / 360);
     this.group.scale.set(1, 1, k);
-    // wide screens push the hands toward the frame edges; tall screens bring them in
     const wide = clamp((ctx.aspect || 1.78) / 1.78, 0.6, 1.3);
-    // look lag: the hands trail a fast turn a little, then settle
     this.lagX.update(clamp(-(ctx.lookX || 0) * 2.2, -0.06, 0.06), dt);
     this.lagY.update(clamp(-(ctx.lookY || 0) * 2.2, -0.05, 0.05), dt);
     const breath = Math.sin(this.t * 1.6) * 0.004;
     const bobY = -Math.abs(Math.sin(ph)) * 0.016 * walk * (1 + run) + breath;
     const bobX = Math.sin(ph) * 0.011 * walk;
-    this.reach = damp(this.reach, ctx.reach ? 1 : 0, ctx.reach ? 2.2 : 3.0, dt);
+    this.reach = damp(this.reach, ctx.reach ? 1 : 0, ctx.reach ? 3.5 : 2.4, dt);
     const rc = smoothstep(0, 1, this.reach);
     const P = this.P;
+    this.uGlow.value = ctx.glow || 0;
 
-    // ---- right arm: lantern
+    // ---- right arm: the katana (drawn) or a relaxed hand
+    const act = ctx.act || null, u = ctx.u || 0;
+    let drawnT = ctx.drawn ? 1 : 0;
+    if (act === 'draw') drawnT = smoothstep(0.3, 0.7, u);
+    else if (act === 'sheathe') drawnT = 1 - smoothstep(0.35, 0.8, u);
+    else if (act === 'charge') drawnT = 0;
+    this.drawnW = damp(this.drawnW, drawnT, 14, dt);
+    const dw = this.drawnW;
     const R = this.armR;
-    R.position.copy(P.lampWrist); R.position.x *= wide;
-    R.position.x += bobX + this.lagX.x; R.position.y += bobY + this.lagY.x - 0.08 * swim - 0.04 * air - 0.02 * run;
-    R.quaternion.copy(this._qLamp);
-    // lantern pivot: the grip point of the right fist; it hangs plumb (gravity), swinging with the gait / turns
-    _v.copy(this.grip).applyQuaternion(R.quaternion).add(R.position);
-    this.lamp.position.copy(_v);
-    this.lampSwing.update(clamp(this.lagX.x * 7 + Math.sin(ph) * 0.14 * walk, -0.6, 0.6), dt);
-    this.lampSwingZ.update(clamp(-this.lagY.x * 5 + Math.cos(ph * 2) * 0.07 * walk - 0.12 * run, -0.5, 0.5), dt);
-    this.lamp.rotation.set(-(ctx.pitch || 0) + this.lampSwingZ.x, 0.35, this.lampSwing.x);
-    this.lamp.visible = swim < 0.5;
+    _v.copy(P.restWrist).lerp(P.swordWrist, dw); _v.x *= wide;
+    R.position.copy(_v);
+    R.position.x += bobX + this.lagX.x; R.position.y += bobY + this.lagY.x - 0.08 * swim - 0.03 * air - 0.02 * run;
+    R.position.y -= (1 - dw) * 0.02 + (act === 'draw' ? (1 - smoothstep(0.3, 0.7, u)) * 0.25 : 0);
+    R.quaternion.slerpQuaternions(this._qRest, this._qSword, dw);
+    // a cut in first person: the fist sweeps across the frame and the blade follows (diagonal / flat / rising)
+    let swing = 0, sx = 0, sy = 0, roll = 0;
+    if (act && act.startsWith('slash')) {
+      const t = smoothstep(0.18, 0.5, u) - smoothstep(0.62, 1, u) * 0;
+      swing = Math.sin(Math.min(1, u * 1.6) * Math.PI) ;
+      const dir = act === 'slash2' ? -1 : 1;
+      sx = lerp(0.12, -0.42, t) * dir; sy = act === 'slash3' ? lerp(-0.12, 0.14, t) : lerp(0.16, -0.12, t);
+      roll = lerp(0.6, -0.9, t) * dir;
+      const back = smoothstep(0.55, 1, u);
+      sx *= 1 - back; sy *= 1 - back; roll *= 1 - back;
+    } else if (act === 'iai') {
+      const t = smoothstep(0.04, 0.13, u), back = smoothstep(0.62, 1, u);
+      sx = lerp(0.05, -0.5, t) * (1 - back); sy = lerp(0.1, -0.02, t) * (1 - back); roll = lerp(0.4, -1.2, t) * (1 - back); swing = 1 - back;
+    }
+    R.position.x += sx * dw; R.position.y += sy * dw;
+    poseHand(this.handR, 1, lerp(0.35, 0, dw));
+    // sword: along the fist's X axis, edge rolled down/forward; the cut rolls it across
+    _swDirFrom(this._swDir, R.quaternion);
+    _q.setFromAxisAngle(_w.set(0, 0, -1), roll * dw);
+    this._swDir.applyQuaternion(_q);
+    this._swEdge.set(0.25, -1, 0.2).addScaledVector(this._swDir, -this._swDir.dot(_w.set(0.25, -1, 0.2))).normalize();
+    _x.crossVectors(this._swDir, this._swEdge);
+    _m.makeBasis(_x, this._swDir, this._swEdge);
+    this.sword.quaternion.setFromRotationMatrix(_m);
+    _v.copy(this.grip).multiplyScalar(1.15).applyQuaternion(R.quaternion).add(R.position).addScaledVector(this._swDir, 0.045);
+    this.sword.position.copy(_v);
+    this.sword.visible = dw > 0.05 && swim < 0.5;
+    this.swing = swing;
 
-    // ---- left arm: staff grip ↔ reach toward the view
+    // ---- left arm: the light in the open palm ↔ reach toward the view (the pulse)
     const L = this.armL;
-    _v.copy(P.staffWrist); _v.x *= wide;
+    _v.copy(P.lightWrist); _v.x *= wide;
     _w.copy(P.reachWrist); _w.x *= lerp(1, wide, 0.5);
     L.position.lerpVectors(_v, _w, rc);
-    L.position.x += -bobX * 0.8 + this.lagX.x; L.position.y += bobY * 0.9 + this.lagY.x - 0.08 * swim + Math.sin(this.t * 0.9) * 0.005 * rc;
-    // a little drift of the reaching hand toward the view (a breath, a hesitation)
-    _qa.copy(this._qStaff); _qb.copy(this._qReach);
+    L.position.x += -bobX * 0.8 + this.lagX.x; L.position.y += bobY * 0.9 + this.lagY.x - 0.08 * swim + Math.sin(this.t * 0.9) * 0.004;
+    _qa.copy(this._qLight); _qb.copy(this._qReach);
     if (rc > 0) _qb.multiply(_q.setFromAxisAngle(ZA, Math.sin(this.t * 0.7) * 0.05));
     L.quaternion.slerpQuaternions(_qa, _qb, rc);
-    poseHand(this.handL, -1, smoothstep(0.25, 0.85, this.reach));
-    // the staff stays in the fist; when the hand lets go it is lowered out of frame to the lower left
-    _v.copy(this.grip).applyQuaternion(this._qStaff).add(L.position);
-    if (rc > 0) _v.lerpVectors(_v, _w.set(-0.62, -0.75, -0.5), smoothstep(0.1, 0.9, rc));
-    this.staff.position.copy(_v);
-    this.staff.quaternion.copy(this._staffQ);
-    if (rc > 0) this.staff.quaternion.multiply(_q.setFromAxisAngle(ZA, 0.5 * rc));
-    // swimming / gliding: the staff is stowed (and the left hand comes forward for balance)
-    this.staff.visible = swim < 0.5 && air < 0.5;
+    poseHand(this.handL, -1, lerp(0.62, 0.95, rc));
+    // the Lumen floats a hand's breadth above the palm (it rides forward with the reach and comes back)
+    _v.set(0, -0.095 + 0.008 * Math.sin(this.t * 1.7), -0.07).multiplyScalar(1.15).applyQuaternion(_qa).add(L.position);
+    _w.set(0, 0.05, -0.32).add(_v);
+    this.orb.position.lerpVectors(_v, _w, rc * 0.6);
+    const li = clamp(ctx.light ?? 1, 0, 1);
+    this.orb.visible = li > 0.02 && swim < 0.5;
+    this.orbHalo.material.opacity = li;
+    this.orbHalo.scale.setScalar(0.13 + 0.05 * li + 0.01 * Math.sin(this.t * 5.1));
     L.visible = true;
   }
 

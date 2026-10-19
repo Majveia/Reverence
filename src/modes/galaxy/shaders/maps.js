@@ -258,6 +258,13 @@ void main(){
     float envD = exp(-r / (0.7 * R)) * smoothstep(gR0 * 0.05, gR0 * 0.5, r) * cut;
     dust += (1.1 * smoothstep(0.5, 0.88, fd) + 0.6 * smoothstep(0.58, 0.9, fd2) + 0.35 * smoothstep(0.62, 0.92, fd3)) * envD * smoothstep(0.3, 0.75, n1 * 0.6 + n2 * 0.6 + 0.5);
   }
+  // spirals: the inner disk and inner arms are the brightest part of the galaxy (M51 / M81), cream and
+  // glowing; the lanes there are thin and weaker, so the centre never reads darker than the arms
+  if (gType == 0 && gM > 0.5) {
+    float inner = exp(-r / (0.17 * R));
+    old *= 1.0 + 1.7 * inner;
+    dust *= 1.0 - 0.5 * inner;
+  }
   if (gap > 0.0) { old *= 1.0 - 0.6 * gap; young *= 1.0 - 0.55 * gap; dust *= 1.0 - 0.6 * gap; }
   // Sombrero-like dust ring: a crisp, optically thick lane with fibrous edges, a bright rim of
   // starlight just outside it and a bright smooth inner lens
