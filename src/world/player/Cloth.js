@@ -52,6 +52,7 @@ function scarfTexture(c1, c2) {
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
+  t.flipY = false; // canvas top = the anchor (the fringe hangs at the free end)
   return t;
 }
 
@@ -162,7 +163,7 @@ export class Scarf {
       this.gK = 0.95; this.flK = 0.35; this.aeroK = 0.55; this.cupK = 0.35;
     } else {
       // two generous tails (the one warm accent of the silhouette), tapering
-      this.strips = [new Strip(3, Math.round(18 * q), 0.17, 1.3, 0.45), new Strip(3, Math.round(13 * q), 0.135, 0.92, 0.45)];
+      this.strips = [new Strip(3, Math.round(17 * q), 0.16, 1.15, 0.45), new Strip(3, Math.round(12 * q), 0.13, 0.82, 0.45)];
       // anchors in chest space (back of the loose neck wrap)
       this.anchorsC = [
         [new THREE.Vector3(-0.02, 0.24, -0.1), new THREE.Vector3(0.05, 0.245, -0.096), new THREE.Vector3(0.11, 0.236, -0.075)],
@@ -179,11 +180,11 @@ export class Scarf {
     let nrm = null;
     try { nrm = scarfNormal(); } catch (_) { nrm = null; }
     this.material = new (hi ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial)({
-      color: this.tex ? 0xffffff : hairK ? palette.hair : palette.scarf, map: this.tex, roughness: hairK ? 0.45 : 0.86, side: THREE.DoubleSide,
+      color: this.tex ? 0xffffff : hairK ? palette.hair : palette.scarf, map: this.tex, roughness: hairK ? 0.55 : 0.86, side: THREE.DoubleSide,
       normalMap: hairK ? null : nrm, normalScale: new THREE.Vector2(0.8, 0.8), alphaTest: this.tex ? 0.5 : 0,
     });
     if (hi) {
-      if (hairK) { this.material.sheen = 1; this.material.sheenRoughness = 0.3; this.material.sheenColor = new THREE.Color(palette.hairHi).multiplyScalar(1.5); }
+      if (hairK) { this.material.sheen = 0.5; this.material.sheenRoughness = 0.4; this.material.sheenColor = new THREE.Color(palette.hairHi).multiplyScalar(0.7); }
       else { // silk-wool: a soft sheen in the scarf's own (lighter, more saturated) hue — never a pink/white film
         const hsl = {}; palette.scarf.getHSL(hsl);
         this.material.sheen = 0.5; this.material.sheenRoughness = 0.5;
