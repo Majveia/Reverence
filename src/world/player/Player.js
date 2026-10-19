@@ -330,8 +330,8 @@ export class Player {
     const e = new THREE.Vector3(), n = new THREE.Vector3(), d = new THREE.Vector3(), q = new THREE.Vector3();
     const te = new THREE.Vector3(), tn = new THREE.Vector3(), hd = new THREE.Vector3(), nrm = new THREE.Vector3();
     const H = (v) => { const h = S.height(v.x, v.y, v.z); return Number.isFinite(h) ? h : 0; };
-    const DIST = [7, 14, 26, 45, 80, 150, 300, 600, 1200, 2400];
-    const NH = 20, NC = 150;
+    const DIST = [7, 14, 26, 45, 80, 150, 300, 600, 1200, 2400, 4500, 8000];
+    const NH = 20, NC = 130;
     tangentBasis(dir, e, n);
     let best = null, bestS = -Infinity;
     for (let i = 0; i < NC; i++) {
@@ -361,7 +361,7 @@ export class Player {
         // fills the frame), a distant range welcome (a destination) but not a mountain face; a gentle
         // preference for the URL point itself
         const sc = smoothstep(3, 22, dropNear) * 0.7 + smoothstep(10, 140, dropFar)
-          - 2.0 * smoothstep(0.04, 0.18, nearH) - 1.0 * smoothstep(0.22, 0.42, farH) + 0.2 * smoothstep(0.0, 0.12, farH)
+          - 2.0 * smoothstep(0.04, 0.18, nearH) - 1.2 * smoothstep(0.13, 0.32, farH) + 0.2 * smoothstep(0.0, 0.08, farH)
           - 0.25 * (r * R / meters);
         if (sc > bestS) { bestS = sc; best = { dir: d.clone(), heading: hd.clone(), score: sc }; }
       }

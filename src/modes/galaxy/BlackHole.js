@@ -25,8 +25,12 @@ uniform mat3 uCamRot;       // view dir → BH frame
 uniform mat3 uBhToView;     // BH frame dir → view
 uniform mat4 uProj, uInvProj;
 uniform float uTime, uDiskIn, uDiskOut, uDiskT, uDiskGain, uSeed, uBgGain, uStarF;
+uniform float uPixAng;      // radians per pixel
+uniform float uRing, uJet, uTorn;
 uniform int uSteps;
 varying vec2 vUv;
+
+const float B_CRIT = 2.598076;   // 3√3/2 r_s: critical impact parameter (photon sphere at 1.5 r_s)
 
 vec3 starfield(vec3 d){
   vec3 c = vec3(0.0);
@@ -44,21 +48,50 @@ vec3 starfield(vec3 d){
   return c;
 }
 
+// "torn space": the ionised gas of the nucleus behind the hole — Hα red and [OIII] teal veils with dark
+// filaments. A function of direction only, so the geodesics tear it into arcs around the shadow.
+vec3 tornSky(vec3 d){
+  vec3 q = d * 2.4 + uSeed * 0.13;
+  vec3 w = vec3(rv_snoise(q * 0.9), rv_snoise(q * 0.9 + 5.2), rv_snoise(q * 0.9 + 9.7));
+  q += 0.55 * w;
+  float a = rv_fbm(q, 4);
+  float b = rv_fbm(q * 1.7 + 3.3, 4);
+  float fil = rv_ridged(q * 2.6 + 1.1, 3);
+  vec3 red = vec3(0.55, 0.06, 0.035) * smoothstep(-0.05, 0.55, a);
+  vec3 teal = vec3(0.03, 0.26, 0.30) * smoothstep(0.0, 0.6, b) * (1.0 - 0.6 * smoothstep(0.0, 0.5, a));
+  vec3 c = red + teal + vec3(0.6, 0.18, 0.08) * pow(fil, 4.0) * smoothstep(-0.2, 0.4, a) * 0.6;
+  // dark dust lanes in front of the glow
+  c *= 0.25 + 0.75 * smoothstep(-0.35, 0.15, rv_fbm(q * 3.1 + 7.0, 3));
+  return c;
+}
+
 vec3 background(vec3 dirBH){
   vec3 dv = uBhToView * dirBH;
+  vec3 extra = uTorn > 0.0 ? tornSky(dirBH) * uTorn : vec3(0.0);
   if (dv.z < -1e-4) {
     vec4 c = uProj * vec4(dv, 1.0);
     vec2 uv = c.xy / c.w * 0.5 + 0.5;
-    if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) return textureLod(tInput, uv, 0.0).rgb;
+    if (uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) return textureLod(tInput, uv, 0.0).rgb + extra;
     vec2 e = clamp(uv, 0.002, 0.998);
     float f = exp(-length(uv - e) * 2.5);
-    return textureLod(tInput, e, 0.0).rgb * f + starfield(dirBH);
+    return textureLod(tInput, e, 0.0).rgb * f + starfield(dirBH) + extra;
   }
-  return textureLod(tInput, vec2(0.5), 3.0).rgb * 0.15 + starfield(dirBH);
+  return textureLod(tInput, vec2(0.5), 3.0).rgb * 0.15 + starfield(dirBH) + extra;
 }
 
-// thin disk sample at crossing point p (BH frame, y≈0) seen along photon direction ph (toward camera)
-vec4 disk(vec3 p, vec3 ph){
+// emitted colour of the disk gas: a gold "ring of fire" ramp (deep red outer gas → orange → gold → warm
+// white at the ISCO; strongly beamed gas goes white-hot). t ≈ local temperature / peak temperature.
+vec3 fireRamp(float t){
+  vec3 c = mix(vec3(0.30, 0.035, 0.008), vec3(1.0, 0.26, 0.035), smoothstep(0.05, 0.38, t));
+  c = mix(c, vec3(1.0, 0.55, 0.12), smoothstep(0.32, 0.62, t));
+  c = mix(c, vec3(1.0, 0.80, 0.42), smoothstep(0.58, 0.9, t));
+  c = mix(c, vec3(1.0, 0.95, 0.86), smoothstep(0.9, 1.35, t));
+  return c;
+}
+
+// thin disk sample at crossing point p (BH frame, y≈0) seen along photon direction ph (toward camera);
+// foot = pixel footprint on the disk (r_s) for anti-aliasing the fine filaments
+vec4 disk(vec3 p, vec3 ph, float foot){
   float r = length(p.xz);
   if (r < uDiskIn * 0.98 || r > uDiskOut) return vec4(0.0);
   float x = uDiskIn / r;
@@ -68,15 +101,24 @@ vec4 disk(vec3 p, vec3 ph){
   float gam = inversesqrt(1.0 - beta * beta);
   float dop = 1.0 / (gam * (1.0 - beta * dot(uPhi, ph)));
   float g = dop * sqrt(max(1.0 - 1.0 / r, 0.02));
-  // turbulent streaks sheared by Keplerian rotation
+  // Keplerian flow: everything is advected at Ω ∝ r^-3/2 and sheared into trailing filaments
   float om = sqrt(0.5 / (r * r * r));
   float phi = atan(p.z, p.x) - om * uTime * 6.0;
   float lr = log(r);
-  float n = rv_fbm(vec3(cos(phi) * 2.2, sin(phi) * 2.2, lr * 9.0 + uSeed), 5);
-  // trailing log-spiral striations (MRI turbulence sheared by the Keplerian flow, Ω ∝ r^-3/2)
-  float phS = phi + 2.4 * lr;
-  float n2 = rv_fbm(vec3(cos(phS) * 7.0, sin(phS) * 7.0, lr * 26.0 + 3.1 + uSeed), 3);
-  float dens = smoothstep(-0.55, 0.55, n + 0.4 * n2);
+  float fpl = foot / r;                         // footprint in ln r
+  // coarse clumps (±) — slow, broad
+  float cl = rv_snoise(vec3(cos(phi) * 1.3, sin(phi) * 1.3, lr * 5.0 + uSeed));
+  // fine anisotropic filaments: long along the flow (azimuth), thin across it (ln r), trailing shear
+  float phS = phi + 1.8 * lr;
+  float st = 0.0, ws = 0.0, F = 34.0, A = 2.2, amp = 1.0;
+  for (int k = 0; k < 3; k++){
+    float aa = 1.0 - smoothstep(0.18, 0.5, F * fpl);    // fade a layer once its period nears 2-3 px
+    float nk = rv_snoise(vec3(cos(phS) * A, sin(phS) * A, lr * F + uSeed * 1.7 + float(k) * 7.31));
+    st += amp * aa * nk; ws += amp;
+    F *= 2.15; A *= 1.6; amp *= 0.62; phS += 0.35 * lr;
+  }
+  st /= ws;
+  float fil = smoothstep(-0.12, 0.42, st + 0.22 * cl);
   // a few compact hot spots (flares) riding the flow at their own Keplerian rate
   float hot = 0.0;
   for (int k = 0; k < 3; k++) {
@@ -85,21 +127,20 @@ vec4 disk(vec3 p, vec3 ph){
     float ak = uSeed * (1.3 + fk) + fk * 2.4 - sqrt(0.5 / (rk * rk * rk)) * uTime * 6.0;
     vec2 hp = vec2(cos(ak), sin(ak)) * rk;
     vec2 dd = p.xz - hp;
-    hot += exp(-dot(dd, dd) / (0.35 + 0.25 * fk)) * (1.4 - 0.3 * fk);
+    hot += exp(-dot(dd, dd) / (0.3 + 0.2 * fk)) * (1.2 - 0.3 * fk);
   }
-  dens = min(1.0, dens + 0.6 * hot);
-  float edgeIn = smoothstep(uDiskIn * 0.98, uDiskIn * 1.12, r);
-  float edgeOut = 1.0 - smoothstep(uDiskOut * 0.45, uDiskOut, r);
-  float a = clamp((0.35 + 0.75 * dens) * edgeIn * edgeOut, 0.0, 0.97);
-  float T = uDiskT * prof * g;
-  vec3 col = rv_blackbody(T);
-  col /= max(max(col.r, col.g), max(col.b, 1e-3));
-  // relativistic beaming I ∝ g³ (+ gravitational redshift), with a soft knee on the approaching side so
-  // the boosted limb keeps its structure instead of clipping to a white smear
+  float edgeIn = smoothstep(uDiskIn * 0.98, uDiskIn * 1.08, r);
+  float edgeOut = 1.0 - smoothstep(uDiskOut * 0.3, uDiskOut, r);
+  // gaps between filaments are thin and nearly transparent: the far side and the black sky show through
+  float a = clamp((0.18 + 0.72 * fil) * edgeIn * edgeOut + 0.25 * hot, 0.0, 0.95);
+  // colour temperature: Novikov–Thorne profile × redshift; the ramp is art-directed (gold, not white)
+  float t = pow(prof, 1.35) * pow(g, 1.4) * (uDiskT / 6000.0) * (0.85 + 0.25 * fil + 0.3 * hot);
+  vec3 col = fireRamp(t);
+  // relativistic beaming I ∝ g³ (+ gravitational redshift) with a soft knee on the approaching side
   float gb = pow(g, 3.0);
   gb = gb <= 1.0 ? gb : 1.0 + (gb - 1.0) / (1.0 + 0.45 * (gb - 1.0));
-  float I = uDiskGain * prof * prof * gb * (0.45 + 0.9 * dens) * (1.0 + 1.2 * hot);
-  return vec4(col * I, a);
+  float I = uDiskGain * pow(prof, 3.0) * gb * (0.05 + 1.35 * fil * fil) * (1.0 + 0.25 * cl) * (1.0 + 1.5 * hot);
+  return vec4(col * I / max(a, 0.05), a);
 }
 
 void main(){
@@ -111,10 +152,11 @@ void main(){
   float tca = -dot(ro, rd);
   vec3 cp = ro + rd * tca;
   float b = length(cp);
+  float bw = max(fwidth(b), 1e-4);              // impact-parameter change per pixel (before any branch)
   const float B_FULL = 320.0;
   if (b > B_FULL || (tca < 0.0 && R0 > 60.0)) {
     // weak field: deflect toward the hole (partial if the hole is behind)
-    float part = tca > 0.0 ? 0.5 * (1.0 + tca / sqrt(tca * tca + b * b)) : 0.5 * (1.0 + tca / sqrt(tca * tca + b * b));
+    float part = 0.5 * (1.0 + tca / sqrt(tca * tca + b * b));
     float alpha = 2.0 / max(b, 1.0) * part;
     if (alpha < 2e-5) { gl_FragColor = vec4(base * uBgGain, 1.0); return; }
     vec3 d = normalize(rd - (cp / b) * alpha);
@@ -124,19 +166,25 @@ void main(){
   // strong field: start on a sphere around the hole
   float rStart = max(90.0, 1.3 * b);
   vec3 x = ro;
+  float s = 0.0;                                 // path length from the camera (pixel footprint)
   if (R0 > rStart) {
     float disc = tca * tca - (R0 * R0 - rStart * rStart);
-    x = ro + rd * (tca - sqrt(max(disc, 0.0)));
+    s = tca - sqrt(max(disc, 0.0));
+    x = ro + rd * s;
   }
   vec3 v = rd;
   float h2 = dot(cross(x, v), cross(x, v));
   vec3 L = vec3(0.0);
-  float Tr = 1.0;
+  float Tr = 1.0, TrRing = -1.0;
+  float nCross = 0.0;
   bool captured = false;
+  // polar jet ("pillar of light"): collimated along the spin axis, emerging just outside the shadow
+  vec3 jetCore = vec3(1.0, 0.86, 0.6), jetSheath = vec3(0.35, 0.75, 1.0);
   for (int i = 0; i < 400; i++) {
     if (i >= uSteps) break;
     float r = length(x);
     if (r < 1.0) { captured = true; break; }
+    if (TrRing < 0.0 && r < 1.8) TrRing = Tr;
     if (r > rStart * 1.02 && dot(x, v) > 0.0) break;
     float dt = clamp(0.07 * r, 0.015, 6.0) * (r < 2.5 ? 0.7 : 1.0);
     // velocity Verlet on x'' = -1.5 h² x / r⁵
@@ -145,20 +193,45 @@ void main(){
     float rn = length(xn);
     vec3 accn = -1.5 * h2 * xn / pow(max(rn, 0.5), 5.0);
     vec3 vn = v + 0.5 * (acc + accn) * dt;
+    if (uJet > 0.0) {
+      vec3 xm = 0.5 * (x + xn);
+      float ay = abs(xm.y), rho = length(xm.xz);
+      float wj = 0.22 + 0.075 * ay;
+      float q = rho / wj;
+      float jb = smoothstep(2.6, 5.5, ay) * exp(-ay / 70.0);
+      float knots = 0.65 + 0.35 * sin(ay * 0.55 - uTime * 2.2 + (xm.y > 0.0 ? 0.0 : 1.7));
+      vec3 je = jetCore * exp(-q * q * 4.0) * 2.2 + jetSheath * exp(-q * q) * 0.35;
+      L += Tr * je * (jb * knots * uJet / wj) * dt;
+    }
     if (x.y * xn.y < 0.0) {
       float f = x.y / (x.y - xn.y);
       vec3 p = mix(x, xn, f);
-      vec4 d = disk(p, -normalize(mix(v, vn, f)));
+      vec3 ph = -normalize(mix(v, vn, f));
+      float foot = (s + f * dt) * uPixAng / max(abs(ph.y), 0.25) * (1.0 + 3.0 * nCross);
+      vec4 d = disk(p, ph, foot);
       L += Tr * d.rgb * d.a;
       Tr *= 1.0 - d.a;
+      nCross += 1.0;
       if (Tr < 0.01) break;
     }
+    s += dt;
     x = xn; v = vn;
   }
+  if (TrRing < 0.0) TrRing = Tr;
   // near the hole the nucleus glow is exposed down; a procedural sky of sharp stars stays (lensed by direction)
   vec3 bg = captured ? vec3(0.0) : background(normalize(v)) * uBgGain + starfield(normalize(v)) * uStarF;
-  // smooth hand-over to the unlensed frame at the edge of the strong-field region
-  vec3 col = L + Tr * bg;
+  // photon ring: light that orbited the photon sphere (n ≥ 2 images of the disk) piles up at b → b_c.
+  // Drawn analytically at pixel scale (the n ≥ 2 crossings are thinner than a pixel): a thin blazing
+  // gold-white line with a soft outer glow, Doppler-brighter on the approaching side, black inside.
+  float db = b - B_CRIT;
+  float wr = max(bw * 0.9, 0.002);
+  float ringCore = exp(-db * db / (wr * wr));
+  float ringGlow = db > 0.0 ? exp(-db / (wr * 5.0)) * 0.45 + exp(-db / 0.35) * 0.12 : exp(db / (wr * 0.8)) * 0.4;
+  vec3 tang = normalize(vec3(-cp.z, 0.0, cp.x) + 1e-6);
+  float beam = clamp(1.0 + 0.7 * dot(tang, -rd), 0.35, 1.8);
+  vec3 ringCol = mix(vec3(1.0, 0.55, 0.16), vec3(1.0, 0.9, 0.7), clamp(ringCore * beam * 0.8, 0.0, 1.0));
+  vec3 ring = ringCol * (ringCore * 1.6 + ringGlow) * beam * uRing * uDiskGain * 0.55;
+  vec3 col = L + Tr * bg + TrRing * ring;
   gl_FragColor = vec4(col, 1.0);
 }
 `;
@@ -183,10 +256,13 @@ export class BlackHole {
       uCamRot: { value: new THREE.Matrix3() },
       uBhToView: { value: new THREE.Matrix3() },
       uProj: { value: new THREE.Matrix4() }, uInvProj: { value: new THREE.Matrix4() },
-      uTime: { value: 0 }, uDiskIn: { value: isco }, uDiskOut: { value: 16 },
+      uTime: { value: 0 }, uDiskIn: { value: isco }, uDiskOut: { value: 20 },
       uDiskT: { value: 5000 + 1800 * bh.spin }, uDiskGain: { value: 5.0 }, uSeed: { value: (S.seed % 997) * 0.37 },
       uSteps: { value: steps }, uBgGain: { value: 1 }, uStarF: { value: 0 },
+      uPixAng: { value: 0.001 }, uRing: { value: 1 }, uJet: { value: 0.0 }, uTorn: { value: 0 },
     });
+    this.jet = 0.06;      // jet brightness (×uDiskGain units); &gx=Jet:… overrides
+    this.torn = 0.06;     // torn-space nebula brightness
     this.quad = new FullscreenQuad(this.material);
     this._m3 = new THREE.Matrix3();
     this._v = new THREE.Vector3();
@@ -213,6 +289,13 @@ export class BlackHole {
     const k = Math.min(1, Math.max(0, (lr - 2.2) / (4.3 - 2.2)));
         u.uBgGain.value = 0.02 + 0.98 * k * k * (3 - 2 * k);
     u.uStarF.value = 1 - k;
+    // pixel footprint (rad / px) for the disk filaments' anti-aliasing
+    const H = Math.max(1, this.engine.pipeline?.height || this.engine.height || 720);
+    u.uPixAng.value = 2 * Math.tan((cam.fov || 45) * Math.PI / 360) / (cam.zoom || 1) / H;
+    // close to the hole: the polar jet (pillar of light) and the torn red/teal gas of the nucleus behind it
+    const near = 1 - k;
+    u.uJet.value = this.jet * near;
+    u.uTorn.value = this.torn * near;
     this.quad.render(renderer, io.output);
   }
 

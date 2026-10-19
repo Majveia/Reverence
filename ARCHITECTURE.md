@@ -456,6 +456,11 @@ visualizations). What separates AAA from "tech demo":
   with seat sockets). Creatures steer around `world.player.pos`.
 * **player → ui, audio** — a rest pose (sit, look up): signal it (e.g. `world.player.resting`) so the UI fades the
   HUD and audio can swell; first-person hands holding a small lamp.
+* **player → fauna, flora, terrain, space, atmosphere, ui, audio** (19 Oct: the explorer is a cosmic mystic with
+  abilities; see docs/VISION.md) — react to the abilities: `player:pulse` {pos, radius} makes nearby life, paths and
+  sacred sites glow for a few seconds (creatures look up, giants lower their heads); `player:blink` leaves stardust;
+  `world.player.meditating` lets the sky answer (stars brighten, the ring of the source appears faintly) while the
+  HUD fades and audio swells; the Lumen orb is a moving light source; ui shows the ability keys.
 * **space → atmosphere, post** — eclipses as events: expose `world.get('space').eclipse` (0..1) so sky light and
   grading can follow; neighbour worlds and rings large in the sky.
 * **ui** — photo mode (HUD hidden, free camera, looks: two-tone, black and white, poster) and a small ring reticle
