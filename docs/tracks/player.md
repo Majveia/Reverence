@@ -35,17 +35,41 @@ at rest, leans into the hug. It is a fallback: if fauna ever exposes `world.get(
 optional `.headPos`), the player uses that one for the hug / gaze and does not build its own. `companion=0`
 disables it. 2 draw calls, ~3k tris.
 
-**First person body** (`Viewmodel.js`, children of the camera, lit by the scene): the right hand holds the
-lantern low right (it carries a real warm point light, brighter as night falls), the left hand grips the staff
-whose ring of light stands in the upper left; coat sleeves run in from the frame corners; gait bob, breathing,
-look-lag, lantern swing. **Reach**: hold **R** (or primary / RB) — the staff is lowered and the open left hand
-reaches toward the view, fingers spread. The body's own arms collapse in FP (the legs and coat stay visible when
-looking down).
+**First person body** (`Viewmodel.js`, rebuilt in round 2b, children of the camera, lit by the scene): built for the
+frame edges like the reference frames. Each forearm runs in from a lower corner in a folded wool sleeve (compression
+folds above the wrist, drape folds, fold shading, a lighter turned-back cuff) to a wrapped wrist and a fingerless
+leather glove with **articulated fingers** (3 joints each + a 3-joint thumb) blended between a grip and an open pose.
+Hands are posed from a forearm direction + a palm axis, so every pose is a body (the elbow leaves the frame). The
+right hand holds the **lantern** by its bail low right; it **hangs plumb** (compensates the view pitch) and swings
+with the gait / turns, with a real warm point light inside. The left hand grips the **staff** low left; the staff
+leans away into the frame and its ring of light stands in the upper-left third. **Reach**: hold **R** (or primary /
+RB) — the staff is lowered out of frame and the whole left arm reaches out from the lower-left corner toward the
+view, palm down, fingers relaxed and spread (u_153 / u_154). Gait bob, breathing, look-lag. The layout keeps its
+screen positions at any `fov=` (the rig is pushed deeper for telephoto). The body's own arms collapse in FP (the
+legs and coat stay visible when looking down).
+
+**Vista finder** (`vista=<m>`, or `vista=1` = 350 m): at spawn the explorer walks to the best OVERLOOK within that
+radius and faces out over it: walkable, dry, the land falling away in front (an edge within ~45 m, a valley below
+within 600 m), nothing near (26–300 m) rising into the view, a distant range welcome but not a mountain face
+(150 candidates × 20 headings × 10 distances, one-shot). On foot it also starts already composed as an overlook.
+Works with `act=rest` (sit facing the view), `view=fp` (first-person vista) and `yaw=` (relative turn).
+`world.player.vistaInfo = {score}` for debugging.
+
+**Framing presets** (`frame=shoulder|wide|low`, **B** cycles in play: auto → shoulder → wide → low):
+* `shoulder`: close over the right shoulder (arm 2.15 m, lateral 0.62 m, FOV ≤ 50): pack, bedroll, scarf and staff
+  in frame, the view ahead (u_136 "over-the-shoulder with the cargo in frame").
+* `wide`: the small figure under a vast sky (arm 9.5 m, chest-height lens tilted up ~6°: the horizon on the lower
+  third, figure centred and small) — the overlook framing, always on.
+* `low`: the lens low behind the walker looking up past the figure (pitch ~15°, FOV ≥ 62): the walker against the
+  sky / a giant overhead.
+* event `player:framing {framing}`. Rest keeps its own composition.
 
 **Camera framing director** (Camera.js): default third person has more sky (arm 4.3 m, aim 1.6 m, idle pitch
 −3.4°); **overlook**: standing still > 1.2 s where the land drops away along the view (> 4–14 m within 50 m)
-the lens pulls back to 7.8 m, levels out, aims above the head and centres the figure small; **rest** as above;
-**glide**: arm +1.7 m, aim higher, flatter pitch (more sky above the canopy). Looking up (pitch > 0.3) the lens
+the lens pulls back to 9 m, drops to chest height (1.45 m) and tilts ~6° up so the horizon sits near the lower
+third and the sky holds about two thirds, the figure small and centred; **lie back**: the lens looks down onto the
+figure from ~3.5 m (above the meadow grass, not through it); **rest** as above;
+**glide**: arm +2.9 m (round 2b: pulled back ~40% more), aim higher, level pitch (more sky above the canopy). Looking up (pitch > 0.3) the lens
 now sits low behind the explorer instead of re-aiming down when terrain lifts it (space request: frame the
 giant overhead).
 

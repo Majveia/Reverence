@@ -138,7 +138,7 @@ export class CameraRig {
       const rw = ctx.rest;
       _a.copy(ctx.forward).applyAxisAngle(up, (ctx.restSide || 1) * (0.78 + 0.05 * Math.sin(this.t * 0.11)));
       this.recenter(up, _a, (this.restSnap ? 60 : 0.55) * rw, dt, 3.14);
-      const tgtP = (ctx.restLie ? -0.12 : 0.15) + 0.015 * Math.sin(this.t * 0.17); // lying: look down onto the figure in the grass
+      const tgtP = (ctx.restLie ? -0.62 : 0.15) + 0.015 * Math.sin(this.t * 0.17); // lying: look down onto the figure in the flowers (from above the grass, not through it)
       this.pitch = this.restSnap ? tgtP : damp(this.pitch, tgtP, 0.6 * rw, dt);
     } else if ((ctx.overlook || 0) > 0.01 && this.idleLook > 2 && st === 'ground') {
       // OVERLOOK: standing still at a drop — the lens pulls back, drops to chest height and tilts a touch up:
@@ -150,12 +150,12 @@ export class CameraRig {
       const tgt = lerp(lerp(-0.06, 0.1 + 0.01 * Math.sin(this.t * 0.15), this.fW), 0.26, this.fL);
       this.pitch = this.snapFrame ? tgt : damp(this.pitch, tgt, 0.8, dt);
     } else if (this.idleLook > 2.2) {
-      const target = st === 'glide' ? -0.03 : st === 'swim' ? -0.32 : st === 'slide' ? -0.2 : sp > 7 ? -0.12 : -0.06;
+      const target = st === 'glide' ? 0.01 : st === 'swim' ? -0.32 : st === 'slide' ? -0.2 : sp > 7 ? -0.12 : -0.06;
       this.pitch = damp(this.pitch, target, 0.5, dt);
     }
     // ---- arm length by state
     const glideK = st === 'glide' ? 1 : 0;
-    let arm = 4.3 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (1.7 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? 0.35 : st === 'slide' ? -0.15 : 0) + (st === 'climb' ? 0.2 + 0.7 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
+    let arm = 4.3 + 0.45 * smoothstep(6, 11, sp) * (1 - glideK) + glideK * (2.9 + (ctx.dive ? 0.9 : 0)) + (st === 'swim' ? 0.35 : st === 'slide' ? -0.15 : 0) + (st === 'climb' ? 0.2 + 0.7 * smoothstep(3, 12, ctx.climbAgl || 0) : 0);
     // looking up from low: shorten the arm so the camera sits low behind the explorer and can tilt up past 45°
     // to frame a giant planet / the sky overhead (BotW; space request)
     const restW = st === 'ground' ? (ctx.rest || 0) : 0;
@@ -170,13 +170,13 @@ export class CameraRig {
     this.fW = damp(this.fW, this.framing === 'wide' ? onFoot : 0, fk, dt);
     this.fL = damp(this.fL, this.framing === 'low' ? onFoot : 0, fk, dt);
     const pS = this.fS * (1 - restW), pW = this.fW * (1 - restW), pL = this.fL * (1 - restW);
-    arm = lerp(lerp(lerp(arm, 2.15, pS), 9.5, pW), 3.6, pL);
+    arm = lerp(lerp(lerp(arm, 2.7, pS), 9.5, pW), 3.6, pL);
     arm *= this.zoom;
     this.frameW = Math.max(restW, ovW);
     // ---- pivot (critically damped; looser in the air so jumps don't jerk the frame)
     let pivotH = st === 'swim' ? 1.6 : st === 'slide' ? 0.5 : st === 'glide' ? 2.15 : 1.6;
-    pivotH = lerp(lerp(pivotH, 1.45, ovW), ctx.restLie ? 1.25 : 1.32, restW);
-    pivotH = lerp(lerp(lerp(pivotH, 1.62, pS), 1.45, pW), 0.95, pL);
+    pivotH = lerp(lerp(pivotH, 1.45, ovW), ctx.restLie ? 0.55 : 1.32, restW);
+    pivotH = lerp(lerp(lerp(pivotH, 1.78, pS), 1.45, pW), 0.95, pL);
     this.pivot.omega = st === 'glide' ? 10 : st === 'air' ? 12 : st === 'slide' ? 14 : 18;
     // velocity feed-forward cancels the spring's steady-state lag (2v/ω): fast falls / glides / sprints stay
     // framed, while small hops (|vy| < 4 m/s) keep their vertical smoothing
@@ -198,7 +198,7 @@ export class CameraRig {
     const right = this.camRight;
     let sh = this.shoulder * clamp(arm / 4.5, 0.5, 1.2) * (st === 'glide' ? 1.5 : 1); // gliding: wider side offset → wing silhouette against the sky
     sh = lerp(lerp(sh, 0, ovW), 0.35, restW);
-    sh = lerp(lerp(lerp(sh, 0.62, pS), 0, pW), 0.25, pL);
+    sh = lerp(lerp(lerp(sh, 0.78, pS), 0, pW), 0.25, pL);
     const want = _c.copy(pivot).addScaledVector(camF, -arm).addScaledVector(right, sh);
     // ---- collision: first try to rise over terrain along the arm (BotW), then pull in as a fallback
     const H = ctx.heights;
