@@ -19,6 +19,8 @@ import { G } from '../../core/Uniforms.js';
 import { Animator } from './Animator.js';
 import { Scarf } from './Cloth.js';
 import { Coat } from './Coat.js';
+import { Companion } from './Companion.js';
+import { Viewmodel } from './Viewmodel.js';
 import { Glider } from './Glider.js';
 import { FX } from './FX.js';
 import { HeightSampler, ColliderIndex, AirField } from './Physics.js';
@@ -78,6 +80,8 @@ export class Player {
     let dir = latLonToDir(p.lat !== undefined ? +p.lat : 12, p.lon !== undefined ? +p.lon : 28);
     if (p.lat === undefined && this.surface) dir = this._findLand(dir);
     else if (this.surface && p.view !== 'fly' && p.view !== 'orbit' && !(+p.alt > 0.5) && p.flat !== '0') dir = p.flat === 'low' ? this._lowSpot(dir, clamp(+p.flatr || 400, 20, 3000)) : this._flatSpot(dir, 45);
+    // first person spawned out at sea (e.g. W12 lat=35 lon=20): step ashore to the nearest dry ground (space request)
+    if (this.view === 'fp' && p.lat !== undefined && !(+p.alt > 0.5) && p.dry !== '0') safe(() => { dir = this._nearestDry(dir); });
     this.up = dir.clone().normalize();
     this.pos = this.up.clone().multiplyScalar(this.R + this._terrainH(this.up));
     if (this.heights.solidSea && this.pos.length() < this.heights.seaR) this.pos.setLength(this.heights.seaR); // on the ice
@@ -114,7 +118,7 @@ export class Player {
     this.swimT = 0; this.dive = 0;
     // rest: sit (knees up / legs over an edge), lie back against the pack; `resting` (0..1) is public so the UI can
     // fade the HUD and audio can swell
-    this.restS = { on: false, w: 0, lie: false, dangle: false, hug: false, hold: 0, lieHold: 0, lieArmed: false, seat: null, t: 0, compYaw: null, side: 1 };
+    this.restS = { on: false, w: 0, lie: false, dangle: false, hug: false, hold: 0, lieHold: 0, lieArmed: false, seat: null, t: 0, compYaw: null, side: -1 };
     this.resting = 0;
     this._restPending = p.act === 'rest' || p.act === 'lie' || p.act === 'sit' ? p.act : null;
     this._xPrev = false;
@@ -212,6 +216,20 @@ export class Player {
         this.fx.jets.forEach((j, i) => { pack.add(j); j.position.set(i ? -0.085 : 0.085, -0.28, -0.09); j.rotation.x = -0.18; j.scale.set(1.7, 1.9, 1.7); });
       }
     } catch (e) { console.error('[player] fx failed', e); this.fx = null; }
+    // first-person hands (lantern + staff) hang off the camera; a warm point light rides in the lantern
+    try { if (P) { this.viewmodel = new Viewmodel(P, this.quality); this.camera.add(this.viewmodel.group); } } catch (e) { console.error('[player] viewmodel failed', e); this.viewmodel = null; }
+    try {
+      if (P && this.rig && this.quality?.tier !== 'low') {
+        this.lampLight = new THREE.PointLight(new THREE.Color(1.0, 0.7, 0.4), 0, 7, 2);
+        this.lampLight.name = 'explorer-lantern';
+        this.rig.bones[B.antenna].add(this.lampLight);
+        this.lampLight.position.set(0, -0.14, 0);
+      }
+    } catch (e) { this.lampLight = null; }
+    // small companion (fallback until the fauna track provides world.get('fauna').companion); companion=0 disables
+    try {
+      if (P && this.params.companion !== '0' && !w.get?.('fauna')?.companion) { this.companion = new Companion(w, this, this.quality); w.root.add(this.companion.group); }
+    } catch (e) { console.error('[player] companion failed', e); this.companion = null; }
     this.anchorsW = [[new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()], [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]];
     this.spheres = [];
     for (let i = 0; i < 10; i++) this.spheres.push({ c: new THREE.Vector3(), r: 0.1 });
@@ -229,6 +247,21 @@ export class Player {
     const l = dir.length() || 1;
     const h = S.height(dir.x / l, dir.y / l, dir.z / l);
     return Number.isFinite(h) ? h : 0;
+  }
+
+  _nearestDry(dir) {
+    const S = this.surface;
+    if (!S || !(S.seaLevel > -1e8) || this.world.body?.ocean?.present === false) return dir;
+    if (S.height(dir.x, dir.y, dir.z) > S.seaLevel + 0.5) return dir;
+    const e = new THREE.Vector3(), n = new THREE.Vector3(), d = new THREE.Vector3();
+    tangentBasis(dir, e, n);
+    const k = 4000 / this.R / Math.sqrt(600);
+    for (let i = 1; i < 600; i++) {
+      const t = i * 2.39996, r = Math.sqrt(i) * k;
+      d.copy(dir).addScaledVector(e, Math.cos(t) * r).addScaledVector(n, Math.sin(t) * r).normalize();
+      if (S.height(d.x, d.y, d.z) > S.seaLevel + 2) return d.clone();
+    }
+    return dir;
   }
 
   _findLand(dir) {
@@ -297,6 +330,9 @@ export class Player {
     this._openGlider(false, true);
     this.cam.pivotInit = false; this.cam.fpInit = false;
     if (this.scarf) this.scarf.initialized = false;
+    if (this.coat) this.coat.initialized = false;
+    if (this.companion) this.companion.init = false;
+    this._standUp();
     this.fx?.rebase(this.pos);
   }
 
@@ -428,6 +464,7 @@ export class Player {
     if (this.group) this.group.visible = v;
     if (this.scarf) this.scarf.group.visible = v;
     if (this.coat) this.coat.group.visible = v;
+    if (this.companion) this.companion.group.visible = v;
     if (!v && this.fx) for (const j of this.fx.jets) j.visible = false;
   }
 
@@ -525,7 +562,9 @@ export class Player {
     if (this._ovT > 0.3) { this._ovT = 0; this._ovTarget = this.stillT > 1.2 ? this._dropAhead() : 0; }
     this.overlook = damp(this.overlook, this._ovTarget, this._ovTarget > this.overlook ? 0.7 : 2.5, dt);
 
+    this._updateCompanionLink();
     this._syncBody(dt);
+    if (this.companion) safe(() => this.companion.update(dt));
     if (this.params?.camlock) this.cam.idleLook = 0; // photo mode: the lens keeps its URL heading (no auto-recenter)
     this._camera(dt);
     this._feedback(dt, I);
@@ -687,7 +726,7 @@ export class Player {
     // ---- rest: hold C (descend) while standing still, or tap X, to sit; move / jump / X to stand
     const R = this.restS;
     const xNow = typeof this.input.code === 'function' && this.input.code('KeyX');
-    const xDown = xNow && !this._xPrev;
+    const xDown = (xNow && !this._xPrev) || !!this.input._pressed?.has?.('KeyX'); // (a 1-frame simulated press never shows in code())
     this._xPrev = xNow;
     if (R.on) {
       if (I.mag > 0.35 || this.jumpBuf > 0 || xDown) { this.jumpBuf = 0; this._standUp(); }
@@ -780,10 +819,28 @@ export class Player {
         an.dangleW = R.dangle ? 1 : 0; an.lieW = R.lie ? 1 : 0;
       }
       this.cam.restSnap = true;
+      this._updateCompanionLink();
+      this.companion?.snap?.(true);
+      this._updateCompanionLink();
       if (this.coat) this.coat.initialized = false;
       if (this.scarf) this.scarf.initialized = false;
     }
     this.world.events?.emit?.('player:rest', { on: true, pos: this.pos });
+  }
+
+  /** The companion (ours or fauna's): sitting close at rest → the arm goes around it, the gaze turns to it. */
+  _updateCompanionLink() {
+    const RS = this.restS;
+    const comp = this.companion || this.world.get?.('fauna')?.companion || null;
+    const cp = comp?.pos;
+    if (!cp?.isVector3) { RS.hug = false; RS.compYaw = null; return; }
+    const d = cp.distanceTo(this.pos);
+    RS.hug = RS.on && d < 0.85;
+    if (d < 4) {
+      _a.crossVectors(this.up, this.forward); // left
+      _b.copy(comp.headPos?.isVector3 ? comp.headPos : cp).sub(this.pos).addScaledVector(this.up, -1.0);
+      RS.compYaw = Math.atan2(_b.dot(_a), _b.dot(this.forward));
+    } else RS.compYaw = null;
   }
 
   _standUp() {
@@ -1256,6 +1313,7 @@ export class Player {
     if (!this.animator || dt <= 0) { this.group.updateMatrixWorld(true); return; }
     const S = this._animState(dt);
     this.animator.headHidden = this.view === 'fp';
+    this.animator.armsHidden = this.view === 'fp' && !!this.viewmodel;
     safe(() => this.animator.update(dt, S, this.gpos, this.gquat));
     this.rig.materials.visor?.userData?.uUp?.value.copy(up);
     {
@@ -1352,12 +1410,32 @@ export class Player {
         this.animator.eyeGroup(this.eye).applyQuaternion(this.gquat).add(this.gpos);
       } else this.eye.copy(this.pos).addScaledVector(this.up, 1.65);
       this.cam.firstPerson(dt, ctx, this.eye);
+      if (this.viewmodel) {
+        const vc = this._vmCtx || (this._vmCtx = {});
+        const I = this.input, lk = I.axis('look');
+        vc.visible = this._visible; vc.speed = this.speed; vc.phase = this.animator?.phase || 0;
+        vc.lookX = lk.x; vc.lookY = lk.y; vc.state = this.state; vc.aspect = this.camera.aspect;
+        vc.reach = I.held('primary') || (typeof I.code === 'function' && I.code('KeyR')) || I.held('KeyR');
+        safe(() => this.viewmodel.update(dt, vc));
+      }
       // in first person the body turns with the view when standing (body awareness)
       if (this.state === 'ground' && this.speed < 0.3) {
         const a = Math.acos(clamp(this.forward.dot(this.cam.fwd), -1, 1));
         if (a > 0.9) this._turnToward(this.cam.fwd, 6, dt);
       }
-    } else this.cam.thirdPerson(dt, ctx);
+    } else {
+      this.cam.thirdPerson(dt, ctx);
+      if (this.viewmodel?.group.visible) this.viewmodel.group.visible = false;
+    }
+    // the lantern's light: in the hand (first person) or swinging off the pack; brighter as night falls
+    if (this.lampLight) {
+      const fp = this.view === 'fp' && this.viewmodel;
+      const anchor = fp ? this.viewmodel.lightAnchor : this.rig.bones[B.antenna];
+      if (this.lampLight.parent !== anchor) { anchor.add(this.lampLight); this.lampLight.position.set(0, fp ? 0 : -0.14, 0); }
+      const night = clamp(G.uNight.value || 0, 0, 1);
+      const flick = 1 + 0.04 * Math.sin(this.time * 13.1) + 0.03 * Math.sin(this.time * 7.3 + 1);
+      this.lampLight.intensity = this._visible ? (0.12 + 1.5 * night + 0.4 * night * this.resting) * (fp ? 0.6 : 1) * flick : 0;
+    }
   }
 
   _feedback(dt, I) {
@@ -1589,6 +1667,9 @@ export class Player {
       if (this._fallbackMesh) { this._fallbackMesh.geometry.dispose(); this._fallbackMesh.material.dispose(); }
       if (this.scarf) { this.world.root.remove(this.scarf.group); this.scarf.dispose(); }
       if (this.coat) { this.world.root.remove(this.coat.group); this.coat.dispose(); }
+      if (this.companion) { this.world.root.remove(this.companion.group); this.companion.dispose(); }
+      if (this.viewmodel) { this.viewmodel.group.parent?.remove(this.viewmodel.group); this.viewmodel.dispose(); }
+      if (this.lampLight) { this.lampLight.parent?.remove(this.lampLight); this.lampLight.dispose?.(); }
       if (this.glider) this.glider.dispose();
       if (this.fx) { this.world.root.remove(this.fx.group); this.fx.dispose(); }
     } catch (e) { console.error('[player] dispose failed', e); }

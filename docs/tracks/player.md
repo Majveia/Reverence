@@ -2,6 +2,53 @@
 
 Owner paths: `src/world/player/**`, this file.
 
+## Season 2 round 2 (toward the creator's frames)
+
+**The explorer is now a wayfarer, not an astronaut.** Silhouette first: a deep hood with a soft peak, a short
+shoulder mantle (front hem lifted so the chest and straps show), a long wool coat whose split skirt is simulated
+cloth (`Coat.js`), wrapped shins and low boots, a tall canvas rucksack with a striped bedroll on top, a coil of
+rope, a tin mug, a small warm **lantern** swinging on a pendulum bone off the pack, and a **walking staff** strapped
+diagonally across the back with a little brass **ring of light** on top (the source's sign, carried). The only
+saturated accent is the **red scarf**, wrapped over the mouth with two wide wool tails (verlet). Goggles pushed up
+on the hood brim. Muted wool / canvas / leather tones picked against the world's ground hue (`heroPalette`);
+~7 heads tall. Materials: felted wool (new `woolNormal`), waxy leather, brass, skin; a **sun-keyed back rim**
+(golden-hour halo when the sun is behind the figure) and the old fresnel rim fixed (it was brightening every
+front-facing pixel — the "flat plastic" look).
+
+**Rest as a verb** (`world.player.resting`, 0..1, smoothed): hold **C** (descend) while standing still for 0.75 s,
+or tap **X**, to sit; move / jump / X to stand; hold C again (1 s) to **lie back** / sit up.
+* knees-up sit: forearms draped over the knees, gaze wandering over the horizon and the sky; the **pack comes off**
+  and is set down at the right hip, the **lantern is put on the ground** in front (a small hearth);
+* **sit on a ridge**: if the ground drops away within ~1.4 m ahead, the explorer shuffles onto the edge and sits
+  with the legs hanging over the drop, hands on the ledge;
+* **lie back**: the pack becomes a pillow, hands behind the head, looking up;
+* **tender contact**: the companion sits at the left hip and the near arm goes around it; now and then the
+  explorer's head turns to it and it leans in / nuzzles.
+* camera: a slow drift to a ¾-back composition, lens low and tilted up (pitch ≈ +7°, FOV 44, arm 4.6 m, aim
+  above the figure) so the **sky holds about two thirds** and the figure sits small in the lower third; a very slow
+  breathing drift. Events `player:rest {on, pos}`; audio param `rest` (0..1); the HUD prompt clears while resting.
+* URL: `act=rest` (sit at spawn, composition snapped), `act=lie`.
+
+**Companion** (`Companion.js`): a small cream "lantern fox" whose tail tip glows and who wears a tiny ring of light
+on its brow. Follows with a spring-damped offset (left-behind), trots, sits when idle, sits beside the explorer
+at rest, leans into the hug. It is a fallback: if fauna ever exposes `world.get('fauna').companion` (with `.pos`,
+optional `.headPos`), the player uses that one for the hug / gaze and does not build its own. `companion=0`
+disables it. 2 draw calls, ~3k tris.
+
+**First person body** (`Viewmodel.js`, children of the camera, lit by the scene): the right hand holds the
+lantern low right (it carries a real warm point light, brighter as night falls), the left hand grips the staff
+whose ring of light stands in the upper left; coat sleeves run in from the frame corners; gait bob, breathing,
+look-lag, lantern swing. **Reach**: hold **R** (or primary / RB) — the staff is lowered and the open left hand
+reaches toward the view, fingers spread. The body's own arms collapse in FP (the legs and coat stay visible when
+looking down).
+
+**Camera framing director** (Camera.js): default third person has more sky (arm 4.3 m, aim 1.6 m, idle pitch
+−3.4°); **overlook**: standing still > 1.2 s where the land drops away along the view (> 4–14 m within 50 m)
+the lens pulls back to 7.8 m, levels out, aims above the head and centres the figure small; **rest** as above;
+**glide**: arm +1.7 m, aim higher, flatter pitch (more sky above the canopy). Looking up (pitch > 0.3) the lens
+now sits low behind the explorer instead of re-aiming down when terrain lifts it (space request: frame the
+giant overhead).
+
 ## What was built
 
 A BotW / Journey / Outer Wilds-style explorer that plays on a spherical planet.
@@ -16,7 +63,10 @@ A BotW / Journey / Outer Wilds-style explorer that plays on a spherical planet.
 | `textures.js` | procedural panel normal + panel albedo (panel lines, grime streaks) / fabric normal maps and wear roughness (canvas, cached) |
 | `bake.js` | one-time surface bake of the suit: voxel AO (14 hemisphere rays / vertex), convex-edge paint wear, height + cavity grime tinted with the planet's dust colour → vertex colours + `aWear` (roughness / clearcoat / metalness per vertex) |
 | `Animator.js` | procedural animation: effector-space layer blending + analytic two-bone IK |
-| `Cloth.js` | verlet scarf (2 tails, wind + relative airflow, body collision spheres) |
+| `Cloth.js` | verlet scarf (2 wide wool tails, wind + relative airflow, body / hood / pack / bedroll collision spheres) |
+| `Coat.js` | verlet coat skirt (4 panels: open front, back vent, side slits; shape memory, leash, leg / pelvis / pack capsules, ground plane) |
+| `Companion.js` | the lantern fox companion (follow / sit / hug), fallback for fauna's companion |
+| `Viewmodel.js` | first-person hands: lantern (point light), staff with ring of light, reach gesture |
 | `Glider.js` | paraglider (arched cellular canopy, lines, deploy/stow, flutter, backlit translucency) |
 | `FX.js` | pooled particles (dust, spray, droplets, motes, jet sparks), ripples, footprints, contact shadow, jet flames, wingtip trails |
 | `Physics.js` | `HeightSampler` (cached heightfield + normals + water), `ColliderIndex` (spatial hash over `world.colliders`, capsule resolve, raycast), `AirField` (wind, thermals, ridge lift) |

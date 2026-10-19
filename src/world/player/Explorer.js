@@ -322,22 +322,33 @@ export function buildExplorer(renderer, body, quality) {
     o[0] = y > 1.47 ? B.neck : B.chest; o[1] = 1 - t; o[2] = x > 0 ? B.upperArmL : B.upperArmR; o[3] = t;
     return o;
   };
-  A.add('fabric', loft(mantleSecs, { radial: R(32), sub: 3, ripple: (y) => 1 + 0.012 * sstep(1.3, 1.18, y) }), P.mantle, mantleSkin);
+  const mantleLift = (g) => {
+    const pa = g.attributes.position;
+    for (let i = 0; i < pa.count; i++) {
+      const x = pa.getX(i), y = pa.getY(i), z = pa.getZ(i);
+      const fr = Math.max(0, z) / 0.19, k = fr * fr * (1 - 0.6 * sstep(0.12, 0.24, Math.abs(x)));
+      if (y < 1.4) pa.setY(i, y + (1.4 - y) * 0.55 * k);
+    }
+    g.computeVertexNormals();
+    return g;
+  };
+  A.add('fabric', mantleLift(loft(mantleSecs, { radial: R(32), sub: 3, ripple: (y) => 1 + 0.012 * sstep(1.3, 1.18, y) })), P.mantle, mantleSkin);
   { // thick hem (the cape has weight) + inner lining band seen from below
     const s = mantleSecs[0];
     const g = torus(s.rx + 0.004, 0.012, R(6), R(40)); xf(g, 0, s.y + 0.004, 0, Math.PI / 2, 0, 0, 1, (s.rz + 0.004) / (s.rx + 0.004), 1);
-    A.add('fabric', g, P.coat2, mantleSkin);
+    A.add('fabric', mantleLift(g), P.coat2, mantleSkin);
     const inner = loft([{ y: 1.18, rx: s.rx - 0.006, rz: s.rz - 0.006, e: 2.15 }, { y: 1.27, rx: 0.25, rz: 0.17, e: 2.3 }], { radial: R(32), sub: 1 });
     // flip winding: visible from inside
     const ia = inner.index; for (let i = 0; i < ia.count; i += 3) { const b = ia.getX(i + 1); ia.setX(i + 1, ia.getX(i + 2)); ia.setX(i + 2, b); }
     const na = inner.attributes.normal; for (let i = 0; i < na.count; i++) na.setXYZ(i, -na.getX(i), -na.getY(i), -na.getZ(i));
+    mantleLift(inner); // (normals recomputed from the flipped winding → face inward)
     A.add('fabric', inner, P.coat2, mantleSkin);
   }
   // a stitched trim band near the hem
   {
     const pts = []; const p = new THREE.Vector3(); const MS = loftSurface(mantleSecs);
     for (let i = 0; i <= 40; i++) { MS((i / 40) * Math.PI * 2, 1.205, p); const c = p.clone(); c.y = 0; const d = c.clone().normalize(); pts.push(p.clone().addScaledVector(d, 0.003)); }
-    A.add('fabric', tube(pts, 0.0045, R(80), 4, true), P.scarf2.clone().multiplyScalar(0.55), mantleSkin);
+    A.add('fabric', mantleLift(tube(pts, 0.0045, R(80), 4, true)), P.scarf2.clone().multiplyScalar(0.55), mantleSkin);
   }
 
   // ================================================================ arms: coat sleeves + leather gloves
@@ -498,15 +509,14 @@ export function buildExplorer(renderer, body, quality) {
     const wrapSecs = [
       { y: 1.465, rx: 0.118, rz: 0.112 },
       { y: 1.52, rx: 0.102, rz: 0.103, fz: 0.012 },
-      { y: 1.585, rx: 0.088, rz: 0.098, fz: 0.022 },
-      { y: 1.64, rx: 0.087, rz: 0.1, fz: 0.02 },
-      { y: 1.668, rx: 0.086, rz: 0.098, fz: 0.014 },
+      { y: 1.575, rx: 0.088, rz: 0.098, fz: 0.018 },
+      { y: 1.61, rx: 0.086, rz: 0.095, fz: 0.014 },
+      { y: 1.63, rx: 0.084, rz: 0.092, fz: 0.01 },
     ];
     for (const s of wrapSecs) s.oz = 0.012;
     const wrapSkin = bandsY([[B.chest, 1.46], [B.neck, 1.52], [B.head, 1.6]]);
     A.add('fabric', loft(wrapSecs, { radial: R(28), sub: 3, ripple: (y) => 1 + 0.035 * Math.pow(Math.abs(Math.sin((y - 1.46) * 46)), 2) }), P.scarf, wrapSkin);
-    { const g = ellipsoid(0.05, 0.04, 0.035, R(12), R(8)); xf(g, 0.03, 1.49, 0.12, 0.2, 0.2, 0.4); A.add('fabric', g, P.scarf, rigid(B.chest)); }
-    { const g = box(0.06, 0.16, 0.014, 0.01); xf(g, 0.045, 1.4, 0.142, 0.18, 0.15, 0.12); A.add('fabric', g, P.scarf.clone().multiplyScalar(0.9), rigid(B.chest)); }
+    { const g = ellipsoid(0.034, 0.028, 0.026, R(10), R(8)); xf(g, 0.045, 1.49, 0.118, 0.2, 0.3, 0.4); A.add('fabric', g, P.scarf, rigid(B.chest)); }
   }
 
   // ================================================================ pack: canvas rucksack, bedroll, rope, mug, lantern, staff
@@ -530,11 +540,11 @@ export function buildExplorer(renderer, body, quality) {
       xf(nz, s * 0.085, 0.99, -0.26, -0.18, 0, 0); A.add('metal', nz, P.brass, pk);
     }
     // shoulder straps (over the shoulders, under the mantle → visible at the chest)
-    for (const s of [1, -1]) {
-      const pts = [new THREE.Vector3(s * 0.11, 1.40, -0.16), new THREE.Vector3(s * 0.125, 1.46, -0.09), new THREE.Vector3(s * 0.13, 1.46, 0.03), new THREE.Vector3(s * 0.12, 1.4, 0.13), new THREE.Vector3(s * 0.11, 1.28, 0.15), new THREE.Vector3(s * 0.12, 1.15, 0.13)];
-      const g = tube(pts, 0.013, R(24), 6);
+    for (const s of [1, -1]) { // (the upper run hides under the mantle; only the chest run shows)
+      const pts = [new THREE.Vector3(s * 0.12, 1.33, 0.135), new THREE.Vector3(s * 0.115, 1.22, 0.145), new THREE.Vector3(s * 0.125, 1.1, 0.128)];
+      const g = tube(pts, 0.012, R(12), 6);
       const pa = g.attributes.position;
-      for (let i = 0; i < pa.count; i++) { const xx = pa.getX(i); pa.setX(i, s * 0.12 + (xx - s * 0.12) * 1.9); }
+      for (let i = 0; i < pa.count; i++) { const xx = pa.getX(i), zz = pa.getZ(i); pa.setX(i, s * 0.12 + (xx - s * 0.12) * 2.0); pa.setZ(i, zz - (zz - 0.14) * 0.4); }
       g.computeVertexNormals();
       A.add('hard', g, P.strap, rigid(B.chest));
     }

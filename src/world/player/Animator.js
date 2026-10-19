@@ -316,7 +316,7 @@ export class Animator {
     L.sit = 1;
     L.hipsPos.set(0, -0.81, -0.03);
     L.hipsRot.x = -0.12 + 0.1 * dg;
-    L.spine.x = lerp(lerp(0.2, 0.08, dg), -0.1, lie) + breathe; L.chest.x = lerp(0.06, -0.05, lie) - breathe * 1.4;
+    L.spine.x = lerp(lerp(0.1, 0.04, dg), -0.1, lie) + breathe; L.chest.x = lerp(0.06, -0.05, lie) - breathe * 1.4;
     L.neck.x = lerp(-0.12, 0.1, lie); L.head.x = lerp(-0.16, 0.28, lie);
     L.spine.z = 0.03 * Math.sin(t * 0.07); L.chest.y = 0.04 * Math.sin(t * 0.05 + 1);
     // lie back about the seat (the pack becomes a pillow)
@@ -342,7 +342,7 @@ export class Animator {
     L.handGR.lerpVectors(_v, _w, dg);
     if (hug > 0.001) {
       // around the companion's back (it sits at the left hip, ~0.45 m out), palm resting on its far side
-      _v.set(0.43, 0.27 + 0.01 * Math.sin(t * 0.8), -0.02 + 0.015 * Math.sin(t * 0.37));
+      _v.set(0.45, 0.31 + 0.01 * Math.sin(t * 0.8), -0.03 + 0.015 * Math.sin(t * 0.37));
       L.handGL.lerp(_v, hug);
       L.chest.z += 0.1 * hug; L.spine.z += 0.06 * hug; L.chest.y += 0.12 * hug;
     }
@@ -631,8 +631,26 @@ export class Animator {
     this.lp[B.pack].copy(REST_POS.pack).sub(REST_POS.chest);
     this.lp[B.pack].y += this.packY.x * P.pack; this.lp[B.pack].x += this.packX.x * P.pack;
     _e.set(this.antX.x, 0, this.antZ.x, 'YXZ'); lq[B.antenna].setFromEuler(_e);
+    this.lp[B.antenna].copy(REST_POS.antenna).sub(REST_POS.pack);
     // FK down to shoulders/thighs
     for (const b of [B.root, B.hips, B.spine, B.chest, B.neck, B.head, B.shoulderL, B.shoulderR, B.pack, B.antenna]) this._fk(b);
+    // seated: the pack comes off and is set down at the right hip (a pillow behind the head when lying back),
+    // and the lantern is put on the ground in front, a small hearth
+    const sitK = smoothstep(0.35, 0.95, clamp(P.sit, 0, 1));
+    if (sitK > 1e-3) {
+      const lie = this.lieW;
+      _v.set(lerp(-0.5, -0.05, lie), 0, lerp(-0.1, -0.86, lie));
+      _v.y = 0.27 + this._groundDh(_v.x, _v.z) - lie * 0.12;
+      _e.set(lerp(0.05, -1.45, lie), lerp(2.64, 0, lie), lerp(0.04, 0, lie), 'YXZ'); _q.setFromEuler(_e);
+      this._placeChild(B.pack, B.chest, _v, _q, sitK);
+      this._fk(B.pack);
+      const dg = this.dangleW;
+      _v.set(lerp(0.36, 0.42, dg), 0, lerp(0.34, -0.05, dg));
+      _v.y = 0.195 + this._groundDh(_v.x, _v.z);
+      _q.identity();
+      this._placeChild(B.antenna, B.pack, _v, _q, sitK);
+      this._fk(B.antenna);
+    }
     this._fk(B.upperArmL); this._fk(B.upperArmR); this._fk(B.thighL); this._fk(B.thighR);
 
     // ---- legs with terrain adaptation
@@ -708,7 +726,7 @@ export class Animator {
     const bones = this.bones;
     for (let i = 0; i < bones.length; i++) {
       bones[i].quaternion.copy(lq[i]);
-      if (i === B.hips || i === B.root || i === B.pack) bones[i].position.copy(this.lp[i]);
+      if (i === B.hips || i === B.root || i === B.pack || i === B.antenna) bones[i].position.copy(this.lp[i]);
     }
     // first person: hide head (collapse head bone)
     const hs = this.headHidden ? 0.0001 : 1;
@@ -717,6 +735,25 @@ export class Animator {
     // first-person viewmodel draws its own hands: collapse the body's arms
     const as = this.armsHidden ? 0.0001 : 1;
     bones[B.shoulderL].scale.setScalar(as); bones[B.shoulderR].scale.setScalar(as);
+  }
+
+  /** Height of the ground (relative to the character's feet, along its up) under a group-space point x, z. */
+  _groundDh(x, z) {
+    if (!this.H) return 0;
+    _t.set(x, 0, z).applyQuaternion(this.gquat).add(this.gpos);
+    const gR = this.H.groundR(_t);
+    _t.normalize().multiplyScalar(gR).sub(this.gpos);
+    return clamp(_t.dot(this.gup), -0.6, 0.6);
+  }
+
+  /** Blend bone b (child of parent p) toward a group-space position / orientation by w (sets its local TRS). */
+  _placeChild(b, p, pos, quat, w) {
+    // current (animated) group transform of b → blended target → back into p's space
+    _u.copy(this.gp[b]).lerp(pos, w);
+    _q2.copy(this.gq[b]).slerp(quat, w);
+    _qi.copy(this.gq[p]).invert();
+    this.lp[b].copy(_u).sub(this.gp[p]).applyQuaternion(_qi);
+    this.lq[b].multiplyQuaternions(_qi, _q2);
   }
 
   /** Eye position in group space (after update) — for the first-person camera. */
