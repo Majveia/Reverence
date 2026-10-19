@@ -54,6 +54,25 @@ Yotei like figure and feel, she needs to look badass, sexy, and cool with katana
   leaves stardust), Commune (meditate, and the sky answers).
 * **Feel.** Wind in her hair, scarf and the grass; a small figure under a vast sky; low, cinematic standoff angles.
 
+## The worlds: Ghost of Yotei, alive
+
+In the creator's words (19 Oct): "The worlds should have a Ghost of Yotei feel, like the world and the universe is alive.
+The art style and direction of the worlds should be like Ghost of Yotei." Critics compare against official Ghost of Yotei
+media, kept privately with the lead like the rest of the reference library.
+
+* **Alive.** Wind moves every blade of grass, flower and leaf in travelling waves; petals and leaves drift across the
+  frame; skies move; birds, foxes, wolves and horses are everywhere; a guiding animal leads you to wonders.
+* **Art style.** Painterly but grounded: rich, saturated seasonal fields (gold pampas, red spider lilies, blossom,
+  maples and ginkgo), an iconic snow-capped volcano on the horizon of each world, cinematic weather (storm light, rain
+  veils, a sea of clouds at sunrise), a lone rider small in a vast field, black-and-white film and ink-wash looks.
+
+## The music
+
+"The soundtracks of the universe should be like vibey chillhop/lofi and Ghost of Yotei x Zelda inspired." A lofi
+groove (70-90 BPM, swung drums, warm Rhodes and felt piano, jazzy chords, vinyl and tape warmth), Ghost of Yotei colour
+(breathy flute, koto and shamisen, distant taiko, Japanese scales, space and wind), and Zelda-like leitmotifs (short
+memorable themes that return, sparse piano with rests, a discovery jingle), all procedural.
+
 ## Art direction rules (apply everywhere)
 
 1. The sky takes two thirds of the frame. The figure is small, near the bottom, there for scale.
