@@ -26,7 +26,7 @@ uniform mat3 uBhToView;     // BH frame dir → view
 uniform mat4 uProj, uInvProj;
 uniform float uTime, uDiskIn, uDiskOut, uDiskT, uDiskGain, uSeed, uBgGain, uStarF;
 uniform float uPixAng;      // radians per pixel
-uniform float uRing, uJet, uTorn;
+uniform float uRing, uJet, uTorn, uDiskK;
 uniform int uSteps;
 varying vec2 vUv;
 
@@ -110,15 +110,20 @@ vec4 disk(vec3 p, vec3 ph, float foot){
   float cl = rv_snoise(vec3(cos(phi) * 1.3, sin(phi) * 1.3, lr * 5.0 + uSeed));
   // fine anisotropic filaments: long along the flow (azimuth), thin across it (ln r), trailing shear
   float phS = phi + 1.8 * lr;
-  float st = 0.0, ws = 0.0, F = 34.0, A = 2.2, amp = 1.0;
+  // u_14-like: short bright dashes riding circular orbits (long in azimuth, very thin in radius)
+  float st = 0.0, ws = 0.0, F = 38.0, A = 3.6, amp = 1.0;
   for (int k = 0; k < 3; k++){
     float aa = 1.0 - smoothstep(0.18, 0.5, F * fpl);    // fade a layer once its period nears 2-3 px
     float nk = rv_snoise(vec3(cos(phS) * A, sin(phS) * A, lr * F + uSeed * 1.7 + float(k) * 7.31));
-    st += amp * aa * nk; ws += amp;
-    F *= 2.15; A *= 1.6; amp *= 0.62; phS += 0.35 * lr;
+    st += amp * aa * nk; ws += amp * aa;
+    F *= 2.1; A *= 1.85; amp *= 0.7; phS += 0.35 * lr;
   }
-  st /= ws;
-  float fil = smoothstep(-0.12, 0.42, st + 0.22 * cl);
+  float con = smoothstep(0.08, 0.45, ws / 2.19);       // how much filament contrast survives the footprint
+  st /= max(ws, 1e-3);
+  float fil = smoothstep(-0.1, 0.45, st + 0.25 * cl);
+  // brightness: crisp dashes with truly dark gaps; where the footprint is too coarse to resolve them,
+  // the same mean energy as a smooth glow (no dark band near the shadow, no aliasing)
+  float filB = mix(0.42 + 0.12 * cl, 0.03 + 1.4 * fil * fil, con);
   // a few compact hot spots (flares) riding the flow at their own Keplerian rate
   float hot = 0.0;
   for (int k = 0; k < 3; k++) {
@@ -132,14 +137,15 @@ vec4 disk(vec3 p, vec3 ph, float foot){
   float edgeIn = smoothstep(uDiskIn * 0.98, uDiskIn * 1.08, r);
   float edgeOut = 1.0 - smoothstep(uDiskOut * 0.3, uDiskOut, r);
   // gaps between filaments are thin and nearly transparent: the far side and the black sky show through
-  float a = clamp((0.18 + 0.72 * fil) * edgeIn * edgeOut + 0.25 * hot, 0.0, 0.95);
-  // colour temperature: Novikov–Thorne profile × redshift; the ramp is art-directed (gold, not white)
-  float t = pow(prof, 1.35) * pow(g, 1.4) * (uDiskT / 6000.0) * (0.85 + 0.25 * fil + 0.3 * hot);
+  float a = clamp((0.16 + 0.74 * mix(0.5, fil, con)) * edgeIn * edgeOut + 0.25 * hot, 0.0, 0.95);
+  // colour temperature: Novikov–Thorne profile × redshift; art-directed ramp: a white-hot heart near
+  // the ISCO, gold through the middle, deep orange-red embers fading to black at the rim (u_14)
+  float t = pow(prof, 1.15) * pow(g, 1.15) * (uDiskT / 6000.0) * 1.32 * (0.82 + 0.3 * mix(0.5, fil, con) + 0.3 * hot);
   vec3 col = fireRamp(t);
   // relativistic beaming I ∝ g³ (+ gravitational redshift) with a soft knee on the approaching side
   float gb = pow(g, 3.0);
   gb = gb <= 1.0 ? gb : 1.0 + (gb - 1.0) / (1.0 + 0.45 * (gb - 1.0));
-  float I = uDiskGain * pow(prof, 3.0) * gb * (0.05 + 1.35 * fil * fil) * (1.0 + 0.25 * cl) * (1.0 + 1.5 * hot);
+  float I = uDiskGain * pow(prof, 3.0) * gb * filB * (1.0 + 0.25 * cl) * (1.0 + 1.5 * hot) * uDiskK;
   return vec4(col * I / max(a, 0.05), a);
 }
 
@@ -179,7 +185,7 @@ void main(){
   float nCross = 0.0;
   bool captured = false;
   // polar jet ("pillar of light"): collimated along the spin axis, emerging just outside the shadow
-  vec3 jetCore = vec3(1.0, 0.86, 0.6), jetSheath = vec3(0.35, 0.75, 1.0);
+  vec3 jetCore = vec3(1.0, 0.82, 0.5), jetSheath = vec3(1.0, 0.36, 0.08);
   for (int i = 0; i < 400; i++) {
     if (i >= uSteps) break;
     float r = length(x);
@@ -194,14 +200,20 @@ void main(){
     vec3 accn = -1.5 * h2 * xn / pow(max(rn, 0.5), 5.0);
     vec3 vn = v + 0.5 * (acc + accn) * dt;
     if (uJet > 0.0) {
+      // the pillar of light: a collimated jet along the spin axis, a blazing gold-white core inside a
+      // flickering fiery sheath, emerging from the shadow's edge (u_157)
       vec3 xm = 0.5 * (x + xn);
       float ay = abs(xm.y), rho = length(xm.xz);
-      float wj = 0.22 + 0.075 * ay;
+      float wj = 0.2 + 0.06 * ay;
       float q = rho / wj;
-      float jb = smoothstep(2.6, 5.5, ay) * exp(-ay / 70.0);
-      float knots = 0.65 + 0.35 * sin(ay * 0.55 - uTime * 2.2 + (xm.y > 0.0 ? 0.0 : 1.7));
-      vec3 je = jetCore * exp(-q * q * 4.0) * 2.2 + jetSheath * exp(-q * q) * 0.35;
-      L += Tr * je * (jb * knots * uJet / wj) * dt;
+      if (q < 4.0) {
+        float jb = smoothstep(2.5, 4.0, ay) * exp(-ay / 90.0);
+        float fl = rv_snoise(vec3(xm.x / wj * 0.7, ay * 0.22 - uTime * 3.0 * sign(xm.y), xm.z / wj * 0.7 + (xm.y > 0.0 ? 0.0 : 9.1)));
+        float qq = q * (1.0 - 0.28 * fl);
+        float knots = 0.75 + 0.25 * sin(ay * 0.45 - uTime * 2.2 + (xm.y > 0.0 ? 0.0 : 1.7));
+        vec3 je = jetCore * exp(-qq * qq * 5.0) * 3.0 + jetSheath * exp(-qq * qq * 0.9) * (0.4 + 0.35 * fl);
+        L += Tr * je * (jb * knots * uJet / wj) * dt;
+      }
     }
     if (x.y * xn.y < 0.0) {
       float f = x.y / (x.y - xn.y);
