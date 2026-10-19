@@ -36,18 +36,23 @@ Only the cosmic track changes `src/modes/cosmic/**`, and every one of its fixes 
 judge on fixed views and reverted unless the new look wins. Global changes (post-processing, UI, engine, shared
 shaders) must leave the cosmic view unchanged.
 
-## The explorer: a cosmic mystic
+## The explorer: a cosmic mystic swordswoman
 
 In the creator's words (19 Oct): "The look of my character should be a cosmic mystic explorer, not a spacesuit. We need
-something minimal, effortless steez, elegant, and beautiful. I should also have cosmic mystic abilities."
+something minimal, effortless steez, elegant, and beautiful. I should also have cosmic mystic abilities." And: "Ghost of
+Yotei like figure and feel, she needs to look badass, sexy, and cool with katana on her back that you can draw and use."
 
-* **Look.** No suit, helmet, visor or jetpack. A tall, graceful figure in a long flowing robe or coat of one deep night
-  colour with a fine gold thread, wind-blown hair or a soft hood, and the long red scarf as the one warm accent. Few
-  shapes, a clean silhouette, faint woven star patterns that glow at night and when an ability is used.
-* **Movement.** Unhurried, confident, effortless: a gliding walk, a light jump, a slow float.
+* **She.** A lone wandering swordswoman and cosmic mystic with the figure and feel of Ghost of Yotei (an original design):
+  athletic, tall and poised, long dark wind-blown hair, a fitted dark kimono-style coat with wrapped sleeves and
+  hakama-style trousers in one deep night colour with a fine gold thread, the long red scarf as the one warm accent, and a
+  katana in a black lacquered scabbard across her back. Badass, sexy and cool through confidence, poise and silhouette.
+  No suit, helmet, visor or jetpack. Faint woven star patterns glow at night and when an ability flows through her.
+* **The katana.** Drawn over the shoulder and sheathed with a crisp motion; a fluid combo, a charged iaido slash, trails of
+  light; grass, flowers and bamboo fall in petals and leaves. No enemies are needed: the sword is grace, skill and wonder.
 * **Abilities.** Drift (levitate and glide on a ring of light), Lumen (an orb of light that follows and can be sent
   ahead), Resonance (a pulse that makes nearby life, paths and sacred sites glow), Blink (a step through light that
   leaves stardust), Commune (meditate, and the sky answers).
+* **Feel.** Wind in her hair, scarf and the grass; a small figure under a vast sky; low, cinematic standoff angles.
 
 ## Art direction rules (apply everywhere)
 
