@@ -153,7 +153,9 @@ function buildIsle(o, pal, grassC) {
   for (let j = 1; j <= under; j++) {
     const t = j / under;
     rows.push((th) => {
-      const ledge = 1 + 0.07 * Math.sign(Math.sin(t * 34 + n.n3(th, t * 3, 7.7) * 3)) * Math.pow(Math.abs(Math.sin(t * 34 + n.n3(th, t * 3, 7.7) * 3)), 0.3);
+      // (irregular strata: a few uneven ledges, not a stack of identical rings — read as a pagoda before)
+      const lw = Math.sin(t * 19 + 2.5 * n.n3(Math.cos(th) * 0.8, t * 2.2, Math.sin(th) * 0.8) + 1.7 * n.n3(0.3, t * 5.1, 1.9));
+      const ledge = 1 + 0.045 * Math.sign(lw) * Math.pow(Math.abs(lw), 0.45) * (0.5 + 0.5 * n.n3(Math.cos(th) * 2.1, t * 1.3, Math.sin(th) * 2.1));
       const lump = 1 + 0.28 * n.n3(Math.cos(th) * 1.8, t * 2.6, Math.sin(th) * 1.8) + 0.1 * n.n3(Math.cos(th) * 5, t * 7, Math.sin(th) * 5);
       const prof = Math.pow(1 - t, 0.85) * (t < 0.08 ? 1 - 0.1 * (t / 0.08) : 0.9) ;
       const er = edgeR(th) * prof * lump * ledge * (j === under ? 0.02 : 1);
