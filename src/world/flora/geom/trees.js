@@ -157,8 +157,41 @@ export function broadleaf(rnd, P) {
     const a = rnd() * 6.28, rr = crownR * rnd.range(0.3, 0.65);
     clumps.push({ x: crown[0] + Math.cos(a) * rr, y: crown[1] + rnd.range(-0.2, 0.5) * crownH, z: crown[2] + Math.sin(a) * rr, r: clR * 0.9, flex: 0.45, phase: rnd() });
   }
+  // weeping habit (shidare-zakura, willow): curtains of bloom/leaf strands hang from the limb ends
+  const weep = P.weep ?? (P.weepVariant !== undefined && P._variant === P.weepVariant ? 1 : 0);
+  const strands = [];
+  if (weep > 0) {
+    for (const c of clumps) {
+      const ns = 3 + Math.floor(rnd() * 3);
+      for (let q = 0; q < ns; q++) {
+        const a = rnd() * 6.28, r0s = c.r * rnd.range(0.4, 0.9);
+        const sx = c.x + Math.cos(a) * r0s, sz = c.z + Math.sin(a) * r0s, sy = c.y - c.r * 0.2;
+        const ox = sx - crown[0], oz = sz - crown[2], ol = Math.hypot(ox, oz) || 1;
+        const L = Math.max(1.2, sy * rnd.range(0.45, 0.8) * weep);
+        strands.push({ x: sx, y: sy, z: sz, dx: ox / ol, dz: oz / ol, L, out: rnd.range(0.15, 0.45), phase: c.phase ?? rnd(), seed: rnd() });
+      }
+    }
+  }
+  const emitStrands = (b, detail) => {
+    const size = (P.leafSize ?? 1.6) * (detail ? 1.4 : 0.8);
+    strands.forEach((st, si) => {
+      if (detail && si % 2) return;
+      const n = Math.max(2, Math.round(st.L / (size * 0.42)));
+      for (let k = 0; k < n; k++) {
+        const t = (k + 0.5) / n;
+        // falls out a little, then hangs straight down (catenary-ish)
+        const o = st.out * Math.sin(Math.min(1, t * 2) * 1.5708) * st.L * 0.5;
+        const c = [st.x + st.dx * o, st.y - st.L * t, st.z + st.dz * o];
+        const sk = size * (1 - 0.45 * t) * (0.85 + 0.3 * ((st.seed * 13.7 + k * 0.618) % 1));
+        const top = 1 - t;
+        const col = colorVar(rnd, P.leafA, P.leafB, 0.88 + 0.12 * top, clamp(0.3 + 0.5 * top, 0, 1));
+        b.bcard({ c, w: sk * 0.36, h: sk * 0.55, roll: (st.seed * 31 + k) % 6.28 * 0.3, rect: P.rects[0], kind: KIND.LEAF,
+          flex: 0.55 + 0.4 * t, ao: clamp(0.55 + 0.35 * top, 0.2, 1), phase: st.phase, color: col, shade: norm3(st.dx * 0.8, 0.25 - 0.4 * t, st.dz * 0.8) });
+      }
+    });
+  };
   const leafOpts = (detail) => ({
-    detail, density: P.leafDensity ?? 7.5, size: P.leafSize ?? 1.6, crown, crownR, crownFlat: crownH / crownR,
+    detail, density: (P.leafDensity ?? 7.5) * (weep > 0 ? 0.7 : 1), size: P.leafSize ?? 1.6, crown, crownR, crownFlat: crownH / crownR,
     colA: P.leafA, colB: P.leafB, rect: (r) => P.rects[Math.floor(r() * P.rects.length)], flat: 0.8, flatBottom: P.flatBottom ?? 0.6,
   });
   const emit = (detail) => {
@@ -173,6 +206,7 @@ export function broadleaf(rnd, P) {
     const r2 = mulberryFork(rnd, detail);
     const lo = leafOpts(detail);
     for (const c of clumps) leafClump(b, r2, c, lo);
+    if (strands.length) emitStrands(b, detail);
     return b;
   };
   return {

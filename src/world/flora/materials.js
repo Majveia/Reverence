@@ -54,6 +54,23 @@ vec2 rvLodFade(float d, vec4 f){
   float fout = f.w > f.z ? clamp((f.w - d) / (f.w - f.z), 0.0, 1.0) : 1.0;
   return vec2(fin, fout);
 }
+// season regions (Ghost of Yotei): the instance tint slot packs round(season·64) + tint·0.98
+float rvSeasonOf(float z){ return floor(z + 1e-4) / 64.0; }
+float rvTintOf(float z){ return clamp(fract(z + 1e-4) / 0.98, 0.0, 1.0); }
+// Deciduous leaf colour through the seasons: blossom-time fresh green · gold (ginkgo / larch yellow)
+// · crimson (maple reds and oranges). k = how far this tree has turned (per tree, 0..1).
+vec3 rvSeasonLeaf(vec3 c, float s, float seed, float k){
+  if (k <= 0.001 || s <= 0.01) return c;
+  float l = max(dot(c, vec3(0.3, 0.59, 0.11)), 1e-4);
+  float lk = clamp(sqrt(l / 0.085), 0.65, 1.45);   // keep the crown's light → shade modelling
+  float h1 = fract(seed * 5.31 + 0.17), h2 = fract(seed * 3.73 + 0.61);
+  vec3 cB = c * vec3(1.12, 1.16, 0.86) + vec3(0.006, 0.01, 0.0);
+  vec3 cY = mix(vec3(0.50, 0.30, 0.03), vec3(0.42, 0.22, 0.025), h1) * lk;
+  vec3 cR = mix(mix(vec3(0.36, 0.03, 0.018), vec3(0.46, 0.11, 0.018), step(0.55, h1)), vec3(0.44, 0.24, 0.03), step(0.86, h2)) * lk;
+  float q = clamp(s, 0.0, 1.0) * 3.0;
+  vec3 t = q < 1.0 ? mix(c, cB, q) : q < 2.0 ? mix(cB, cY, smoothstep(0.0, 1.0, q - 1.0)) : mix(cY, cR, smoothstep(0.0, 1.0, q - 2.0));
+  return mix(c, t, k);
+}
 // distance thinning for far layers: keep instances whose rank < f(d)
 float rvThin(float d, float rank, vec4 t){
   if (t.w < 0.5) return 1.0;
@@ -103,7 +120,8 @@ attribute vec4 aInfo; attribute vec3 aShade; attribute vec3 aColor; attribute ve
 varying vec3 vGlowL;
 uniform vec4 uFade; uniform vec4 uDFade; uniform vec4 uThin; uniform float uWindAmp; uniform float uBillboard;
 uniform vec3 uCamPos; uniform vec3 uPlanetCenter; uniform float uTime; uniform vec3 uWindDir; uniform float uWindStrength;
-uniform float uTintVar; uniform float uShadowPush; uniform float uStandVar;
+uniform float uTintVar; uniform float uShadowPush; uniform float uStandVar; uniform float uSeasonAmt; uniform float uSeasonLeaf;
+uniform float uCutOn; uniform vec4 uCuts[8];
 #include <rv_flora_wind>
 varying vec2 vAtlasUv; varying vec4 vInfo; varying vec3 vCol; varying vec3 vShadeN; varying vec2 vFade; varying vec3 vObjPos; varying float vSeed;
 varying vec2 vCardP; varying vec3 vObjN; varying vec3 vUpV;
@@ -126,6 +144,15 @@ vec3 transformed;
   #endif
   float thin = rvThin(d, iData.y, uThin);
   float sc = iPos.w * thin;
+  if (uCutOn > 0.5) {
+    // flowers inside a recent katana cut lose their heads (shrunk to a stub, regrowing)
+    float cutK = 0.0;
+    for (int ci = 0; ci < 8; ci++) {
+      vec4 cu = uCuts[ci];
+      if (cu.w > 0.0) { vec3 cv = wb - cu.xyz; cv -= up * dot(cv, up); cutK = max(cutK, 1.0 - smoothstep(cu.w * 0.8, cu.w, length(cv))); }
+    }
+    sc *= 1.0 - 0.85 * cutK;
+  }
   vec3 wp = rvQrot(iRot, position * sc);
   vec3 wp0 = wp;
   if (aCorner.z > 0.5) {
@@ -155,9 +182,14 @@ vec3 transformed;
   #ifndef DEPTH_PASS
   vGlowL = aGlowL;
   #endif
-  float tv = (iData.z - 0.5) * uTintVar;
+  float tv = (rvTintOf(iData.z) - 0.5) * uTintVar;
   vCol = aColor * vec3(1.0 + tv * 0.6, 1.0 + tv * 0.25, 1.0 - tv * 0.35) * (1.0 + (iData.x - 0.5) * uTintVar * 0.35);
   vCol *= rvStandTint(pl, iData.x, uStandVar);
+  // deciduous crowns turn with the season region they stand in (some trees further than others)
+  if (uSeasonLeaf > 0.0 && kind > 0.5 && kind < 2.5) {
+    float ks = uSeasonLeaf * uSeasonAmt * mix(0.35, 1.0, smoothstep(0.15, 0.55, fract(iData.x * 9.13 + 0.3)));
+    vCol = rvSeasonLeaf(vCol, rvSeasonOf(iData.z), iData.x, ks);
+  }
   // position inside a billboarded leaf-cluster card (−1..1, unit length at the corners): the
   // fragment shader domes the card's shading normal so each cluster shades as a soft rounded mass
   vCardP = aCorner.z > 0.5 ? aCorner.xy / max(length(aCorner.xy), 1e-4) : vec2(0.0);
@@ -191,7 +223,7 @@ varying vec3 vGlowL;
 varying vec2 vAtlasUv; varying vec4 vInfo; varying vec3 vCol; varying vec3 vShadeN; varying vec2 vFade; varying vec3 vObjPos; varying float vSeed;
 varying vec2 vCardP; varying vec3 vObjN; varying vec3 vUpV;
 uniform float uWet; uniform float uSnowG;
-uniform float uDome; uniform float uLeafSoft;
+uniform float uDome; uniform float uLeafSoft; uniform float uDayGlow;
 #define rvIsBb (dot(vCardP, vCardP) > 1e-6 ? 1.0 : 0.0)
 float rvTransl = 0.0;
 float rvWrap = 0.0;
@@ -322,7 +354,7 @@ if (kind < 0.5) {
   rvWrap = 0.5;
   rvLeafSoft = uLeafSoft * (rvIsBb > 0.5 ? 1.0 : 0.5);
   rvLeafAO = vInfo.z;
-  if (uCardGlow > 0.0 && kind > 1.5) rvGlow = albedo * uCardGlow * (0.05 + uNight) * (0.8 + 0.2 * sin(uTime * 1.3 + vSeed * 20.0));
+  if (uCardGlow > 0.0 && kind > 1.5) rvGlow = albedo * uCardGlow * max(0.05 + uNight, uDayGlow) * (0.8 + 0.2 * sin(uTime * 1.3 + vSeed * 20.0 + vObjPos.y * 0.07));
 } else {
   albedo = rvPattern(pat, vAtlasUv, vCol);
   // material breakup on solids (caps, stalks, bulbs): mottling + fine grain, drives roughness too
@@ -334,7 +366,7 @@ if (kind < 0.5) {
   rvSheen = uSheen;
   if (kind > 3.5 && kind < 4.5) {
     float pulse = 0.85 + 0.15 * sin(uTime * (0.8 + vSeed) + vSeed * 30.0 + vObjPos.y * 0.5);
-    rvGlow = albedo * uGlowStr * (0.08 + 0.92 * uNight) * pulse;
+    rvGlow = albedo * uGlowStr * max(0.08 + 0.92 * uNight, uDayGlow) * pulse;
     rvTransl = uTransl * 0.6;
   }
   if (kind > 4.5) {
@@ -472,8 +504,16 @@ export function linkCommon(shader, u) {
   shader.uniforms.uSnowG = G.uSnow;
   shader.uniforms.uDitherF = FLORA_DITHER.frame;
   shader.uniforms.uDitherA = FLORA_DITHER.amt;
+  shader.uniforms.uSeasonAmt = FLORA_SEASON;
+  shader.uniforms.uCuts = FLORA_CUTS;
   for (const k in u) shader.uniforms[k] = u[k];
 }
+
+/** recent katana cuts (scene xyz, radius; w = 0 unused), updated by index.js from player:slash */
+export const FLORA_CUTS = { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, 0, 0, 0)) };
+
+/** world season-region strength for flora (surface.seasonAmt × the style's seasonal weight), see index.js */
+export const FLORA_SEASON = { value: 0 };
 
 /** shared temporal-dither state (updated per draw from the TAA sub-frame index, see index.js) */
 export const FLORA_DITHER = { frame: { value: 0 }, amt: { value: 0 } };
@@ -496,6 +536,7 @@ export function makePlantMaterials(p) {
     uTintVar: { value: p.tintVar ?? 0.35 }, uShadowPush: { value: p.shadowPush ?? 0.35 }, uSpec: { value: p.spec ?? 1 },
     uStandVar: { value: p.standVar ?? 1 }, uDome: { value: p.dome ?? 0.65 }, uLeafSoft: { value: p.leafSoft ?? 0.55 },
     uSolidTransl: { value: p.solidTransl ?? 0.35 }, uSheen: { value: p.sheen ?? 0.5 },
+    uSeasonLeaf: { value: p.seasonLeaf ?? 0 }, uCutOn: { value: p.cutOn ? 1 : 0 }, uDayGlow: { value: p.dayGlow ?? 0 },
   };
   const mat = new THREE.MeshStandardMaterial({
     color: 0xffffff, roughness: 0.65, metalness: 0, side: THREE.DoubleSide,
@@ -575,7 +616,7 @@ vec3 transformed;
   vObjP = position * iPos.w;
   vRock = aRock;
   vUpW = normalize(wb - uPlanetCenter);
-  vSeed = iData.x; vTint = iData.z;
+  vSeed = iData.x; vTint = rvTintOf(iData.z);
 }
 `;
 const ROCK_FRAG_PARS = /* glsl */`

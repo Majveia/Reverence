@@ -13,8 +13,11 @@ export const ATLAS_CELLS = [
   'pine', 'frond', 'fern', 'blades',
   'daisy', 'spike', 'cup', 'alienleaf',
   'vine', 'twigs', 'flowerball', 'spores',
+  // season 2 (Ghost of Yotei): cherry blossom sprays, palmate maple, ginkgo fans, red spider lily
+  'blossom', 'maple', 'ginkgo', 'lily',
 ];
-const GRID = 4;
+// 5 columns × 4 rows (square cells; the atlas is 1.25× wider than tall)
+const GRID = 4, GRIDX = 5;
 
 function makeCanvas(w, h) {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
@@ -381,6 +384,149 @@ const PAINT = {
       ctx.beginPath(); ctx.arc(x, y, s * 0.18, 0, TAU); ctx.fillStyle = rgb(1, 1, 1); ctx.fill();
     }
   },
+  blossom(ctx, rnd) {
+    // cherry blossom spray (Ghost of Yotei): dark twigs (G = tint2) carrying dense clusters of
+    // five-petal flowers; petals thin and back-lit (B = 1), centres a touch of tint
+    const tips = [];
+    const branch = (x, y, a, len, w, depth) => {
+      const x1 = x + Math.cos(a) * len, y1 = y + Math.sin(a) * len;
+      twig(ctx, x, y, x1, y1, w, (rnd() - 0.5) * 0.3);
+      if (depth <= 0) { tips.push([x1, y1]); return; }
+      tips.push([x + (x1 - x) * 0.6, y + (y1 - y) * 0.6]);
+      const n = 2 + (rnd() < 0.35 ? 1 : 0);
+      for (let k = 0; k < n; k++) branch(x1, y1, a + (rnd() - 0.5) * 1.5, len * (0.58 + rnd() * 0.2), w * 0.62, depth - 1);
+    };
+    for (let k = 0; k < 3; k++) branch(256 + (k - 1) * 30, 512, -Math.PI / 2 + (k - 1) * 0.55 + (rnd() - 0.5) * 0.2, 150, 8, 3);
+    const flower = (x, y, s, lum) => {
+      const a0 = rnd() * TAU;
+      for (let p = 0; p < 5; p++) {
+        const a = a0 + (p / 5) * TAU;
+        ctx.save(); ctx.translate(x + Math.cos(a) * s * 0.55, y + Math.sin(a) * s * 0.55); ctx.rotate(a + Math.PI / 2);
+        ctx.beginPath(); ctx.moveTo(0, s * 0.5);
+        ctx.bezierCurveTo(s * 0.55, s * 0.25, s * 0.5, -s * 0.45, s * 0.1, -s * 0.55);
+        ctx.lineTo(0, -s * 0.4); ctx.lineTo(-s * 0.1, -s * 0.55);   // notched petal tip
+        ctx.bezierCurveTo(-s * 0.5, -s * 0.45, -s * 0.55, s * 0.25, 0, s * 0.5);
+        ctx.fillStyle = rgb(Math.min(1, lum * (0.9 + rnd() * 0.15)), 0, 1); ctx.fill();
+        ctx.restore();
+      }
+      ctx.beginPath(); ctx.arc(x, y, s * 0.2, 0, TAU); ctx.fillStyle = rgb(lum * 0.8, 0.55, 0.8); ctx.fill();
+    };
+    // clusters around the twig tips, dense enough that the spray reads as a soft cloud of bloom
+    const fl = [];
+    for (const [tx, ty] of tips) {
+      const n = 7 + Math.floor(rnd() * 6);
+      for (let q = 0; q < n; q++) {
+        const r = Math.pow(rnd(), 0.6) * 62, a = rnd() * TAU;
+        const x = tx + Math.cos(a) * r, y = ty + Math.sin(a) * r * 0.85;
+        if (Math.hypot(x - 256, y - 256) > 238) continue;
+        fl.push({ x, y, s: 17 + rnd() * 9, lum: 0.62 + 0.38 * (1 - r / 70) * (0.7 + 0.3 * rnd()) });
+      }
+    }
+    fl.sort((p, q) => p.lum - q.lum);
+    for (const f of fl) flower(f.x, f.y, f.s, f.lum);
+  },
+  maple(ctx, rnd) {
+    // palmate maple leaves (five pointed lobes) in an irregular cluster on fine twigs
+    const palm = (x, y, ang, s, lum) => {
+      ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+      ctx.beginPath(); ctx.moveTo(0, 0);
+      const lobes = [-1.25, -0.62, 0, 0.62, 1.25], len = [0.62, 0.9, 1.0, 0.9, 0.62];
+      for (let k = 0; k < 5; k++) {
+        const a = lobes[k] - Math.PI / 2, L = s * len[k];
+        const aL = a - 0.24, aR = a + 0.24;
+        ctx.lineTo(Math.cos(aL) * L * 0.45, Math.sin(aL) * L * 0.45);
+        ctx.lineTo(Math.cos(a) * L, Math.sin(a) * L);
+        ctx.lineTo(Math.cos(aR) * L * 0.45, Math.sin(aR) * L * 0.45);
+        if (k < 4) { const am = (lobes[k] + lobes[k + 1]) / 2 - Math.PI / 2; ctx.lineTo(Math.cos(am) * s * 0.3, Math.sin(am) * s * 0.3); }
+      }
+      ctx.closePath();
+      const g = ctx.createRadialGradient(0, -s * 0.2, s * 0.05, 0, -s * 0.2, s);
+      g.addColorStop(0, rgb(Math.min(1, lum * 1.08), 0, 1)); g.addColorStop(1, rgb(lum * 0.82, 0, 0.9));
+      ctx.fillStyle = g; ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = rgb(lum * 1.05, 0.3, 0.8);
+      for (let k = 0; k < 5; k++) { const a = lobes[k] - Math.PI / 2; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * s * len[k] * 0.85, Math.sin(a) * s * len[k] * 0.85); ctx.stroke(); }
+      ctx.restore();
+    };
+    for (let k = 0; k < 8; k++) {
+      const a = -Math.PI / 2 + (k / 7 - 0.5) * 2.2 + (rnd() - 0.5) * 0.3;
+      twig(ctx, 256 + (rnd() - 0.5) * 20, 505, 256 + Math.cos(a) * 170, 290 + Math.sin(a) * 160, 2.5 + rnd() * 2, (rnd() - 0.5) * 0.2);
+    }
+    const lv = [];
+    const p1 = rnd() * TAU, p2 = rnd() * TAU;
+    for (let n = 0; n < 150; n++) {
+      const a = rnd() * TAU;
+      const R = 200 * (0.82 + 0.1 * Math.sin(2 * a + p1) + 0.08 * Math.sin(3 * a + p2));
+      const r = R * Math.pow(rnd(), 0.55);
+      lv.push({ x: 256 + Math.cos(a) * r, y: 250 + Math.sin(a) * r * 0.92, e: r / 210, a });
+    }
+    lv.sort((p, q) => p.e - q.e);
+    for (const l of lv) {
+      const s = 34 + rnd() * 18;
+      if (Math.hypot(l.x - 256, l.y - 256) + s > 250) continue;
+      palm(l.x, l.y, l.a + Math.PI / 2 + (rnd() - 0.5) * 1.2, s, Math.min(1, 0.45 + 0.4 * Math.pow(l.e, 0.8) + rnd() * 0.15));
+    }
+  },
+  ginkgo(ctx, rnd) {
+    // ginkgo: fan-shaped leaves with a notched rim and fine radiating veins, on short spur twigs
+    const fan = (x, y, ang, s, lum) => {
+      ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+      ctx.beginPath(); ctx.moveTo(0, 0);
+      ctx.lineTo(-s * 0.08, -s * 0.35);
+      ctx.quadraticCurveTo(-s * 0.75, -s * 0.55, -s * 0.62, -s * 0.92);
+      ctx.quadraticCurveTo(-s * 0.3, -s * 1.05, -s * 0.04, -s * 0.9);
+      ctx.lineTo(0, -s * 0.78); ctx.lineTo(s * 0.04, -s * 0.9);    // the central notch
+      ctx.quadraticCurveTo(s * 0.3, -s * 1.05, s * 0.62, -s * 0.92);
+      ctx.quadraticCurveTo(s * 0.75, -s * 0.55, s * 0.08, -s * 0.35);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(0, 0, 0, -s);
+      g.addColorStop(0, rgb(lum * 0.8, 0, 0.9)); g.addColorStop(1, rgb(Math.min(1, lum * 1.1), 0, 1));
+      ctx.fillStyle = g; ctx.fill();
+      ctx.lineWidth = 1; ctx.strokeStyle = rgb(lum * 0.9, 0.15, 0.9);
+      for (let k = -4; k <= 4; k++) { ctx.beginPath(); ctx.moveTo(0, -s * 0.33); ctx.lineTo(k * s * 0.13, -s * 0.9); ctx.stroke(); }
+      ctx.restore();
+    };
+    for (let k = 0; k < 6; k++) {
+      const a = -Math.PI / 2 + (k / 5 - 0.5) * 1.8 + (rnd() - 0.5) * 0.3;
+      twig(ctx, 256, 505, 256 + Math.cos(a) * 180, 300 + Math.sin(a) * 170, 3 + rnd() * 2, (rnd() - 0.5) * 0.15);
+    }
+    const lv = [];
+    for (let n = 0; n < 190; n++) {
+      const a = rnd() * TAU, r = 205 * Math.pow(rnd(), 0.55) * (0.85 + 0.15 * Math.sin(3 * a));
+      lv.push({ x: 256 + Math.cos(a) * r, y: 250 + Math.sin(a) * r * 0.92, e: r / 205, a });
+    }
+    lv.sort((p, q) => p.e - q.e);
+    for (const l of lv) {
+      const s = 30 + rnd() * 16;
+      if (Math.hypot(l.x - 256, l.y - 256) + s > 250) continue;
+      fan(l.x, l.y, l.a + Math.PI / 2 + (rnd() - 0.5) * 1.4, s, Math.min(1, 0.5 + 0.36 * Math.pow(l.e, 0.8) + rnd() * 0.14));
+    }
+  },
+  lily(ctx, rnd) {
+    // red spider lily (higanbana) seen from the side: a bare green scape (G = tint2) topped by an
+    // umbel of narrow recurved petals and long up-curving stamens (G = 0, recoloured red)
+    const cx = 256, top = 175;
+    twig(ctx, cx, 512, cx + (rnd() - 0.5) * 16, top + 20, 9, 0.03);
+    const n = 6 + Math.floor(rnd() * 2);
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * TAU + rnd() * 0.4;
+      // petals: narrow wavy straps curling outward and back
+      const dx = Math.cos(a), sx = dx * (0.6 + 0.4 * Math.abs(Math.sin(a)));
+      const L = 105 + rnd() * 30;
+      ctx.beginPath(); ctx.moveTo(cx, top);
+      const ex = cx + sx * L, ey = top + 10 - Math.sin(a) * 18 + 22;
+      ctx.bezierCurveTo(cx + sx * L * 0.35, top - 38, cx + sx * L * 0.9, top - 30, ex, ey);
+      ctx.lineWidth = 15; ctx.lineCap = 'round';
+      ctx.strokeStyle = rgb(0.72 + rnd() * 0.28, 0, 1); ctx.stroke();
+      ctx.lineWidth = 6; ctx.strokeStyle = rgb(1, 0, 1); ctx.stroke();
+      // stamens: thin, long, sweeping up and out past the petals
+      const sL = 150 + rnd() * 50;
+      ctx.beginPath(); ctx.moveTo(cx, top);
+      ctx.bezierCurveTo(cx + sx * sL * 0.3, top - 70, cx + sx * sL * 0.75, top - 120, cx + sx * sL, top - 105 - rnd() * 40);
+      ctx.lineWidth = 3.2; ctx.strokeStyle = rgb(0.95, 0, 0.9); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx + sx * sL, top - 105 - 20, 4.5, 0, TAU); ctx.fillStyle = rgb(0.8, 0.5, 0.8); ctx.fill();
+    }
+    ctx.beginPath(); ctx.arc(cx, top, 14, 0, TAU); ctx.fillStyle = rgb(0.75, 0, 1); ctx.fill();
+  },
   spores(ctx, rnd) {
     for (let k = 0; k < 70; k++) {
       const x = 40 + rnd() * 432, y = 40 + rnd() * 432, r = 6 + Math.pow(rnd(), 2) * 34;
@@ -393,40 +539,41 @@ const PAINT = {
 
 /** Build the leaf/flower atlas. Returns { texture, rect(name) → [u0,v0,u1,v1] (v down) }. */
 export function makeLeafAtlas(size = 2048, seed = 1) {
-  const cv = makeCanvas(size, size);
-  const ctx = cv.getContext('2d', { willReadFrequently: true });
-  ctx.clearRect(0, 0, size, size);
   const cell = size / GRID;
+  const W = cell * GRIDX;
+  const cv = makeCanvas(W, size);
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.clearRect(0, 0, W, size);
   const rects = {};
   ATLAS_CELLS.forEach((name, k) => {
-    const cx = (k % GRID) * cell, cy = Math.floor(k / GRID) * cell;
+    const cx = (k % GRIDX) * cell, cy = Math.floor(k / GRIDX) * cell;
     ctx.save();
     ctx.beginPath(); ctx.rect(cx + 2, cy + 2, cell - 4, cell - 4); ctx.clip();
     ctx.translate(cx, cy);
     ctx.scale(cell / 512, cell / 512);
     try { PAINT[name](ctx, mulberry(seed * 31 + k * 7919)); } catch (e) { console.warn('[flora] atlas paint failed', name, e); }
     ctx.restore();
-    const pad = 3 / size;
-    rects[name] = [cx / size + pad, cy / size + pad, (cx + cell) / size - pad, (cy + cell) / size - pad];
+    const pad = 3 / size, padX = 3 / W;
+    rects[name] = [cx / W + padX, cy / size + pad, (cx + cell) / W - padX, (cy + cell) / size - pad];
   });
-  const img = ctx.getImageData(0, 0, size, size);
+  const img = ctx.getImageData(0, 0, W, size);
   const d = img.data;
   // Fill fully transparent texels with the cell's mean color so mips don't bleed black fringes.
   for (let k = 0; k < ATLAS_CELLS.length; k++) {
-    const x0 = (k % GRID) * cell, y0 = Math.floor(k / GRID) * cell;
+    const x0 = (k % GRIDX) * cell, y0 = Math.floor(k / GRIDX) * cell;
     let sr = 0, sg = 0, sb = 0, n = 0;
     for (let y = y0; y < y0 + cell; y += 2) for (let x = x0; x < x0 + cell; x += 2) {
-      const i = (y * size + x) * 4;
+      const i = (y * W + x) * 4;
       if (d[i + 3] > 200) { sr += d[i]; sg += d[i + 1]; sb += d[i + 2]; n++; }
     }
     if (!n) continue;
     sr /= n; sg /= n; sb /= n;
     for (let y = y0; y < y0 + cell; y++) for (let x = x0; x < x0 + cell; x++) {
-      const i = (y * size + x) * 4;
+      const i = (y * W + x) * 4;
       if (d[i + 3] === 0) { d[i] = sr; d[i + 1] = sg; d[i + 2] = sb; }
     }
   }
-  const tex = new THREE.DataTexture(new Uint8Array(d.buffer.slice(0)), size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
+  const tex = new THREE.DataTexture(new Uint8Array(d.buffer.slice(0)), W, size, THREE.RGBAFormat, THREE.UnsignedByteType);
   tex.colorSpace = THREE.NoColorSpace;
   tex.generateMipmaps = true;
   tex.minFilter = THREE.LinearMipmapLinearFilter;

@@ -21,7 +21,9 @@ import { surfaceConfig } from '../planet/SurfaceGen.js';
 import { mulberry, h01, clamp } from './util.js';
 import { levelFor, forEachCellInCap, cellKey } from './cells.js';
 import { InstanceLayer } from './layer.js';
-import { FloraShared, makePlantMaterials, makeRockMaterials, FLORA_DITHER } from './materials.js';
+import { FloraShared, makePlantMaterials, makeRockMaterials, FLORA_DITHER, FLORA_SEASON, FLORA_CUTS } from './materials.js';
+import { Petals } from './petals.js';
+import { SacredFlora } from './sacred.js';
 import { G as GU } from '../../core/Uniforms.js';
 import { makeLeafAtlas, makeBarkTexture, makeRockTexture } from './textures.js';
 import { buildStyle } from './styles.js';
@@ -83,12 +85,18 @@ class Flora {
     const S = buildStyle(this.body, this.atlas);
     this.S = S;
     this.styleKey = S.key;
+    // season regions (terrain's Ghost of Yotei season map) × how strongly this style follows them
+    let sAmt = 0;
+    try { sAmt = Math.max(0, Math.min(1, (this.surface.seasonAmt ?? 0) * (S.season ?? 0))); } catch (_) { sAmt = 0; }
+    try { const v = new URL(window.location.href).searchParams.get('fseason'); if (v !== null && v !== '') sAmt = Math.max(0, Math.min(1, +v)); } catch (_) { /* no window */ }
+    this.seasonAmt = sAmt;
+    FLORA_SEASON.value = sAmt;
 
     const sea = Number.isFinite(this.surface.seaLevel) && this.surface.seaLevel > -1e8 ? this.surface.seaLevel : null;
     this.sea = sea ?? -1e9;
     const base = sea ?? (this.surface.minHeight ?? -this.surface.amp);
     this.table = {
-      R: this.R, seed: seed | 0, density: this.density, hasSea: sea !== null, sea: sea ?? -1e9, altBase: base,
+      R: this.R, seed: seed | 0, density: this.density, hasSea: sea !== null, sea: sea ?? -1e9, altBase: base, seasonAmt: this.seasonAmt,
       altSpan: Math.max(50, (this.surface.maxHeight ?? this.surface.amp) - base),
       layers: {},
       grass: null,
@@ -116,6 +124,14 @@ class Flora {
     const hm = /hide:([\w+-]+)/.exec(dbg);
     if (hm) { const parts = hm[1].split('+'); for (const L of this.layers) if (parts.some((p) => L.name.includes(p))) { L.hidden = true; L.mesh.visible = false; } }
     if (dbg.includes('grassnodepth') && this.grass) for (const L of [this.grass.dense, this.grass.sparse, this.grass.far]) L.material.depthTest = false;
+    // the World Tree of light at the sacred site (terrain landmarks) and the drifting petals/leaves
+    this.sacred = null;
+    try { const sf = new SacredFlora(this); if (sf.init()) { this.sacred = sf; sf.layer.mesh.onBeforeRender = obr; if (hm && hm[1].split('+').some((q) => 'flora-worldtree'.includes(q))) { sf.layer.hidden = true; sf.layer.mesh.visible = false; } } } catch (e) { console.warn('[flora] world tree failed', e); this.sacred = null; }
+    this.petals = null;
+    if (!dbg.includes('nopetals')) { try { const pe = new Petals(this); if (pe.init()) this.petals = pe; } catch (e) { console.warn('[flora] petals failed', e); this.petals = null; } }
+    // katana cuts (player:slash): a short-lived list the grass and flower shaders shorten blades in
+    this._cuts = [];
+    try { this._offSlash = this.world.events?.on?.('player:slash', (e) => this._onSlash(e)); } catch (_) { /* optional */ }
     this._startWorkers();
     this.ready = false;
     this.initMs = Math.round(performance.now() - this.t0);
@@ -145,7 +161,7 @@ class Flora {
           if (layer === 'canopy' && canopyCount >= MAX_IMP) break;
           const rnd = mulberry(hashCombine(this.seed, si * 131 + (layer === 'canopy' ? 7 : 3), v, sp.id.length));
           let r;
-          try { r = sp.gen(rnd, sp.params); } catch (e) { console.warn('[flora] generator failed', sp.id, e); continue; }
+          try { r = sp.gen(rnd, { ...sp.params, _variant: v }); } catch (e) { console.warn('[flora] generator failed', sp.id, e); continue; }
           const geo0 = r.lod0.build(), geo1 = r.lod1.build();
           const m = {
             idx: this.models.length, layer, sp, geo0, geo1, height: r.height || geo0.boundingBox.max.y,
@@ -159,7 +175,7 @@ class Flora {
         if (!models.length) return;
         T.layers[layer].species.push({
           id: sp.id, biomes: Array.from(sp.biomes), m: sp.m, t: sp.t, slope: sp.slope, alt: sp.alt, zone: sp.zone ?? -1,
-          dens: sp.dens ?? 1, scale: sp.scale || [0.8, 1.2], lean: sp.lean ?? 0.05, sink: sp.sink ?? 0.2, shore: sp.shore || 0,
+          dens: sp.dens ?? 1, scale: sp.scale || [0.8, 1.2], lean: sp.lean ?? 0.05, sink: sp.sink ?? 0.2, shore: sp.shore || 0, sea: sp.sea || null,
           align: layer === 'under' ? 0.35 : 0, models,
         });
       });
@@ -172,13 +188,14 @@ class Flora {
       const nVar = low || (S.grass.flowers.length > 3) ? 1 : 2;
       for (let v = 0; v < nVar; v++) {
         const rnd = mulberry(hashCombine(this.seed, 977 + fi, v));
-        const P = { rect: F.rect, colA: F.colA, colB: F.colB, type: F.type, height: F.height ?? 0.42, radius: 0.35, headSize: F.type === 'daisy' ? 0.07 : 0.09, count: F.type === 'daisy' ? 7 : 5, stem: [0.05, 0.1, 0.03] };
+        const P = { rect: F.rect, colA: F.colA, colB: F.colB, type: F.type, height: F.height ?? 0.42, radius: F.radius ?? 0.35, headSize: F.type === 'daisy' ? 0.075 : 0.09, count: F.count ?? (F.type === 'daisy' ? 7 : 5),
+          stem: [0.075, 0.17, 0.035], leafRect: F.type === 'daisy' ? this.atlas.rect('broad') : null, leaf: [0.07, 0.15, 0.035] };
         let r;
         try { r = flowerPatch(rnd, P); } catch (e) { console.warn('[flora] flower failed', e); continue; }
         const m = { idx: this.models.length, layer: 'flower', sp: { id: 'flower' + fi, tint2: F.tint2, glow: F.glow || 0, cardGlow: F.glow || 0, billboard: 0.9 }, geo0: r.lod0.build(), geo1: r.lod1.build(), height: r.height, radius: r.radius, imp: -1 };
         this.models.push(m); models.push(m.idx);
       }
-      if (models.length) flowers.push({ freq: F.freq ?? 1, models });
+      if (models.length) flowers.push({ freq: F.freq ?? 1, models, sea: F.sea || null, mass: F.mass || 0, massOnly: !!F.massOnly });
     }
     this.flowerList = flowers;
     // rocks
@@ -206,6 +223,7 @@ class Flora {
       // small plants (bushes): cards are a large fraction of the plant, so per-card shadow-map
       // visibility and a strong per-card dome read as faceted cubes → mostly analytic, gentler dome
       leafSoft: m.layer === 'canopy' ? 0.55 : 0.85, dome: m.layer === 'canopy' ? 0.65 : 0.4,
+      seasonLeaf: sp.seasonLeaf ?? 0, cutOn: m.layer === 'flower',
     });
     return p;
   }
@@ -258,6 +276,7 @@ class Flora {
         const bk = bakeImpostors(this.engine.renderer, this.atlas.texture, canopy.map((m) => ({
           geo: m.geo0, tint2: m.sp.tint2, glow: m.sp.glow || 0, cardGlow: m.sp.cardGlow || 0,
           glowLevel: (m.sp.glow || m.sp.cardGlow) ? 1 : 0, avg: m.sp.params?.leafA || m.sp.params?.colA || [0.1, 0.14, 0.05],
+          seasonLeaf: (m.sp.glow || m.sp.cardGlow) ? 0 : (m.sp.seasonLeaf ?? 0),
         })), tier === 'low' ? 128 : 256);
         this.impBake = bk;
         const quad = makeImpostorQuad();
@@ -308,6 +327,7 @@ class Flora {
     this.table.grass = {
       cover: Array.from(G.cover || new Float32Array(14)), spacing,
       dryAmount: G.dryAmount ?? 0.2, flowerAmt: G.flowerAmt ?? 0.42, flowers: this.flowerList, flowerWsum: this.flowerList.reduce((a, f) => a + f.freq, 0),
+      massAny: this.flowerList.some((f) => f.mass > 0),
     };
     if (!anyGrass) return;
     const R = this.grassR = (low ? 28 : 44) * Math.sqrt(clamp(this.density, 0.3, 1.5));
@@ -415,12 +435,12 @@ class Flora {
    * Public: cull vegetation in a disc around a planet-local position (e.g. a parked starship).
    * keep = fraction of instances kept (0 = bare). Returns an id for removeClear().
    */
-  clearAround(pos, radius, keep = 0) {
+  clearAround(pos, radius, keep = 0, opt = {}) {
     if (!pos || !(radius > 0)) return 0;
     const l = Math.hypot(pos.x, pos.y, pos.z) || 1;
     this._dynClears = this._dynClears || [];
     const id = (this._clearId = (this._clearId || 0) + 1);
-    this._dynClears.push({ id, c: [pos.x / l, pos.y / l, pos.z / l, Math.cos(radius / this.R), keep] });
+    this._dynClears.push({ id, c: [pos.x / l, pos.y / l, pos.z / l, Math.cos(radius / this.R), keep, opt.grass === false ? 1 : 0] });
     this._refreshClears(true);
     return id;
   }
@@ -452,7 +472,7 @@ class Flora {
     if (sig === this.clearSig && !force) return;
     const grew = sig !== this.clearSig;
     this.clearSig = sig;
-    this.clears = list.map((c) => [c[0], c[1], c[2], c[3], c[4], Math.acos(Math.max(-1, Math.min(1, c[3])))]);
+    this.clears = list.map((c) => [c[0], c[1], c[2], c[3], c[4], Math.acos(Math.max(-1, Math.min(1, c[3]))), c[5] || 0]);
     if (!this.bands) return;
     if (removed) {
       // a clearing went away: re-place affected cells from scratch (instances were compacted out)
@@ -478,6 +498,7 @@ class Flora {
     const cellAng = (Math.PI / 2) / (1 << b.L) * 0.8;
     let rel = null;
     for (const q of C) {
+      if (q[6] && b.name === 'grass') continue;   // (clearings that keep the meadow, e.g. under the World Tree)
       if (d[0] * q[0] + d[1] * q[1] + d[2] * q[2] > Math.cos(Math.min(Math.PI, q[5] + cellAng))) (rel || (rel = [])).push(q);
     }
     if (!rel) return false;
@@ -545,7 +566,7 @@ class Flora {
       const key = c.key * 64 + i;
       if (this.poiKeys.has(key)) continue;
       this.poiKeys.add(key);
-      const names = { oak: 'Elder Oak', spruce: 'Grandfather Spruce', pine: 'Ancient Pine', birch: 'White Sentinel', giant: 'World Tree', shroom: 'Spore Titan', tower: 'Fungal Spire', palm: 'Sky Palm', lollipop: 'Candy Colossus', umbrella: 'Parasol Ancient', acacia: 'Lone Acacia', deadtree: 'Bone Tree', lanterntree: 'Lantern Elder', crystal: 'Singing Spire' };
+      const names = { oak: 'Elder Oak', spruce: 'Grandfather Spruce', pine: 'Ancient Pine', birch: 'White Sentinel', giant: 'World Tree', shroom: 'Spore Titan', tower: 'Fungal Spire', palm: 'Sky Palm', lollipop: 'Candy Colossus', umbrella: 'Parasol Ancient', acacia: 'Lone Acacia', deadtree: 'Bone Tree', lanterntree: 'Lantern Elder', crystal: 'Singing Spire', cherry: 'Elder Cherry', maple: 'Crimson Maple', ginkgo: 'Golden Ginkgo' };
       // unique, deterministic names ("Elder Oak of Varneth") so markers/toasts never repeat
       const syl = ['va', 'mor', 'eth', 'lin', 'ka', 'sul', 'or', 'wen', 'dra', 'thi', 'bel', 'ny', 'ros', 'cai', 'um', 'fal'];
       let hsh = (hashCombine(this.seed, key) >>> 0);
@@ -808,8 +829,34 @@ class Flora {
       this._updateColliders(_cam);
     }
     if (!this.ready) { this.ready = this._checkReady(altG); if (this.ready) this.readyMs = Math.round(now - this.t0); }
+    this._updateCuts(dt);
+    if (this.petals) { try { this.petals.update(dt); } catch (e) { console.warn('[flora] petals', e); this.petals = null; } }
     // deterministic captures: don't pay for rendering half-streamed vegetation
     if (this.shot) this.group.visible = this.visible && this.ready;
+  }
+
+  // ================================================================== katana cuts
+  _onSlash(e) {
+    if (!e?.pos) return;
+    const r = Math.max(0.5, Math.min(8, (e.radius ?? 2.4) * (e.kind === 'iai-bloom' ? 1.6 : 1.1)));
+    const p = new THREE.Vector3().copy(e.pos);
+    // the arc sweeps in front of her: centre the cut a little ahead along the swing direction
+    if (e.dir) p.addScaledVector(e.dir, r * 0.45);
+    this._cuts.push({ p, r, age: 0 });
+    if (this._cuts.length > 8) this._cuts.shift();
+  }
+
+  _updateCuts(dt) {
+    const U = FLORA_CUTS.value, org = this.world.origin;
+    const C = this._cuts || [];
+    for (let i = C.length - 1; i >= 0; i--) { C[i].age += Math.min(dt, 0.25); if (C[i].age > 45) C.splice(i, 1); }
+    for (let i = 0; i < 8; i++) {
+      const c = C[i];
+      if (!c || !org) { U[i].w = 0; continue; }
+      // full cut for 25 s, then the meadow grows back over ~20 s
+      const k = 1 - Math.max(0, Math.min(1, (c.age - 25) / 20));
+      U[i].set(c.p.x - org.x, c.p.y - org.y, c.p.z - org.z, c.r * k);
+    }
   }
 
   _groundAlt(alt) {
@@ -858,12 +905,17 @@ class Flora {
       style: this.styleKey, ready: this.ready, readyMs: this.readyMs, initMs: this.initMs, cells, queue: this.queue.length, jobs: this.jobs.size,
       instances: inst, drawCalls: draws, trisM: +(tris / 1e6).toFixed(2), models: this.models.length,
       workers: this.workers.length, colliders: this.world.colliders?.length ?? 0, top: top.slice(0, 8).map((t) => t.join(':')).join(' '),
+      season: +(this.seasonAmt || 0).toFixed(2), worldTree: this.sacred?.getState?.() || null, petals: this.petals?.getState?.() || null, cuts: this._cuts?.length || 0,
     };
   }
 
   dispose() {
     try { this._offFlat?.(); } catch (_) { /* ignore */ }
     try { if (typeof this._offClear === 'function') this._offClear(); } catch (_) { /* ignore */ }
+    try { if (typeof this._offSlash === 'function') this._offSlash(); } catch (_) { /* ignore */ }
+    try { this.petals?.dispose(); } catch (_) { /* ignore */ }
+    try { this.sacred?.dispose(); } catch (_) { /* ignore */ }
+    for (const u of FLORA_CUTS.value) u.w = 0;
     for (const w of this.workers) { try { w.w.terminate(); } catch (_) {} }
     this.workers.length = 0;
     for (const b of this.bands || []) for (const c of b.cells.values()) this._dropCell(c);
