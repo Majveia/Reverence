@@ -450,6 +450,8 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
 * **Arch reads as bedded rock** (`features.js` `buildArch`): flatter, blockier section (superellipse 0.38),
   hard bedding ledges with recessed soft beds every ~8–12 m. The large soft lumps and 6 m ridged knobs that
   made a doughy, knobbly outline are gone. The soffit and inner leg faces now have baked occlusion.
+* **Gold season fields glow** (`material.js`): the gold-pampas region colour is brighter and more saturated
+  (the old ochre read as dirt from a distance).
 * **Floating isles carry life** (`features.js` `buildIsle`): each isle has a lone gnarled tree (sometimes
   two) with clustered crowns in the season's hue. The largest isle spills a thin waterfall from its rim
   that widens as it falls.
@@ -531,6 +533,16 @@ inView, levels, ms, msMax, readyMs, builds}` (`readyMs` = time until the terrain
 * `low` tier: Lambert lighting, coarser LOD (0.8 m leaves, 14 px/quad), no anisotropy.
 
 ## Known issues
+* (season 2 r2) From the W1 hero view, the forest beyond the meadow (right half, lower cone flanks) still
+  reads as brown ground between green tree dots. Brightening the gold season colour did not change it, so
+  the brown is soil / bare ground under the flora track's far tree impostors, not the season paint.
+  Next step: A/B with `disable=flora` and `tdebug=1` there.
+* (season 2 r2) The volcanic band between the forest and the snow still warms toward orange-brown at sunrise
+  (`tod≈0.28`) and in haze. It is dark grey-violet in neutral light.
+* (season 2 r2) Up close (< 2 km) the per-pixel snow ribs and the real gully geometry do not line up exactly
+  (the ribs are azimuth noise; concave ground adds snow, so gullies still fill first).
+* (season 2 r2) The sea of cloud is a flat, softly lit floor; from 700 m its top lacks billows and sunlit
+  crests.
 * (round 7) W3 badlands at a grazing low sun (`lat=38.65&lon=51.31`) still show some fine "fur" grain on
   30–45° rock slopes, now weaker. Big 80°+ walls in flat diffuse light (W1 lake at `tod=0.3`) still read
   as smooth slabs with tone variation; under raking light (`tod=0.22`) blocks and ledges read.

@@ -523,3 +523,15 @@ visualizations). What separates AAA from "tech demo":
   (`star=2&planet=2.1&lat=-60&lon=160`), add a warmer key light so the aureole and her red scarf sit in a warm/cool
   palette instead of flat violet-grey. (Still open from round 1: flora grass fade and slash cut list; terrain close
   snow speckle at W9; fauna heads lifting on `player:pulse`.)
+
+#### Season 2: terrain round 1 requests (20 Oct)
+* **terrain → flora** — tint far tree crowns by `sample().season` (gold → ginkgo or larch yellow, crimson → maple red,
+  blossom → white-pink) so the canopy agrees with the seasonal ground, as in the Yotei autumn frames; today the ground
+  turns seasonal but the trees stay summer green. The great mountain's scree and heath zone above the forest is now
+  marked as scree, so keep grass off it.
+* **terrain → owner unknown (vehicles or player?)** — a large smooth dome boulder with a saw-toothed base stands a few
+  metres from the W1 (`lat=16.7394&lon=27.123`) and W12 (`lat=19.2409&lon=29.9261`) `view=surface` spawns with
+  `props=0`. It stays with `disable=civ,fauna,flora,space` and the heightfield is smooth there; please keep it off spawn
+  sightlines.
+* **terrain → atmosphere** — the W1 sea-of-cloud view reads best at sunrise (tod 0.27–0.3); a warmer, lower key light
+  at that hour would match the Yotei sunrise frame.
