@@ -239,7 +239,10 @@ export class CameraRig {
     const H = ctx.heights;
     // on foot the lens rides ~1 m over the ground so it stays above meadow grass (flora billboards right
     // in front of the lens read as giant blades); tighter when swimming / climbing / under water
+    // the wide / overlook frames ride higher (~1.8 m): the lens looks OVER the meadow, so no blade as tall as the
+    // figure fills the foreground and she stands on the sky / the valley
     const clear = lerp(st === 'ground' || st === 'slide' || st === 'air' ? 0.95 : 0.45, 0.6, pL);
+    const highW = st === 'ground' ? Math.max(pW, ovW) : 0;
     let lift = 0;
     if (H) {
       const N = 9;
@@ -273,10 +276,13 @@ export class CameraRig {
     // pull in fast, ease back out slowly
     this.dist = this.restSnap ? allowed : allowed < this.dist ? damp(this.dist, allowed, 28, dt) : damp(this.dist, allowed, 2.6, dt);
     const pos = _f.copy(pivot).addScaledVector(dir, this.dist);
-    // final ground clearance (also over the terrain directly beneath the lens)
+    // final ground clearance (also over the terrain directly beneath the lens); the wide / overlook frames ride
+    // ~1.75 m over the ground so the lens looks OVER the meadow (no blade as tall as the figure in the foreground)
+    let raise = 0;
     if (H) {
-      const gr = H.groundR(pos) + (clear > 0.5 ? 0.75 : 0.28);
-      if (pos.length() < gr) pos.setLength(gr);
+      const gr = H.groundR(pos) + (clear > 0.5 ? lerp(0.75, 1.75, highW) : 0.28);
+      const l0 = pos.length();
+      if (l0 < gr) { pos.setLength(gr); raise = (gr - l0) * highW; }
       if (H.hasOcean && !H.solidSea && !ctx.submerged) { // the lens stays above the sea unless we dive
         const sea = H.R + H.sea + (st === 'swim' ? 0.25 : 0.2);
         if (pos.length() < sea) pos.setLength(sea);
@@ -297,7 +303,8 @@ export class CameraRig {
     // tilt down to keep the hero framed when the lens rose over terrain
     // (looking up: keep the upward tilt — the lens sits low behind the explorer rather than re-aiming down)
     const liftK = (st === 'slide' ? 0.5 : 0.95) * (1 - smoothstep(0.25, 0.7, this.pitch)) * (1 - 0.25 * restW) * (1 - pL) * (1 - 0.5 * stW) * (1 - 0.75 * pW); // wide: keep the lens level (the sky holds the frame, the figure sits low)
-    const look = this.lift > 0.02 ? _d.copy(camF).addScaledVector(up, -this.lift * liftK / Math.max(this.dist, 1)).normalize() : camF; // surfing: let the rider sit low so the run-out + horizon stay in frame
+    this.raiseS = damp(this.raiseS || 0, raise, 4, dt); // the lens lifted over the meadow re-aims at her (she stays in frame)
+    const look = this.lift > 0.02 || this.raiseS > 0.02 ? _d.copy(camF).addScaledVector(up, -(this.lift * liftK + this.raiseS) / Math.max(this.dist, 1)).normalize() : camF; // surfing: let the rider sit low so the run-out + horizon stay in frame
     quatLookDir(look, up, this.cam.quaternion);
     if (this.roll || rollJ) { _q.setFromAxisAngle(_u.set(0, 0, 1), this.roll + rollJ); this.cam.quaternion.multiply(_q); }
     // ---- FOV kick
