@@ -18,6 +18,50 @@ Subsystem `atmosphere` (order 20) auto-loaded by `World`. Every pass is fault-is
 | `lighting.js` | `SunLight` key light with custom N-cascade shadows (`RVSunShadow`: 2–4 cascades in one atlas, texel snapping, per-cascade normal bias), moon as key light at night (phase-aware), PMREM environment of the sky + cloud deck (cover / colours follow the weather and time of day) on `scene.environment`, **overcast-aware ambient** (the deck greys and dims the sky dome; blocked direct sun returns as diffuse light), hemisphere fallback, material auto-setup (cloud shadows on the key light) |
 | `index.js` | subsystem glue, per-frame CPU state, pre-render GPU work (LUTs, env map, cloud shadow map) |
 
+### Season 2 · round 3 (Ghost of Yotei: the air as a medium, not a dome with objects in it)
+* **Landscape-scale aerial perspective** (`effect.js landOD / hazeSky`, `index.js _updateFog`): an exponential
+  height haze integrated along the view ray over the curved ground (6 samples), whose in-scatter is the **sky
+  radiance of the same azimuth just above the horizon** (sky-view LUT incl. the sun's aureole, blue-hour dome,
+  night glow, golden aureole). Each ridge back is one step paler and takes the colour of the sky right behind it;
+  a soft shoulder on the optical depth keeps the farthest planes as faint silhouettes. The foreground stays crisp
+  (`× (1 − e^(−d/600 m))`). Rain triples it (`wet = 1 + 3.2·rain + …`), fog / moody / dust worlds thicken it, the
+  sun's Mie aureole is dropped from the near haze once the sun has set at the camera (`uLandSun`). Far clouds fade
+  into the same haze (`clouds.js cl_landOD`).
+* **Rain as a veil** (`uLandOC`): under a closed / raining deck the haze, the far clouds and the horizon band all
+  blend toward one deck-lit veil colour (the world's fog hue, a soft cool lavender in rain, slate under storms),
+  so the horizon is the veil itself; the volumetric pass adds the diffuse, deck-lit part of the rain haze (no dark
+  band) and the far rain sheet is fainter (it summed into a flat milky film over the foreground).
+* **Golden aureole** (`uGold`, effect.js `skyExtras`): a low sun (≈ 20° down to sunrise / sunset, clear air)
+  floods the sky around it with honeyed light (HG 0.76 + a broad HG 0.5 lobe, strongest near the horizon); the
+  haze takes it too, so ridges toward the sun glow gold. The key light warms at golden hour (luminance kept).
+* **Blue hour: the land has no colour** (`uLandMono`): during the blue-hour window (and ~40 % at night) the land's
+  own colour drains to a cool grey (scotopic vision) while the haze in front keeps the sky's hue and bright
+  emitters (windows, lanterns, glowing flora, the World Tree) keep theirs; off on moody worlds and from altitude.
+  The ambient hold-back is milder (a faint cool rim of detail stays), the last-light line is wider and brighter.
+* **The World Tree lights the mist** (flora request; `landmarkGlow`, `uGlowP/uGlowC`): at dusk and night the
+  haze around `flora.sacred` glows warm (analytic single scattering from a point source: brightest where the
+  view grazes the crown, a soft halo a few km out, stronger in fog / rain and while the explorer meditates).
+* **The sky answers** (player request): `world.player.meditating` brightens the stars, draws a faint ring of light
+  around the zenith (the sign of the source, `uSource`), stills the wind (`G.uWindStrength × (1 − 0.8·m)`) and
+  warms the key light (warm / cool palette at W9 dusk).
+* **Dust storm with a light inside** (`uFogGlow`): the hidden sun glows on one side of the one-colour wall
+  (HG 0.5 + a tight core), gust bands roll along the wind in the density, and the wall is brighter up high,
+  denser and darker near the floor.
+* **Orbit**: the limb line takes the world's own sky hue (near white, a breath of tint), warm at the terminator,
+  a ~1 % airglow hairline on the night side (no saturated green ring, post request); the cloud tops' terminator is
+  graded over ~12° (`smoothstep(−0.03, 0.2, μ)`).
+* **Clouds cleaner**: (1) the seam at altitude is gone (rays that dip under the base and miss the ground
+  continue to the far exit of the layer instead of stopping at the base tangent); (2) quadratic step spacing for
+  long grazing paths from inside / above the layer; (3) the light march uses the base shape only, its steps are
+  jittered and the step leaving the layer is weighted by the part inside (fixed sample points terraced the
+  lighting); the column-above gate at h = 0.9 is gone (a contour line across every cloud); (4) stricter
+  anti-confetti gate on thin coverage; (5) full-res stills get a 4×4 depth-aware gaussian denoise of the cloud
+  target (no dither grain); (6) night clouds near towns take the light pollution's hue (neon worlds most).
+* **Aurora**: thin vertical curtains (sinuous folds, fine rays that drift), a hard lower edge, green fading to
+  violet-navy at the top, a thin magenta fringe at the bottom.
+* **Rain fog** in the analytic height fog is lower (the veil is carried by the landscape haze, which keeps the
+  foreground crisp); the horizontal-ray height-fog integral uses a series near zero (no dashed horizon seam).
+
 ### Season 2 · round 2 (toward the creator's frames: the air does the acting)
 * **Blue hour** (`effect.js twilightSky`, `index.js`, `lighting.js`): for the sun between ~+2.5° and −23° an
   art twilight dome is added to the physical sky: deep saturated navy zenith (a touch of the world's sky tint),
