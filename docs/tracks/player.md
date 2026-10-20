@@ -412,6 +412,15 @@ Suit bake: one-time at build (voxel grid 0.7 MB, AO cached per tessellation leve
 Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (a few hundred lookups).
 
 ## Known issues
+* Open after season 2 (the round 3 critic, 20 Oct: 5.5/10, blind 2/4; the track's season-2 rounds are used up, so
+  these lead the next pass): against the creator's Yotei hero frames she is too small, thin and doll-like to carry a
+  close shot (no cloth volume or layered coat, no lived-in material); her hair and scarf do not move in the wind; the
+  white wolf reads as a grey cat or a statue; the first-person hands look like mannequin gloves on plain tube sleeves;
+  the Commune pillar of light overexposes the meadow and washes her out; the combo reads as one clean arc with nothing
+  cut (petals, leaves and grass should fly, see the `player:slash` request to flora); the Resonance ring sits on her
+  like a halo and the animals in the aureole are murky; the Drift rune ring is plain and its pose stiff. The blind
+  judges gave the two lost pairs to the most detailed reference frames, on rendering fidelity (rock, foliage,
+  volumetric clouds, a village), and called one of our frames a letterboxed collage with a flat character render.
 * Round 7: close-ups of her are still the weak point (front ¾ portrait at `zoom=0.42`: the coat reads royal blue in full
   sun, the face is simple, the build a little boxy) — frame her small, from behind or in profile. The W1 golden-hour
   overlook has a tree right behind her in the valley below. The W9 meditation palette (violet-grey, no warm key) and
