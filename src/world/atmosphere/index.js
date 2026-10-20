@@ -308,9 +308,9 @@ class Atmosphere {
       const hh = (camR - m.Rb) / Math.max(m.height, 1);
       const highFade = 1 - THREE.MathUtils.smoothstep(hh, 0.55, 1.15);   // from orbit: the physical veil only
       const art = 1 + 0.6 * (m.moody || 0) + 0.5 * (m.fog || 0) + 0.3 * (m.dust || 0);
-      const wet = 1 + 3.2 * rn + 1.2 * rn * rn + 1.5 * oc * oc + 0.8 * fog;
+      const wet = 1 + 3.2 * rn + 1.2 * rn * rn + 0.8 * oc * oc + 0.8 * fog;
       const k = m.lava ? 0.35 : 1;
-      L.set(0.95e-4 * art * wet * (1 + 0.35 * gold) * k * highFade / sizeK, 1 / ((1050 + 650 * rn + 300 * oc) * sizeK), m.Rb + Math.max(0, sea), 70000 * sizeK);
+      L.set(0.62e-4 * art * wet * (1 + 0.35 * gold) * k * highFade / sizeK, 1 / ((1050 + 650 * rn + 300 * oc) * sizeK), m.Rb + Math.max(0, sea), 70000 * sizeK);
       // under a closed / raining deck the veil is the deck-lit air: a pale, lightly desaturated sky colour (the
       // world's fog hue), darker under storms
       const oL = u.uLandOC.value, sky = this.lighting.skyIrr, na = this.nightAmbient;
