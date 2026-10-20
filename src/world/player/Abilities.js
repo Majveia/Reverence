@@ -85,8 +85,8 @@ class PulseRing {
           if (x > 1.0) {                                    // the curtain: bright at its foot, a soft veil upward
             float v = x - 1.0;
             float sc = 0.7 + 0.3 * sin(vT.x * 6.2831 * 90.0 + uT * 2.0) * sin(vT.x * 6.2831 * 23.0 - uT * 1.3);
-            float ac = (exp(-v * 4.0) * 0.75 + 0.12 * (1.0 - v)) * sc * uA * smoothstep(1.0, 0.92, v);
-            vec3 cc = mix(vec3(2.6, 2.1, 1.4), vec3(0.6, 1.0, 2.4), smoothstep(0.0, 0.7, v));
+            float ac = (exp(-v * 3.0) * 1.25 + 0.22 * (1.0 - v)) * sc * uA * smoothstep(1.0, 0.9, v);
+            vec3 cc = mix(vec3(3.4, 2.6, 1.5), vec3(0.8, 1.3, 3.0), smoothstep(0.05, 0.8, v));
             if (ac < 0.002) discard;
             gl_FragColor = vec4(cc * ac, ac);
             return;

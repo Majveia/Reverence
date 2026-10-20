@@ -276,6 +276,21 @@ the frame shows the drop and the vista. First person (V) from the animated eye (
 * `act=meditate` (Commune at spawn), `act=rest|sit|lie`; `glider=1` (the old paraglider instead of Drift); `lumen=0`.
 * Surface/fp spawns snap to the nearest walkable spot within 45 m (`flat=0` disables).
 
+## Best captures — season 2 round 5 (verified at 1280x720)
+
+| view | URL | steps |
+|---|---|---|
+| W1 golden hour: she stands at the edge over the valley town, facing the low sun (small figure, destination hazed) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.27&props=0&lat=14.916&lon=27.55&vista=800&vistaaz=sun&frame=wide&pitch=10&zoom=0.8` | `[{"advance":3}]` |
+| W1 iaido before the snow-capped volcano: the crescent of the flash cut (bloom: `+{"advance":2.0}`) | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.28&props=0&lat=14.2065&lon=27.1184&yaw=200&flat=0&pitch=-6` | `[{"advance":2},{"hold":"KeyJ","sec":1.8},{"advance":2.0}]` |
+| W1 resonance at dusk: silhouette, wolf, the curtain of light running out through the grass | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.755&props=0&lat=14.916&lon=27.55&vista=800&vistaaz=sun&frame=wide&pitch=8&zoom=0.8` | `[{"advance":2.5},{"hold":"KeyR","sec":0.15},{"advance":0.42}]` |
+| W9 meditating under the ringed giant at dusk, the wolf beside her, grazers and sky rays | `/?mode=system&galaxy=0&star=2&planet=2.1&view=surface&tod=0.76&time=60000&weather=clear&lat=-60&lon=160&vista=900&vistaaz=parent&act=meditate&camlock=1&props=0&fov=55&zoom=1.5` | `[{"advance":0.3},{"eval":"__rv.world.space.look('parent',0,-9)"},{"eval":"var p=__rv.world.player;p.forward.copy(p.cam.fwd);1"},{"advance":3.2}]` |
+| W2 Drift on the ring of light over the valley and the sea | `/?mode=system&galaxy=0&star=11&planet=0&view=surface&alt=60&lat=18.18&lon=-50.80&yaw=22&pitch=-14&tod=0.3` | `[{"advance":1.5},{"move":[0.7,0.6],"sec":2},{"advance":1.4}]` |
+| W3 first person: the Lumen above the open left palm, the katana low right | `/?mode=system&galaxy=0&star=9&planet=2&view=fp&props=0&lat=22.65&lon=56.2&yaw=240&pitch=-6&tod=0.7&flat=0` | `[{"advance":1},{"hold":"KeyG","sec":0.15},{"advance":1.6}]` |
+
+Notes: `hold` only schedules input — the following `advance` must be at least as long as the hold (the round 4 table's
+iaido step `{"hold":"primary"...}` never reached the game; use `KeyJ`). The W9 giant's height in the sky depends only on
+latitude at a given `tod` (lat −60 ≈ 22°, lat −55 ≈ 27°, near the equator it is overhead).
+
 ## Best captures — season 2 round 3, the swordswoman (verified at 960x540 unless noted)
 
 | view | URL | steps |
@@ -333,6 +348,11 @@ Suit bake: one-time at build (voxel grid 0.7 MB, AO cached per tessellation leve
 Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (a few hundred lookups).
 
 ## Known issues
+* Round 5: the crescent arcs are hung in fixed planes per cut kind (not fitted to the blade's actual sweep), so in a few
+  key-pose combinations the crescent and the blade path disagree slightly. The resonance curtain is drawn through
+  terrain-following geometry only (no occlusion test against tall flora: it is additive and shows through grass as a
+  glow, which is intended). Close-ups of her face are still simple (oval face, almond eyes); capture her small or from
+  behind.
 * Round 3 (the swordswoman): the katana has no collision — the blade passes through rocks and the body on extreme
   poses; the cuts do not yet cut the grass (flora request) — petals and leaves are the player's own particles.
 * The over-the-shoulder draw is stylised: the blade slides out along the scabbard and swings over the top while the
@@ -364,6 +384,15 @@ Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (
   heavily weathered Starfield look; there is no fabric wrinkle simulation.
 
 ## Requests
+* **terrain** (round 5) — W9 snow at `lat=-60&lon=160` (the meditation-under-the-giant capture) shows a coarse white /
+  dark speckle in the near foreground (a few metres from the lens) that reads as noise rather than snow; a softer
+  close-range snow detail (or filtering the detail at grazing angles) would clean up the lower third of that frame.
+* **flora** (round 5, repeat) — the W1 golden-hour hero frame (`lat=14.916&lon=27.55&vista=800&vistaaz=sun`) has single
+  grass blades the size of the figure right at the lens (lower left): please fade grass within ~1.5 m of
+  `G.uCameraPos`. A cut list for `player:slash` (shorten blades / tip flower heads inside `radius`) would make the
+  iaido leave a mark in the meadow.
+* **fauna** (round 5) — the resonance ring now rises as a curtain of light (~2–3.4 m) as it runs out to 62 m at
+  ≈25 m/s; creatures it passes could lift their heads as the curtain reaches them (`player:pulse {pos, radius}`).
 * **flora** (season 2 round 3, the katana) — `player:slash {pos, dir, radius, kind}` (planet-local `pos` ~1 m above the
   ground in front of her, `radius` 2.2–3.6 m; kind `iai-bloom` comes ~2 s after an iaido cut, on the sheathe click):
   please cut / flatten grass, flowers and bamboo inside the radius (a short-lived "cut" list for the grass shader next to

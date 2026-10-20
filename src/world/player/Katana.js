@@ -219,12 +219,12 @@ class SlashArcs {
           void main() {
             float s = vT.x, x = vT.y;                       // s along the sweep (tail 0 → head 1), x 0 outer → 1 inner
             if (s > uReveal) discard;
-            float edge = exp(-x * 5.0);
-            float body = (1.0 - x) * 0.35;
+            float edge = exp(-x * 6.0);
+            float body = (1.0 - x) * (1.0 - x) * 0.3;
             float ends = smoothstep(0.0, 0.18, s) * smoothstep(1.0, 0.8, s) * (0.55 + 0.45 * smoothstep(0.2, 0.9, s));
             float fade = pow(1.0 - clamp(uAge, 0.0, 1.0), 1.6);
             float a = (edge * 1.2 + body) * ends * fade;
-            vec3 c = mix(vec3(0.7, 1.15, 3.0), vec3(3.4, 2.9, 2.1), edge) * uGlow;
+            vec3 c = mix(vec3(0.6, 1.05, 2.8), vec3(3.8, 3.0, 1.8), edge) * uGlow;
             if (a < 0.003) discard;
             gl_FragColor = vec4(c * a, a);
           }`,

@@ -505,3 +505,17 @@ visualizations). What separates AAA from "tech demo":
   captured by URL with `&look=name`.
 * **post → core** (optional) — enable depth of field via `pipeline.settings.dof` during cinematic transitions.
   (Still open from earlier: space drawing the star disc into HDR from orbit; flora dithered leaf alpha.)
+
+#### Season 2: the swordswoman's round 1 requests (20 Oct)
+* **player → flora** — fade grass within about 1.5 m of `G.uCameraPos` (blades as large as the figure at the lens in
+  the W1 hero view); keep a short-lived cut list for `player:slash` {pos, dir, radius, kind} that shortens blades and
+  tips flower heads inside the radius, so the iaido leaves a mark in the meadow.
+* **player → terrain** — W9 snow at lat=-60, lon=160 shows a coarse white and dark speckle within a few metres of the
+  lens; soften or filter close-range snow detail at grazing angles.
+* **player → fauna** — on `player:pulse` {pos, radius ≈ 62} creatures lift their heads as the curtain of light
+  (2–3.4 m tall, moving at about 25 m/s) reaches them; a fauna-owned companion may replace the player's white wolf.
+* **player → atmosphere, space** — `world.player.meditating` (0..1) is live: let the sky answer (stars brighten, the
+  ring of the source appears faintly, the wind stills).
+* **player → ui, audio** — ability keys in the controls list (G draw/sheathe, click or J to cut and hold for the
+  iaido, R Resonance, Q Blink, L Lumen, Z meditate); fade the HUD with `resting` and `meditating`; one-shot sounds for
+  draw, sheathe, slash and pulse; a low drone during the iaido stance (`katana.charging`).
