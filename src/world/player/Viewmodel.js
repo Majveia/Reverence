@@ -144,24 +144,24 @@ function buildHand(side, M, add) {
     const j1 = new THREE.Group(); j1.position.set(side * KX[f], -0.002, KZ[f]); j1.rotation.order = 'YXZ'; root.add(j1);
     add(j1, seg(L1[f], RR[f], RR[f] * 0.93), M.leather); // glove covers the first phalanx
     const j2 = new THREE.Group(); j2.position.z = -L1[f]; j1.add(j2);
-    add(j2, seg(L2[f], RR[f] * 0.9, RR[f] * 0.84), M.skin);
+    add(j2, seg(L2[f], RR[f] * 0.9, RR[f] * 0.84), M.leather); // a swordswoman's glove: only the fingertips bare
     const j3 = new THREE.Group(); j3.position.z = -L2[f]; j2.add(j3);
-    add(j3, seg(L3[f], RR[f] * 0.82, RR[f] * 0.74), M.skin);
+    add(j3, seg(L3[f], RR[f] * 0.82, RR[f] * 0.74), side > 0 ? M.leather : M.skin); // the sword hand fully gloved
     fingers.push([j1, j2, j3]);
   }
   const t1 = new THREE.Group(); t1.position.set(-side * 0.036, -0.013, -0.024); t1.rotation.order = 'YXZ'; root.add(t1);
   add(t1, seg(0.036, 0.0125, 0.0115), M.leather);
   const t2 = new THREE.Group(); t2.position.z = -0.036; t2.rotation.order = 'YXZ'; t1.add(t2);
-  add(t2, seg(0.028, 0.0108, 0.0098), M.skin);
+  add(t2, seg(0.028, 0.0108, 0.0098), side > 0 ? M.leather : M.skin);
   const t3 = new THREE.Group(); t3.position.z = -0.028; t2.add(t3);
-  add(t3, seg(0.023, 0.0094, 0.0082), M.skin);
+  add(t3, seg(0.023, 0.0094, 0.0082), side > 0 ? M.leather : M.skin);
   return { root, fingers, thumb: [t1, t2, t3] };
 }
 
 // finger poses: [proximal, middle, distal] curl (negative = toward the palm), spread (per finger, × side)
 const GRIP = { curl: [[-1.32, -1.5, -0.9], [-1.38, -1.52, -0.9], [-1.4, -1.5, -0.85], [-1.42, -1.45, -0.8]], spread: [0.04, 0, -0.03, -0.06], thumb: [-0.36, -0.45, -0.35, -0.3] };
 // open: a relaxed, cupped palm (each finger curls a little more toward the little finger; never straight like a mannequin)
-const OPEN = { curl: [[-0.42, -0.58, -0.4], [-0.52, -0.68, -0.44], [-0.64, -0.78, -0.5], [-0.8, -0.86, -0.56]], spread: [0.13, 0.03, -0.05, -0.15], thumb: [0.5, -0.32, -0.15, -0.12] };
+const OPEN = { curl: [[-0.5, -0.66, -0.46], [-0.62, -0.78, -0.5], [-0.76, -0.88, -0.56], [-0.92, -0.96, -0.62]], spread: [0.16, 0.04, -0.07, -0.19], thumb: [0.55, -0.36, -0.2, -0.16] };
 
 function poseHand(H, side, w) { // w: 0 grip → 1 open
   for (let f = 0; f < 4; f++) {
@@ -208,7 +208,7 @@ export class Viewmodel {
 
     // ---------------------------------------------------------------- arms (wrist at the group origin)
     this.armR = new THREE.Group(); this.group.add(this.armR);
-    add(this.armR, sleeveGeo(0.5, 0.039, 0.05, 1.3, cuffCol), wool);
+    add(this.armR, sleeveGeo(0.42, 0.036, 0.046, 1.3, cuffCol), wool);
     this.handR = buildHand(1, M, add); this.armR.add(this.handR.root); this.handR.root.scale.setScalar(1.15);
     this.armL = new THREE.Group(); this.group.add(this.armL);
     add(this.armL, sleeveGeo(0.55, 0.039, 0.05, 4.1, cuffCol), wool);
@@ -222,6 +222,8 @@ export class Viewmodel {
     this.sword = buildSwordGroup(P, quality, this.uGlow, this.uGlowCol);
     this.group.add(this.sword);
     for (const m of this.sword.userData.mats) this.materials.push(m);
+    // read as a blade, not a wire, at the frame's edge: the blade a little broader across the edge (the fittings keep their size)
+    if (this.sword.children[0]) this.sword.children[0].scale.z = 1.55;
 
     // ---------------------------------------------------------------- the Lumen held above the open left palm
     this.orb = new THREE.Group(); this.group.add(this.orb);
@@ -244,7 +246,7 @@ export class Viewmodel {
     // ---- poses (camera space): wrist position, forearm direction, palm axis hint, roll
     this.P = {
       // sword hand: low right, forearm rising in from the lower-right corner, the blade up and away into the view
-      swordWrist: new THREE.Vector3(0.3, -0.29, -0.6), swordFore: new THREE.Vector3(-0.36, 0.42, -0.83).normalize(), swordDir: new THREE.Vector3(-0.3, 0.7, -0.64).normalize(),
+      swordWrist: new THREE.Vector3(0.25, -0.35, -0.54), swordFore: new THREE.Vector3(-0.2, 0.56, -0.8).normalize(), swordDir: new THREE.Vector3(-0.6, 0.34, -0.72).normalize(),
       // relaxed right hand (sheathed): lower, loosely closed
       restWrist: new THREE.Vector3(0.36, -0.3, -0.5), restFore: new THREE.Vector3(-0.3, 0.38, -0.87).normalize(), restX: new THREE.Vector3(1, 0.2, 0.2),
       // light hand: low left, palm up and cupped, the Lumen hovering above it
@@ -326,7 +328,7 @@ export class Viewmodel {
     _swDirFrom(this._swDir, R.quaternion);
     _q.setFromAxisAngle(_w.set(0, 0, -1), roll * dw);
     this._swDir.applyQuaternion(_q);
-    this._swEdge.set(0.25, -1, 0.2).addScaledVector(this._swDir, -this._swDir.dot(_w.set(0.25, -1, 0.2))).normalize();
+    this._swEdge.set(0.45, -0.75, -0.3).addScaledVector(this._swDir, -this._swDir.dot(_w.set(0.45, -0.75, -0.3))).normalize(); // edge out and down: the flat (and the hamon) tilts up to the eye
     _x.crossVectors(this._swDir, this._swEdge);
     _m.makeBasis(_x, this._swDir, this._swEdge);
     this.sword.quaternion.setFromRotationMatrix(_m);

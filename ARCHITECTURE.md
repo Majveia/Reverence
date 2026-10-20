@@ -519,3 +519,7 @@ visualizations). What separates AAA from "tech demo":
 * **player → ui, audio** — ability keys in the controls list (G draw/sheathe, click or J to cut and hold for the
   iaido, R Resonance, Q Blink, L Lumen, Z meditate); fade the HUD with `resting` and `meditating`; one-shot sounds for
   draw, sheathe, slash and pulse; a low drone during the iaido stance (`katana.charging`).
+* **player → atmosphere** (round 2) — while `world.player.meditating > 0.5` at W9 dusk
+  (`star=2&planet=2.1&lat=-60&lon=160`), add a warmer key light so the aureole and her red scarf sit in a warm/cool
+  palette instead of flat violet-grey. (Still open from round 1: flora grass fade and slash cut list; terrain close
+  snow speckle at W9; fauna heads lifting on `player:pulse`.)

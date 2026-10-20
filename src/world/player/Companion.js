@@ -67,6 +67,14 @@ export class Companion {
     const neckSkin = blendY(C.chest, C.head, 0.34, 0.4);
     A.add('fur', ellipsoid(0.052, 0.07, 0.06, R(14), R(10)).rotateX(-0.55).translate(0, 0.37, 0.185), fur, neckSkin);
     A.add('fur', ellipsoid(0.07, 0.078, 0.062, R(16), R(10)).rotateX(-0.35).translate(0, 0.345, 0.165), fur, neckSkin);
+    // a red cord knotted round the ruff with a gold bead and a short tassel: her one warm accent, shared (a bond)
+    {
+      const red = new THREE.Color('#a3121f'), gold = new THREE.Color('#d6a347');
+      A.add('fur', torus(0.062, 0.0068, 5, R(22)).scale(1.08, 1, 1).rotateX(-1.02).translate(0, 0.378, 0.198), red, neckSkin);
+      A.add('fur', ellipsoid(0.0105, 0.0105, 0.0105, 8, 6).translate(0, 0.336, 0.25), gold, rigid(C.chest));
+      A.add('fur', ellipsoid(0.0075, 0.026, 0.0065, 6, 6).rotateX(0.25).translate(0.006, 0.31, 0.252), red, rigid(C.chest));
+      A.add('fur', ellipsoid(0.0065, 0.022, 0.0058, 6, 6).rotateX(0.2).translate(-0.008, 0.313, 0.25), red, rigid(C.chest));
+    }
     tuft(0, 0.26, 0.15, 0, -0.85, -0.2, 0.06, 0.03, fur, rigid(C.chest)); // chest bib
     tuft(0.03, 0.25, 0.1, 0.25, -0.9, -0.25, 0.05, 0.022, fur, rigid(C.chest));
     tuft(-0.03, 0.25, 0.1, -0.25, -0.9, -0.25, 0.05, 0.022, fur, rigid(C.chest));

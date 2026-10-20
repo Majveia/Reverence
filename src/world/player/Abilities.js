@@ -43,6 +43,18 @@ function makeFootRing() {
         ring += exp(-pow((r - 0.42) / 0.01, 2.0)) * 0.35 * (0.5 + 0.5 * sin(-ang * 7.0 + uT * 2.2));
         float glyph = step(0.92, fract(ang / 6.2831 * 24.0 + uT * 0.05)) * smoothstep(0.74, 0.7, r) * smoothstep(0.66, 0.7, r);
         float inner = exp(-r * r * 6.0) * 0.12;
+        // a band of runes between two fine rings: star marks (a dot over a tick) and longer strokes, turning against
+        // the rim; an eight-pointed seal of fine rays inside (the sign of the source under her feet)
+        float cell = ang / 6.2831 * 36.0 - uT * 0.08, fc = fract(cell), id = floor(cell);
+        float hsh = fract(sin(id * 12.9898) * 43758.5453);
+        float band = smoothstep(0.7, 0.705, r) * smoothstep(0.79, 0.785, r);
+        float rv = (r - 0.7) / 0.09;
+        float rune = band * (hsh > 0.5
+          ? exp(-pow((fc - 0.5) / 0.06, 2.0)) * smoothstep(0.15, 0.25, rv) * smoothstep(0.85, 0.75, rv)
+          : exp(-pow((fc - 0.5) / 0.05, 2.0) - pow((rv - 0.5) / 0.14, 2.0)) * 1.4);
+        rune += (exp(-pow((r - 0.7) / 0.005, 2.0)) + exp(-pow((r - 0.79) / 0.005, 2.0))) * 0.45;
+        float seal = exp(-pow(abs(sin(ang * 4.0 + uT * 0.12)) * r / 0.006, 2.0)) * smoothstep(0.58, 0.12, r) * smoothstep(0.03, 0.1, r) * 0.5;
+        ring += rune * 0.75 + seal;
         float a = (ring + glyph * 0.6 + inner) * uA * smoothstep(1.0, 0.92, r);
         if (a < 0.002) discard;
         gl_FragColor = vec4(mix(uCol2, uCol, smoothstep(0.5, 0.85, r)) * a, a);
@@ -132,7 +144,7 @@ function makeSkyBeam() {
         float stream = 0.75 + 0.25 * sin(y * 60.0 - uT * 1.6 + vB.x * 4.0) * sin(y * 23.0 - uT * 0.7);
         float a = (core * 0.9 + veil * 0.45) * stream * smoothstep(0.0, 0.02, y) * pow(1.0 - y, 1.6) * uA;
         if (a < 0.002) discard;
-        vec3 c = mix(vec3(2.6, 2.1, 1.35), vec3(0.8, 1.05, 2.0), smoothstep(0.0, 0.6, y) * 0.7 + x * 0.3);
+        vec3 c = mix(vec3(2.6, 2.05, 1.3), vec3(1.55, 1.4, 1.75), smoothstep(0.0, 0.6, y) * 0.7 + x * 0.3); // warm gold → pale pearl (no blue: under violet grades it read green)
         gl_FragColor = vec4(c * a, a);
       }`,
   });
@@ -172,9 +184,13 @@ class PulseRing {
           float x = vT.y;                                   // 0 inner (trailing) .. 1 outer (leading edge), 1..2 curtain
           if (x > 1.0) {                                    // the curtain: bright at its foot, a soft veil upward
             float v = x - 1.0;
-            float sc = 0.8 + 0.2 * sin(vT.x * 6.2831 * 90.0 + uT * 2.0 + v * 3.0) * sin(vT.x * 6.2831 * 23.0 - uT * 1.3);
-            float ac = (exp(-v * 3.0) * 1.25 + 0.22 * (1.0 - v)) * sc * uA * smoothstep(1.0, 0.9, v);
-            vec3 cc = mix(vec3(3.4, 2.6, 1.5), vec3(0.8, 1.3, 3.0), smoothstep(0.05, 0.8, v));
+            // an aurora of the source: soft rays drifting up the veil (not a picket fence), gold at the foot, then
+            // azure and a violet hem at the top; colours kept below white so the tone map keeps their hue
+            float ray = 0.5 + 0.5 * sin(vT.x * 6.2831 * 31.0 + sin(vT.x * 6.2831 * 7.0 + uT * 0.6) * 2.5 - v * 1.5);
+            float sc = 0.62 + 0.38 * ray * ray * (0.7 + 0.3 * sin(vT.x * 6.2831 * 11.0 - uT * 1.1 + v * 4.0));
+            float ac = (exp(-v * 3.4) * 1.25 + 0.24 * (1.0 - v) * (1.0 - v)) * sc * uA * smoothstep(1.0, 0.82, v);
+            vec3 cc = mix(vec3(2.3, 1.55, 0.65), vec3(0.45, 1.05, 2.1), smoothstep(0.04, 0.5, v));
+            cc = mix(cc, vec3(1.3, 0.55, 1.9), smoothstep(0.55, 0.95, v));
             if (ac < 0.002) discard;
             gl_FragColor = vec4(cc * ac, ac);
             return;
@@ -220,7 +236,7 @@ class PulseRing {
     const R = 1 + this.maxR * (1 - Math.pow(1 - u, 2.2));
     const W = 0.8 + R * 0.09;
     const r0 = Math.max(0, R - W), r1 = R;
-    const CH = 1.5 + 3.1 * Math.min(1, R / 25);           // curtain height: grows as it runs out (reads over grass)
+    const CH = 2.0 + 4.4 * Math.min(1, R / 25);           // curtain height: grows as it runs out (reads over grass)
     const j1 = Math.min(this.rows, Math.ceil(r1 / this.dr) + 1);
     for (let j = Math.max(0, Math.floor(r0 / this.dr)); j <= j1; j++) this._row(j, H);
     const seg = this.seg, P = this.pos, T = this.at;
@@ -231,7 +247,8 @@ class PulseRing {
         const r = k ? r1 : r0;
         const jf = Math.min(this.rows - 0.001, r / this.dr), j = Math.floor(jf), f = jf - j;
         const h = this.table[j * seg + ii] * (1 - f) + this.table[Math.min(this.rows, j + 1) * seg + ii] * f;
-        _a.copy(this.center).addScaledVector(this.e, ca * r).addScaledVector(this.n, sa * r).normalize().multiplyScalar(h + 0.25 + r * 0.004 + (k === 2 ? CH : 0));
+        const wv = k === 2 ? CH * (0.72 + 0.18 * Math.sin(a * 5 + this.t * 1.7) + 0.1 * Math.sin(a * 13 - this.t * 2.3)) : 0; // a wavy aurora hem
+        _a.copy(this.center).addScaledVector(this.e, ca * r).addScaledVector(this.n, sa * r).normalize().multiplyScalar(h + 0.25 + r * 0.004 + wv);
         const o = (i * 3 + k) * 3;
         P[o] = _a.x - origin.x; P[o + 1] = _a.y - origin.y; P[o + 2] = _a.z - origin.z;
         T[(i * 3 + k) * 2] = i / seg; T[(i * 3 + k) * 2 + 1] = k;

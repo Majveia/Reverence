@@ -2,6 +2,26 @@
 
 Owner paths: `src/world/player/**`, this file.
 
+## Season 2 round 7 — finishing the round 2 answers (20 Oct, morning)
+
+* **First person, a blade and a body** (`Viewmodel.js`): the katana now sits LOW RIGHT and crosses the bottom of the
+  frame at a ~25° cant toward the centre (it pointed straight up into the view as a thin wire); its edge is rolled out
+  and down so the flat and the frosted hamon tilt up to the eye, the FP blade is 1.55× broader across the edge (the
+  tsuba and the wrapped tsuka keep their size) and the honed edge line is brighter. The sword hand is fully gloved
+  (pale fingertips on a fist read as teeth); the light hand is gloved to the last joint with a deeper relaxed cup;
+  the right sleeve is slimmer and the forearm rises from below the frame (the elbow no longer passes by the lens).
+* **Resonance as an aurora** (`Abilities.js` `PulseRing`): the curtain was a white picket fence. Now soft rays drift up
+  a veil that is gold at its foot, azure above and violet at the hem (colours kept under white so the tone map keeps
+  the hue), with a wavy top edge (taller: 2 → 6.4 m as it runs out).
+* **Drift ring** gets a band of runes (star marks and strokes between two fine rings, turning against the rim) and an
+  eight-pointed seal of fine rays inside.
+* **The pillar of light** is warm gold → pearl (its blue end read green under W9's violet grade).
+* **The lens over the meadow** (`Camera.js`): in the wide / overlook frames the lens rides ~1.75 m over the ground
+  directly beneath it (was 0.75 m) and re-aims by the same amount, so she stays where the framing put her and the
+  foreground is no longer a wall of blades as tall as the figure.
+* **The white wolf wears a red cord** knotted round its ruff with a gold bead and a short tassel: her one warm accent,
+  shared — the bond reads at a glance.
+
 ## Season 2 round 6 — the ring of light, and her edges in the light (20 Oct)
 
 Answers to the round 2 critique (hero a flat dark cut-out, Resonance invisible, mannequin first-person hands, a grey
@@ -308,6 +328,18 @@ the frame shows the drop and the vista. First person (V) from the animated eye (
 * `act=meditate` (Commune at spawn), `act=rest|sit|lie`; `glider=1` (the old paraglider instead of Drift); `lumen=0`.
 * Surface/fp spawns snap to the nearest walkable spot within 45 m (`flat=0` disables).
 
+## Best captures — season 2 round 7 (verified at 960x540)
+
+| view | URL | steps |
+|---|---|---|
+| W1 golden hour: she stands at the edge over the valley town, facing the low sun, the wolf beside her | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.27&props=0&lat=14.916&lon=27.55&vista=800&vistaaz=sun&frame=wide&pitch=8&zoom=0.8` | `[{"advance":3}]` |
+| W1 iaido before the snow-capped volcano: the crescent of the flash cut, the wolf watching | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.28&props=0&lat=14.2065&lon=27.1184&yaw=200&flat=0&pitch=-6` | `[{"advance":2},{"hold":"KeyJ","sec":1.8},{"advance":2.0}]` |
+| W1 Resonance at dusk: the aureole flash and the aurora curtain running out over the land | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.755&props=0&lat=14.916&lon=27.55&vista=800&vistaaz=sun&frame=wide&pitch=8&zoom=0.8` | `[{"advance":2.5},{"hold":"KeyR","sec":0.15},{"advance":0.85}]` |
+| W1 Commune in the meadow: the ring of light behind her, the pillar from the sky | `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.75&props=0&lat=14.916&lon=27.55&vista=800&vistaaz=sun&act=meditate&frame=wide&pitch=8&zoom=0.9` | `[{"advance":3}]` (round 6 capture) |
+| W9 meditating under the ringed giant at dusk | see the round 5 table | |
+| W2 Drift on the ring of light over the coast and the sea | `/?mode=system&galaxy=0&star=11&planet=0&view=surface&alt=60&lat=18.18&lon=-50.80&yaw=22&pitch=-14&tod=0.3` | `[{"advance":1.5},{"move":[0.7,0.6],"sec":2},{"advance":1.4}]` |
+| W3 first person: the Lumen above the open left palm, the katana low right across the frame | `/?mode=system&galaxy=0&star=9&planet=2&view=fp&props=0&lat=22.65&lon=56.2&yaw=240&pitch=-6&tod=0.7&flat=0` | `[{"advance":1},{"hold":"KeyG","sec":0.15},{"advance":1.6}]` |
+
 ## Best captures — season 2 round 5 (verified at 1280x720)
 
 | view | URL | steps |
@@ -380,6 +412,11 @@ Suit bake: one-time at build (voxel grid 0.7 MB, AO cached per tessellation leve
 Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (a few hundred lookups).
 
 ## Known issues
+* Round 7: close-ups of her are still the weak point (front ¾ portrait at `zoom=0.42`: the coat reads royal blue in full
+  sun, the face is simple, the build a little boxy) — frame her small, from behind or in profile. The W1 golden-hour
+  overlook has a tree right behind her in the valley below. The W9 meditation palette (violet-grey, no warm key) and
+  the close snow speckle belong to atmosphere / terrain (requests below). The first-person left hand overexposes a
+  little under the Lumen's own point light at dusk.
 * Round 5: the crescent arcs are hung in fixed planes per cut kind (not fitted to the blade's actual sweep), so in a few
   key-pose combinations the crescent and the blade path disagree slightly. The resonance curtain is drawn through
   terrain-following geometry only (no occlusion test against tall flora: it is additive and shows through grass as a
@@ -416,6 +453,9 @@ Climbing: ~8 push-out probes + 4 limb rays per frame on the cached heightfield (
   heavily weathered Starfield look; there is no fabric wrinkle simulation.
 
 ## Requests
+* **atmosphere** (round 7) — while `world.player.meditating` > 0.5 at W9 dusk (`star=2&planet=2.1&lat=-60&lon=160`),
+  a warmer key (the giant's reflected light or the sun's last gold) would let the aureole and her red scarf sit in a
+  warm/cool palette instead of a flat violet-grey.
 * **terrain** (round 5) — W9 snow at `lat=-60&lon=160` (the meditation-under-the-giant capture) shows a coarse white /
   dark speckle in the near foreground (a few metres from the lens) that reads as noise rather than snow; a softer
   close-range snow detail (or filtering the detail at grazing angles) would clean up the lower third of that frame.

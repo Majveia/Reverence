@@ -285,7 +285,7 @@ export function buildSwordGroup(P, quality, uGlow, uGlowCol) {
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         totalEmissiveRadiance += uGlowCol * uGlow * (pow(vEdge, 3.0) * 1.6 + 0.1) * (0.75 + 0.25 * sin(vBy * 60.0 - uGlow * 3.0));
         // in the hand, close to the eye: the frosted hamon and a bright honed edge line always read (not a grey stick)
-        totalEmissiveRadiance += vec3(0.82, 0.88, 1.0) * (hamon * 0.05 + pow(vEdge, 10.0) * 0.55);`);
+        totalEmissiveRadiance += vec3(0.82, 0.88, 1.0) * (hamon * 0.07 + pow(vEdge, 10.0) * 1.3);`);
   };
   steel.customProgramCacheKey = () => 'rv-katana-steel-fp';
   const gold = new THREE.MeshStandardMaterial({ color: P.gold || 0xd1a554, metalness: 1.0, roughness: 0.3 });
