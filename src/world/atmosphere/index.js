@@ -133,7 +133,7 @@ class Atmosphere {
     const twi = present ? Math.max(twRise * twFade, this.eclipse) : 0;
     this.twilight = twi;
     this.twBlue = present ? twRise * twFade : 0;   // blue-hour window (lighting.js holds the land's ambient back)
-    this.nightAmbient.setRGB(0.020 + tint.r * 0.006, 0.026 + tint.g * 0.008, 0.052 + tint.b * 0.012).multiplyScalar(night * E * 0.47 * (1 + 0.4 * (this.model.moody || 0)) * (1 - 0.72 * twRise * twFade));   // moody (neon-noir) nights: glow-lit silhouettes read further
+    this.nightAmbient.setRGB(0.020 + tint.r * 0.006, 0.026 + tint.g * 0.008, 0.052 + tint.b * 0.012).multiplyScalar(night * E * 0.47 * (1 + 0.4 * (this.model.moody || 0)) * (1 - 0.6 * twRise * twFade));   // moody (neon-noir) nights: glow-lit silhouettes read further
     // night sky: scattered starlight + airglow continuum, art-lifted so a moonless sky reads deep blue
     // (not a void) after eye adaptation; airglow emission layer = faint green band along the horizon
     const ns = present ? night * E * 0.0032 * (0.55 + 0.45 * Math.min(this.model.density, 1.4)) : 0;
@@ -145,6 +145,16 @@ class Atmosphere {
     S.uAirglow.value.set(0.12, 0.62, 0.30).multiplyScalar(present ? night * E * 0.00025 * (0.6 + this.model.density * 0.4) * (1 - limbK) : 0);
     const eu = this.effect.u;
     eu.uLimb.value.x = limbK * E * 0.0095 * Math.min(1.3, 0.6 + 0.4 * this.model.density);
+    if (!this._limbCol) {
+      // limb line colours from the world's own sky (not a fixed teal / green): a pale, near-white line on the
+      // day side with a breath of the sky hue, warm at the terminator, a very faint airglow hairline at night
+      this._limbCol = true;
+      const tl0 = Math.max(tint.r, tint.g, tint.b, 1e-3);
+      eu.uLimbDay.value.set(0.62 + 0.38 * tint.r / tl0, 0.66 + 0.34 * tint.g / tl0, 0.72 + 0.28 * tint.b / tl0);
+      eu.uLimbWarm.value.set(1.0, 0.56, 0.36);
+      eu.uLimbNight.value.set(0.16 + 0.1 * tint.r / tl0, 0.22 + 0.12 * tint.g / tl0, 0.42 + 0.12 * tint.b / tl0);
+      eu.uLimb.value.w = 0.012;
+    }
     if (limbK > 0 && this._limbR === undefined) {
       // the emitting shell sits just above the cloud tops and the highest relief (else clouds / peaks cut it)
       const Hm = this.model.height, Rb = this.model.Rb;
@@ -162,6 +172,12 @@ class Atmosphere {
     eu.uTwi.value.set(twi * (1 - 0.75 * ocT), Math.max(Math.min(1.2, Math.exp(muS / 0.1)), this.eclipse), muS, this.eclipse);
     // stars & the galactic band: hidden by a bright day sky, shown against the dark night sky
     eu.uStarVis.value = THREE.MathUtils.lerp(3.0, 0.45, night);
+    // the sky answers (player: world.player.meditating 0..1): more stars, a faint ring of light at the zenith
+    let med = 0;
+    try { med = THREE.MathUtils.clamp(+(w.player?.meditating || 0), 0, 1); } catch (_) { med = 0; }
+    this.meditating = med;
+    if (med > 0) eu.uStarVis.value *= 1 - 0.6 * med;
+    eu.uSource.value.x = present ? med * med * E * (0.0012 + 0.0035 * night) : 0;
 
     // overcast fraction of the sky (cloud type coverage + weather): greys & dims the ambient, feeds the env deck
     const W = this.weather;
@@ -186,6 +202,8 @@ class Atmosphere {
     if (this.weatherSys) {
       try { this.weatherSys.update(dt, t); } catch (e) { if ((this._wErr = (this._wErr || 0) + 1) < 4) console.error('[atmosphere] weather update failed', e); }
     }
+    // meditation stills the wind (grass, clouds and particles read G.uWindStrength)
+    if (this.meditating > 0) G.uWindStrength.value *= 1 - 0.8 * this.meditating;
     this._updateFog(t);
     if (this.clouds?.present) {
       try { this.clouds.update(dt, t, { G, lighting: this.lighting, sunDir, sunMu: muS, camR, coverBoost: this.weather.coverBoost || 0, flash: this.weather.flash || 0 }); }
@@ -281,6 +299,41 @@ class Atmosphere {
     const sc = this.lighting.sunColor, sd = Math.max(0, W.sunDim ?? 1);
     u.uFogSun.value.set(sc.r, sc.g, sc.b).multiplyScalar(sd * sd);
     u.uFogWind.value.set(G.uWindDir.value.x, G.uWindDir.value.z).multiplyScalar(t * 6);
+    // landscape-scale aerial perspective (effect.js landOD / hazeSky): an exponential haze over the land whose
+    // in-scatter is the sky colour behind each ridge → every ridge back one step paler; rain triples it
+    {
+      const L = u.uLand.value, oc = W.overcast || 0, storm = W.storm || 0;
+      const sizeK = THREE.MathUtils.clamp((this.world.body.radius || 70000) / 70000, 0.6, 1.4);
+      const camR = this._camLocal.length();
+      const hh = (camR - m.Rb) / Math.max(m.height, 1);
+      const highFade = 1 - THREE.MathUtils.smoothstep(hh, 0.55, 1.15);   // from orbit: the physical veil only
+      const art = 1 + 0.6 * (m.moody || 0) + 0.5 * (m.fog || 0) + 0.3 * (m.dust || 0);
+      const wet = 1 + 3.2 * rn + 1.2 * rn * rn + 1.5 * oc * oc + 0.8 * fog;
+      const k = m.lava ? 0.35 : 1;
+      L.set(0.95e-4 * art * wet * (1 + 0.35 * gold) * k * highFade / sizeK, 1 / ((1050 + 650 * rn + 300 * oc) * sizeK), m.Rb + Math.max(0, sea), 70000 * sizeK);
+      // under a closed / raining deck the veil is the deck-lit air: a pale, lightly desaturated sky colour (the
+      // world's fog hue), darker under storms
+      const oL = u.uLandOC.value, sky = this.lighting.skyIrr, na = this.nightAmbient;
+      const sl = (sky[0] * 0.2126 + sky[1] * 0.7152 + sky[2] * 0.0722) / Math.PI;
+      const fhc = fh || _n.set(0.92, 0.95, 1.0);
+      const lift = (0.95 + 0.6 * rn * (1 - storm)) * (1 - 0.55 * storm);
+      oL.set((sl * (0.55 + 0.45 * fhc.x) + na.r * 0.02) * lift, (sl * (0.55 + 0.45 * fhc.y) + na.g * 0.02) * lift, (sl * (0.55 + 0.45 * fhc.z) + na.b * 0.02) * lift);
+      oL.w = THREE.MathUtils.clamp(oc * 0.75 + rn * 0.5, 0, 0.9);
+    }
+    // dust storm: the hidden sun glows inside the wall (one bright side), gust bands roll with the wind
+    {
+      const gl = u.uFogGlow.value, sc0 = this.lighting.sunColor, st = this.starColor, E = m.sunIlluminance;
+      const muS = this._sunMu ?? 0.5;
+      const above = THREE.MathUtils.smoothstep(muS, -0.06, 0.05);
+      if (dust > 0.05) {
+        const mono = u.uFogMono.value;
+        const s = 0.07 * dust * E * above * (0.4 + 0.6 * Math.min(1, (sc0.r + sc0.g + sc0.b) / Math.max(1e-6, (st.r + st.g + st.b) * E) * 3));
+        gl.set(mono.x * s, mono.y * s, mono.z * s, Math.min(1, dust * 1.1));
+      } else if (fog > 0.4) {
+        const s = 0.012 * (fog - 0.4) * above;
+        gl.set(sc0.r * s, sc0.g * s, sc0.b * s, 0);
+      } else gl.set(0, 0, 0, 0);
+    }
     // lava glow in the low haze (emission, so it reads most at dusk and night)
     if (m.lava) u.uLavaGlow.value.set(1.0 * 0.05, 0.3 * 0.05, 0.06 * 0.05, 1 / 350);
     else if (bio > 0) { const g = this._bio; u.uLavaGlow.value.set(g.r * 0.006 * bio, g.g * 0.006 * bio, g.b * 0.006 * bio, 1 / 140); }

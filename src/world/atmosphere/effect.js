@@ -66,7 +66,11 @@ uniform vec3 uTwiHor;         // last-light radiance on the horizon under the su
 uniform vec4 uLimb;           // orbit limb line: x strength, y radius of the emitting shell, z half width, w night airglow share
 uniform vec3 uLimbDay;        // limb line colour on the sunlit side (teal-white)
 uniform vec3 uLimbWarm;       // limb line colour at the terminator (warm)
-uniform vec3 uLimbNight;      // limb line colour on the night side (green airglow)
+uniform vec3 uLimbNight;      // limb line colour on the night side (faint airglow)
+uniform vec4 uLand;           // landscape haze: x extinction at sea level (1/m), y 1/scale height, z sea radius (m), w max distance (m)
+uniform vec4 uLandOC;         // rgb: haze radiance under a closed deck (lit by the cloud bases), a: overcast share
+uniform vec4 uFogGlow;        // dust / fog wall: rgb sun glow radiance (HG lobe inside the veil), a: gust-band amount
+uniform vec4 uSource;         // ring of the source (meditation): x strength, y angular radius (rad), z width (rad)
 varying vec2 vUv;
 
 // Night lights of settlements seen from altitude / orbit: cores + sprawl along noise "roads", only where
@@ -228,23 +232,69 @@ vec3 auroraMarch(vec3 ro, vec3 rd, float tMax, float jitter){
     float hf = clamp((r - r0) / (r1 - r0), 0.0, 1.0);
     float band = smoothstep(uAuroraLat, uAuroraLat + 0.25, abs(n.y));
     if (band <= 0.0) continue;
-    // curtain field on the sphere: warped longitude/latitude lines
+    // curtain field on the sphere: sinuous folded lines (warped latitude), thin sheets seen edge-on
     float lon = atan(n.x, n.z);
     vec2 q = vec2(lon * 3.0, n.y * 9.0);
-    float w1 = rv_snoise(vec3(q * 0.7, uTime * 0.05));
-    float w2 = rv_snoise(vec3(q * 1.9 + 3.1, uTime * 0.11));
-    float f = n.y * 14.0 + w1 * 1.6 + w2 * 0.45;
-    float curtain = pow(1.0 - abs(fract(f) * 2.0 - 1.0), 22.0);
-    curtain += 0.6 * pow(1.0 - abs(fract(f * 1.7 + 0.37) * 2.0 - 1.0), 28.0);
-    // rays (vertical striations)
-    float rn = rv_snoise(vec3(lon * 260.0 + w1 * 3.0, hf * 0.5, uTime * 0.35)) * 0.5 + 0.5;
-    float rays = 0.25 + 1.5 * rn * rn * rn;
-    // vertical profile: sharp bottom, long fading top
-    float prof = smoothstep(0.0, 0.025, hf) * exp(-hf * 2.4);
-    vec3 col = mix(uAuroraCol1, uAuroraCol2, smoothstep(0.25, 0.85, hf));
+    float w1 = rv_snoise(vec3(q * 0.7, uTime * 0.04));
+    float w2 = rv_snoise(vec3(q * 1.9 + 3.1, uTime * 0.09));
+    float f = n.y * 14.0 + w1 * 1.6 + w2 * 0.35;
+    float curtain = pow(1.0 - abs(fract(f) * 2.0 - 1.0), 34.0);
+    curtain += 0.55 * pow(1.0 - abs(fract(f * 1.7 + 0.37) * 2.0 - 1.0), 40.0);
+    // rays: fine vertical striations (high-frequency along the fold, constant with height) that drift slowly
+    float rn = rv_snoise(vec3(lon * 620.0 + w1 * 5.0, hf * 0.35, uTime * 0.25)) * 0.5 + 0.5;
+    float rn2 = rv_snoise(vec3(lon * 170.0 + w2 * 2.0, hf * 0.2 + 3.0, uTime * 0.12)) * 0.5 + 0.5;
+    float rays = 0.12 + 2.4 * pow(rn, 3.0) + 0.8 * pow(rn2, 2.0);
+    // vertical profile: a hard lower edge, the rays fading upward (taller where the rays are bright)
+    float prof = smoothstep(0.0, 0.012, hf) * exp(-hf * mix(3.4, 1.8, rn2));
+    // green curtain fading to violet-navy at the top, a thin magenta fringe along the lower edge
+    vec3 col = mix(uAuroraCol1, vec3(0.18, 0.22, 0.75), smoothstep(0.3, 0.95, hf));
+    col = mix(col, uAuroraCol2, (1.0 - smoothstep(0.0, 0.05, hf)) * 0.7);
     acc += col * curtain * rays * prof * band * dt;
   }
   return acc * uAurora / (r1 - r0);
+}
+
+// Night sky glow, moonlit sky, blue-hour dome and light pollution for a direction (inside the atmosphere).
+vec3 skyExtras(vec3 dir, vec3 up, float camR){
+  float cz = max(dot(dir, up), 0.0);
+  float airmass = 1.0 / (cz + 0.12);
+  vec3 ns = uNightSky * (0.45 + 0.18 * airmass);
+  float mnu = dot(dir, uMoonDir);
+  vec3 ms = uMoonSky * (atmo_phaseRayleigh(mnu) * (0.6 + 0.15 * airmass) + 0.35 * atmo_phaseHG(mnu, 0.8));
+  // aerosol aureole: a soft white halo hugging the moon disc (seats it in the sky)
+  ms += vec3(dot(uMoonSky, vec3(0.3333))) * 0.25 * min(atmo_phaseHG(mnu, 0.9), 20.0) * (0.6 + 0.4 * uAPScale / 0.5);
+  vec3 L = ns + ms;
+  if (uTwi.x > 0.0) L += twilightSky(dir, up);
+  if (uCitySky > 0.0) L += citySky(dir, up, camR);
+  return L;
+}
+
+// Landscape-scale aerial perspective (the air as a medium): an exponential height haze integrated along the
+// view ray over the curved ground (6 midpoint samples: on a 30–110 km planet a horizontal ray climbs ~2 km
+// above the ground within 20 km), whose in-scatter is the SKY RADIANCE OF THE SAME DIRECTION seen just above
+// the horizon (sky-view LUT incl. the sun's Mie aureole, the blue-hour dome, the night glow). Each ridge back
+// is one step paler and takes the colour of the sky right behind it: far silhouettes melt into the horizon
+// instead of standing as hard cut-outs. Rain / overcast blend the in-scatter toward the deck-lit grey veil.
+float landOD(vec3 ro, vec3 dir, float d){
+  d = min(d, uLand.w);
+  float dt = d / 6.0, od = 0.0;
+  for (int i = 0; i < 6; i++){
+    vec3 p = ro + dir * ((float(i) + 0.5) * dt);
+    od += exp(-max(length(p) - uLand.z, -400.0) * uLand.y);
+  }
+  return od * dt * uLand.x;
+}
+vec3 hazeSky(vec3 dir, vec3 up, float camR, float nu){
+  float cz = dot(dir, up);
+  // the visible horizon (dip below the mathematical horizon from altitude) + a little: rays toward the ground
+  // take the colour of the sky where it meets the land in their azimuth
+  float dip = -sqrt(max(1.0 - (uAtmoRb / camR) * (uAtmoRb / camR), 0.0));
+  float e = max(cz, dip + 0.012);
+  vec3 h = dir - up * cz;
+  float lh = length(h);
+  vec3 dH = lh > 1e-4 ? h / lh * sqrt(max(1.0 - e * e, 0.0)) + up * e : up;
+  vec3 L = atmo_skyLUT(dH, up, camR, uSunDir, dot(dH, uSunDir)) * uSunIll + skyExtras(dH, up, camR);
+  return mix(L, uLandOC.rgb, uLandOC.a);
 }
 
 // Analytic exponential height fog along [0, d] (flat-earth approximation near the camera), patchy banks.
@@ -257,11 +307,22 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 dir, float d, vec3 up, float nu){
   float Hf = uFog.y;
   float he = hc + cz * d;
   float e0 = exp(-max(hc, -2.0 * Hf) / Hf), e1 = exp(-max(he, -2.0 * Hf) / Hf);
-  float od = abs(cz) > 1e-4 ? uFog.x * Hf * (e0 - e1) / cz : uFog.x * d * e0;
+  // (e0 - e1) / cz cancels catastrophically for near-horizontal rays (a dashed seam along the horizon):
+  // use the series of (1 - e^-x) / x for small height changes
+  float x = cz * d / Hf;
+  float od = abs(x) > 0.02 ? uFog.x * Hf * (e0 - e1) / cz : uFog.x * d * e0 * (1.0 - 0.5 * x + x * x / 6.0);
   // drifting banks: modulate by noise at the ray's end region
   vec3 pe = ro + dir * min(d, 8000.0);
   float n = rv_snoise(vec3(pe.xz * 0.00035 + uFogWind * 0.0004, pe.y * 0.0003)) * 0.5 + 0.5;
   od *= mix(1.0, 0.25 + 1.5 * n, uFog.w);
+  // dust storm: gust bands rolling with the wind (long ridges of denser dust across the view)
+  if (uFogGlow.w > 0.0){
+    vec3 pm = ro + dir * min(d, 2500.0) * 0.6;
+    vec2 wd = normalize(uFogWind + vec2(1e-4, 0.0));
+    float along = dot(pm.xz, wd), across = dot(pm.xz, vec2(-wd.y, wd.x));
+    float g = rv_snoise(vec3(across * 0.0016, along * 0.00035 - length(uFogWind) * 0.0011, uTime * 0.03)) * 0.5 + 0.5;
+    od *= mix(1.0, 0.55 + 0.9 * smoothstep(0.25, 0.85, g), uFogGlow.w);
+  }
   float T = exp(-max(od, 0.0));
   // two-lobe aerosol phase: a compact bright aureole around the sun + a broad lobe (no flat milky veil)
   vec3 L = uFogAmb * 1.6 + uFogSun * ((atmo_phaseHG(nu, 0.82) * 0.45 + atmo_phaseHG(nu, 0.35) * 0.5) * 0.9 + 0.05);
@@ -270,6 +331,8 @@ vec3 applyFog(vec3 col, vec3 ro, vec3 dir, float d, vec3 up, float nu){
   if (uLavaGlow.w > 0.0) L += uLavaGlow.rgb * exp(-max(0.5 * (hc + he), 0.0) * uLavaGlow.w);
   // dust storm: the haze is one hue (brightness kept, chroma replaced)
   if (uFogMono.w > 0.0) L = mix(L, uFogMono.rgb * (rv_luma(L) / max(rv_luma(uFogMono.rgb), 1e-3)), uFogMono.w);
+  // the light inside the wall: one side of the veil glows where the hidden sun is (HG 0.5 + a tight core)
+  if (uFogGlow.w > 0.0) L += uFogGlow.rgb * (atmo_phaseHG(nu, 0.5) * 0.8 + atmo_phaseHG(nu, 0.85) * 0.25);
   return col * T + L * (1.0 - T);
 }
 
@@ -319,6 +382,10 @@ void main(){
     }
     outc = col * a.T + L;
     if (uCityGround > 0.0){ vec3 ph = ro + dir * tHit; outc += cityGround(normalize(ph), length(ph)) * a.T; }
+    if (uLand.x > 0.0){
+      float Th = exp(-landOD(ro, dir, tHit));
+      if (Th < 0.999) outc = mix(hazeSky(dir, up, camR, nu), outc, Th);
+    }
     outc = applyFog(outc, ro, dir, tHit, up, nu);
   } else {
     // ---------------- sky / background
@@ -360,16 +427,14 @@ void main(){
       // night sky: starlight/airglow gradient + moonlit sky (inside the atmosphere)
       float inside = 1.0 - smoothstep(uAtmoRt * 0.985, uAtmoRt, camR);
       if (inside > 0.0 && !hitGround){
-        float cz = max(dot(dir, up), 0.0);
-        float airmass = 1.0 / (cz + 0.12);
-        vec3 ns = uNightSky * (0.45 + 0.18 * airmass);
-        float mnu = dot(dir, uMoonDir);
-        vec3 ms = uMoonSky * (atmo_phaseRayleigh(mnu) * (0.6 + 0.15 * airmass) + 0.35 * atmo_phaseHG(mnu, 0.8));
-        // aerosol aureole: a soft white halo hugging the moon disc (seats it in the sky)
-        ms += vec3(dot(uMoonSky, vec3(0.3333))) * 0.25 * min(atmo_phaseHG(mnu, 0.9), 20.0) * (0.6 + 0.4 * uAPScale / 0.5);
-        L += (ns + ms) * inside;
-        if (uTwi.x > 0.0) L += twilightSky(dir, up) * inside;
-        if (uCitySky > 0.0) L += citySky(dir, up, camR) * inside;
+        L += skyExtras(dir, up, camR) * inside;
+        // the sky answers (meditation): a faint ring of light around the zenith, the sign of the source
+        if (uSource.x > 0.0){
+          float za = acos(clamp(dot(dir, up), -1.0, 1.0));
+          float dz = (za - uSource.y) / uSource.z;
+          float ring = exp(-dz * dz) + 0.25 * exp(-dz * dz * 0.08);
+          L += vec3(1.0, 0.86, 0.62) * ring * uSource.x * inside * smoothstep(0.0, 0.08, dot(dir, up));
+        }
       }
       // airglow emission layer (limb brightening; visible at night and from space)
       float ch = shellChord(ro, dir, uAirglowR - uAirglowW, uAirglowR + uAirglowW, hitGround ? bot.x : 1e30);
@@ -464,7 +529,11 @@ export class AtmosphereEffect {
       uLimb: { value: new THREE.Vector4(0, atmo.model.Rb + atmo.model.height * 0.1, atmo.model.height * 0.018, 0.07) },
       uLimbDay: { value: new THREE.Vector3(0.55, 0.85, 1.0) },
       uLimbWarm: { value: new THREE.Vector3(1.0, 0.5, 0.24) },
-      uLimbNight: { value: new THREE.Vector3(0.12, 0.62, 0.30) },
+      uLimbNight: { value: new THREE.Vector3(0.10, 0.30, 0.42) },
+      uLand: { value: new THREE.Vector4(0, 1 / 1100, atmo.model.Rb, 60000) },
+      uLandOC: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uFogGlow: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uSource: { value: new THREE.Vector4(0, 0.52, 0.006, 0) },
       ...atmo.atmoUniforms,
     };
     this.mat = fsMaterial(FRAG, this.u);
