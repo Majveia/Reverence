@@ -199,6 +199,66 @@ function buildIsle(o, pal, grassC) {
     }
     parts.push(stripUV(tubeGeo(pts, r * (0.012 + rnd() * 0.012), r * 0.002, 4, root)));
   }
+  // a lone tree on the isle (the creator's floating lands always carry life: one tree, sometimes two), a
+  // gnarled trunk under a few clustered crowns in the season's hue; small enough to read the scale
+  const nt = rnd() < 0.3 ? 2 : 1;
+  for (let k = 0; k < nt; k++) {
+    const th = rnd() * Math.PI * 2, rr = r * (k === 0 ? 0.1 + 0.25 * rnd() : 0.4 + 0.2 * rnd());
+    const tx = Math.cos(th) * rr, tz = Math.sin(th) * rr;
+    const ty = r * 0.07 * (1 - (rr / r) * (rr / r)) - r * 0.01;
+    const th2 = r * (k === 0 ? 0.32 + 0.14 * rnd() : 0.2 + 0.08 * rnd());
+    const lean = [(rnd() - 0.5) * 0.35, (rnd() - 0.5) * 0.35];
+    const tp = [];
+    for (let q = 0; q <= 4; q++) {
+      const f = q / 4;
+      tp.push(new THREE.Vector3(tx + lean[0] * th2 * f * f + Math.sin(f * 4 + k) * th2 * 0.04, ty + th2 * f, tz + lean[1] * th2 * f * f));
+    }
+    parts.push(stripUV(tubeGeo(tp, th2 * 0.07, th2 * 0.025, 6, new THREE.Color(0.075, 0.05, 0.035))));
+    const top = tp[4];
+    const crownC = grassC.clone().multiplyScalar(0.9);
+    const nb = 4 + Math.floor(rnd() * 3);
+    for (let b = 0; b < nb; b++) {
+      const cr = th2 * (b === 0 ? 0.42 : 0.24 + 0.14 * rnd());
+      const ico = new THREE.IcosahedronGeometry(cr, 1);
+      const pp = ico.attributes.position;
+      for (let i = 0; i < pp.count; i++) {
+        const x = pp.getX(i), y = pp.getY(i), z = pp.getZ(i);
+        const kk = 1 + 0.22 * n.n3(x / cr * 1.7 + b, y / cr * 1.7, z / cr * 1.7 + k);
+        pp.setXYZ(i, x * kk, y * kk * 0.72, z * kk);
+      }
+      const a = rnd() * Math.PI * 2, d = b === 0 ? 0 : th2 * (0.22 + 0.16 * rnd());
+      ico.translate(top.x + Math.cos(a) * d, top.y - (b === 0 ? 0 : th2 * (0.05 + 0.15 * rnd())), top.z + Math.sin(a) * d);
+      const g2 = ico.index ? ico.toNonIndexed() : ico;   // (polyhedra are already non-indexed)
+      if (g2 !== ico) ico.dispose();
+      g2.computeVertexNormals();
+      const p2 = g2.attributes.position, col2 = new Float32Array(p2.count * 3);
+      for (let i = 0; i < p2.count; i++) {
+        // lit crown tops, darker undersides (baked occlusion), small hue jitter between clumps
+        const v = 0.62 + 0.55 * Math.max(0, Math.min(1, (p2.getY(i) - top.y + th2 * 0.25) / (th2 * 0.6)));
+        col2[i * 3] = crownC.r * v * (0.92 + 0.16 * (b % 2)); col2[i * 3 + 1] = crownC.g * v; col2[i * 3 + 2] = crownC.b * v;
+      }
+      g2.setAttribute('color', new THREE.BufferAttribute(col2, 3));
+      parts.push(g2);
+    }
+  }
+  // the largest isle spills a thin waterfall from its rim that frays into mist far below
+  if (o.radius > 80 && rnd() < 0.8) {
+    const th = rnd() * Math.PI * 2, er = edgeR(th) * 0.98;
+    const L = depth * (1.6 + rnd() * 0.8), wW = r * 0.05;
+    const wg = new THREE.PlaneGeometry(1, 1, 1, 12);
+    const wp = wg.attributes.position, wc = new Float32Array(wp.count * 3);
+    for (let i = 0; i < wp.count; i++) {
+      const u = wp.getX(i), t = 0.5 - wp.getY(i);   // t: 0 rim → 1 bottom
+      const w = wW * (1 + 2.6 * t * t);
+      const outD = er + r * 0.05 + r * 0.22 * Math.sqrt(t);
+      wp.setXYZ(i, Math.cos(th) * outD - Math.sin(th) * u * w, r * 0.04 - L * t, Math.sin(th) * outD + Math.cos(th) * u * w);
+      const v = 0.92 - 0.25 * t;
+      wc[i * 3] = v; wc[i * 3 + 1] = v * 1.02; wc[i * 3 + 2] = v * 1.06;
+    }
+    wg.setAttribute('color', new THREE.BufferAttribute(wc, 3));
+    wg.computeVertexNormals();
+    parts.push(stripUV(wg));
+  }
   const g = mergeGeometries(parts.map((p) => { const q = p.index ? p.toNonIndexed() : p; for (const k of Object.keys(q.attributes)) if (!['position', 'normal', 'color'].includes(k)) q.deleteAttribute(k); return q; }), false);
   for (const p of parts) p.dispose();
   return { geo: g, depth };
@@ -238,26 +298,35 @@ function buildArch(o, pal, grassC, seed) {
     for (let i = 0; i <= seg; i++) {
       const th = (i / seg) * Math.PI * 2;
       const ct = Math.cos(th), st = Math.sin(th);
-      const e = 0.5;   // superellipse: blocky section with rounded corners
+      const e = 0.38;   // superellipse: blocky section (flat faces, firm edges)
       const sx = Math.sign(ct) * Math.pow(Math.abs(ct), e), sz = Math.sign(st) * Math.pow(Math.abs(st), e);
       let px = C.p[0] + nx * sx * ht, py = C.p[1] + ny * sx * ht, pz = sz * hd;
       const nnx = nx * sx, nny = ny * sx, nnz = sz;
       const nl = Math.hypot(nnx, nny, nnz) || 1;
       // relief: big lumps, ridged crags (sharp), horizontal strata ledges (stepped, altitude-locked)
-      let off = 0.16 * T * n.n3(px / 16, py / 16, pz / 16) + 0.09 * T * (ridged(px / 6, py / 6, pz / 6) - 0.2) + 0.03 * T * n.n3(px / 1.8, py / 1.8, pz / 1.8);
-      const lv = py / 3.4 + 0.35 * n.n3(px / 40, 0.3, pz / 40), lf = lv - Math.floor(lv);
-      off += 0.07 * T * (lf < 0.75 ? lf / 0.75 : (1 - lf) / 0.25) * (0.6 + 0.4 * n.n3(px / 12, 5.5, pz / 12));
+      // (big soft lumps and 6 m ridged knobs made a doughy, knobbly outline: the form now comes from
+      //  bedding — hard ledges, recessed soft beds — over a gentle large-scale undulation)
+      let off = 0.1 * T * n.n3(px / 24, py / 24, pz / 24) + 0.045 * T * (ridged(px / 7, py / 7, pz / 7) - 0.2) + 0.022 * T * n.n3(px / 1.8, py / 1.8, pz / 1.8);
+      const lv = py / 2.7 + 0.3 * n.n3(px / 40, 0.3, pz / 40), lf = lv - Math.floor(lv);
+      off += 0.085 * T * (lf < 0.8 ? lf / 0.8 : (1 - lf) / 0.2) * (0.6 + 0.4 * n.n3(px / 12, 5.5, pz / 12));
+      // soft beds weathered back between massive ones (a recessed band every ~8-12 m)
+      const sb = Math.sin(py / 1.6 + 1.3 * n.n3(px / 30, 2.2, pz / 30));
+      off -= 0.07 * T * sstep(0.55, 0.92, sb);
       off *= 1 - 0.5 * Math.max(0, -nny / nl) * (1 - legK);   // the soffit of the crown is smoother
       px += (nnx / nl) * off; py += (nny / nl) * off; pz += (nnz / nl) * off;
       pos.push(px, py, pz);
       // colour: strata bands, pale fresh scars, dark varnish streaks down the faces, moss on top
-      const band = 0.8 + 0.3 * Math.sin(py * 0.62 + n.n3(px / 25, py / 25, pz / 25) * 2.5) + 0.12 * n.n3(0.2, py / 2.1, 0.7);
+      const band = 0.78 + 0.3 * Math.sin(py * 0.62 + n.n3(px / 25, py / 25, pz / 25) * 2.5) + 0.12 * n.n3(0.2, py / 2.1, 0.7) - 0.22 * sstep(0.55, 0.92, sb);
       c.copy(rock).multiplyScalar(band);
       c.lerp(rockP, Math.max(0, n.n3(px / 11, py / 7, pz / 11) - 0.25) * 0.9);
       const streak = Math.max(0, n.n3(px / 3.5, py / 26, pz / 3.5) - 0.1) * 1.3;
       c.lerp(rockD, Math.min(0.75, streak * (1 - Math.abs(nny / nl)) + sstep(-bury, 6, -py) * 0.35));
       const up = nny / nl;
       c.lerp(grassC.clone().multiplyScalar(0.62), sstep(0.5, 0.85, up + 0.25 * n.n3(px / 5, py / 5, pz / 5)) * 0.9);
+      // the soffit and the inner faces of the legs sit in their own occlusion (baked: the lintel would
+      // otherwise read as one evenly lit tube)
+      const inner = Math.max(0, -(nnx * C.p[0] + nny * Math.max(0, C.p[1])) / (nl * (Math.hypot(C.p[0], Math.max(0, C.p[1])) || 1)));
+      c.multiplyScalar(1 - 0.38 * inner * (0.6 + 0.4 * (1 - legK)) - 0.15 * Math.max(0, -up));
       col.push(c.r, c.g, c.b);
     }
   }

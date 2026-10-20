@@ -161,7 +161,10 @@ float dens( vec3 p, float alt, float hT, bool lite ) {
     vec4 n = texture( tNoise, q / S.w );
     float lowN = texture( tNoise, q / ( S.w * 4.3 ) + 0.37 ).r;
     // ragged top / bottom: the altitude profile is displaced by the noise
-    float dvn = dv + ( n.r - 0.5 ) * 1.1 + ( lowN - 0.5 ) * 0.8;
+    // (+ a finer octave: with only the 1.7-2.6 km noise the bands read as straight ruled stripes across the
+    //  cone when seen near their own altitude — now billowing tops and torn undersides)
+    float fineN = lite ? 0.5 : texture( tNoise, q / ( S.w * 0.31 ) + 0.19 ).r;
+    float dvn = dv + ( n.r - 0.5 ) * 1.2 + ( lowN - 0.5 ) * 0.9 + ( fineN - 0.5 ) * ( dv > 0.0 ? 1.3 : 0.8 );
     float vprof = clamp( 1.0 - dvn * dvn, 0.0, 1.0 );
     float rad = smoothstep( -0.6 * A.w, 0.0, gap ) * ( 1.0 - smoothstep( 0.25 * A.w, A.w, gap + ( lowN - 0.5 ) * 0.5 * A.w ) );
     float sec = smoothstep( S.y - 0.25, S.y + 0.3, cos( phi - S.x ) + ( lowN - 0.5 ) * 0.7 );
@@ -356,9 +359,9 @@ export class MountainClouds {
       //  shoulder high, and both overlap in front of the cone)
       // (radial extents stay well inside the spawn / view distance ~1.15-1.3 Rb from the axis: seen from
       //  the ground the bands are bands hugging the cone, never a veil overhead)
-      { f: 0.22, w: 0.06, ext: 0.32, off: -0.75 + (rnd() - 0.5) * 0.5, hw: 100, cov: cov + 0.04, sc: 2600 },
-      { f: 0.52, w: 0.055, ext: 0.36, off: 0.6 + (rnd() - 0.5) * 0.5, hw: 95, cov: cov + 0.01, sc: 1700 },
-      { f: 0.84, w: 0.035, ext: 0.42, off: Math.PI + (rnd() - 0.5) * 1.2, hw: 140, cov: cov * 0.9, sc: 1700 },
+      { f: 0.22, w: 0.08, ext: 0.32, off: -0.75 + (rnd() - 0.5) * 0.5, hw: 100, cov: cov + 0.04, sc: 2600 },
+      { f: 0.52, w: 0.075, ext: 0.36, off: 0.6 + (rnd() - 0.5) * 0.5, hw: 95, cov: cov + 0.01, sc: 1700 },
+      { f: 0.84, w: 0.045, ext: 0.42, off: Math.PI + (rnd() - 0.5) * 1.2, hw: 140, cov: cov * 0.9, sc: 1700 },
     ];
     if (rnd() < 0.55) bands.push({ f: 1.05, w: 0.03, ext: 0.3, off: 0, hw: 180, cov: 0.55, sc: 1500, cap: true });
     this.uBA = []; this.uBS = [];

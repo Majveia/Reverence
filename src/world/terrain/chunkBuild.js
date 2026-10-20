@@ -228,7 +228,16 @@ export function buildChunk(gen, job) {
     const curv = Math.tanh(((0.4 * (hm - h) + 0.22 * (hm2 - h)) * cosT / sp) * 3.6);
     mat[v * 4] = u8(infoArr[o]);
     mat[v * 4 + 1] = u8(Math.max(infoArr[o + 1], infoArr[o + 6]));
-    mat[v * 4 + 2] = u8((clim.temperature + 0.5) / 1.8);
+    // (on the great mountain's cone the generator's snow mask — long fingers down the gullies, bare ridges
+    //  between them — owns the snow: the altitude lapse alone turned everything above ~2.9 km into one
+    //  uniform white dome. The shader's temperature is lifted just above its cold threshold there; the
+    //  CPU climate (flora's tree line, biomes) is unchanged)
+    let tSh = clim.temperature;
+    if (gen.great && tSh < 0.2) {
+      const gr = gen._gr(dx, dy, dz);
+      if (gr < 1.1) tSh += (0.2 - tSh) * sstep(1.1, 0.85, gr);
+    }
+    mat[v * 4 + 2] = u8((tSh + 0.5) / 1.8);
     mat[v * 4 + 3] = u8(clim.moisture);
     mat2[v * 4] = u8(infoArr[o + 3]);
     mat2[v * 4 + 1] = u8(infoArr[o + 4]);
