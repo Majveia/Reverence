@@ -2,6 +2,35 @@
 
 Owner paths: `src/world/player/**`, this file.
 
+## Season 2 round 5 — compositions under the vast sky (19 Oct, night)
+
+* **`vistaaz=<deg|sun|parent>`**: the vista finder (`vista=<m>`) now takes a preferred heading — `sun` (into the low
+  sun at the URL `tod`), `parent` (toward the ringed giant a moon orbits) or a yaw in degrees — and only accepts
+  overlooks within ~25° of it (`Player._prefHeading`). Golden-hour hero frames walk to an edge that faces the light;
+  W9 meditation frames sit facing the giant.
+* **Under the ringed giant (W9)**: the sky of a moon rotates rigidly about its pole, so the giant's elevation at a
+  given `tod` depends only on latitude (scan: lat −60 → ≈22° at dusk, lat 0–20 → 77–79° overhead, which is why the old
+  capture only showed tree tops). The new capture spawns at lat −60, faces the giant, and frames figure + wolf + grazers
+  small under it (space request: a low third-person camera that frames the giant overhead).
+* **Crescents of light** (`Katana.js` `SlashArcs`, `katana.arc(kind, pos, up, fwd, mid)`): every cut hangs a ring
+  sector of light in the plane of the cut — white-hot at the outer edge, cosmic blue inside, tapering to threads at
+  both ends, revealed along the sweep in 0.05–0.08 s then fading. The iai crescent is stretched along the dash line,
+  centred on the middle of the dash and lingers ~1.2 s through the held beat (she ends beyond it); kesa / flat / rising
+  crescents for the combo. 4 pooled meshes (2 on `low`), additive, no per-frame allocation. The tip-path trail stays
+  for the combo but only draws while the blade direction itself turns fast (a pull out of the scabbard or a thrust drew
+  hard-edged outlines), with zero-width joints between separate sweeps.
+* **Blade trails are body-relative**: trail points are stored as offsets from her feet, so the arc reads as a crescent
+  of light around her that travels with her. In world space the iai dash (4 m in 0.1 s) swept the trail into a flat
+  white card. The trail veil is thinner (the bright edge line carries it).
+* **Iaido standoff side** also weighs the land BEHIND her as seen from each candidate side (a rising hillside fills the
+  frame; open land / a drop lets her stand against the sky).
+* **Wide framing keeps the lens level** when it rises over a slope (it used to tilt down onto the grass): the horizon
+  stays low and the sky holds the frame.
+* **The scarf stays red** under purple / blue grades (a faint dye glow in its own hue, a less pale sheen), and when she
+  sits or meditates the wind on it drops by 60% (from behind, a tail streaming level at shoulder height read as a
+  third, pink arm).
+* Hair strand grooves are now nearly the hair colour (pale stripes read as cords on the head in close-ups).
+
 ## Season 2 round 4 — polish toward the frames (19 Oct, later)
 
 * **The white wolf, rebuilt** (`Companion.js`): a lofted wolf instead of ellipsoid "balloon" parts — high rump, tucked

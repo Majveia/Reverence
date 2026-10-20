@@ -86,7 +86,10 @@ export class Player {
     // vista=<m>: walk to the best overlook nearby and face out over the drop (overlook / rest / first-person vistas)
     let vista = null;
     if (p.vista !== undefined && p.vista !== '0' && this.surface && !(+p.alt > 0.5) && p.view !== 'fly' && p.view !== 'orbit') {
-      safe(() => { vista = this._vistaSpot(dir, clamp(+p.vista > 1 ? +p.vista : 350, 20, 3000)); });
+      // vistaaz=<deg|sun|parent>: prefer overlooks that face this way (into the low sun, toward the ringed giant)
+      let pref = null;
+      if (p.vistaaz !== undefined) safe(() => { pref = this._prefHeading(dir, p.vistaaz, p.tod); });
+      safe(() => { vista = this._vistaSpot(dir, clamp(+p.vista > 1 ? +p.vista : 350, 20, 3000), pref); });
       if (vista) dir = vista.dir;
     }
     // first person spawned out at sea (e.g. W12 lat=35 lon=20): step ashore to the nearest dry ground (space request)
@@ -331,7 +334,29 @@ export class Player {
    * The creator's "over-the-edge view" / "classic overlook" frames, findable on any world. One-shot at spawn
    * (~20k height samples).
    */
-  _vistaSpot(dir, meters) {
+  /** A preferred tangent heading at `dir`: 'sun' (needs tod), 'parent' / any sky ref, or a yaw in degrees (0 = north). */
+  _prefHeading(dir, az, tod) {
+    const e = new THREE.Vector3(), n = new THREE.Vector3(), out = new THREE.Vector3();
+    tangentBasis(dir, e, n);
+    const C = this.world.celestial;
+    if (az === 'sun' && C) {
+      if (tod !== undefined) C.setLocalTime(dir, +tod);
+      out.copy(C.sunDir);
+    } else if (Number.isFinite(+az)) {
+      const y = +az * DEG;
+      return out.copy(n).multiplyScalar(Math.cos(y)).addScaledVector(e, Math.sin(y)).normalize();
+    } else if (C) {
+      if (tod !== undefined) C.setLocalTime(dir, +tod);
+      const b = this.world.body, sys = this.world.system;
+      const tb = az === 'parent' && b?.isMoon ? sys?.planets?.[b.parent] : null;
+      if (!tb) return null;
+      out.copy(C.bodyLocal(tb)).sub(_a.copy(dir).multiplyScalar(this.R));
+    } else return null;
+    projectOnPlane(out, dir);
+    return out.lengthSq() > 1e-8 ? out.normalize() : null;
+  }
+
+  _vistaSpot(dir, meters, pref = null) {
     const S = this.surface;
     if (!S) return null;
     const R = this.R, sea = S.seaLevel > -1e8 ? S.seaLevel : -Infinity;
@@ -370,7 +395,8 @@ export class Player {
         // preference for the URL point itself
         const sc = smoothstep(3, 22, dropNear) * 0.7 + smoothstep(10, 140, dropFar)
           - 2.0 * smoothstep(0.04, 0.18, nearH) - 1.2 * smoothstep(0.13, 0.32, farH) + 0.2 * smoothstep(0.0, 0.08, farH)
-          - 0.25 * (r * R / meters);
+          - 0.25 * (r * R / meters)
+          + (pref ? (hd.dot(pref) > 0.9 ? 0.6 * smoothstep(0.9, 1, hd.dot(pref)) : -5) : 0);
         if (sc > bestS) { bestS = sc; best = { dir: d.clone(), heading: hd.clone(), score: sc }; }
       }
     }
@@ -748,6 +774,7 @@ export class Player {
       w.events?.emit?.('player:slash', { pos: P, dir: D, radius: data.radius, kind: data.kind });
       au?.play?.('slash', { kind: data.kind, intensity: data.kind === 'iai' ? 1 : 0.6 });
       this.cam.addTrauma(data.kind === 'iai' ? 0.22 : 0.08);
+      if (this.katana) safe(() => this.katana.arc(data.kind, this.pos, up, this.forward, data.kind === 'iai' && this._stanceA ? _e.copy(this._stanceA) : null));
       if (data.kind === 'iai') { this._iaiPending = true; this._iaiFrom = (this._iaiFrom || new THREE.Vector3()).copy(this.pos); }
       else if (this.fx && this.katana) this.katana.burst(this.fx, _a.copy(this.pos).addScaledVector(this.forward, 0.6), up, this.forward, data.radius, data.kind, (p) => this.heights.groundR(p), this.katana.glow);
     }
@@ -1629,6 +1656,9 @@ export class Player {
       place(9, B.chest, 0, -0.06, -0.06, 0.15);
       const w = _d.copy(this.windV);
       if (this.state === 'swim') w.multiplyScalar(0.1);
+      // seated / meditating low on the ground she is sheltered: the tails lift and drift instead of streaming out
+      // level at shoulder height (from behind, a stiff horizontal tail read as a third arm)
+      w.multiplyScalar(1 - 0.6 * (this.restS?.w || 0));
       safe(() => this.scarf.update(dt, this.anchorsW, up, this.g, w, sp, this.gpos));
     }
     if (this.scarf) this.scarf.group.visible = vis && this.view !== 'fp';
@@ -1651,6 +1681,9 @@ export class Player {
       place(5, B.pack, 0.0, 0.0, -0.04, 0.06);
       const w = _d.copy(this.windV);
       if (this.state === 'swim') w.multiplyScalar(0.1);
+      // seated / meditating low on the ground she is sheltered: the tails lift and drift instead of streaming out
+      // level at shoulder height (from behind, a stiff horizontal tail read as a third arm)
+      w.multiplyScalar(1 - 0.6 * (this.restS?.w || 0));
       safe(() => this.hair.update(dt, this.hairAnchorsW, up, this.g, w, sp, this.gpos));
     }
     if (this.hair) this.hair.group.visible = vis && this.view !== 'fp';

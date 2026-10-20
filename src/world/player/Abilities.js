@@ -61,11 +61,16 @@ class PulseRing {
     this.center = new THREE.Vector3(); this.up = new THREE.Vector3(); this.e = new THREE.Vector3(); this.n = new THREE.Vector3();
     this.t = 99; this.dur = 3.0; this.maxR = 62;
     const g = new THREE.BufferGeometry();
-    this.pos = new Float32Array((seg + 1) * 2 * 3); this.at = new Float32Array((seg + 1) * 2 * 2);
+    // three vertices per spoke: the trailing ground edge, the leading ground edge, and the top of a low CURTAIN of
+    // light rising from the leading edge (a flat band on the ground vanished behind the grass from a low lens)
+    this.pos = new Float32Array((seg + 1) * 3 * 3); this.at = new Float32Array((seg + 1) * 3 * 2);
     g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('aT', new THREE.BufferAttribute(this.at, 2).setUsage(THREE.DynamicDrawUsage));
     const idx = [];
-    for (let i = 0; i < seg; i++) { const a = i * 2, b = a + 1, c = a + 2, d = a + 3; idx.push(a, c, b, b, c, d); }
+    for (let i = 0; i < seg; i++) {
+      const a = i * 3, b = a + 1, c = a + 3, d = a + 4; idx.push(a, c, b, b, c, d);      // the band on the ground
+      const e = a + 1, f = a + 2, gg = a + 4, h = a + 5; idx.push(e, gg, f, f, gg, h);     // the curtain
+    }
     g.setIndex(idx);
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 80);
     this.uA = { value: 0 };
@@ -76,7 +81,16 @@ class PulseRing {
       fragmentShader: /* glsl */`
         uniform float uA; uniform float uT; varying vec2 vT;
         void main(){
-          float x = vT.y;                                   // 0 inner (trailing) .. 1 outer (leading edge)
+          float x = vT.y;                                   // 0 inner (trailing) .. 1 outer (leading edge), 1..2 curtain
+          if (x > 1.0) {                                    // the curtain: bright at its foot, a soft veil upward
+            float v = x - 1.0;
+            float sc = 0.7 + 0.3 * sin(vT.x * 6.2831 * 90.0 + uT * 2.0) * sin(vT.x * 6.2831 * 23.0 - uT * 1.3);
+            float ac = (exp(-v * 4.0) * 0.75 + 0.12 * (1.0 - v)) * sc * uA * smoothstep(1.0, 0.92, v);
+            vec3 cc = mix(vec3(2.6, 2.1, 1.4), vec3(0.6, 1.0, 2.4), smoothstep(0.0, 0.7, v));
+            if (ac < 0.002) discard;
+            gl_FragColor = vec4(cc * ac, ac);
+            return;
+          }
           float lead = exp(-pow((x - 0.86) / 0.07, 2.0));
           float wake = smoothstep(0.0, 0.85, x) * 0.35;
           float sh = 0.75 + 0.25 * sin(vT.x * 6.2831 * 40.0 + uT * 3.0);
@@ -114,20 +128,21 @@ class PulseRing {
     const R = 1 + this.maxR * (1 - Math.pow(1 - u, 2.2));
     const W = 0.8 + R * 0.09;
     const r0 = Math.max(0, R - W), r1 = R;
+    const CH = 1.2 + 2.2 * Math.min(1, R / 25);           // curtain height: grows as it runs out (reads over grass)
     const j1 = Math.min(this.rows, Math.ceil(r1 / this.dr) + 1);
     for (let j = Math.max(0, Math.floor(r0 / this.dr)); j <= j1; j++) this._row(j, H);
     const seg = this.seg, P = this.pos, T = this.at;
     for (let i = 0; i <= seg; i++) {
       const ii = i % seg;
       const a = (ii / seg) * Math.PI * 2, ca = Math.cos(a), sa = Math.sin(a);
-      for (let k = 0; k < 2; k++) {
+      for (let k = 0; k < 3; k++) {
         const r = k ? r1 : r0;
         const jf = Math.min(this.rows - 0.001, r / this.dr), j = Math.floor(jf), f = jf - j;
         const h = this.table[j * seg + ii] * (1 - f) + this.table[Math.min(this.rows, j + 1) * seg + ii] * f;
-        _a.copy(this.center).addScaledVector(this.e, ca * r).addScaledVector(this.n, sa * r).normalize().multiplyScalar(h + 0.25 + r * 0.004);
-        const o = (i * 2 + k) * 3;
+        _a.copy(this.center).addScaledVector(this.e, ca * r).addScaledVector(this.n, sa * r).normalize().multiplyScalar(h + 0.25 + r * 0.004 + (k === 2 ? CH : 0));
+        const o = (i * 3 + k) * 3;
         P[o] = _a.x - origin.x; P[o + 1] = _a.y - origin.y; P[o + 2] = _a.z - origin.z;
-        T[(i * 2 + k) * 2] = i / seg; T[(i * 2 + k) * 2 + 1] = k ? 1 : 0;
+        T[(i * 3 + k) * 2] = i / seg; T[(i * 3 + k) * 2 + 1] = k;
       }
     }
     this.mesh.geometry.attributes.position.needsUpdate = true;

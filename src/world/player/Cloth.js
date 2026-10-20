@@ -187,10 +187,13 @@ export class Scarf {
       if (hairK) { this.material.specularIntensity = 0.18; this.material.sheen = 0.35; this.material.sheenRoughness = 0.35; this.material.sheenColor = new THREE.Color(palette.hairHi).multiplyScalar(0.5); }
       else { // silk-wool: a soft sheen in the scarf's own (lighter, more saturated) hue — never a pink/white film
         const hsl = {}; palette.scarf.getHSL(hsl);
-        this.material.sheen = 0.5; this.material.sheenRoughness = 0.5;
-        this.material.sheenColor = new THREE.Color().setHSL(hsl.h, Math.min(1, hsl.s * 1.1), Math.min(0.6, hsl.l * 1.35 + 0.05));
+        this.material.sheen = 0.32; this.material.sheenRoughness = 0.55;
+        this.material.sheenColor = new THREE.Color().setHSL(hsl.h, Math.min(1, hsl.s * 1.15), Math.min(0.5, hsl.l * 1.1));
       }
     }
+    // the one warm accent must stay RED under any sky (purple twilight / blue night grades turned it skin-pink):
+    // a faint dye glow in its own hue
+    if (!hairK) { this.material.emissive = palette.scarf.clone().multiplyScalar(0.07); }
     if (hairK) { if (nrm) nrm.dispose(); }
     this.meshes = [];
     for (const s of this.strips) {

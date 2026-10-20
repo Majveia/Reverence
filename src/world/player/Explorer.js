@@ -474,7 +474,7 @@ export function buildExplorer(renderer, body, quality) {
       const az0 = -0.5 + i * 0.33;
       const pts = [];
       for (let k = 0; k <= 8; k++) { const t = k / 8; HS(az0 * (1 - t) + Math.PI * Math.sign(az0 || 1) * t * 0.98, 0.5 + 0.55 * Math.sin(t * Math.PI) * 0.6 + t * 0.15, p); q.copy(p).sub(HC).normalize(); pts.push(p.clone().addScaledVector(q, 0.0075)); }
-      A.add('hair', tube(pts, 0.0018, 24, 3), P.hair.clone().lerp(P.hairHi, 0.35), hk);
+      A.add('hair', tube(pts, 0.0016, 24, 3), P.hair.clone().lerp(P.hairHi, 0.12), hk);
     }
     // the tie: a gold band and a short cuff of hair where the ponytail springs out (the tail itself is cloth)
     const T = HEAD.tie;

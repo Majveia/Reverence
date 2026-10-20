@@ -131,8 +131,8 @@ class Trail {
           float age = clamp(vT.x, 0.0, 1.0), across = vT.y;      // across: 0 at the hilt side, 1 at the tip
           // a crescent of light: a thin bright line along the edge's path, a soft veil toward the hilt
           float fade = (1.0 - age) * (1.0 - age);
-          float edge = exp(-pow((0.95 - across) / 0.075, 2.0));
-          float veil = across * across * 0.55;
+          float edge = exp(-pow((0.95 - across) / 0.06, 2.0));
+          float veil = pow(across, 4.0) * 0.32 * (1.0 - age);
           float a = fade * (edge * 1.1 + veil) * smoothstep(1.0, 0.985, across);
           float core = edge * (1.0 - age);
           vec3 c = mix(uColB, uColA, core) * uGlow;
@@ -162,8 +162,9 @@ class Trail {
       const i = (this.head - 1 - k + this.n * 2) % this.n;
       const t = this.age[i] / this.life;
       const o = k * 6;
-      P[o] = this.base[i * 3] - center.x; P[o + 1] = this.base[i * 3 + 1] - center.y; P[o + 2] = this.base[i * 3 + 2] - center.z;
-      P[o + 3] = this.tip[i * 3] - center.x; P[o + 4] = this.tip[i * 3 + 1] - center.y; P[o + 5] = this.tip[i * 3 + 2] - center.z;
+      // points are stored relative to her feet (see Katana.update): the mesh rides at `center`
+      P[o] = this.base[i * 3]; P[o + 1] = this.base[i * 3 + 1]; P[o + 2] = this.base[i * 3 + 2];
+      P[o + 3] = this.tip[i * 3]; P[o + 4] = this.tip[i * 3 + 1]; P[o + 5] = this.tip[i * 3 + 2];
       A[k * 4] = t; A[k * 4 + 1] = 0; A[k * 4 + 2] = t; A[k * 4 + 3] = 1;
       if (t < 1) live++;
     }
@@ -174,6 +175,96 @@ class Trail {
   }
   clear() { this.age.fill(9); this.count = 0; }
   dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); }
+}
+
+/**
+ * The crescent of a cut: a ring sector of light hung in the plane of the cut, thick and white-hot in the middle,
+ * tapering to threads at both ends, cooling to cosmic blue on its inner edge; it reveals along the sweep in a few
+ * hundredths of a second and fades (the iai crescent lingers through the held beat, stretched along the dash).
+ * Planet-local (re-centred like the trail); a few pooled meshes, no per-frame allocation.
+ */
+class SlashArcs {
+  constructor(n = 3) {
+    const SEG = 40;
+    const pos = [], at = [], idx = [];
+    for (let i = 0; i <= SEG; i++) {
+      const s = i / SEG;
+      for (let k = 0; k < 2; k++) { pos.push(0, 0, 0); at.push(s, k); }
+      if (i < SEG) { const a = i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+    }
+    this.geo = new THREE.BufferGeometry();
+    this.geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    this.geo.setAttribute('aT', new THREE.Float32BufferAttribute(at, 2));
+    this.geo.setIndex(idx);
+    this.geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 6);
+    this.items = [];
+    this.group = new THREE.Group(); this.group.name = 'katana-arcs';
+    for (let i = 0; i < n; i++) {
+      const u = { uAge: { value: 1 }, uReveal: { value: 1 }, uA0: { value: 0 }, uA1: { value: 1 }, uThick: { value: 0.14 }, uStretch: { value: 1 }, uGlow: { value: 1 } };
+      const mat = new THREE.ShaderMaterial({
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, uniforms: u,
+        vertexShader: /* glsl */`
+          attribute vec2 aT; uniform float uA0; uniform float uA1; uniform float uThick; uniform float uStretch; uniform float uAge;
+          varying vec2 vT;
+          void main() {
+            vT = aT;
+            float th = mix(uA0, uA1, aT.x);
+            float taper = pow(sin(3.14159 * aT.x), 0.7);
+            float r = (1.0 + 0.1 * uAge) * (1.0 - aT.y * uThick * taper);
+            vec3 p = vec3(cos(th) * r * uStretch, sin(th) * r, 0.0);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+          }`,
+        fragmentShader: /* glsl */`
+          uniform float uAge; uniform float uReveal; uniform float uGlow; varying vec2 vT;
+          void main() {
+            float s = vT.x, x = vT.y;                       // s along the sweep (tail 0 → head 1), x 0 outer → 1 inner
+            if (s > uReveal) discard;
+            float edge = exp(-x * 5.0);
+            float body = (1.0 - x) * 0.35;
+            float ends = smoothstep(0.0, 0.18, s) * smoothstep(1.0, 0.8, s) * (0.55 + 0.45 * smoothstep(0.2, 0.9, s));
+            float fade = pow(1.0 - clamp(uAge, 0.0, 1.0), 1.6);
+            float a = (edge * 1.2 + body) * ends * fade;
+            vec3 c = mix(vec3(0.7, 1.15, 3.0), vec3(3.4, 2.9, 2.1), edge) * uGlow;
+            if (a < 0.003) discard;
+            gl_FragColor = vec4(c * a, a);
+          }`,
+      });
+      const mesh = new THREE.Mesh(this.geo, mat);
+      mesh.frustumCulled = false; mesh.renderOrder = 12; mesh.visible = false; mesh.name = 'katana-arc';
+      mesh.matrixAutoUpdate = false;
+      this.group.add(mesh);
+      this.items.push({ mesh, u, t: 9, life: 0.4, reveal: 0.06 });
+    }
+    this.next = 0;
+    this._m = new THREE.Matrix4(); this._x = new THREE.Vector3(); this._y = new THREE.Vector3(); this._z = new THREE.Vector3();
+  }
+  /** center (planet-local), fwd / up unit; tilt: the cut plane leans from vertical toward her right (rad);
+   *  a0..a1: the sweep in that plane (rad, 0 = forward, π/2 = up); radius (m); stretch along fwd; life (s). */
+  spawn(center, fwd, up, tilt, a0, a1, radius, stretch, life, glow) {
+    const it = this.items[this.next]; this.next = (this.next + 1) % this.items.length;
+    const X = this._x.copy(fwd).normalize();
+    const Z = this._z.crossVectors(X, up).normalize();             // her right
+    const Y = this._y.copy(up).multiplyScalar(Math.cos(tilt)).addScaledVector(Z, Math.sin(tilt));
+    Y.addScaledVector(X, -Y.dot(X)).normalize();
+    Z.crossVectors(X, Y);
+    this._m.makeBasis(X, Y, Z).scale(_a.set(radius, radius, radius)).setPosition(center);
+    it.mesh.matrix.copy(this._m);
+    it.u.uA0.value = a0; it.u.uA1.value = a1; it.u.uStretch.value = stretch; it.u.uGlow.value = glow;
+    it.u.uThick.value = clamp(0.16 / Math.max(radius, 0.5) * 1.3, 0.08, 0.22);
+    it.t = 0; it.life = life; it.reveal = life > 0.6 ? 0.08 : 0.05;
+    it.mesh.visible = true;
+  }
+  update(dt) {
+    for (const it of this.items) {
+      if (!it.mesh.visible) continue;
+      it.t += dt;
+      it.u.uReveal.value = smoothstep(0, it.reveal, it.t) * 1.001;
+      it.u.uAge.value = clamp((it.t - it.reveal) / Math.max(it.life - it.reveal, 1e-3), 0, 1);
+      if (it.t >= it.life) it.mesh.visible = false;
+    }
+  }
+  clear() { for (const it of this.items) { it.mesh.visible = false; it.t = 9; } }
+  dispose() { this.geo.dispose(); for (const it of this.items) it.mesh.material.dispose(); }
 }
 
 /** A stand-alone sword (first-person copy): same geometry, its own materials; glow uniform shared if given. */
@@ -281,8 +372,10 @@ export class Katana {
     this.trail = new Trail(hi ? 30 : 18);
     this.trailGroup = new THREE.Group(); this.trailGroup.name = 'katana-trail-root';
     this.trailGroup.add(this.trail.mesh);
+    this.arcs = new SlashArcs(hi ? 4 : 2);
+    this.trailGroup.add(this.arcs.group);
     this.tipW = new THREE.Vector3(); this.baseW = new THREE.Vector3();
-    this.prevTipW = new THREE.Vector3(); this.prevBaseW = new THREE.Vector3(); this.hasPrev = false;
+    this.prevTipW = new THREE.Vector3(); this.prevBaseW = new THREE.Vector3(); this.hasPrev = false; this.prevDir = new THREE.Vector3(0, 1, 0); this.wasFast = false; this.lastPushB = new THREE.Vector3();
     this._m = new THREE.Matrix4();
 
     // ---- state machine
@@ -406,8 +499,23 @@ export class Katana {
     this._m.multiplyMatrices(group.matrix, this.sword.matrix);  // group (planet-local) ← sword
     this.baseW.set(0, 0.22, -0.004).applyMatrix4(this._m);
     this.tipW.set(0, BLADE_Y0 + BLADE_L, -0.01).applyMatrix4(this._m);
-    const fast = an.swordSpeed > 5 && an.swIn > 0.6;
+    // the trail lives in BODY-relative space (offsets from her feet): the arc the blade draws around her stays a
+    // crescent of light that travels with her — in world space the iai dash (4 m in 0.1 s) swept it into a flat card
+    this.baseW.sub(center); this.tipW.sub(center);
+    // only a SWEEP draws light: the blade direction itself must turn fast this frame (sliding out of the scabbard or
+    // a lunge moves the tip in a straight line and drew hard-edged "card" outlines)
+    _c.copy(this.tipW).sub(this.baseW).normalize();
+    const turn = this.hasPrev && dt > 1e-5 ? Math.acos(clamp(_c.dot(this.prevDir), -1, 1)) / dt : 0;
+    this.prevDir.copy(_c);
+    const fast = an.swordSpeed > 5 && an.swIn > 0.6 && turn > 4 && this.act !== 'iai'; // the iai draws its crescent (arc)
     if (fast) {
+      if (!this.wasFast && this.trail.count > 0) {
+        // a new sweep after a pause: break the ribbon with zero-width joints (no bridging quad back to the last arc)
+        this.trail.push(this.lastPushB, this.lastPushB);
+        this.trail.push(this.prevBaseW, this.prevBaseW);
+        this.trail.push(this.prevBaseW, this.prevTipW);
+      }
+      this.lastPushB.copy(this.baseW);
       if (this.hasPrev) {
         // sub-steps along the chord so a fast cut draws a smooth arc at low frame rates
         for (let k = 1; k <= 3; k++) {
@@ -417,10 +525,35 @@ export class Katana {
         }
       } else this.trail.push(this.baseW, this.tipW);
     }
+    this.wasFast = fast;
     this.hasPrev = true;
     this.prevBaseW.copy(this.baseW); this.prevTipW.copy(this.tipW);
     this.trail.uGlow.value = 0.55 + this.glow * 0.5 + (this.act === 'iai' ? 1.2 : 0);
+    // the iai flash is over in a tenth of a second: its crescent lingers through the held follow-through (the beat)
+    this.trail.life = this.act === 'iai' ? 0.75 : 0.3;
     this.trail.update(dt, center);
+    this.arcs.update(dt);
+  }
+
+  /** Hang the crescent of a cut in the air (planet-local `pos` = her feet). */
+  arc(kind, pos, up, fwd, mid = null) {
+    if (!this.arcs) return;
+    const g = 1 + Math.min(this.glow, 3) * 0.35;
+    if (kind === 'iai') {
+      // the flash cut: a long rising crescent stretched along the dash line, hung where she cut (she ends beyond it)
+      if (mid) _b.copy(mid); else _b.copy(pos).addScaledVector(fwd, -1.8);
+      _b.addScaledVector(up, 1.15);
+      this.arcs.spawn(_b, fwd, up, 0.55, -2.25, 0.75, 0.95, 2.4, 1.2, g * 1.35);
+    } else if (kind === 'slash1') { // kesa-giri: from high right down across the body
+      _b.copy(pos).addScaledVector(fwd, 0.45).addScaledVector(up, 1.1);
+      this.arcs.spawn(_b, fwd, up, -0.75, 2.0, -1.2, 1.15, 1.0, 0.42, g);
+    } else if (kind === 'slash2') { // the flat backhand
+      _b.copy(pos).addScaledVector(fwd, 0.35).addScaledVector(up, 1.15);
+      this.arcs.spawn(_b, fwd, up, 1.35, -1.9, 1.4, 1.2, 1.0, 0.42, g);
+    } else { // rising finisher
+      _b.copy(pos).addScaledVector(fwd, 0.45).addScaledVector(up, 1.0);
+      this.arcs.spawn(_b, fwd, up, 0.4, -2.2, 1.0, 1.25, 1.05, 0.5, g * 1.15);
+    }
   }
 
   /** Petals, leaves and grass bits flung along the cut (and light motes when the blade glows). */
@@ -466,5 +599,6 @@ export class Katana {
     for (const o of [this.sword, this.sheath]) o.traverse((m) => { if (m.isMesh) m.geometry.dispose(); });
     for (const m of this.mats) { m.map?.dispose?.(); m.dispose(); }
     this.trail.dispose();
+    this.arcs?.dispose();
   }
 }
