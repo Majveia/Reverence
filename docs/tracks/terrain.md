@@ -533,6 +533,16 @@ inView, levels, ms, msMax, readyMs, builds}` (`readyMs` = time until the terrain
 * `low` tier: Lambert lighting, coarser LOD (0.8 m leaves, 14 px/quad), no anisotropy.
 
 ## Known issues
+* Open after season 2 (the round 2 critic, 20 Oct: 4.8 → 5.5/10, blind 2/4; the track's season-2 rounds are used up,
+  so these lead the next pass): the arch framing the volcano with floating isles beyond is the strongest frame, close
+  to a game shot, but everything sits a notch below the creator's frames. The sea-of-cloud "sunrise" renders as flat
+  mid-day light (no low sun, god rays or warm/cool split; partly atmosphere's, see the section 6 request); the mountain
+  surface reads plasticky and unlit, with no painterly ground colour and no cloud at three heights; the midground
+  fields are noisy tree confetti or bald green instead of rolling painterly fields; there is no depth ladder from the
+  foreground to the mountain base; the arch and the isles need material and depth finish; the frames hold little life.
+  The smooth dome boulder with the sawtooth skirt (owner unknown, see section 6) sits in the arch shot with the
+  player's white wolf on it, and spiky ground artifacts show at the rock base there. The blind judges lost the golden
+  sunrise and the storm-meadow pairs and won the blossom-castle and arch pairs.
 * (season 2 r2) From the W1 hero view, the forest beyond the meadow (right half, lower cone flanks) still
   reads as brown ground between green tree dots. Brightening the gold season colour did not change it, so
   the brown is soil / bare ground under the flora track's far tree impostors, not the season paint.
