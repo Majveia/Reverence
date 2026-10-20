@@ -100,6 +100,28 @@ class Atmosphere {
     this._camLocal = new THREE.Vector3();
   }
 
+  _updateLandmarkGlow(eu, present, night, E) {
+    const gc = eu.uGlowC.value;
+    gc.x = 0;
+    if (!present) return;
+    let sc = null;
+    try { sc = this.world.get?.('flora')?.sacred || null; } catch (_) { sc = null; }
+    const pos = sc?.pos, st = sc?.site;
+    if (!pos || !st || sc.layer?.mesh?.visible === false) return;
+    const k = Math.max(night, (this.twilight || 0) * 0.6);
+    if (k < 0.02) return;
+    const H = st.height || 195, cr = st.crownR || 110;
+    const gp = eu.uGlowP.value;
+    _n.copy(pos).normalize();
+    gp.set(pos.x + _n.x * H * 0.62, pos.y + _n.y * H * 0.62, pos.z + _n.z * H * 0.62, cr * 0.7);
+    // strength: ~0.05–0.1 (HDR) where the view grazes the crown, a soft halo a few km out; denser air
+    // (rain, fog) carries more of it
+    const W = this.weather;
+    const wet = 1 + 1.5 * (W.fog || 0) + 1.0 * (W.rain || 0);
+    const s = k * E * 0.0026 * cr * wet * (1 + 0.4 * (this.meditating || 0));
+    gc.set(1.0 * s, 0.74 * s, 0.42 * s, 1 / (7000 * Math.max(0.6, cr / 112)));
+  }
+
   // ---------------------------------------------------------------- per-frame CPU
   lateUpdate(dt, t) {
     const w = this.world, cel = w.celestial;
@@ -178,6 +200,18 @@ class Atmosphere {
     this.meditating = med;
     if (med > 0) eu.uStarVis.value *= 1 - 0.6 * med;
     eu.uSource.value.x = present ? med * med * E * (0.0012 + 0.0035 * night) : 0;
+    // the World Tree of light (flora) lights the haze around it at dusk and night: a warm luminous mist
+    this._updateLandmarkGlow(eu, present, night, E);
+    // blue hour / night: drain the land's colour (sky keeps its hue); guard level = the ambient-lit land's
+    // radiance so emitters keep their colour
+    {
+      const lm = eu.uLandMono.value, hh0 = (camR - this.model.Rb) / Math.max(this.model.height, 1);
+      const low = 1 - THREE.MathUtils.smoothstep(hh0, 0.5, 1.2);
+      lm.x = present ? Math.min(0.85, (this.twBlue || 0) * 0.78 + night * 0.42) * low * (1 - 0.7 * (this.model.moody || 0)) : 0;
+      const sk = this.lighting?.skyIrr;
+      const amb = sk ? (sk[0] * 0.2126 + sk[1] * 0.7152 + sk[2] * 0.0722) / Math.PI : 0.01;
+      lm.y = Math.max(1e-4, amb * 0.35 + this.nightAmbient.g * 0.3 + (S.uMoonSky?.value?.y || 0) * 0.5);
+    }
 
     // overcast fraction of the sky (cloud type coverage + weather): greys & dims the ambient, feeds the env deck
     const W = this.weather;
@@ -257,11 +291,21 @@ class Atmosphere {
     const se = this._sunMu ?? 0.5;
     const gold = THREE.MathUtils.smoothstep(se, -0.05, 0.03) * (1 - THREE.MathUtils.smoothstep(se, 0.1, 0.42));
     this.goldHaze = gold;
+    // the warm aureole around a low sun (effect.js skyExtras): from ~20° down to sunrise / sunset, clear air
+    {
+      const gk = THREE.MathUtils.smoothstep(se, -0.03, 0.02) * (1 - THREE.MathUtils.smoothstep(se, 0.16, 0.36));
+      const clear = Math.max(0, 1 - 1.2 * (W.overcast || 0)) * Math.max(0, Math.min(1, W.sunDim ?? 1)) * (1 - Math.min(1, dust + (W.snow || 0)));
+      const sc = this.lighting.sunColor, sl = Math.max(1e-6, sc.r * 0.2126 + sc.g * 0.7152 + sc.b * 0.0722);
+      const k = gk * clear * m.sunIlluminance * 0.06 * (1 - 0.6 * (m.moody || 0)) * (1 - (this.eclipse || 0));
+      // honey: the reddened key light's hue pushed warmer
+      const hr = Math.min(2.2, sc.r / sl) * 1.05, hg = Math.min(1.6, sc.g / sl) * 0.9, hb = Math.min(1.4, sc.b / sl) * 0.55;
+      u.uGold.value.set(hr * k, hg * k, hb * k, 1.5);
+    }
     // heavy rain: visibility of a few km (grey rain haze swallows the forest at a few hundred metres)
     const rn = W.rain || 0;
     // snow is fog (falling snow swallows the land within ~1 km); a dust storm is a one-colour wall
     const sn = W.snow || 0;
-    let rho = fog * fog * 2.0e-4 + rn * 0.9e-4 + rn * rn * 2.4e-4 + sn * 3.0e-4 + sn * sn * 9e-4 + dust * 1.0e-3 + dust * dust * 1.6e-3 + gold * 2.6e-5 * (1 - 0.5 * (m.moody || 0));
+    let rho = fog * fog * 2.0e-4 + rn * 0.5e-4 + rn * rn * 1.6e-4 + sn * 3.0e-4 + sn * sn * 9e-4 + dust * 1.0e-3 + dust * dust * 1.6e-3 + gold * 2.6e-5 * (1 - 0.5 * (m.moody || 0));
     if (m.lava) rho *= 0.45;
     // bioluminescent worlds at night: a low mist that takes the glow of the flora (coloured fog lit by its
     // light source: teal around W4's glowing forest)
@@ -317,7 +361,9 @@ class Atmosphere {
       const sl = (sky[0] * 0.2126 + sky[1] * 0.7152 + sky[2] * 0.0722) / Math.PI;
       const fhc = fh || _n.set(0.92, 0.95, 1.0);
       const lift = (0.76 + 0.26 * rn * (1 - storm)) * (1 - 0.55 * storm);
-      oL.set((sl * (0.55 + 0.45 * fhc.x) + na.r * 0.02) * lift, (sl * (0.55 + 0.45 * fhc.y) + na.g * 0.02) * lift, (sl * (0.55 + 0.45 * fhc.z) + na.b * 0.02) * lift);
+      // (rain, not storm: a soft cool-lavender veil, the creator's rain frame; storms stay slate)
+      const lav = Math.min(1, rn * 1.4) * (1 - storm);
+      oL.set((sl * (0.55 + 0.45 * fhc.x) + na.r * 0.02) * lift * (1 - 0.02 * lav), (sl * (0.55 + 0.45 * fhc.y) + na.g * 0.02) * lift * (1 - 0.05 * lav), (sl * (0.55 + 0.45 * fhc.z) + na.b * 0.02) * lift * (1 + 0.09 * lav));
       oL.w = THREE.MathUtils.clamp(oc * 0.75 + rn * 0.5, 0, 0.9);
       u.uLandSun.value.x = THREE.MathUtils.smoothstep(this._sunMu ?? 0.5, -0.012, 0.015) * Math.max(0, Math.min(1, W.sunDim ?? 1));
     }

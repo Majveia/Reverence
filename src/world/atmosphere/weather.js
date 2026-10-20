@@ -518,7 +518,7 @@ export class Weather {
       // far sheet: the same instances in a 3× larger volume, thinner and fainter (dense rain into the distance)
       const b0 = u.uBox.value, w0 = u.uWidth.value, a0 = u.uAlpha.value;
       this.bolt.visible = false;
-      u.uSheet.value = 1; u.uBox.value = b0 * 3; u.uWidth.value = w0 * 3.2; u.uAlpha.value = a0 * 0.5;
+      u.uSheet.value = 1; u.uBox.value = b0 * 3; u.uWidth.value = w0 * 2.2; u.uAlpha.value = a0 * 0.26;   // (fainter: thousands of sub-pixel far streaks summed into a flat milky film over the foreground)
       u.uOffset.value.copy(this._driftFar).negate();
       renderer.render(this.pscene, cam);
       u.uSheet.value = 0; u.uBox.value = b0; u.uWidth.value = w0; u.uAlpha.value = a0;

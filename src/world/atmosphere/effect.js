@@ -72,6 +72,10 @@ uniform vec2 uLandSun;        // x: sun lights the near air (0 once the sun has 
 uniform vec4 uLandOC;         // rgb: haze radiance under a closed deck (lit by the cloud bases), a: overcast share
 uniform vec4 uFogGlow;        // dust / fog wall: rgb sun glow radiance (HG lobe inside the veil), a: gust-band amount
 uniform vec4 uSource;         // ring of the source (meditation): x strength, y angular radius (rad), z width (rad)
+uniform vec4 uLandMono;       // blue hour / night: x share of the land's colour removed (Purkinje), y emissive guard level, z orbit-off
+uniform vec4 uGold;           // low golden sun: rgb warm aureole radiance (art), w broad-lobe share
+uniform vec4 uGlowP;          // a luminous landmark lighting the haze (World Tree at night): xyz planet-local centre, w core radius (m)
+uniform vec4 uGlowC;          // rgb in-scatter strength, w 1/attenuation distance (1/m)
 varying vec2 vUv;
 
 // Night lights of settlements seen from altitude / orbit: cores + sprawl along noise "roads", only where
@@ -265,6 +269,13 @@ vec3 skyExtras(vec3 dir, vec3 up, float camR, vec3 dirP){
   // aerosol aureole: a soft white halo hugging the moon disc (seats it in the sky)
   ms += vec3(dot(uMoonSky, vec3(0.3333))) * 0.25 * min(atmo_phaseHG(mnu, 0.9), 20.0) * (0.6 + 0.4 * uAPScale / 0.5);
   vec3 L = ns + ms;
+  // a low golden sun floods the sky around it with warm light (Ghost of Yotei sunrise): a honeyed aureole
+  // (forward lobe + a broad lobe) strongest near the horizon, in the true view direction (dirP)
+  if (uGold.x > 0.0){
+    float snu = dot(dirP, uSunDir);
+    float el = max(dot(dirP, up), 0.0);
+    L += uGold.rgb * (atmo_phaseHG(snu, 0.76) * 0.45 + atmo_phaseHG(snu, 0.5) * uGold.w) * (0.35 + 0.65 * exp(-el / 0.3));
+  }
   if (uTwi.x > 0.0) L += twilightSky(dir, up);
   if (uCitySky > 0.0) L += citySky(dir, up, camR);
   return L;
@@ -276,6 +287,18 @@ vec3 skyExtras(vec3 dir, vec3 up, float camR, vec3 dirP){
 // the horizon (sky-view LUT incl. the sun's Mie aureole, the blue-hour dome, the night glow). Each ridge back
 // is one step paler and takes the colour of the sky right behind it: far silhouettes melt into the horizon
 // instead of standing as hard cut-outs. Rain / overcast blend the in-scatter toward the deck-lit grey veil.
+// Glow of a luminous landmark in the haze around it (single scattering from a point source, analytic:
+// ∫ dt / (h² + (t - tc)²) = (atan((t1 - tc) / h) - atan((t0 - tc) / h)) / h, h = closest approach): the air
+// around the World Tree at night is a warm luminous mist, brightest where the view grazes the crown.
+vec3 landmarkGlow(vec3 ro, vec3 dir, float d){
+  vec3 oc = uGlowP.xyz - ro;
+  float tc = dot(oc, dir);
+  float h = max(length(oc - dir * tc), uGlowP.w);
+  float t1 = min(d, 60000.0);
+  float a = (atan((t1 - tc) / h) - atan(-tc / h)) / h;
+  return uGlowC.rgb * a * exp(-max(tc, 0.0) * uGlowC.w);
+}
+
 float landOD(vec3 ro, vec3 dir, float d){
   d = min(d, uLand.w);
   float dt = d / 6.0, od = 0.0;
@@ -283,7 +306,9 @@ float landOD(vec3 ro, vec3 dir, float d){
     vec3 p = ro + dir * ((float(i) + 0.5) * dt);
     od += exp(-max(length(p) - uLand.z, -400.0) * uLand.y);
   }
-  return od * dt * uLand.x;
+  // the foreground stays crisp (the veil builds with distance: ~d²/1200 m within the first few hundred
+  // metres, linear beyond) — the haze is a landscape-scale medium, not a film over the lens
+  return od * dt * uLand.x * (1.0 - exp(-d / 600.0));
 }
 vec3 hazeSky(vec3 dir, vec3 up, float camR, float nu){
   float cz = dot(dir, up);
@@ -395,6 +420,14 @@ void main(){
       // chips) — fade the lit ground with the sphere's own N·L (wrap), so the day side ends in a graded band
       col *= mix(1.0, smoothstep(-0.07, 0.16, muH), uOrbitLit);
     }
+    // blue hour: the sky keeps its colour, the land has none (scotopic vision: the land's own colour drains
+    // to a cool grey; the haze in front keeps the sky's hue, and bright emitters — windows, lanterns, glowing
+    // flora — keep theirs: the warm accent against a colourless land)
+    if (uLandMono.x > 0.0){
+      float lg = rv_luma(col);
+      float km = uLandMono.x * (1.0 - smoothstep(uLandMono.y * 3.0, uLandMono.y * 12.0, lg));
+      col = mix(col, vec3(lg) * vec3(0.82, 0.92, 1.12), km);
+    }
     outc = col * a.T + L;
     if (uCityGround > 0.0){ vec3 ph = ro + dir * tHit; outc += cityGround(normalize(ph), length(ph)) * a.T; }
     if (uLand.x > 0.0){
@@ -405,6 +438,7 @@ void main(){
       if (Th < 0.999) outc = mix(hazeSky(dir, up, camR, nu), outc, Th);
     }
     outc = applyFog(outc, ro, dir, tHit, up, nu);
+    if (uGlowC.x > 0.0) outc += landmarkGlow(ro, dir, tHit);
   } else {
     // ---------------- sky / background
     float tAtmEnd = far ? top.y : min(tHit, top.y);
@@ -486,6 +520,7 @@ void main(){
     float vis = far ? clamp((bl - uStarVis * sl) / max(bl, 1e-6), 0.0, 1.0) : 1.0;
     outc = bg * vis + L;
     if (camR < uAtmoRt) outc = applyFog(outc, ro, dir, far ? 40000.0 : tHit, up, nu);
+    if (uGlowC.x > 0.0 && camR < uAtmoRt) outc += landmarkGlow(ro, dir, far ? 60000.0 : tHit);
   }
   gl_FragColor = vec4(outc, 1.0);
 }`;
@@ -559,6 +594,10 @@ export class AtmosphereEffect {
       uLandSun: { value: new THREE.Vector2(1, 0) },
       uFogGlow: { value: new THREE.Vector4(0, 0, 0, 0) },
       uSource: { value: new THREE.Vector4(0, 0.52, 0.006, 0) },
+      uGlowP: { value: new THREE.Vector4(0, 0, 0, 60) },
+      uGold: { value: new THREE.Vector4(0, 0, 0, 0.6) },
+      uLandMono: { value: new THREE.Vector4(0, 1, 0, 0) },
+      uGlowC: { value: new THREE.Vector4(0, 0, 0, 1 / 9000) },
       ...atmo.atmoUniforms,
     };
     this.mat = fsMaterial(FRAG, this.u);

@@ -183,7 +183,10 @@ float cl_dlod = 0.0;
 
 float cl_remap(float x, float a, float b, float c, float d){ return c + (x - a) * (d - c) / max(b - a, 1e-4); }
 
-vec4 cl_weather(vec3 p){ return texture(uWeather, uWeatherRot * p); }
+// (explicit LOD: inside the jittered march neighbouring pixels sample far-apart points, so the implicit
+// derivative-based mip choice jumped between levels in bands across the screen → wavy horizontal stripes in
+// clouds seen at a grazing angle; far away (orbit LOD) a coarser level filters the cells)
+vec4 cl_weather(vec3 p){ return textureLod(uWeather, uWeatherRot * p, cl_lod * 1.5); }
 
 // base density (no detail) at planet-local position p with normalized layer height h
 float cl_base(vec3 p, float h, vec4 wx, out float prof){
@@ -404,6 +407,7 @@ void main(){
   // (only from inside / above the layer: below the deck the uniform steps keep the jitter variance even)
   float kq = camR >= Rc0 ? smoothstep(thick * 3.0, thick * 12.0, len) : 0.0;
   float jit = rv_ign(gl_FragCoord.xy + 5.588238 * uFrameJitter);
+  float jl = rv_ign(gl_FragCoord.yx * 1.31 + 17.17 + 3.7 * uFrameJitter);
   float nu = dot(dir, uLightDir);
   // dual-lobe HG + silver lining (strong forward peak), mixed per octave below
   float phS = cl_hg(nu, 0.9);
@@ -442,23 +446,35 @@ void main(){
     float od = 0.0;
     float ls = lightStep * (1.0 + 1.5 * cl_lod);
     vec3 lp = p;
+    float hPrev = h;
+    // each light step samples a jittered point inside its segment (TAA / the still's denoise integrate it):
+    // fixed sample points made the optical depth jump wherever a sample crossed a cloud's top → terraced,
+    // wavy horizontal stripes across clouds seen at a grazing angle
     for (int j = 0; j < 6; j++){
       if (float(j) >= uLightSteps) break;
-      lp += uLightDir * ls;
-      float lr = length(lp);
-      float lh = (lr - Rc0) / thick;
-      if (lh > 1.0 || lh < 0.0) break;
-      // detail erosion only on the first light step: deeper steps with detail turned the shadowed sides of
-      // thick clouds into a freckled sponge (the od noise follows the 90 m detail cells)
-      // (base shape only: detail in the light march mottled the lit bodies with a dirty, speckled texture —
-      // the detail erosion shapes the edges through the view-ray density, the lighting stays coherent)
-      od += cl_density(lp, lh, false) * ls;
+      vec3 lq = lp + uLightDir * ls;
+      float lh = (length(lq) - Rc0) / thick;
+      float fr = 1.0;
+      bool leaves = lh > 1.0 || lh < 0.0;
+      // the last step leaves the layer: only the part of it still inside counts (no jump at fixed heights)
+      if (leaves) fr = clamp(((lh > 1.0 ? 1.0 : 0.0) - hPrev) / (lh - hPrev), 0.0, 1.0);
+      if (fr > 0.0){
+        vec3 lm = lp + uLightDir * (ls * fr * mix(0.2, 1.0, jl));
+        float hm = clamp((length(lm) - Rc0) / thick, 0.0, 1.0);
+        // (base shape only: detail in the light march mottled the lit bodies with a dirty, speckled texture —
+        // the detail erosion shapes the edges through the view-ray density, the lighting stays coherent)
+        od += cl_density(lm, hm, false) * ls * fr;
+      }
+      if (leaves) break;
+      lp = lq; hPrev = lh;
       ls *= 1.9;
     }
     od *= sg;
     // --- optical depth of the column above (ambient occlusion from the sky, diffuse transmission)
+    // (no cut-off height: an h < 0.9 gate made the column depth drop to 0 at one fixed height → a bright
+    // contour line across every cloud; the span shrinks to 0 at the top by itself)
     float odUp = 0.0;
-    if (h < 0.9){
+    if (h < 0.995){
       float span = (1.0 - h) * thick;
       float hu1 = h + (1.0 - h) * 0.3, hu2 = h + (1.0 - h) * 0.7;
 #ifdef CL_HQ
@@ -933,9 +949,9 @@ export class Clouds {
     // bases (light pollution glows on the deck)
     const nsk = this.atmo.shared?.uNightSky?.value, eu = this.atmo.effect?.u;
     if (nsk) at.addScaledVector(nsk, 0.9);
-    // (the neon / sodium light pollution lights the whole cloud, its base most: clouds sit in the glowing
-    // night sky instead of reading as black smoke)
-    if (eu && eu.uCitySky.value > 0) { const cc = eu.uCityCol.value, cs = eu.uCitySky.value; u.uAmbBot.value.addScaledVector(cc, cs * 6.0); at.addScaledVector(cc, cs * 2.2); }
+    // (on neon-noir worlds the light pollution lights the whole cloud, its base most: clouds sit in the
+    // glowing night sky instead of reading as black smoke; elsewhere only a faint warm underside)
+    if (eu && eu.uCitySky.value > 0) { const cc = eu.uCityCol.value, cs = eu.uCitySky.value, moodyC = this.atmo.model?.moody || 0; u.uAmbBot.value.addScaledVector(cc, cs * (0.5 + 5.5 * moodyC)); at.addScaledVector(cc, cs * 2.2 * moodyC); }
     if (!this._refDone) {
       this._refDone = true;
       m.skyIrradiance(rc, 0.7, sk, gr);
