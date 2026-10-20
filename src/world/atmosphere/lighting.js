@@ -382,6 +382,20 @@ export class Lighting {
     const above = Math.max(altK, clp ? THREE.MathUtils.smoothstep(camR, clp.Rc0 + (clp.Rc1 - clp.Rc0) * 0.5, clp.Rc1 + 200) : 0);
     const cloudDim = (weather ? weather.sunDim : 1) * (1 - above) + above;
     this.sunColor.setRGB(starCol.r * T[0] * E, starCol.g * T[1] * E, starCol.b * T[2] * E).multiplyScalar(cloudDim);
+    // golden hour (Ghost of Yotei light): a low sun is a warmer, honeyed key (luminance kept) — long gold light
+    // across the fields at sunrise / sunset; also warmer while the explorer meditates (warm / cool palette)
+    if (model.present && altK < 1) {
+      let med = 0;
+      try { med = Math.min(1, Math.max(0, +(this.world.player?.meditating || 0))); } catch (_) { med = 0; }
+      const gold = THREE.MathUtils.smoothstep(muS, -0.02, 0.04) * (1 - THREE.MathUtils.smoothstep(muS, 0.12, 0.36));
+      const wk = Math.max(gold * 0.85, med * 0.7) * (1 - altK);
+      if (wk > 0) {
+        const c = this.sunColor, l0 = c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+        c.r *= 1 + 0.16 * wk; c.g *= 1 + 0.01 * wk; c.b *= 1 - 0.24 * wk;
+        const l1 = c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+        if (l1 > 1e-9) c.multiplyScalar(l0 / l1 * (1 + 0.25 * med));
+      }
+    }
     const sunI = this.sunColor.r * 0.2126 + this.sunColor.g * 0.7152 + this.sunColor.b * 0.0722;
 
     // --- sky irradiance (CPU model) for the hemisphere fallback / ambient uniforms
@@ -415,7 +429,8 @@ export class Lighting {
     // colour (the atmosphere pass adds the art twilight to the sky only), so the land falls to silhouette
     const blue = (this.atmo.twBlue || 0) * (1 - altK);
     if (blue > 0) {
-      const bd = 1 - 0.56 * blue;
+      // (a faint cool ambient stays: the silhouette keeps one rim of detail instead of a black cut-out)
+      const bd = 1 - 0.46 * blue;
       for (let c = 0; c < 3; c++) { sky[c] *= bd; gr[c] *= bd; }
       this.envScale *= bd;
     }

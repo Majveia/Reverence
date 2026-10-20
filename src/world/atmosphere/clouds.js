@@ -244,7 +244,7 @@ float cl_base(vec3 p, float h, vec4 wx, out float prof){
   if (cl_lod > 0.0) base += cl_lod * uShape7.y * smoothstep(0.12, 0.55, cover) * smoothstep(0.0, 0.25, h) * (1.0 - smoothstep(0.45, 0.8, h));
   // thin coverage gives no confetti of tiny puffs (noise peaks barely above the threshold) near the camera:
   // clear sky between real cloud clusters, BotW-style
-  base *= mix(smoothstep(0.14, 0.34, cover), 1.0, cl_lod);
+  base *= mix(smoothstep(0.2, 0.42, cover), 1.0, cl_lod);
   // denser toward the top (wispy, translucent bases; bright, solid tops)
   base *= mix(uShape4.y, 1.0, smoothstep(0.0, 0.65, h));
   return max(base, 0.0);
@@ -277,7 +277,7 @@ float cl_densityW(vec3 p, float h, bool detail, out vec4 wx){
   b = max(b, 0.0);
   b *= mix(1.0, smoothstep(0.0, uShape6.w, b), 1.0 - cl_lod);
   // no detached specks: where the base shape is nearly empty the erosion may not leave isolated bits
-  b *= mix(1.0, smoothstep(0.05, 0.18, b0), 1.0 - cl_lod);
+  b *= mix(1.0, smoothstep(0.08, 0.26, b0), 1.0 - cl_lod);
   // storms are denser & darker
   return max(b, 0.0) * (1.0 + wx.b * 1.5);
 }
@@ -311,7 +311,20 @@ uniform float uInside;       // camera inside the atmosphere (sky LUT valid)
 uniform vec2 uLowRes;
 uniform vec3 uAmbNight;      // moon / starlight fill on the night side (seen from altitude / orbit)
 uniform vec4 uCirrus;        // high ice layer: radius (m), opacity, 1/tile (1/m), stretch along the wind
+uniform vec4 uLand;          // landscape haze of the atmosphere pass (effect.js landOD)
 varying vec2 vUv;
+
+// the same landscape haze as the atmosphere pass: far clouds melt into the horizon with the ridges below them
+float cl_landOD(vec3 ro, vec3 dir, float d){
+  if (uLand.x <= 0.0) return 0.0;
+  d = min(d, uLand.w);
+  float dt = d / 5.0, od = 0.0;
+  for (int i = 0; i < 5; i++){
+    vec3 p = ro + dir * ((float(i) + 0.5) * dt);
+    od += exp(-max(length(p) - uLand.z, -400.0) * uLand.y);
+  }
+  return od * dt * uLand.x;
+}
 
 // High cirrus / cirrostratus sheet (thin ice, 2D): fibrous streaks stretched along the wind, forward-
 // scattering halo around the sun. Returns radiance (rgb) and opacity (a).
@@ -363,9 +376,12 @@ void main(){
     if (gnd.x > 0.0) skip = true;
     t0 = inner.y; t1 = outer.y;
   } else if (camR < Rc1){
-    t0 = 0.0; t1 = inner.x > 0.0 ? inner.x : outer.y;
+    // a ray that dips under the base and misses the ground re-enters the layer beyond the base tangent: march
+    // through to the far exit (the gap is skipped sample by sample) — stopping at the base made a hard seam
+    // along the tangent elevation and cut the far deck off (a flat strip)
+    t0 = 0.0; t1 = (inner.x > 0.0 && gnd.x > 0.0) ? inner.x : outer.y;
   } else {
-    t0 = outer.x; t1 = inner.x > 0.0 ? inner.x : outer.y;
+    t0 = outer.x; t1 = (inner.x > 0.0 && gnd.x > 0.0) ? inner.x : outer.y;
   }
   if (!skip){
     t1 = min(t1, tHit);
@@ -444,6 +460,9 @@ void main(){
     }
     float muS = dot(n, uLightDir);
     vec3 sunT = atmo_sunTransmittance(r, muS) * uLightIll;
+    // from orbit the terminator on the cloud tops is graded (a soft warm band, not a hard cut): the grazing
+    // sunlight fades in over ~12° of the sphere
+    sunT *= mix(1.0, smoothstep(-0.03, 0.2, muS), 1.0 - uAmbLocal);
     // multiply-scattered light has travelled through cloud (white droplets): less of the low-sun tint
     vec3 sunTd = mix(sunT, vec3(dot(sunT, vec3(0.2126, 0.7152, 0.0722))), 0.45);
     // multiple-scattering octaves (Wrenninge): energy a, extinction b, anisotropy c
@@ -461,11 +480,11 @@ void main(){
     lumMS = lumMS / (1.0 + lumMS * 2.2);
     // diffuse transmission through the column above (thick decks: mottled, darker where thicker)
     float Tup = 1.0 / (1.0 + uShape5.y * odUp);
-    float day = smoothstep(-0.12, 0.3, muS) * (0.35 + 0.65 * clamp(muS, 0.0, 1.0)) / 0.805;
+    float day = smoothstep(-0.05, 0.3, muS) * (0.35 + 0.65 * clamp(muS, 0.0, 1.0)) / 0.805;
     vec3 aTop = mix(uAmbRef * day + uAmbNight, uAmbTop, uAmbLocal);
     vec3 aBot = mix(uAmbRef * day * 0.5, uAmbBot, uAmbLocal);
     float hk = clamp(h * 1.25, 0.0, 1.0);
-    vec3 amb = (aTop * hk * mix(0.12, 1.0, Tup) + aBot * (1.0 - hk) * mix(0.2, 1.0, Tup)) * uShape3.w;
+    vec3 amb = (aTop * hk * mix(0.16, 1.0, Tup) + aBot * (1.0 - hk) * mix(0.36, 1.0, Tup)) * uShape3.w;
     // overcast / storm: light reaching the base is diffused through the deck → neutral grey, darker
     float oc = clamp(max((wxs.r * uShape3.x + uShape3.y + uCoverBoost) * 1.4 - 0.5, uCoverBoost * 2.2), 0.0, 1.0);
     float ocb = oc * (1.0 - 0.6 * h);
@@ -489,6 +508,7 @@ void main(){
     vec2 ta = atmo_raySphere(ro, dir, uAtmoRt);
     vec3 pa = ro + dir * max(ta.x, 0.0);
     vec3 Tair = mix(vec3(1.0), pow(atmo_transSegment(pa, p1), vec3(uAPScale)), 0.85);
+    if (uInside > 0.5) Tair *= exp(-cl_landOD(ro, dir, dist));
     vec3 skyL = vec3(0.0);
     if (uInside > 0.5) skyL = atmo_skyLUT(dir, ro / camR, camR, uSunDir, dot(dir, uSunDir)) * uSunIllSky;
     L = L * Tair + skyL * (1.0 - Tair) * alpha;
@@ -721,6 +741,7 @@ export class Clouds {
       uShape7: { value: new THREE.Vector4(P.billow ?? 0, Params.num?.('veil') ?? 0.015, 0, 0) },
       uAmbNight: { value: new THREE.Vector3() },
       uCirrus: { value: new THREE.Vector4(0, 0, 1 / (10000 * sizeK), 0.4) },
+      uLand: atmo.effect?.u?.uLand ?? { value: new THREE.Vector4(0, 1, 0, 1) },
       uWindA: { value: this.windA.clone() }, uWindB: { value: this.windB.clone() },
       uWindDirC: { value: new THREE.Vector3(1, 0, 0) },
       uCoverBoost: { value: 0 },

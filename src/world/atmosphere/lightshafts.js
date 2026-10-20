@@ -370,9 +370,12 @@ void main(){
       // bright shafts through the gaps, dimmer air in the shadows between them, a little of the mean glow
       // relative to what the shaft crosses (the sky near a low sun is many times brighter than the zenith):
       // lines through gaps are brightened in the key light's hue, the shadowed lines between them dimmed
-      float gain = max(con, 0.0) * 7.0 + fb * uFanP.y;
-      c += min(c, vec3(4.0)) * uFanCol * gain * kf;
-      c *= 1.0 - clamp(-con * 3.0 * kf, 0.0, 0.4);
+      // (warm near the sun, paler and desaturated toward the far end of each shaft)
+      float gain = max(con, 0.0) * 10.0 + fb * uFanP.y;
+      vec3 fcol = mix(vec3(rv_luma(uFanCol)), uFanCol, exp(-ang * 1.1));
+      c += min(c, vec3(4.0)) * fcol * gain * kf;
+      // the shadowed lines between the shafts (and the cloud mass around the gaps) are darkened: local contrast
+      c *= 1.0 - clamp(-con * 4.5 * kf, 0.0, 0.5);
       if (uDebug > 5.5) c = vec3(fb, max(con, 0.0) * 4.0, max(-con, 0.0) * 4.0);
     }
   }
@@ -608,7 +611,7 @@ export class LightShafts {
     const gold = 1 - THREE.MathUtils.smoothstep(this._elev ?? 1, 0.02, 0.3);
     cu.uColor.value.set(kc.r, kc.g, kc.b).multiplyScalar(strength * (0.12 + 0.22 * gold));
     // fan: tinted by the key light (warm at golden hour), relative to the sky the shafts cross
-    cu.uFanP.value.set(fan, 0.1, 0.75 + 0.35 * gold, 0);
+    cu.uFanP.value.set(fan, 0.12, 0.9 + 0.4 * gold, 0);
     cu.uFanSun.value.set(sx, sy);
     // shafts are scaled to the sky they cross (a reddened low sun is dim in absolute terms but the shafts
     // must still read against its sky): hue of the key light, brightness ∝ sky radiance
