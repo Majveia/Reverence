@@ -128,9 +128,9 @@ function makeSkyBeam() {
       uniform float uA; uniform float uT; varying vec2 vB;
       void main(){
         float x = abs(vB.x), y = vB.y;
-        float core = exp(-x * x * 9.0), veil = (1.0 - x) * (1.0 - x);
+        float core = exp(-x * x * 4.0), veil = (1.0 - x) * (1.0 - x);
         float stream = 0.75 + 0.25 * sin(y * 60.0 - uT * 1.6 + vB.x * 4.0) * sin(y * 23.0 - uT * 0.7);
-        float a = (core * 0.7 + veil * 0.3) * stream * smoothstep(0.0, 0.02, y) * pow(1.0 - y, 1.6) * uA;
+        float a = (core * 0.9 + veil * 0.45) * stream * smoothstep(0.0, 0.02, y) * pow(1.0 - y, 1.6) * uA;
         if (a < 0.002) discard;
         vec3 c = mix(vec3(2.6, 2.1, 1.35), vec3(0.8, 1.05, 2.0), smoothstep(0.0, 0.6, y) * 0.7 + x * 0.3);
         gl_FragColor = vec4(c * a, a);
@@ -172,7 +172,7 @@ class PulseRing {
           float x = vT.y;                                   // 0 inner (trailing) .. 1 outer (leading edge), 1..2 curtain
           if (x > 1.0) {                                    // the curtain: bright at its foot, a soft veil upward
             float v = x - 1.0;
-            float sc = 0.7 + 0.3 * sin(vT.x * 6.2831 * 90.0 + uT * 2.0) * sin(vT.x * 6.2831 * 23.0 - uT * 1.3);
+            float sc = 0.8 + 0.2 * sin(vT.x * 6.2831 * 90.0 + uT * 2.0 + v * 3.0) * sin(vT.x * 6.2831 * 23.0 - uT * 1.3);
             float ac = (exp(-v * 3.0) * 1.25 + 0.22 * (1.0 - v)) * sc * uA * smoothstep(1.0, 0.9, v);
             vec3 cc = mix(vec3(3.4, 2.6, 1.5), vec3(0.8, 1.3, 3.0), smoothstep(0.05, 0.8, v));
             if (ac < 0.002) discard;
@@ -443,7 +443,7 @@ export class Abilities {
         au.material.uniforms.uReveal.value = this.aurRev;
         au.material.uniforms.uR.value = 3.6 * (1 + (1 - med) * pf * 0.35);
       }
-      const wantB = Math.max(smoothstep(0.4, 1, med) * 0.55, pf * 0.8);
+      const wantB = Math.max(smoothstep(0.4, 1, med) * 1.0, pf * 0.8);
       this.beamA += (wantB - this.beamA) * dampF(wantB > this.beamA ? (pf > 0.2 ? 9 : 1.2) : 1.6, dt);
       const bm = this.beam;
       bm.visible = this.beamA > 0.01 && ctx.visible && !ctx.fp;
