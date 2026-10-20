@@ -398,6 +398,9 @@ void main(){
   float thick = Rc1 - Rc0;
   float steps = clamp(uSteps * (0.35 + 0.65 * clamp(len / (thick * 3.0), 0.0, 1.0)), 8.0, uSteps);
   float dt = len / steps;
+  // long grazing paths (inside / above the layer toward the horizon): steps grow with distance (quadratic
+  // spacing) so the near deck is finely sampled — uniform ~1 km steps sliced the cloud tops into stripes
+  float kq = smoothstep(thick * 3.0, thick * 12.0, len);
   float jit = rv_ign(gl_FragCoord.xy + 5.588238 * uFrameJitter);
   float nu = dot(dir, uLightDir);
   // dual-lobe HG + silver lining (strong forward peak), mixed per octave below
@@ -412,7 +415,9 @@ void main(){
   float powderAmt = 0.75 * clamp(0.6 - 0.6 * nu, 0.0, 1.0);
   for (int i = 0; i < 128; i++){
     if (float(i) >= steps || T < 0.01) break;
-    float t = t0 + (float(i) + jit) * dt;
+    float xs = (float(i) + jit) / steps;
+    float t = t0 + len * mix(xs, xs * xs, kq);
+    dt = len * mix(1.0, (2.0 * float(i) + 1.0) / steps, kq) / steps;
     vec3 p = ro + dir * t;
     float r = length(p);
     float h = (r - Rc0) / thick;

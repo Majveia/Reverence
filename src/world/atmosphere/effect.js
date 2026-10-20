@@ -383,7 +383,10 @@ void main(){
     outc = col * a.T + L;
     if (uCityGround > 0.0){ vec3 ph = ro + dir * tHit; outc += cityGround(normalize(ph), length(ph)) * a.T; }
     if (uLand.x > 0.0){
-      float Th = exp(-landOD(ro, dir, tHit));
+      // (a soft shoulder on the optical depth: the farthest planes keep a faint silhouette, one step paler
+      // again, instead of vanishing outright)
+      float odL = landOD(ro, dir, tHit);
+      float Th = exp(-odL / (1.0 + 0.22 * odL));
       if (Th < 0.999) outc = mix(hazeSky(dir, up, camR, nu), outc, Th);
     }
     outc = applyFog(outc, ro, dir, tHit, up, nu);
