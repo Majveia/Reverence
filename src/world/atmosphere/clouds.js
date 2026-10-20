@@ -312,6 +312,7 @@ uniform vec2 uLowRes;
 uniform vec3 uAmbNight;      // moon / starlight fill on the night side (seen from altitude / orbit)
 uniform vec4 uCirrus;        // high ice layer: radius (m), opacity, 1/tile (1/m), stretch along the wind
 uniform vec4 uLand;          // landscape haze of the atmosphere pass (effect.js landOD)
+uniform vec4 uLandOC;        // the veil under a closed / raining deck (far clouds fade into it, not into blue sky)
 varying vec2 vUv;
 
 // the same landscape haze as the atmosphere pass: far clouds melt into the horizon with the ridges below them
@@ -400,7 +401,8 @@ void main(){
   float dt = len / steps;
   // long grazing paths (inside / above the layer toward the horizon): steps grow with distance (quadratic
   // spacing) so the near deck is finely sampled — uniform ~1 km steps sliced the cloud tops into stripes
-  float kq = smoothstep(thick * 3.0, thick * 12.0, len);
+  // (only from inside / above the layer: below the deck the uniform steps keep the jitter variance even)
+  float kq = camR >= Rc0 ? smoothstep(thick * 3.0, thick * 12.0, len) : 0.0;
   float jit = rv_ign(gl_FragCoord.xy + 5.588238 * uFrameJitter);
   float nu = dot(dir, uLightDir);
   // dual-lobe HG + silver lining (strong forward peak), mixed per octave below
@@ -448,7 +450,9 @@ void main(){
       if (lh > 1.0 || lh < 0.0) break;
       // detail erosion only on the first light step: deeper steps with detail turned the shadowed sides of
       // thick clouds into a freckled sponge (the od noise follows the 90 m detail cells)
-      od += cl_density(lp, lh, j < 1) * ls;
+      // (base shape only: detail in the light march mottled the lit bodies with a dirty, speckled texture —
+      // the detail erosion shapes the edges through the view-ray density, the lighting stays coherent)
+      od += cl_density(lp, lh, false) * ls;
       ls *= 1.9;
     }
     od *= sg;
@@ -514,8 +518,11 @@ void main(){
     vec3 pa = ro + dir * max(ta.x, 0.0);
     vec3 Tair = mix(vec3(1.0), pow(atmo_transSegment(pa, p1), vec3(uAPScale)), 0.85);
     if (uInside > 0.5) Tair *= exp(-cl_landOD(ro, dir, dist));
+    // rain / overcast veil: looking far under a raining deck is looking through kilometres of rain-lit air —
+    // the horizon is the pale veil (the same one the ridges fade into), only the deck overhead stays dark
+    if (uInside > 0.5 && uLandOC.a > 0.0) Tair *= exp(-dist * 6e-5 * uLandOC.a * uLandOC.a);
     vec3 skyL = vec3(0.0);
-    if (uInside > 0.5) skyL = atmo_skyLUT(dir, ro / camR, camR, uSunDir, dot(dir, uSunDir)) * uSunIllSky;
+    if (uInside > 0.5) skyL = mix(atmo_skyLUT(dir, ro / camR, camR, uSunDir, dot(dir, uSunDir)) * uSunIllSky, uLandOC.rgb, uLandOC.a);
     L = L * Tair + skyL * (1.0 - Tair) * alpha;
   }
   // cloud shadows on the ground seen from altitude / orbit (the cloud shadow map that the terrain samples
@@ -610,6 +617,7 @@ uniform sampler2D tDepth;
 uniform sampler2D tClouds;
 uniform vec2 uLowRes;
 uniform float uSwallow;    // dust storm / heavy snow below the deck: the clouds vanish into the veil
+uniform float uBlur;       // > 0: wider denoise footprint (full-res stills)
 varying vec2 vUv;
 float linDist(vec2 uv){
   float d = texture(tDepth, uv).r;
@@ -635,6 +643,21 @@ void main(){
     float w = wb * wz;
     acc += texture(tClouds, uv) * w;
     wsum += w;
+  }
+  if (uBlur > 0.0){
+    // full-res stills: a wider 4×4 gaussian of bilinear taps at half-texel offsets (each tap a 2×2 box: the
+    // Nyquist-frequency jitter pattern cancels) — the residual grain of a 4-sub-frame still resolves into soft
+    // cloud forms; the depth weight keeps ridges crisp
+    acc = vec4(0.0); wsum = 0.0;
+    for (int k = 0; k < 16; k++){
+      vec2 oc = vec2(float(k % 4) - 1.5, float(k / 4) - 1.5);
+      vec2 uv = vUv + oc / uLowRes;
+      float wb = exp(-dot(oc, oc) / (2.0 * uBlur * uBlur));
+      float z = linDist(uv);
+      float w = wb / (1e-3 + abs(log(max(z, 1e-3)) - log(max(dz, 1e-3))) * 12.0);
+      acc += texture(tClouds, uv) * w;
+      wsum += w;
+    }
   }
   vec4 c = wsum > 0.0 ? acc / wsum : vec4(0.0, 0.0, 0.0, 1.0);
   c = vec4(c.rgb * (1.0 - uSwallow), mix(c.a, 1.0, uSwallow));
@@ -747,6 +770,7 @@ export class Clouds {
       uAmbNight: { value: new THREE.Vector3() },
       uCirrus: { value: new THREE.Vector4(0, 0, 1 / (10000 * sizeK), 0.4) },
       uLand: atmo.effect?.u?.uLand ?? { value: new THREE.Vector4(0, 1, 0, 1) },
+      uLandOC: atmo.effect?.u?.uLandOC ?? { value: new THREE.Vector4(0, 0, 0, 0) },
       uWindA: { value: this.windA.clone() }, uWindB: { value: this.windB.clone() },
       uWindDirC: { value: new THREE.Vector3(1, 0, 0) },
       uCoverBoost: { value: 0 },
@@ -781,6 +805,7 @@ export class Clouds {
     const hq = this.tier === 'high' || this.tier === 'ultra';
     this.marchMat = fsMaterial(this.mode2D ? LOW_FRAG : MARCH_FRAG, this.u, hq ? { defines: { CL_HQ: 1 } } : {});
     this.u.uSwallow = { value: 0 };
+    this.u.uBlur = { value: this.scale >= 0.99 && shotHQ ? 1.25 : 0 };
     this.compMat = fsMaterial(COMPOSITE_FRAG, this.u);
     this.shadowSize = { low: 128, med: 256, high: 384, ultra: 512 }[this.tier] ?? 384;
     this.shadowRT = new THREE.WebGLRenderTarget(this.shadowSize, this.shadowSize, { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
@@ -908,7 +933,9 @@ export class Clouds {
     // bases (light pollution glows on the deck)
     const nsk = this.atmo.shared?.uNightSky?.value, eu = this.atmo.effect?.u;
     if (nsk) at.addScaledVector(nsk, 0.9);
-    if (eu && eu.uCitySky.value > 0) { const cc = eu.uCityCol.value, cs = eu.uCitySky.value * 0.5; u.uAmbBot.value.addScaledVector(cc, cs); }
+    // (the neon / sodium light pollution lights the whole cloud, its base most: clouds sit in the glowing
+    // night sky instead of reading as black smoke)
+    if (eu && eu.uCitySky.value > 0) { const cc = eu.uCityCol.value, cs = eu.uCitySky.value; u.uAmbBot.value.addScaledVector(cc, cs * 6.0); at.addScaledVector(cc, cs * 2.2); }
     if (!this._refDone) {
       this._refDone = true;
       m.skyIrradiance(rc, 0.7, sk, gr);

@@ -49,6 +49,7 @@ uniform float uHasCloudRT;
 uniform vec4 uFogV;        // effect height fog: density at base (1/m), scale height, base altitude, -
 uniform vec3 uFogSunV;     // sun illuminance used by the fog (already dimmed by weather)
 uniform float uFrameJ;     // frame counter (jitter pattern; TAA accumulates it)
+uniform vec4 uLandOC;      // overcast veil of the atmosphere pass (a: share)
 varying vec2 vUv;
 layout(location = 0) out vec4 outAdd;   // rgb: added light (lit haze, rain), a: transmittance
 layout(location = 1) out vec4 outSub;   // r: removed light (shadowed air), luminance (>= 0)
@@ -116,7 +117,7 @@ void main(){
   vec3 add = vec3(0.0), addL = vec3(0.0);
   float sub = 0.0, subL = 0.0;
   vec3 Tv = vec3(1.0);
-  float Tr = 1.0, Th = 1.0;
+  float Tr = 1.0, Th = 1.0, Tf = 1.0;
 #ifdef HAS_CLOUDS
   float rc0 = uLayer.x;
 #else
@@ -155,7 +156,9 @@ void main(){
     float hz = uHaze.x * exp(-max(h - uHaze.z, 0.0) * uHaze.y);
     float fogD = uFogV.x * exp(-clamp(h - uFogV.z, -2.0 * uFogV.y, 1e5) / uFogV.y);
     // shadowed air & fog lose the single scattering the atmosphere pass gave them; lit haze glows
-    vec3 dL = vis * hz * phH * Ts * uMarch.w;
+    // (+ the diffuse, sky / deck-lit part of the haze: without it the extra haze only darkened what lay behind
+    // it under an overcast — a dark band along the horizon instead of a pale rain veil)
+    vec3 dL = vis * hz * phH * Ts * uMarch.w + hz * uRainCol;
     vec3 dS = (1.0 - vis) * ((sR * phR * uSkyGain + sM * phM * uMieGain) * Ts * uMarch.w + fogD * phF * uFogSunV);
     float dSl = dot(dS, vec3(0.2126, 0.7152, 0.0722));
     float sr = 0.0;
@@ -173,8 +176,12 @@ void main(){
     // air between the clouds (inside the layer): hidden behind the clouds in front of it
     float w = dot(Tv, vec3(0.2126, 0.7152, 0.0722)) * Tr * dt;
     if (r > rc0){ addL += Tv * Tr * dL * dt; subL += w * dSl; } else { add += Tv * Tr * dL * dt; sub += w * dSl; }
-    Tr *= exp(-sr * dt);
-    Th *= exp(-hz * dt);
+    // the curtains / haze behind the height fog are hidden by it: the atmosphere pass already replaced the far
+    // background with fog, so only the part of the curtain in front of the fog may dim it (else the far rain
+    // dimmed the fogged horizon twice and added light only where the fog let it through: a dark band)
+    Tr *= exp(-sr * dt * Tf);
+    Th *= exp(-hz * dt * Tf);
+    Tf *= exp(-fogD * dt);
     Tv *= exp(-(ext + hz + fogD) * dt);
   }
   // clouds in front hide the air behind them; the clouds pass also replaced the sky's in-scatter
@@ -183,7 +190,9 @@ void main(){
   addL *= Tc;
   // rain curtains and the extra haze also dim what lies behind them
   outAdd = vec4(add + addL, Tr * Th);
-  outSub = vec4((sub + subL) * Tc, 0.0, 0.0, 1.0);
+  // under a closed / raining deck the air's in-scatter was already replaced by the deck-lit veil (effect.js
+  // uLandOC): there is no sunlit single scattering left to remove (it darkened the horizon into a band)
+  outSub = vec4((sub + subL) * Tc * (1.0 - uLandOC.a * uLandOC.a), 0.0, 0.0, 1.0);
 }`;
 
 const MASK_FRAG = /* glsl */`
@@ -436,6 +445,7 @@ export class LightShafts {
     this.vu.tCloudRT = { value: null }; this.vu.uHasCloudRT = { value: 0 };
     this.vu.uFogSunV = { value: new THREE.Vector3() };
     this.vu.uFrameJ = { value: 0 };
+    this.vu.uLandOC = atmo.effect?.u?.uLandOC ?? { value: new THREE.Vector4(0, 0, 0, 0) };
     this.volMat = fsMaterial(VOL_FRAG, this.vu, { defines, glslVersion: THREE.GLSL3 });
     this.maskMat = fsMaterial(MASK_FRAG, this.u);
     this.blurMat = fsMaterial(BLUR_FRAG, { tSrc: { value: null }, uCenter: { value: new THREE.Vector2() }, uLen: { value: 1 }, uAspect: { value: 16 / 9 }, uDecay: { value: 0.965 }, uFan: { value: 0 } });
@@ -527,6 +537,10 @@ export class LightShafts {
     vu.uRainCol.value.set((amb[0] + na.r * 0.1) / Math.PI, (amb[1] + na.g * 0.1) / Math.PI, (amb[2] + na.b * 0.1) / Math.PI).multiplyScalar(0.55 * sd + 0.15);
     const lum = vu.uRainCol.value.x * 0.2126 + vu.uRainCol.value.y * 0.7152 + vu.uRainCol.value.z * 0.0722;
     vu.uRainCol.value.lerp(_v3.set(lum, lum * 1.02, lum * 1.06), 0.6);
+    // the curtains are the same rain-lit veil the ridges and the far deck fade into (effect.js uLandOC):
+    // a pale horizon under the rain, not a dark band between the land and the deck
+    const oc = atmo.effect?.u?.uLandOC?.value;
+    if (oc && oc.w > 0) vu.uRainCol.value.lerp(_v3.set(oc.x, oc.y, oc.z), Math.min(1, oc.w * 1.1));
     return camR < base && (shOn || csmOn || hz > 0 || rainAmt > 0.02);
   }
 
