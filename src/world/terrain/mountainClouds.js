@@ -444,7 +444,8 @@ export class MountainClouds {
     const cdot = (u.uCamP.value.x * this.C[0] + u.uCamP.value.y * this.C[1] + u.uCamP.value.z * this.C[2]) / Math.max(cl, 1);
     const distM = Math.acos(Math.max(-1, Math.min(1, cdot))) * this.R;
     const horizon = Math.sqrt(Math.max(0, 2 * this.R * Math.max(camAlt, 2))) + Math.sqrt(2 * this.R * Math.max(this.top + 1000, 100)) + u.uCyl.value.x;
-    if (distM > horizon) { io.skip = true; return; }
+    if (distM > horizon) { io.skip = true; this.skips = (this.skips | 0) + 1; return; }
+    this.renders = (this.renders | 0) + 1;
     u.uSunL.value.copy(G.uSunDir.value);
     u.uSunC.value.copy(G.uSunColor.value);
     u.uAmbS.value.copy(G.uAmbientSky.value);

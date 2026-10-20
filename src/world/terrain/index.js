@@ -515,7 +515,8 @@ class Terrain {
     const hist = {}; let iv = 0;
     for (const n of this.desired) { hist[n.level] = (hist[n.level] || 0) + 1; if (n.inView) iv++; }
     const lm = this.landmarks?.mountain;
-    return { mountain: lm ? { lat: lm.lat, lon: lm.lon, h: Math.round(lm.height) } : null, chunks: this.meshCount, casters: this.casters, desired: this.desired.length, inflight: this.inflight, uploads: this.uploads.length, maxLevel: this.maxLevel, K: +this.K.toFixed(2), workers: this.workers.length, tex: this.texReady, inView: iv, levels: hist, ms: +this.ms.toFixed(2), msMax: +this.msMax.toFixed(1), readyMs: this.readyMs, builds: this.builds };
+    const mc = this.mclouds;
+    return { mountain: lm ? { lat: lm.lat, lon: lm.lon, h: Math.round(lm.height) } : null, mclouds: mc ? { ready: mc.ready, on: mc.enabled && mc.effect?.enabled !== false, renders: mc.renders | 0, skips: mc.skips | 0, seaTop: Math.round(mc.seaTop ?? -1), sea: +(mc.u?.uSea.value.z ?? 0).toFixed(2) } : null, chunks: this.meshCount, casters: this.casters, desired: this.desired.length, inflight: this.inflight, uploads: this.uploads.length, maxLevel: this.maxLevel, K: +this.K.toFixed(2), workers: this.workers.length, tex: this.texReady, inView: iv, levels: hist, ms: +this.ms.toFixed(2), msMax: +this.msMax.toFixed(1), readyMs: this.readyMs, builds: this.builds };
   }
 
   onOriginShift() { /* chunk transforms are planet-local under world.root: nothing to do */ }
