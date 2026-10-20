@@ -16,6 +16,7 @@ import { bakeDetail, DETAIL_SIZE, DETAIL_LAYERS } from './detailTex.js';
 import { createTerrainMaterial, createTerrainDepthMaterial, updateOriginMod } from './material.js';
 import { decorateLandmarks } from '../planet/index.js';
 import { LandmarkFeatures } from './features.js';
+import { MountainClouds } from './mountainClouds.js';
 
 const RES_DEFAULT = 64;
 const _dir = new Float64Array(3), _dir2 = new Float64Array(3);
@@ -110,10 +111,15 @@ class Terrain {
     this._t0 = performance.now(); this.readyMs = 0; this.builds = 0; this.buildMs = 0;
     // floating isles + natural arch at the sacred sites (non-heightfield landforms)
     try { if (this.landmarks?.mountain) this.features = new LandmarkFeatures(world, this); } catch (e) { console.warn('[terrain] landmark features', e); this.features = null; }
+    // cloud crossing the great mountain at three heights + a sea of cloud below it (URL tclouds=0: off)
+    let mcOn = true;
+    try { mcOn = new URLSearchParams(globalThis.location?.search || '').get('tclouds') !== '0'; } catch (_) { /* no url */ }
+    try { if (mcOn && this.landmarks?.mountain) this.mclouds = new MountainClouds(world, this); } catch (e) { console.warn('[terrain] mountain clouds', e); this.mclouds = null; }
   }
 
   update(dt) {
     if (this.features) { try { this.features.update(dt); } catch (e) { if (!this._fw) { console.warn('[terrain] features', e); this._fw = true; } } }
+    if (this.mclouds) { try { this.mclouds.update(dt); } catch (e) { if (!this._mw) { console.warn('[terrain] mountain clouds', e); this._mw = true; } this.mclouds.enabled = false; } }
   }
 
   // ------------------------------------------------------------------ workers
@@ -469,6 +475,7 @@ class Terrain {
   // ------------------------------------------------------------------ public
   isReady() {
     if (!this.texReady || this.desired.length === 0) return false;
+    if (this.mclouds && this.mclouds.mat && !this.mclouds.ready) return false;
     if (this.uploads.length || this.changed || this.inflight) return false;
     for (const n of this.desired) if ((!n.mesh || n.stale) && (n.fail || 0) <= 3) return false;
     if (!this.readyMs) this.readyMs = Math.round(performance.now() - this._t0);
@@ -520,6 +527,7 @@ class Terrain {
     const walk = (n) => { if (n.mesh) { n.mesh.geometry.dispose(); n.mesh = null; } n.dead = true; if (n.children) n.children.forEach(walk); };
     this.roots.forEach(walk);
     try { this.features?.dispose(); } catch (_) { /* */ }
+    try { this.mclouds?.dispose(); } catch (_) { /* */ }
     this.material.dispose();
     this.depthMaterial.dispose();
     this.detailTex?.dispose();
