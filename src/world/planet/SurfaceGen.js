@@ -565,6 +565,20 @@ export class SurfaceGen {
         Object.assign(arch, { lat: +ll.lat.toFixed(4), lon: +ll.lon.toFixed(4), dir: bestA.Ap, height: bestA.ha, yaw: +(ab.b * 180 / Math.PI).toFixed(2) });
         const v = pack(bestA.r, 0.5);
         L.views.arch = { lat: v.lat, lon: v.lon, yaw: v.yaw, pitch: v.pitch, dist: v.dist, visible: v.visible };
+        // a wider framing (whole arch with its lintel, mountain in the opening): step back along the axis
+        // while the ground behind stays below the eye and nothing between rises into the opening
+        const V0 = bestA.r.V, hv0 = hAt(V0, 1);
+        let wide = null;
+        for (const back of [170, 130, 95, 60]) {
+          const Vb = offsetDir(V0, bestA.r.b + Math.PI, back / R), hb = hAt(Vb, 1);
+          if (hb < sea + 3 || hb > hv0 + 40) continue;
+          // (the ground between must stay below the sight line from the eye to the arch's foot)
+          let ok = true;
+          const tot = back + 115;
+          for (let k = 1; k < 8 && ok; k++) { const sk = tot * k / 8, q = offsetDir(Vb, bestA.r.b, sk / R); if (hAt(q, 1) > hb + 1.7 + (bestA.ha - hb - 1.7) * (sk / tot) + 3) ok = false; }
+          if (ok) { wide = { Vb, back }; break; }
+        }
+        if (wide) { const ll = llOf(wide.Vb); L.views.archWide = { lat: +ll.lat.toFixed(4), lon: +ll.lon.toFixed(4), yaw: v.yaw, pitch: 9, dist: 115 + wide.back }; }
       }
     }
     // ---- the floating isles: over open low ground (a valley, a lake, the sea) in clear view of the spawn,
@@ -580,11 +594,15 @@ export class SurfaceGen {
       const dists = [1900, 2700, 3700, 5000, 6600, 8500];
       const sc = Math.min(1.3, Math.max(0.6, R / 70000));
       const isl = [];
+      // (the whole line is compressed to fit before the cone: clamping each distance separately stacked
+      //  the far isles on one spot on small worlds)
+      const dk = Math.min(1, Math.max(400, best.dist - GM.Rb * 0.75) / dists[dists.length - 1]);
       for (let i = 0; i < dists.length; i++) {
-        const dd = Math.min(dists[i], best.dist - GM.Rb * 0.75);
+        const dd = dists[i] * dk;
         // (fanned out sideways and in height so they never stack behind each other)
-        let q = offsetDir(V, side + (rr() - 0.5) * 0.06 + (i % 2 ? 1 : -1) * (0.05 + 0.035 * i), dd / R);
-        if (this._gr(q[0], q[1], q[2]) < 1.02) q = offsetDir(V, side + 0.25, dd / R);
+        const fan = (rr() - 0.5) * 0.06 + (i % 2 ? 1 : -1) * (0.05 + 0.035 * i);
+        let q = offsetDir(V, side + fan, dd / R);
+        if (this._gr(q[0], q[1], q[2]) < 1.02) q = offsetDir(V, side + 0.25 + Math.abs(fan), dd / R);
         const g = Math.max(hAt(q, 4), sea);
         const r = (i === 0 ? 90 : 50 + rr() * 70) * sc;
         const minAlt = eye + dd * tanB + dd * dd / (2 * R) + r * 2.2;
@@ -781,6 +799,10 @@ export class SurfaceGen {
     }
     return sum;
   }
+
+  /** Forest belt on the great mountain's flanks (0..1 by normalized radius gr): between the tree line
+   *  (bare ash / scree above gr ≈ 0.4) and a little beyond the foot of the cone. */
+  _gBelt(gr) { return gr >= 1.3 ? 0 : sstep(0.28, 0.7, gr) * (1 - sstep(1.0, 1.3, gr)); }
 
   /** Ranges fade out around the great mountain so it stands alone (1 far away, 0 at its foot). */
   _gFade(x, y, z) { return this.great ? sstep(0.8, 1.65, this._gr(x, y, z)) : 1; }
@@ -1164,7 +1186,7 @@ export class SurfaceGen {
       if (gr < GM.rc) { const u = gr / GM.rc, b = 1 - u * u; p -= GM.cd * b * b; } // crater bowl
       let hc = H * p, gv = 0;
       // radial gullies / barrancos: the slope-aligned erosion filter steered by the cone's own slope
-      const gs = GM.gully * sstep(0.05, 0.22, gr) * (1 - sstep(0.72, 0.99, gr));
+      const gs = GM.gully * sstep(0.035, 0.15, gr) * (1 - sstep(0.72, 0.99, gr));
       if (gs > 1e-3 && !(this.cfg.dbg & 4)) {
         const cdt = x * GM.x + y * GM.y + z * GM.z;
         let vx = x * cdt - GM.x, vy = y * cdt - GM.y, vz = z * cdt - GM.z;   // tangent, toward the centre
@@ -1184,7 +1206,7 @@ export class SurfaceGen {
         const K = 7.5;
         streak = nF.n3((ve / vl) * K + 4.4, (vn / vl) * K + 1.9, gr * 2.2 + 7.3) * 0.75 + nF.n3((ve / vl) * K * 2.3 + 9.1, (vn / vl) * K * 2.3 + 3.3, gr * 3.5 + 0.7) * 0.35;
       }
-      const pn = p + 0.03 * nF.n3(x * R / 700 + 3.1, y * R / 700 + 8.8, z * R / 700 + 1.4) + 0.11 * streak * sstep(0.0, 0.12, 0.62 - p) - 3.2 * gv / H;
+      const pn = p + 0.03 * nF.n3(x * R / 700 + 3.1, y * R / 700 + 8.8, z * R / 700 + 1.4) + 0.17 * streak * sstep(0.0, 0.12, 0.62 - p) - 4.2 * gv / H;
       const cap = GM.snow * sstep(GM.snowLo, GM.snowHi, pn);
       if (cap > glacier) glacier = cap;
       const ash = sstep(0.36, 0.52, p) * 0.8 * (1 - 0.6 * cap);   // bare volcanic scree above the tree line
@@ -1740,10 +1762,15 @@ export class SurfaceGen {
           const b1 = nH.n3(x * f1 + 31.7, y * f1 + 7.9, z * f1 + 19.3);
           const b2 = w2 > 0 ? nH.n3(x * f2 + 3.3, y * f2 + 41.1, z * f2 + 5.5) * w2 : 0;
           bare = w1 * sstep(0.3, 0.6, b1 * 0.8 + b2 * 0.3 + 0.3 * rock + 0.45 * talus) * (1 - sand) * (1 - dune) * (1 - lake);
+          if (gr < 1.3) bare *= 1 - 0.85 * this._gBelt(gr);   // (no worn-soil patches in the mountain's forest)
         }
       }
       info.bare = bare;
-      info.season = st.seasonAmt > 0 ? this._season(px, py, pz, h) : 0.5;
+      let sv = st.seasonAmt > 0 ? this._season(px, py, pz, h) : 0.5;
+      // the great mountain's forest belt (Yotei: dark green flanks under the snow) turns spring green,
+      // except on crimson-maple worlds where the forest stays red
+      if (gr < 1.3 && sv < 0.83) sv *= 1 - 0.7 * this._gBelt(gr);
+      info.season = sv;
       info.c = c; info.land = land; info.mtn = mtn; info.rock = rock; info.sand = sand;
       info.river = river; info.lake = lake; info.cliff = cliff; info.dune = dune; info.glacier = glacier;
       info.steep = steep; info.wallS = wallS; info.talus = talus;
@@ -1768,6 +1795,8 @@ export class SurfaceGen {
     else m -= 0.12;
     m += st.moistBias;
     m -= 0.25 * sstep(0.2, 0.7, Math.max(0, h) / A);
+    // orographic rain: the great mountain's flanks are forested (flora reads FOREST / TAIGA there)
+    if (this.great) { const gr = this._gr(x, y, z); if (gr < 1.3) m += 0.34 * this._gBelt(gr); }
     out.temperature = t;
     out.moisture = m < 0 ? 0 : m > 1 ? 1 : m;
     return out;

@@ -119,7 +119,7 @@ export function heroPalette(body) {
   const warm = envHue < 0.12 || envHue > 0.9;
   const P = {
     // one deep night colour (coat, sleeves, hakama), a darker shade for collars / obi / lining
-    coat: hex('#1f2640'), coat2: hex('#10131f'), mantle: hex('#262e4a'), inner: hex('#4a4f66'),
+    coat: hex('#263052'), coat2: hex('#121626'), mantle: hex('#2c3657'), inner: hex('#4a4f66'),
     tunic: hex('#2a3150'), trousers: hex('#191e33'), patch: hex('#232a44'), wrap: hex('#2b2d36'),
     boot: hex('#1a1512'), sole: hex('#0b0908'), leather: hex('#2c211b'), strap: hex('#241b16'),
     lacquer: hex('#0d0c10'), gold: hex('#d1a554'), brass: hex('#c9a052'), iron: hex('#46464c'),
@@ -168,9 +168,11 @@ export const SUIT_LIGHT = {
   uLamp: { value: 0 },
   // woven star pattern in the night-coloured cloth: faint at night, bright when an ability flows through her
   uStar: { value: 0 },
+  // warm rim from the aureole behind her (Commune / Resonance), 0..1
+  uAura: { value: 0 },
 };
 
-export function patchLighting(mat, { rim = 0.0, sky = 0.2, wear = 1, key = 'x', sunRim = 0.8, stars = 0, starUv = false } = {}) {
+export function patchLighting(mat, { rim = 0.0, sky = 0.2, wear = 1, key = 'x', sunRim = 0.8, stars = 0, starUv = false, self = 0 } = {}) {
   // • sun-keyed back rim: when the sun is behind the figure, grazing surfaces facing the sun catch a warm
   //   rim (the golden-hour halo that separates the silhouette from the land)
   // • soft rim + sky fresnel: grazing angles pick up the sky colour (ties the figure into the world's light)
@@ -183,7 +185,8 @@ export function patchLighting(mat, { rim = 0.0, sky = 0.2, wear = 1, key = 'x', 
     sh.uniforms.uSunRimK = { value: sunRim };
     sh.uniforms.uWearK = { value: wear };
     sh.uniforms.uStarK = { value: stars };
-    sh.uniforms.uStar = SUIT_LIGHT.uStar; sh.uniforms.uTimeS = G.uTime;
+    sh.uniforms.uSelfK = { value: self };
+    sh.uniforms.uStar = SUIT_LIGHT.uStar; sh.uniforms.uTimeS = G.uTime; sh.uniforms.uAura = SUIT_LIGHT.uAura;
     sh.uniforms.uUpW = SUIT_LIGHT.uUpW; sh.uniforms.uBounce = SUIT_LIGHT.uBounce; sh.uniforms.uSkyAmb = G.uAmbientSky;
     sh.uniforms.uSunDirW = G.uSunDir; sh.uniforms.uSunColW = G.uSunColor;
     sh.uniforms.uWaterN = SUIT_LIGHT.uWaterN; sh.uniforms.uWaterP = SUIT_LIGHT.uWaterP; sh.uniforms.uWaterOn = SUIT_LIGHT.uWaterOn; sh.uniforms.uWaterCol = SUIT_LIGHT.uWaterCol;
@@ -191,7 +194,7 @@ export function patchLighting(mat, { rim = 0.0, sky = 0.2, wear = 1, key = 'x', 
       .replace('#include <common>', '#include <common>\nattribute vec2 aWear;\nvarying vec2 vWear;\nvarying vec3 vStarP;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>\nvWear = aWear;\n${starUv ? 'vStarP = vec3(uv * vec2(1.05, 0.66), 0.37);' : 'vStarP = position;'}`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uRimStrength; uniform float uSkyRim; uniform float uSunRimK; uniform float uWearK; uniform vec3 uUpW; uniform vec3 uBounce; uniform vec3 uSkyAmb; uniform vec3 uSunDirW; uniform vec3 uSunColW;\nuniform vec3 uWaterN; uniform vec3 uWaterP; uniform float uWaterOn; uniform vec3 uWaterCol;\nuniform float uStarK; uniform float uStar; uniform float uTimeS;\nvarying vec2 vWear;\nvarying vec3 vStarP;')
+      .replace('#include <common>', '#include <common>\nuniform float uRimStrength; uniform float uSkyRim; uniform float uSunRimK; uniform float uWearK; uniform vec3 uUpW; uniform vec3 uBounce; uniform vec3 uSkyAmb; uniform vec3 uSunDirW; uniform vec3 uSunColW;\nuniform vec3 uWaterN; uniform vec3 uWaterP; uniform float uWaterOn; uniform vec3 uWaterCol;\nuniform float uStarK; uniform float uStar; uniform float uTimeS; uniform float uAura; uniform float uSelfK;\nvarying vec2 vWear;\nvarying vec3 vStarP;')
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = clamp(roughnessFactor + vWear.x * 0.2 * uWearK - vWear.y * 0.22 * uWearK, 0.04, 1.0);`)
       .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
@@ -205,13 +208,18 @@ export function patchLighting(mat, { rim = 0.0, sky = 0.2, wear = 1, key = 'x', 
           vec3 upV = normalize((viewMatrix * vec4(uUpW, 0.0)).xyz);
           float nu = dot(normal, upV);
           // sky fresnel on upward / sideways facing grazing surfaces
-          outgoingLight += fr * uSkyRim * uSkyAmb * (0.35 + 0.65 * clamp(nu * 0.5 + 0.6, 0.0, 1.0)) * (0.2 + 0.8 * diffuseColor.rgb);
+          outgoingLight += fr * uSkyRim * uSkyAmb * (0.35 + 0.65 * clamp(nu * 0.5 + 0.6, 0.0, 1.0)) * (0.5 + 0.5 * diffuseColor.rgb);
           // sun back-rim (golden hour halo): sun behind the figure, normal turned toward the sun
           vec3 sV = normalize((viewMatrix * vec4(uSunDirW, 0.0)).xyz);
           float back = clamp(-dot(sV, Vc) * 0.8 + 0.2, 0.0, 1.0);
           float facing = clamp(dot(normal, sV) * 0.7 + 0.3, 0.0, 1.0);
           float sunUp = clamp(dot(normalize(uSunDirW), uUpW) * 4.0 + 0.2, 0.0, 1.0);
-          outgoingLight += uSunColW * pow(1.0 - ndv, 2.5) * back * back * facing * sunUp * uSunRimK * (0.25 + 0.75 * diffuseColor.rgb) * 0.35;
+          // (albedo-independent like a cloth sheen: the night-dark coat must still catch the low sun on its edges)
+          outgoingLight += uSunColW * pow(1.0 - ndv, 2.0) * back * back * facing * sunUp * uSunRimK * (0.55 + 0.45 * diffuseColor.rgb) * 0.75;
+          // the gold thread keeps a faint lustre in shade (it must read on a small figure); brighter with her light
+          outgoingLight += diffuseColor.rgb * uSelfK * (0.08 + 0.5 * uStar);
+          // the source answers (Commune / Resonance): a warm aureole rim from behind her
+          outgoingLight += vec3(1.0, 0.74, 0.42) * pow(1.0 - ndv, 2.2) * uAura * (0.45 + 0.55 * diffuseColor.rgb);
           // warm/cool bounce from the ground under the hero (BotW / Journey colour bleeding)
           float down = clamp(-nu * 0.6 + 0.4, 0.0, 1.0);
           outgoingLight += diffuseColor.rgb * uBounce * down * down;
@@ -238,7 +246,7 @@ export function patchLighting(mat, { rim = 0.0, sky = 0.2, wear = 1, key = 'x', 
         }
         #include <opaque_fragment>`);
   };
-  mat.customProgramCacheKey = () => 'rv-ronin-' + key + '-' + rim + '-' + sky + '-' + sunRim + '-' + stars + (starUv ? 'u' : 'p');
+  mat.customProgramCacheKey = () => 'rv-ronin-' + key + '-' + rim + '-' + sky + '-' + sunRim + '-' + stars + '-' + self + (starUv ? 'u' : 'p');
   return mat;
 }
 
@@ -262,11 +270,11 @@ export function makeMaterials(renderer, P, quality) {
   // hair: dark, a soft anisotropic-looking sheen band (sheen) over a glossy-ish base
   const hair = new Std({ vertexColors: true, roughness: 0.42, metalness: 0.0, normalMap: woolN, normalScale: new THREE.Vector2(0.3, 0.9) });
   if (hi) { hair.sheen = 1.0; hair.sheenRoughness = 0.32; hair.sheenColor = new THREE.Color(P.hairHi).multiplyScalar(1.6); }
-  patchLighting(fabric, { rim: 0.32, sky: 0.16, key: 'silk', sunRim: 1.15, stars: 1 });
+  patchLighting(fabric, { rim: 0.32, sky: 0.34, key: 'silk', sunRim: 1.15, stars: 1 });
   patchLighting(hard, { rim: 0.3, sky: 0.2, key: 'lacquer', sunRim: 0.8 });
-  patchLighting(metal, { rim: 0.2, sky: 0.1, key: 'gold', wear: 0.4, sunRim: 0.5 });
+  patchLighting(metal, { rim: 0.2, sky: 0.1, key: 'gold', wear: 0.4, sunRim: 0.5, self: 1 });
   patchLighting(skin, { rim: 0.4, sky: 0.1, key: 'skin', sunRim: 1.0, wear: 0.2 });
-  patchLighting(hair, { rim: 0.45, sky: 0.12, key: 'hair', sunRim: 1.4, wear: 0.1 });
+  patchLighting(hair, { rim: 0.45, sky: 0.3, key: 'hair', sunRim: 1.4, wear: 0.1 });
   const mats = { fabric, hard, metal, glow, skin, hair };
   for (const [k, m] of Object.entries(mats)) { m.name = 'rv-explorer-' + k; }
   return mats;

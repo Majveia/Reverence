@@ -354,6 +354,71 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
   rakes the face, so blocks and ledges read) and the W1 hero `tod=0.26`.
 * `node tools/check.mjs`: ALL OK after these changes.
 
+## Season 2 — Ghost of Yotei worlds (19–20 Oct)
+
+### What exists now (one great mountain, sacred sites, seasons, cloud bands, arch, floating isles)
+* **The great mountain** (`SurfaceGen._placeLandmarks`, deterministic from the seed, identical in every
+  worker): one lone stratovolcano per rocky world (not gas giants), `H = clamp(1.2·A, 1.8–5.6 km)`, footprint
+  `Rb = 2.45·H` (≈ 9–14 km). Placed on a ring ~1.1–1.3 footprints from the default spawn, scored for land under
+  it, no competing range at its base and an open line of sight, so it fills the first view (on 50–90 km
+  planets curvature hides anything beyond ~25 km, so "visible from everywhere" means: from the spawn region
+  and every sacred site). Profile: concave cone `0.55 t^2.2 + 0.45 t^1.2`, smooth-min summit truncation,
+  crater bowl, lobed footprint, radial gullies (the slope-aligned erosion filter steered by the cone), ranges
+  and carving features fade out around its base so it stands alone. Snow cap with long fingers down the
+  gullies and radial streaks (Fuji / Yotei in late spring); bare ash / scree above the tree line.
+  **New this round:** a **forest belt** on the flanks (`_gBelt`: moisture +0.34 in `climate()`, season pulled
+  to spring green except on crimson-maple worlds) — flora now plants a dense forest up the cone, and the
+  terrain paints a dark patchy **canopy** under / beyond it (see material) — and the gullies now reach
+  higher up the cone (`gs` from gr 0.035), so the snow cap breaks into fingers instead of a smooth dome.
+* **Landmarks API** (`world.surface.landmarks`, also `world.get('terrain').landmarks`; a provisional
+  `terrain` entry carrying them is registered by the planet subsystem at order 0 so `space` (order 5) can
+  read them):
+  ```
+  { mountain: {kind:'volcano', lat, lon, dir, pos, up, height (summit, m), peak (H), radius (Rb), snowline},
+    sacred: [{kind:'shrine'|'tree'|'floating'|'arch', lat, lon, dir, pos, up, height, radius, …}],
+       // floating: islands[{lat, lon, dir, pos, alt, radius, seed}]; arch: span, rise, yaw (opens toward the mountain)
+    spawn: {lat, lon, dir, toMountain (deg), mountainDist (m)},
+    views: {mountain, mountainNear, arch, archWide, floating: {lat, lon, yaw, pitch[, dist, visible]}} }
+  ```
+  `views.*` are capture / photo presets found by marching the terrain profile toward the summit (curvature
+  included): the mountain stands highest above the nearest blocking ridge with an open foreground.
+  `archWide` (new) steps back along the arch axis while the sight line to the arch foot stays clear, so the
+  whole arch with its lintel frames the mountain. `__rv.state().terrain.mountain` / `.planet.mountain` give
+  the summit's lat/lon/height.
+* **Season regions** (`SurfaceGen._season`, `info.season` / `sample().season`, vertex attribute `aMat3.z`):
+  broad ~11 km one-hue regions — 0 spring green · ⅓ blossom (petal carpets) · ⅔ gold pampas · 1 crimson
+  (spider lilies / maple litter) — per-world bias and spread (`st.seasonBias/Spread`, uplands turn first),
+  strength by type (`st.seasonAmt`: terran/ocean 1, savanna .85, jungle .7, arctic .55, barren 0). The shader
+  paints them with painterly drifts and patches; URL `tseason=0..1` scales it (0 = off).
+* **Cloud crossing the mountain at three heights + a sea of cloud** (`mountainClouds.js`, pipeline effect
+  `terrain-clouds`, order 95 — after GTAO, before the atmosphere's aerial perspective at 100). A ray-marched
+  volume inside a cylinder around the cone: a foot band (left of the spawn bearing), a shoulder band (right),
+  a thin summit streak on the far side and sometimes a cap, each a partial ring hugging the cone, shaped by a
+  baked tileable Perlin-Worley volume and drifting with the wind; a sea of cloud over the low ground around
+  the mountain, drawn only when the camera is above it. Terrain-aware via a baked height grid (soft contact,
+  the mountain's shadow on its clouds). Lighting: Beer + powder + dual-lobe HG (silver lining), terrain
+  shadow, sky / ground ambient from the shared `G` uniforms. URL `tclouds=0` turns it off.
+  **New this round:** the march runs at **half resolution** into a half-float target and a depth-aware 4×4
+  composite filters it to full resolution — the checkerboard dither seen in round 1 (IGN jitter at 20 steps)
+  is gone and the march costs ~¼. Bands now face the spawn side and hug the cone (radial extent ≤ 0.36 Rb):
+  from the ground they read as bands across the cone, not a veil overhead.
+* **Natural arch + floating isles** (`features.js`, main thread, one draw per object, shared rock material
+  with world-anchored triplanar detail, box colliders, a slow bob for the isles). The arch stands on flat dry
+  ground ~115 m ahead of the best mountain viewpoint near the spawn and opens toward the summit (rule 11).
+  The isles (6) recede from the mountain view toward the cone, fanned out sideways and in height, each
+  further one paler in the aerial perspective; grassy tops, tapering strata undersides, hanging roots and
+  stalactites.
+* **Material (new this round)**:
+  * **Forest canopy**: where moisture is high (the cone's belt, wet forests) the ground takes a deep, patchy
+    canopy tone (dark hollows, lighter crowns on ridges / convex ground, seasonal tint) — 45 % near, 85 %
+    beyond 600 m — instead of a lit lawn between the flora track's tree impostors.
+  * **Wind sheen**: travelling gust waves sweep far meadows (beyond ~25 m, where single blades no longer
+    carry the motion): the same along-wind gust as the flora blades (`0.047 m⁻¹`, `0.9 s⁻¹`) plus a slower
+    long wave, brightening toward a pale silver-gold as the blades bend (`G.uWindDir`, `G.uWindStrength`).
+  * **Snow close up** (player request, W9): glitter fades where a glitter cell is sub-pixel or the view grazes
+    the snow, and the micro-relief break-up of the snow edge eases off within ~10 m: no coarse white / dark
+    speckle a few metres from the lens.
+
 ## Capture URLs (verified this round, 1280×720)
 Use `view=fly` for terrain-only framing (no player body). Side light reads relief best: pick `tod` so the
 sun is ~60–120° off the view direction (sun ≈ east at tod 0.3, ≈ west at 0.68 on these worlds).

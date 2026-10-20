@@ -110,7 +110,6 @@ const FRAG = /* glsl */`
 #include <rv_common>
 precision highp float;
 precision highp sampler3D;
-uniform sampler2D tColor;
 uniform sampler2D tDepth;
 uniform sampler3D tNoise;
 uniform sampler2D tHgt;
@@ -188,7 +187,9 @@ float dens( vec3 p, float alt, float hT, bool lite ) {
 float hg( float c, float g ) { float g2 = g * g; return ( 1.0 - g2 ) / ( 4.0 * 3.14159265 * pow( max( 1.0 + g2 - 2.0 * g * c, 1e-4 ), 1.5 ) ); }
 
 void main() {
-  vec4 src = texture( tColor, vUv );
+  // (half-resolution march: output = in-scattered light (rgb) + transmittance (a); the composite pass
+  //  below filters it depth-aware at full resolution, so the per-pixel jitter never shows as a dither)
+  vec4 src = vec4( 0.0, 0.0, 0.0, 1.0 );
   float depth = texture( tDepth, vUv ).r;
   vec2 ndc = vUv * 2.0 - 1.0;
   vec3 vd = vec3( ( ndc.x + uProjParams.z ) / uProjParams.x, ( ndc.y + uProjParams.w ) / uProjParams.y, -1.0 );
@@ -251,7 +252,44 @@ void main() {
     L += T * Ls * ( 1.0 - ex );
     T *= ex;
   }
-  gl_FragColor = vec4( src.rgb * T + L, src.a );
+  gl_FragColor = vec4( L, T );
+}
+`;
+
+const COMP = /* glsl */`
+#include <rv_common>
+precision highp float;
+uniform sampler2D tColor;
+uniform sampler2D tDepth;
+uniform sampler2D tCloud;
+uniform vec2 uCTex;          // half-res texel size (uv)
+uniform float uNear, uFar;
+varying vec2 vUv;
+float lin( vec2 uv ) {
+  float d = texture( tDepth, uv ).r;
+#ifdef USE_REVERSED_DEPTH_BUFFER
+  if ( d <= 1e-9 ) return 1e9;
+#else
+  if ( d >= 0.9999999 ) return 1e9;
+#endif
+  return rv_viewZFromDepth( d, uNear, uFar );
+}
+void main() {
+  vec4 src = texture( tColor, vUv );
+  float z0 = lin( vUv );
+  vec4 acc = vec4( 0.0 ); float wsum = 0.0;
+  // 4x4 taps over the half-res grid (bilinear fetches: ~3x3 half-res texels, tent-weighted), each
+  // weighted by depth similarity so cloud never bleeds across a near silhouette
+  for ( int j = 0; j < 4; j++ ) for ( int i = 0; i < 4; i++ ) {
+    vec2 o = vec2( float( i ) - 1.5, float( j ) - 1.5 );
+    vec2 uv = vUv + o * uCTex * 0.75;
+    float z = lin( uv );
+    float w = ( 2.0 - abs( o.x ) * 0.6 ) * ( 2.0 - abs( o.y ) * 0.6 );
+    w *= exp( -abs( z - z0 ) / ( 0.04 * min( z0, z ) + 2.0 ) );
+    acc += texture( tCloud, uv ) * w; wsum += w;
+  }
+  vec4 c = wsum > 1e-4 ? acc / wsum : texture( tCloud, vUv );
+  gl_FragColor = vec4( src.rgb * c.a + c.rgb, src.a );
 }
 `;
 
@@ -268,7 +306,7 @@ export class MountainClouds {
     const q = world.quality || {};
     const soft = !!terrain._softGL?.();
     const tier = q.tier || 'high';
-    this.steps = soft ? 20 : tier === 'low' ? 16 : tier === 'med' ? 24 : tier === 'ultra' ? 48 : 36;
+    this.steps = soft ? 28 : tier === 'low' ? 16 : tier === 'med' ? 24 : tier === 'ultra' ? 48 : 36;
     // ---- geometry of the mountain
     const C = M.dir, Hk = M.peak || 4000, Rb = M.radius || 10000;
     const top = M.height;                           // summit altitude
@@ -313,8 +351,13 @@ export class MountainClouds {
     const cov = 0.62 + 0.12 * rnd();
     const bands = [
       // altitude fraction, half thickness (×H), radial extent (×Rb), sector offset from the spawn side, half width (deg), coverage, noise scale
-      { f: 0.2, w: 0.075, ext: 0.75, off: (rnd() - 0.5) * 1.6 + Math.PI * 0.55, hw: 120, cov: cov * 0.95, sc: 2600 },
-      { f: 0.52, w: 0.06, ext: 0.5, off: (rnd() - 0.5) * 0.6, hw: 95, cov: cov + 0.06, sc: 2200 },
+      // (foot and shoulder bands are centred to either side of the spawn bearing, so from the spawn side
+      //  — where the capture / first views stand — one crosses the left flank low and one the right
+      //  shoulder high, and both overlap in front of the cone)
+      // (radial extents stay well inside the spawn / view distance ~1.15-1.3 Rb from the axis: seen from
+      //  the ground the bands are bands hugging the cone, never a veil overhead)
+      { f: 0.22, w: 0.06, ext: 0.32, off: -0.75 + (rnd() - 0.5) * 0.5, hw: 100, cov: cov + 0.04, sc: 2600 },
+      { f: 0.52, w: 0.055, ext: 0.36, off: 0.6 + (rnd() - 0.5) * 0.5, hw: 95, cov: cov + 0.01, sc: 1700 },
       { f: 0.84, w: 0.035, ext: 0.42, off: Math.PI + (rnd() - 0.5) * 1.2, hw: 140, cov: cov * 0.9, sc: 1700 },
     ];
     if (rnd() < 0.55) bands.push({ f: 1.05, w: 0.03, ext: 0.3, off: 0, hw: 180, cov: 0.55, sc: 1500, cap: true });
@@ -352,6 +395,10 @@ export class MountainClouds {
       uDens: { value: 0.0065 },
     };
     this.mat = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: this.u, depthTest: false, depthWrite: false });
+    // half-resolution march target + depth-aware full-resolution composite
+    this.rt = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
+    this.cu = { tColor: { value: null }, tDepth: { value: null }, tCloud: { value: this.rt.texture }, uCTex: { value: new THREE.Vector2(0.5, 0.5) }, uNear: this.u.uNear, uFar: this.u.uFar };
+    this.cmat = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: COMP, uniforms: this.cu, depthTest: false, depthWrite: false });
     // (linear filtering of the height grid: R32F + manual bilinear would cost 4 fetches; use a half-float
     //  copy instead once baked, see _finishGrid)
     this.quad = new THREE.Mesh(new THREE.BufferGeometry(), this.mat);
@@ -364,7 +411,7 @@ export class MountainClouds {
     this.enabled = false;
     // shot mode / software GL: bake the grid now (deterministic, ~0.3 s); otherwise time-sliced in update()
     if (world.engine?.shot) this._bake(1e9);
-    this.effect = { name: 'terrain-clouds', order: 95, enabled: true, render: (r, io) => this._render(r, io) };
+    this.effect = { name: 'terrain-clouds', order: 95, enabled: true, render: (r, io) => this._render(r, io), setSize: (w, h) => this._setSize(w, h) };
     this._off = pipe.addEffect(this.effect);
   }
 
@@ -416,6 +463,13 @@ export class MountainClouds {
     this.enabled = true;
   }
 
+  _setSize(w, h) {
+    if (!this.rt) return;
+    const hw = Math.max(2, Math.ceil(w / 2)), hh = Math.max(2, Math.ceil(h / 2));
+    if (this.rt.width !== hw || this.rt.height !== hh) this.rt.setSize(hw, hh);
+    this.cu.uCTex.value.set(1 / hw, 1 / hh);
+  }
+
   update(dt) {
     if (!this.mat) return;
     if (!this.ready) this._bake(3);
@@ -452,14 +506,21 @@ export class MountainClouds {
     u.uAmbG.value.copy(G.uAmbientGround.value);
     u.uWind.value.copy(this.windOff);
     u.uFrame.value = this.frame;
-    u.tColor.value = io.input.texture;
     u.tDepth.value = io.depth;
+    const iw = io.input.width, ih = io.input.height;
+    if (this.rt.width !== Math.max(2, Math.ceil(iw / 2)) || this.rt.height !== Math.max(2, Math.ceil(ih / 2))) this._setSize(iw, ih);
+    this.quad.material = this.mat;
+    r.setRenderTarget(this.rt);
+    r.render(this.quad, this.qcam);
+    this.cu.tColor.value = io.input.texture;
+    this.cu.tDepth.value = io.depth;
+    this.quad.material = this.cmat;
     r.setRenderTarget(io.output);
     r.render(this.quad, this.qcam);
   }
 
   dispose() {
     try { this._off?.(); } catch (_) { /* */ }
-    this.noise?.dispose(); this.hTex?.dispose(); this.mat?.dispose(); this.quad?.geometry.dispose();
+    this.noise?.dispose(); this.hTex?.dispose(); this.mat?.dispose(); this.cmat?.dispose(); this.rt?.dispose(); this.quad?.geometry.dispose();
   }
 }

@@ -53,13 +53,101 @@ function makeFootRing() {
   return m;
 }
 
+/**
+ * The aureole (Commune, and a flash on Resonance): a ring of light standing behind her — the sign of the source —
+ * billboarded in view space and pushed a little behind her so her silhouette sits inside it. A bright gold-white
+ * ring, a fine inner ring of glyph ticks, a beaded outer thread, a faint sunburst of rays and a warm core glow. The
+ * ring draws itself around (uReveal) as the meditation deepens and breathes at ~0.4 Hz.
+ */
+function makeAureole() {
+  const g = new THREE.PlaneGeometry(2, 2);
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uA: { value: 0 }, uReveal: { value: 0 }, uT: G.uTime, uR: { value: 3.6 }, uBack: { value: 0.55 } },
+    vertexShader: /* glsl */`
+      uniform float uR; uniform float uBack; varying vec2 vP;
+      void main(){
+        vP = position.xy;
+        vec4 mv = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        mv.xyz += normalize(mv.xyz) * uBack;            // a little behind her, along the view ray
+        mv.xy += position.xy * uR;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uA; uniform float uReveal; uniform float uT; uniform float uR; varying vec2 vP;
+      void main(){
+        float r = length(vP) * uR;                       // metres from the centre
+        float ang = atan(vP.x, vP.y);                    // 0 at the top, clockwise
+        float a01 = fract(ang / 6.2831853 + 1.0);
+        float rev = smoothstep(uReveal * 1.02, uReveal * 1.02 - 0.04, a01);   // the ring draws itself around
+        float br = 0.86 + 0.14 * sin(uT * 2.513);        // breathing ~0.4 Hz
+        float R0 = 1.18 * (1.0 + 0.025 * sin(uT * 2.513));
+        float ring = exp(-pow((r - R0) / 0.022, 2.0)) * 2.4 + exp(-pow((r - R0) / 0.2, 2.0)) * 0.32;
+        float inner = exp(-pow((r - R0 * 0.8) / 0.008, 2.0)) * 0.9;
+        float tick = smoothstep(0.75, 0.9, fract(a01 * 48.0 + uT * 0.03)) * smoothstep(1.0, 0.9, fract(a01 * 48.0 + uT * 0.03)) * smoothstep(R0 * 0.86, R0 * 0.84, r) * smoothstep(R0 * 0.8, R0 * 0.82, r);
+        float beads = exp(-pow((r - R0 * 1.32) / 0.012, 2.0)) * (0.5 + 0.5 * sin(a01 * 6.2831853 * 36.0 - uT * 0.3));
+        float rays = pow(abs(sin(ang * 9.0 + 0.6 * sin(ang * 3.0 + uT * 0.2))), 30.0) * smoothstep(R0, R0 * 1.15, r) * exp(-(r - R0) * 1.1) * 0.5;
+        float core = exp(-r * r * 1.1) * 0.22;
+        float edge = smoothstep(uR, uR * 0.85, r);
+        float a = ((ring + inner * 0.5 + tick * 0.3 + beads * 0.35) * rev + rays * uReveal + core) * uA * br * edge;
+        if (a < 0.002) discard;
+        vec3 gold = vec3(3.2, 2.5, 1.45), cosm = vec3(0.85, 1.15, 2.6);
+        vec3 c = mix(cosm, gold, clamp(exp(-pow((r - R0) / 0.09, 2.0)) + core * 3.0, 0.0, 1.0));
+        gl_FragColor = vec4(c * a, a);
+      }`,
+  });
+  const m = new THREE.Mesh(g, mat);
+  m.frustumCulled = false; m.renderOrder = 10; m.name = 'aureole'; m.visible = false;
+  return m;
+}
+
+/**
+ * A pillar of light from the sky onto her (the sky answers Commune; a flash on Resonance): a camera-facing column
+ * around the planet's up axis, narrow at her feet and widening into the sky, faint and slowly streaming.
+ */
+function makeSkyBeam() {
+  const g = new THREE.BufferGeometry();
+  const pos = [], idx = [], N = 24;
+  for (let j = 0; j <= N; j++) { const y = j / N; pos.push(-1, y, 0, 1, y, 0); if (j < N) { const a = j * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); } }
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx);
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    uniforms: { uA: { value: 0 }, uT: G.uTime, uUp: { value: new THREE.Vector3(0, 1, 0) }, uH: { value: 90 }, uW0: { value: 0.9 }, uW1: { value: 7 } },
+    vertexShader: /* glsl */`
+      uniform vec3 uUp; uniform float uH; uniform float uW0; uniform float uW1; varying vec2 vB;
+      void main(){
+        vB = position.xy;
+        vec3 base = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        vec3 side = cross(uUp, cameraPosition - base);
+        side = length(side) > 1e-4 ? normalize(side) : vec3(1.0, 0.0, 0.0);
+        float y = position.y, w = mix(uW0, uW1, pow(y, 0.8));
+        vec3 wp = base + uUp * (y * uH) + side * position.x * w;
+        gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uA; uniform float uT; varying vec2 vB;
+      void main(){
+        float x = abs(vB.x), y = vB.y;
+        float core = exp(-x * x * 9.0), veil = (1.0 - x) * (1.0 - x);
+        float stream = 0.75 + 0.25 * sin(y * 60.0 - uT * 1.6 + vB.x * 4.0) * sin(y * 23.0 - uT * 0.7);
+        float a = (core * 0.7 + veil * 0.3) * stream * smoothstep(0.0, 0.02, y) * pow(1.0 - y, 1.6) * uA;
+        if (a < 0.002) discard;
+        vec3 c = mix(vec3(2.6, 2.1, 1.35), vec3(0.8, 1.05, 2.0), smoothstep(0.0, 0.6, y) * 0.7 + x * 0.3);
+        gl_FragColor = vec4(c * a, a);
+      }`,
+  });
+  const m = new THREE.Mesh(g, mat);
+  m.frustumCulled = false; m.renderOrder = 9; m.name = 'sky-beam'; m.visible = false;
+  return m;
+}
+
 /** The resonance wave: a band conformed to the heightfield, rebuilt each frame from a lazily filled polar table. */
 class PulseRing {
   constructor(seg = 128) {
     this.seg = seg; this.rows = 20; this.dr = 3.5;
     this.table = new Float32Array((this.rows + 1) * seg); this.rowOk = new Uint8Array(this.rows + 1);
     this.center = new THREE.Vector3(); this.up = new THREE.Vector3(); this.e = new THREE.Vector3(); this.n = new THREE.Vector3();
-    this.t = 99; this.dur = 3.0; this.maxR = 62;
+    this.t = 99; this.dur = 3.8; this.maxR = 62;
     const g = new THREE.BufferGeometry();
     // three vertices per spoke: the trailing ground edge, the leading ground edge, and the top of a low CURTAIN of
     // light rising from the leading edge (a flat band on the ground vanished behind the grass from a low lens)
@@ -106,7 +194,7 @@ class PulseRing {
   start(center, up) {
     this.center.copy(center); this.up.copy(up).normalize();
     tangentBasis(this.up, this.e, this.n);
-    this.t = 0; this.rowOk.fill(0);
+    this.t = 0; this.rowOk.fill(0); this.c0 = 0;
   }
   _row(j, H) {
     if (this.rowOk[j]) return;
@@ -117,18 +205,22 @@ class PulseRing {
       let h = H.groundR(_a);
       const wl = H.water ? H.water(_a) : -Infinity;           // ride over the sea, not along the seabed
       if (wl > -1e8 && !H.solidSea) h = Math.max(h, H.R + wl);
+      // over a drop (an overlook, a cliff edge) the wave does not plunge out of sight down the slope: it runs out
+      // level from her feet and settles gently (a shock ring of light over the valley), hugging any rising land
+      if (this.c0 > 0) h = Math.max(h, this.c0 - 0.6 - r * 0.07);
       this.table[j * seg + i] = h;
     }
     this.rowOk[j] = 1;
   }
   update(dt, H, origin) {
     if (this.t > this.dur) { this.mesh.visible = false; return; }
+    if (!this.c0) this.c0 = H.groundR(this.center);
     this.t += dt;
     const u = clamp(this.t / this.dur, 0, 1);
     const R = 1 + this.maxR * (1 - Math.pow(1 - u, 2.2));
     const W = 0.8 + R * 0.09;
     const r0 = Math.max(0, R - W), r1 = R;
-    const CH = 1.2 + 2.2 * Math.min(1, R / 25);           // curtain height: grows as it runs out (reads over grass)
+    const CH = 1.5 + 3.1 * Math.min(1, R / 25);           // curtain height: grows as it runs out (reads over grass)
     const j1 = Math.min(this.rows, Math.ceil(r1 / this.dr) + 1);
     for (let j = Math.max(0, Math.floor(r0 / this.dr)); j <= j1; j++) this._row(j, H);
     const seg = this.seg, P = this.pos, T = this.at;
@@ -147,7 +239,7 @@ class PulseRing {
     }
     this.mesh.geometry.attributes.position.needsUpdate = true;
     this.mesh.geometry.attributes.aT.needsUpdate = true;
-    this.uA.value = smoothstep(0, 0.06, u) * (1 - smoothstep(0.55, 1, u)) * 1.4;
+    this.uA.value = smoothstep(0, 0.04, u) * (1 - smoothstep(0.62, 1, u)) * 1.75; // holds near its peak for ~1.5 s (bloom catches it)
     this.mesh.visible = true;
   }
   dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); }
@@ -179,6 +271,11 @@ export class Abilities {
     // ---- resonance
     this.pulse = new PulseRing(hi ? 128 : 64);
     this.group.add(this.pulse.mesh);
+    // ---- Commune: the aureole behind her and the pillar of light from the sky (both flash on Resonance)
+    this.aureole = makeAureole(); this.group.add(this.aureole);
+    this.beam = makeSkyBeam(); this.group.add(this.beam);
+    this.aurA = 0; this.aurRev = 0; this.beamA = 0; this.pulseFlash = 0;
+    this.aura = 0;        // warm rim on her body while the source answers (read by the Player → SUIT_LIGHT.uAura)
     this.cool = { pulse: 0, blink: 0, lumen: 0 };
     this.glow = 0;        // 0..~1.5: "an ability flows through her" (woven stars, the blade's edge)
     this.aether = 3;      // drift lift reserve (s)
@@ -195,6 +292,7 @@ export class Abilities {
     this.pulse.start(_a, p.up);
     this.glow = Math.max(this.glow, 1.5);
     this.ringFlash = 1;
+    this.pulseFlash = 1;
     this.world.events?.emit?.('player:pulse', { pos: p.pos.clone(), radius: this.pulse.maxR });
     p.engine?.audio?.play?.('pulse', { intensity: 1 });
     const fx = p.fx;
@@ -322,13 +420,40 @@ export class Abilities {
         fr.position.copy(_a);
         fr.quaternion.copy(ctx.quat);
         fr.rotateY(p.time * 0.35);
-        const s = 0.8 + 0.3 * (ctx.drift || 0) + this.ringFlash * 0.5;
+        const s = 0.8 + 0.6 * (ctx.drift || 0) + this.ringFlash * 0.5; // larger under a drift (reads from 10+ m)
         fr.scale.setScalar(s);
         fr.material.uniforms.uA.value = this.ringA * (0.8 + 0.2 * Math.sin(p.time * 2.3));
       }
     }
     // ---- resonance wave
     this.pulse.update(dt, p.heights, origin);
+    // ---- Commune: the aureole and the pillar of light (and their flash on Resonance)
+    {
+      const med = ctx.meditate || 0;
+      this.pulseFlash = Math.max(0, this.pulseFlash - dt * 0.4);
+      const pf = this.pulseFlash * this.pulseFlash;
+      const wantA = Math.max(smoothstep(0.25, 0.9, med), pf * 0.9);
+      this.aurA += (wantA - this.aurA) * dampF(wantA > this.aurA ? (pf > 0.2 ? 9 : 1.6) : 2.0, dt);
+      this.aurRev = med > 0.3 ? Math.min(1, this.aurRev + dt * 0.45) : pf > 0.05 ? 1 : Math.max(0, this.aurRev - dt * 0.8);
+      const au = this.aureole;
+      au.visible = this.aurA > 0.01 && ctx.visible && !ctx.fp;
+      if (au.visible) {
+        au.position.copy(ctx.feet).addScaledVector(p.up, med > 0.3 ? 0.78 : 1.0).sub(origin);
+        au.material.uniforms.uA.value = this.aurA;
+        au.material.uniforms.uReveal.value = this.aurRev;
+        au.material.uniforms.uR.value = 3.6 * (1 + (1 - med) * pf * 0.35);
+      }
+      const wantB = Math.max(smoothstep(0.4, 1, med) * 0.55, pf * 0.8);
+      this.beamA += (wantB - this.beamA) * dampF(wantB > this.beamA ? (pf > 0.2 ? 9 : 1.2) : 1.6, dt);
+      const bm = this.beam;
+      bm.visible = this.beamA > 0.01 && ctx.visible && !ctx.fp;
+      if (bm.visible) {
+        bm.position.copy(ctx.feet).sub(origin);
+        bm.material.uniforms.uUp.value.copy(p.up);
+        bm.material.uniforms.uA.value = this.beamA;
+      }
+      this.aura = Math.max(this.aurA * 0.9, pf * 0.6);
+    }
     // ---- meditation: motes of light rise around her
     this.meditating = ctx.meditate || 0;
     if (this.meditating > 0.3 && p.fx) {
@@ -350,6 +475,7 @@ export class Abilities {
     this.light?.dispose?.();
     this.footRing.geometry.dispose(); this.footRing.material.dispose();
     this.pulse.dispose();
+    for (const m of [this.aureole, this.beam]) { m.geometry.dispose(); m.material.dispose(); }
   }
 }
 

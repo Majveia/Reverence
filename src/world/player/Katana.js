@@ -220,11 +220,13 @@ class SlashArcs {
             float s = vT.x, x = vT.y;                       // s along the sweep (tail 0 → head 1), x 0 outer → 1 inner
             if (s > uReveal) discard;
             float edge = exp(-x * 6.0);
-            float body = (1.0 - x) * (1.0 - x) * 0.3;
+            float body = (1.0 - x) * (1.0 - x) * 0.42;
             float ends = smoothstep(0.0, 0.18, s) * smoothstep(1.0, 0.8, s) * (0.55 + 0.45 * smoothstep(0.2, 0.9, s));
             float fade = pow(1.0 - clamp(uAge, 0.0, 1.0), 1.6);
-            float a = (edge * 1.2 + body) * ends * fade;
-            vec3 c = mix(vec3(0.6, 1.05, 2.8), vec3(3.8, 3.0, 1.8), edge) * uGlow;
+            float a = (edge * 1.5 + body) * ends * fade;
+            // white-hot at the cutting edge → cosmic teal → a violet veil toward the inside and the tail
+            vec3 inner = mix(vec3(0.45, 1.35, 2.6), vec3(1.5, 0.7, 2.7), smoothstep(0.25, 0.95, x) * (1.0 - 0.5 * s));
+            vec3 c = mix(inner, vec3(4.6, 3.8, 2.6), edge) * uGlow;
             if (a < 0.003) discard;
             gl_FragColor = vec4(c * a, a);
           }`,
@@ -281,7 +283,9 @@ export function buildSwordGroup(P, quality, uGlow, uGlowCol) {
         float hamon = smoothstep(0.42, 0.62, vEdge + 0.08 * sin(vBy * 120.0) * sin(vBy * 37.0));
         roughnessFactor = mix(roughnessFactor, 0.09, hamon);`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-        totalEmissiveRadiance += uGlowCol * uGlow * (pow(vEdge, 3.0) * 1.6 + 0.1) * (0.75 + 0.25 * sin(vBy * 60.0 - uGlow * 3.0));`);
+        totalEmissiveRadiance += uGlowCol * uGlow * (pow(vEdge, 3.0) * 1.6 + 0.1) * (0.75 + 0.25 * sin(vBy * 60.0 - uGlow * 3.0));
+        // in the hand, close to the eye: the frosted hamon and a bright honed edge line always read (not a grey stick)
+        totalEmissiveRadiance += vec3(0.82, 0.88, 1.0) * (hamon * 0.05 + pow(vEdge, 10.0) * 0.55);`);
   };
   steel.customProgramCacheKey = () => 'rv-katana-steel-fp';
   const gold = new THREE.MeshStandardMaterial({ color: P.gold || 0xd1a554, metalness: 1.0, roughness: 0.3 });
@@ -561,7 +565,9 @@ export class Katana {
     if (!fx) return;
     const r = fx.rand;
     _c.crossVectors(up, fwd).normalize(); // left
-    const n = Math.round((kind === 'iai' ? 70 : 34) * (fx.max > 400 ? 1 : 0.6));
+    const big = kind === 'iai' || kind === 'iai-bloom';
+    const n = Math.round((big ? 110 : 40) * (fx.max > 400 ? 1 : 0.6));
+    const ps = big ? 1.6 : 1.15; // the flash cut throws a cloud of petals that reads even when she is small in frame
     const sweep = kind === 'slash2' ? -1 : kind === 'slash1' ? 1 : (r.next() < 0.5 ? 1 : -1);
     for (let i = 0; i < n; i++) {
       const ang = (r.next() - 0.5) * 2.2;
@@ -573,7 +579,7 @@ export class Katana {
       _b.copy(_c).multiplyScalar(sweep * (1.5 + r.next() * 3)).addScaledVector(up, 1.6 + r.next() * 3.2).addScaledVector(fwd, (r.next() - 0.3) * 2.2);
       const col = this.petalCols[(r.next() * this.petalCols.length) | 0];
       _col.copy(col).multiplyScalar(0.75 + r.next() * 0.4);
-      fx.emit(_a, _b, { kind: 3, size: 0.05 + r.next() * 0.05, size1: 0.045 + r.next() * 0.04, life: 2.2 + r.next() * 2.4, color: _col, alpha: 0.95, drag: 2.4, grav: 0.07, spin: 9 });
+      fx.emit(_a, _b, { kind: 3, size: (0.05 + r.next() * 0.05) * ps, size1: (0.045 + r.next() * 0.04) * ps, life: 2.6 + r.next() * 2.8, color: _col, alpha: 0.95, drag: 2.4, grav: 0.07, spin: 9 });
     }
     // grass cuttings (small, fast, green-gold)
     for (let i = 0; i < n * 0.6; i++) {
