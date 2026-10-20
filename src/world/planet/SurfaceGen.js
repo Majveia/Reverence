@@ -1206,11 +1206,33 @@ export class SurfaceGen {
         const K = 7.5;
         streak = nF.n3((ve / vl) * K + 4.4, (vn / vl) * K + 1.9, gr * 2.2 + 7.3) * 0.75 + nF.n3((ve / vl) * K * 2.3 + 9.1, (vn / vl) * K * 2.3 + 3.3, gr * 3.5 + 0.7) * 0.35;
       }
-      const pn = p + 0.03 * nF.n3(x * R / 700 + 3.1, y * R / 700 + 8.8, z * R / 700 + 1.4) + 0.17 * streak * sstep(0.0, 0.12, 0.62 - p) - 4.2 * gv / H;
-      const cap = GM.snow * sstep(GM.snowLo, GM.snowHi, pn);
+      const pn = p + 0.03 * nF.n3(x * R / 700 + 3.1, y * R / 700 + 8.8, z * R / 700 + 1.4) + 0.17 * streak * sstep(0.0, 0.12, 0.62 - p) - 4.2 * Math.min(0, gv) / H;   // (gullies only ADD snow: the ridge term made the cap LOD-dependent — distant chunks lost most of it)
+      let cap = GM.snow * sstep(GM.snowLo, GM.snowHi, pn);
+      // (Yotei / Fuji in late spring: even high up the snow lies in the gullies and the ridges between
+      //  them show dark rock in long radial lines — a solid cap above the snowline read as a white dome.
+      //  Radial streak noise (constant along the fall line) + the gully ridges bare the ribs; the summit
+      //  rim and crater stay white)
+      if (cap > 0) {
+        const cdt = x * GM.x + y * GM.y + z * GM.z;
+        const vx = x - GM.x * cdt, vy = y - GM.y * cdt, vz = z - GM.z * cdt;
+        const ve = vx * GM.e[0] + vy * GM.e[1] + vz * GM.e[2], vn = vx * GM.n[0] + vy * GM.n[1] + vz * GM.n[2];
+        // (K = 6 / 13 around the unit circle ≈ 25-60 ribs: wider than the coarsest chunk spacing that
+        //  draws the cone from 20 km. Finer ribs aliased per vertex into a speckle that averaged to bare)
+        const vl = Math.hypot(ve, vn) || 1, ue = ve / vl, un = vn / vl;
+        const rib = nF.n3(ue * 6 + 2.7, un * 6 + 6.1, gr * 1.3 + 4.2) * 0.55 + nF.n3(ue * 13 + 8.1, un * 13 + 1.7, gr * 2.1 + 0.6) * 0.3 + 0.2 * streak + 2.0 * Math.min(0.1, Math.max(0, gv / H));
+        const bareRib = sstep(0.28, 0.4, rib) * sstep(0.06, 0.2, gr) * (1 - sstep(0.85, 1.0, p));
+        cap *= 1 - 0.9 * bareRib;
+      }
       if (cap > glacier) glacier = cap;
-      const ash = sstep(0.36, 0.52, p) * 0.8 * (1 - 0.6 * cap);   // bare volcanic scree above the tree line
-      if (ash > rock) rock = ash;
+      // bare volcanic scree above the tree line: grey gravel (the terrain's talus / scree paint, also keeps
+      // flora's grass off it) with rock only on the gully ridges — a flat rock hint painted the whole band in
+      // the palette's warm rock colour (a uniform orange collar under the snow)
+      const ash = sstep(0.34 + 0.05 * streak, 0.5, p) * (1 - 0.6 * cap);
+      if (ash > 0) {
+        if (ash * 0.9 > talus) talus = ash * 0.9;
+        const ar = ash * (0.25 + 0.55 * sstep(0, 0.5, gv / (H * 0.004)));
+        if (ar > rock) rock = ar;
+      }
       const mg = sstep(0.22, 0.55, p);
       if (mg > mtn) mtn = mg;
     }

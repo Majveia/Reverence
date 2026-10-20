@@ -419,7 +419,58 @@ Owner paths: `src/world/planet/**`, `src/world/terrain/**`.
     the snow, and the micro-relief break-up of the snow edge eases off within ~10 m: no coarse white / dark
     speckle a few metres from the lens.
 
+### Season 2, round 2 (critic r1 follow-up, 20 Oct)
+* **Ribbed snow cap, not a dome** (`SurfaceGen`, cone block): the snow on the great mountain now lies in
+  the gullies with bare dark ribs between them in long radial lines up to near the rim (radial streak noise
+  constant along the fall line, K = 6 / 13 around the cone ≈ 25–60 ribs, plus the gully ridges), and the lower
+  edge runs down the gullies in fingers. (Finer ribs, K = 21, aliased per vertex on the coarse chunks that
+  draw the cone from 15–25 km into a speckle that averaged out to bare rock: only a small summit cap showed.) The cap is now **LOD-stable**: the ridge term only ever ADDS snow in gullies
+  (`min(0, gv)`), so a distant chunk (lod 300–600 m) shows the same cap as a near one. Before, far chunks lost
+  most of the snow and near ones showed a smooth white dome.
+* **The cone's snow cap is drawn per pixel** (`material.js`, `capS`): the chunks that draw the cone from
+  10–25 km have vertices 400–1000 m apart, so any per-vertex mask (ribs, gully fingers) came out as a few soft
+  blobs under a white dome — the root cause of round 1's "dome". The shader rebuilds the same recipe at pixel
+  resolution from the summit direction (`uRvGM`): the cone profile from the normalized radius, irregular
+  radial ribs (sums of warped sines of the azimuth, 13–127 per turn), fingers reaching down the gullies (low
+  rib signal and real concave ground from the curvature attribute), bare dark ribs between them, and a white
+  rim. The snowline sits at ~45 % of the cone's height (Yotei / Fuji in late spring). Up close the
+  generator mask still matches the real gullies. `uRvGM2.x` = snow amount (0 on barren worlds, 0.6 volcanic).
+* **Snow owned by the mask on the cone** (`chunkBuild`): the shader's temperature attribute is lifted just
+  above its cold threshold inside the cone's footprint (`gr < 1.1`), so the altitude lapse no longer paints
+  everything above ~2.9 km a uniform white. The CPU climate (flora's tree line, `sample().snow`, biomes) is
+  unchanged. On the cone the shader gives the glacier mask full weight (`glac × 1.2`).
+* **Volcanic upper cone** (`material.js`, new uniform `uRvGM` = summit direction + angular footprint, set
+  from `surface.great` in `terrain/index.js`): above the forest the cone's rock is dark grey-violet volcanic
+  rock with fall-line scree streaks, and the ground is a dark olive heath. The palette's warm rock and the
+  cold-tundra tint had painted a flat orange collar under the snow. The generator marks the ash zone as
+  talus (`sample().talus`, so flora keeps grass off it), with rock only on the gully ribs.
+* **Cloud bands billow** (`mountainClouds.js`): a finer noise octave now tears the band tops and undersides,
+  and the bands are ~35 % thicker. Seen near their own altitude, the foot and shoulder bands had read as
+  straight ruled stripes across the cone.
+* **Arch reads as bedded rock** (`features.js` `buildArch`): flatter, blockier section (superellipse 0.38),
+  hard bedding ledges with recessed soft beds every ~8–12 m. The large soft lumps and 6 m ridged knobs that
+  made a doughy, knobbly outline are gone. The soffit and inner leg faces now have baked occlusion.
+* **Floating isles carry life** (`features.js` `buildIsle`): each isle has a lone gnarled tree (sometimes
+  two) with clustered crowns in the season's hue. The largest isle spills a thin waterfall from its rim
+  that widens as it falls.
+
 ## Capture URLs (verified this round, 1280×720)
+**Season 2 heroes (great mountain, 20 Oct):**
+* **W1 sea of cloud, the whole mountain from the south** (the cone over a white cloud floor, side-lit at
+  sunrise, ribbed snow cap): `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=700&lat=5.79&lon=13.2736&yaw=0&pitch=7&tod=0.28&disable=fauna,vehicles`
+* **W1 on foot, the explorer on a flowered ridge facing the mountain** (cloud band across the cone, floating
+  isles with trees): `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=16.6718&lon=25.7718&yaw=277&pitch=9&tod=0.37&props=0`
+* **W1 the arch framing the mountain**: `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=16.7394&lon=27.123&yaw=276.5&pitch=9&tod=0.3&props=0`
+  (a large smooth dome-shaped boulder with a saw-toothed base stands left of the player here and at W12
+  `lat=19.2409&lon=29.9261`. It is NOT terrain: the heightfield is smooth there and it remains with
+  `disable=civ`, `fauna`, `flora` or `space`. See Requests.)
+* **W2 meadow, deer and the mountain** (isles overhead): `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=5.3479&lon=24.1607&yaw=241.5&pitch=9&tod=0.36&props=0`
+* W1 mountain aerial (flat front light, good for checking the cap): `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=1400&lat=16.6718&lon=25.7718&yaw=277&pitch=3&tod=0.4&disable=fauna,vehicles,flora`
+* Other mountain viewpoints (from `transect`-style probing, W1 summit lat 17.777 lon 13.2736): from the sea to
+  the south-east `alt=250&lat=11.5237&lon=23.8506&yaw=300&tod=0.64` (backlit, hazy). Any point ~1.15–1.35 Rb
+  (≈14–17 km) from the summit with yaw toward it frames the whole cone.
+
+**Earlier (landform) views:**
 Use `view=fly` for terrain-only framing (no player body). Side light reads relief best: pick `tod` so the
 sun is ~60–120° off the view direction (sun ≈ east at tod 0.3, ≈ west at 0.68 on these worlds).
 Aerial heroes add `tk=1.7` (finer capture LOD; ~+50 % chunks — do NOT use it on foot).
@@ -517,6 +568,18 @@ inView, levels, ms, msMax, readyMs, builds}` (`readyMs` = time until the terrain
   Requests: flora should forward `surface.onFlattenChange`).
 
 ## Requests
+* **flora** (season 2, r2): on the great mountain's lower flanks and in gold / crimson season regions the
+  terrain paints the ground in the season's hue (`sample().season`: 0 spring green, ⅓ blossom, ⅔ gold, 1
+  crimson), but the far tree impostors stay summer green. From the W1 hero view that reads as brown dirt
+  between green dots. Please tint crowns by `sample().season` (gold → ginkgo / larch yellow, crimson → maple
+  red, blossom → white-pink), so ground and canopy agree as in the Yotei autumn frames.
+* **owner unknown (vehicles? player?)** (season 2, r2): a large smooth dome boulder with a saw-toothed
+  base stands a few metres from the W1 (`lat=16.7394&lon=27.123`) and W12 (`lat=19.2409&lon=29.9261`)
+  `view=surface` spawns with `props=0`. It survives `disable=civ`, `fauna`, `flora` and `space`, and the
+  terrain heightfield is smooth there. It blocks the arch view. Whoever owns it: keep it off spawn sightlines.
+* **atmosphere** (season 2, r2): the sea of cloud (terrain `mountainClouds`) reads best at sunrise
+  (`tod≈0.27–0.3`). A warmer, lower key light at that hour would turn the W1 south view into the Yotei
+  sunrise frame.
 * **all tracks** (round 7): `height()` is now continuous everywhere (zero-width steps of 0.15–30 m were
   removed, see Round 7). Placement through `surface.sample` is unaffected; hard-coded lat/lon spawns at
   the foot of ranges, on fjord coasts or near karst towers may sit a little higher or lower.

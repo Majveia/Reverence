@@ -59,6 +59,15 @@ class Terrain {
     this.group.name = 'terrain';
     world.root.add(this.group);
     this.material = createTerrainMaterial(world.body, q, { lite: this._liteLighting(q) });
+    // the great mountain's centre and angular footprint: the shader paints its volcanic rock, scree and
+    // dark forest flanks (Yotei) from them
+    try {
+      const GM = this.surface?.great, u = this.material.userData.uniforms.uRvGM;
+      if (GM && u) {
+        u.value.set(GM.x, GM.y, GM.z, GM.Rb / this.surface.radius);
+        this.material.userData.uniforms.uRvGM2?.value.set(GM.snow ?? 1, 0, 0, 0);
+      }
+    } catch (_) { /* optional */ }
     this.depthMaterial = createTerrainDepthMaterial();
     // quads per chunk side
     this.RES = RES_DEFAULT;

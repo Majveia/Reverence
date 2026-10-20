@@ -83,6 +83,8 @@ uniform vec3 uRvWindDir; uniform float uRvWindS;
 uniform float uRvDebug;
 uniform int uRvOff;   // debug A/B (URL tfoff=<bits>): 1 no 8 m rock layer, 2 no 32 m, 4 no macro, 8 no detail-height occlusion, 16 no near layers
 uniform float uRvLite; // 1 = software-GL budget: no micro layer, single-fetch tiling
+uniform vec4 uRvGM;  // great mountain: unit centre direction, angular footprint radius (0 = none)
+uniform vec4 uRvGM2; // great mountain: snow amount
 uniform vec4 uRvF;   // detail fade distances: mid start/end, far start/end (scaled by quality)
 uniform vec4 uRvSeason; // x = season-region strength (1 = full painterly fields)
 varying vec3 vRvW;
@@ -196,6 +198,8 @@ void rvTerrain( inout vec3 albedo ) {
   float dist = length( W - cameraPosition );
   vec3 C = W + uRvOriginMod;
   float q = uRvP.w;
+  // normalized radius from the great mountain's centre (1 = foot of the cone; 9 = none / far)
+  float gCone = uRvGM.w > 0.0 ? acos( clamp( dot( up, uRvGM.xyz ), -1.0, 1.0 ) ) / uRvGM.w : 9.0;
   // local frame: L = (u, alt, v); face tangents from screen derivatives (cotangent frame)
   vec3 L = vec3( vRvUV.x, alt, vRvUV.y );
   vec3 dLx = dFdx( L ), dLy = dFdy( L );
@@ -210,7 +214,7 @@ void rvTerrain( inout vec3 albedo ) {
   vec3 Nl = vec3( dot( Ng, Tu ), dot( Ng, up ), dot( Ng, Tv ) );
 
   float rockA = vRvMat.x, sandA = vRvMat.y, temp = vRvMat.z * 1.8 - 0.5, moist = vRvMat.w;
-  float wetA = vRvMat2.x, glac = vRvMat2.y, curv = vRvMat2.z * 2.0 - 1.0, mtn = vRvMat2.w;
+  float wetA = vRvMat2.x; float glac = vRvMat2.y; float curv = vRvMat2.z * 2.0 - 1.0, mtn = vRvMat2.w;
   float slope = 1.0 - dot( Ng, up );
 
   vec3 wg = pow( abs( Nl ), vec3( 6.0 ) ); wg /= dot( wg, vec3( 1.0 ) );
@@ -256,8 +260,31 @@ void rvTerrain( inout vec3 albedo ) {
   // (beaches only where the shore is gentle; the beach band also widens/narrows with noise)
   float shingle = sea > -1e8 ? smoothstep( 0.03, 0.09, slope + 0.03 * n4 ) * ( 1.0 - smoothstep( 2.5 + 3.0 * ( mC.r - 0.3 ), 9.0, hs ) ) * smoothstep( -6.0, -1.0, hs ) : 0.0;
   float wSand = clamp( ( max( sandA, dryness * 0.9 ) + 0.28 * n4 + 0.18 * ( mC.r - 0.5 ) ) * ( 1.0 - rockS ) * ( 1.0 - 0.8 * talusW ) * ( 1.0 - 0.85 * shingle ), 0.0, 1.0 );
+  // ---- the great mountain's snow cap, per pixel: the chunks that draw the cone from 10-25 km have vertices
+  //      400-1000 m apart, so the generator's per-vertex mask (ribs, gully fingers) came out as a few soft
+  //      blobs under a white dome. Same recipe here at pixel resolution: the cone profile from the radius,
+  //      snow fingers reaching down the gullies (low rib signal + real concave ground), bare dark ribs
+  //      in long radial lines between them, the rim and crater white
+  float coneK = 1.0 - smoothstep( 0.85, 1.0, gCone );
+  if ( coneK > 0.0 ) {
+    vec3 cAx = uRvGM.xyz;
+    vec3 rd = up - cAx * dot( up, cAx );
+    vec3 eA = normalize( cross( cAx, abs( cAx.y ) < 0.9 ? vec3( 0.0, 1.0, 0.0 ) : vec3( 1.0, 0.0, 0.0 ) ) );
+    float th = dot( rd, rd ) > 1e-14 ? atan( dot( rd, cross( cAx, eA ) ), dot( rd, eA ) ) : 0.0;
+    float g = clamp( gCone, 0.0, 1.0 );
+    float thw = th + 0.05 * sin( g * 11.0 + th * 3.0 ) + 0.03 * sin( g * 23.0 + th * 7.0 );
+    float rib = 0.5 + 0.28 * sin( thw * 29.0 + 1.7 * sin( thw * 5.0 ) ) + 0.17 * sin( thw * 61.0 + 2.3 + 2.0 * sin( thw * 9.0 ) )
+              + 0.1 * sin( thw * 13.0 + 0.7 ) + 0.06 * sin( thw * 127.0 + 4.1 );
+    float t = 1.0 - g;
+    float pr = 0.55 * pow( t, 2.2 ) + 0.45 * pow( t, 1.2 );
+    float pn = pr + 0.16 * ( 0.5 - rib ) * smoothstep( 0.0, 0.25, 0.75 - pr ) + 0.05 * clamp( curv, 0.0, 1.0 ) + 0.03 * n2;
+    float capS = smoothstep( 0.37, 0.43, pn );
+    capS *= 1.0 - 0.88 * smoothstep( 0.6, 0.72, rib + 0.08 * n4 - 0.1 * clamp( curv, 0.0, 1.0 ) ) * smoothstep( 0.05, 0.16, g ) * ( 1.0 - smoothstep( 0.86, 0.97, pr ) );
+    glac = mix( glac, capS * uRvGM2.x, coneK );
+  }
   float coldness = smoothstep( 0.12, -0.08, temp + 0.10 * n2 + 0.05 * n4 );
-  float snowPot = clamp( coldness + glac * 0.7 + uRvS.y + uRvS2.w, 0.0, 1.0 );
+  // (on the great mountain the generator's ribbed snow mask is the whole story: full weight)
+  float snowPot = clamp( coldness + glac * mix( 0.7, 1.2, 1.0 - smoothstep( 0.85, 1.0, gCone ) ) + uRvS.y + uRvS2.w, 0.0, 1.0 );
   // talus / scree aprons: 30-40° concave slopes below rock (cliff feet, mountain flanks)
   float nearRock = smoothstep( 0.15, 0.55, mtn + rockA + 0.3 * rockS );
   float meadow0 = smoothstep( 0.3, 0.55, moist + 0.1 * n3 ) * smoothstep( 0.1, 0.3, temp ) * uRvS2.x;
@@ -622,7 +649,8 @@ void rvTerrain( inout vec3 albedo ) {
     vec3 green = mix( vec3( 0.055, 0.15, 0.028 ), vec3( 0.11, 0.21, 0.035 ), smoothstep( 0.3, 0.7, drift ) );
     vec3 cG = green;
     vec3 cB = mix( green * 1.15 + vec3( 0.02, 0.01, 0.0 ), vec3( 0.58, 0.29, 0.37 ), 0.1 + 0.6 * patchF );
-    vec3 cO = mix( vec3( 0.33, 0.22, 0.06 ), vec3( 0.50, 0.35, 0.10 ), smoothstep( 0.3, 0.75, drift ) );
+    // (gold pampas glows: the old ochre read as bare brown dirt between the flora track's green crowns)
+    vec3 cO = mix( vec3( 0.40, 0.29, 0.065 ), vec3( 0.60, 0.45, 0.12 ), smoothstep( 0.3, 0.75, drift ) );
     vec3 cR = mix( mix( vec3( 0.30, 0.18, 0.05 ), vec3( 0.36, 0.15, 0.04 ), smoothstep( 0.35, 0.65, drift ) ), vec3( 0.40, 0.035, 0.045 ), 0.55 * patchF );
     float i0 = floor( min( sq, 2.999 ) ), fs = sq - i0;
     vec3 ca = i0 < 0.5 ? cG : i0 < 1.5 ? cB : cO;
@@ -722,6 +750,22 @@ void rvTerrain( inout vec3 albedo ) {
   vec3 snowC = uRvSnow * ( 0.8 + 0.1 * mA.b + 0.06 * n4 + 0.06 * mix( 0.5, dSnow.a, fMid ) );
   snowC = mix( snowC, snowC * vec3( 0.84, 0.91, 1.04 ), clamp( curv, 0.0, 1.0 ) * 0.5 + smoothstep( 0.55, 0.8, mC.b ) * 0.25 );
 
+  // ---- the great mountain (Yotei): above the forest, dark volcanic rock and grey-violet scree streaked
+  //      down the fall line (the palette's warm rock and the cold-tundra tint drew a flat orange collar
+  //      under the snow); low alpine heath between the streaks
+  if ( gCone < 1.0 ) {
+    float kUp = smoothstep( 0.62, 0.36, gCone + 0.05 * n3 );
+    // fall-line streaks: angular coordinate around the cone (stretched radially)
+    vec3 rad = up - uRvGM.xyz * dot( up, uRvGM.xyz );
+    vec3 eA = normalize( cross( uRvGM.xyz, abs( uRvGM.y ) < 0.9 ? vec3( 0.0, 1.0, 0.0 ) : vec3( 1.0, 0.0, 0.0 ) ) );
+    float th = dot( rad, rad ) > 1e-14 ? atan( dot( rad, cross( uRvGM.xyz, eA ) ), dot( rad, eA ) ) : 0.0;
+    float stk = 0.5 + 0.5 * sin( th * 46.0 + 3.0 * mC.g + gCone * 6.0 ) * sin( th * 17.0 + 2.0 * mA.r );
+    vec3 volc = mix( vec3( 0.06, 0.058, 0.064 ), vec3( 0.13, 0.118, 0.115 ), smoothstep( 0.3, 0.8, stk + 0.3 * ( mC.b - 0.5 ) ) );
+    volc *= 0.85 + 0.3 * mix( 0.5, hRock, fMid );
+    rockC = mix( rockC, volc * ( 0.9 + 0.25 * mA.b ), kUp * 0.9 );
+    vec3 heath = mix( uRvForest * vec3( 0.68, 0.78, 0.68 ), vec3( 0.085, 0.082, 0.078 ), smoothstep( 0.5, 0.85, stk ) * 0.5 );
+    groundC = mix( groundC, heath, kUp * 0.75 * ( 1.0 - 0.4 * smoothstep( 0.5, 0.9, moist ) ) );
+  }
   vec3 col = groundC;
   col = mix( col, sandC, bSand );
   col = mix( col, rockC, bRock );
@@ -873,6 +917,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
     uRvS2: { value: new THREE.Vector4(st.lush, st.forest, 0, 0) },
     uRvLite: { value: opts.lite ? 1 : 0 },
     uRvSeason: { value: new THREE.Vector4((() => { try { const v = new URLSearchParams(globalThis.location?.search || '').get('tseason'); return v !== null && v !== '' ? +v : 1; } catch (_) { return 1; } })(), 0, 0, 0) },
+    uRvGM: { value: new THREE.Vector4(0, 1, 0, 0) }, uRvGM2: { value: new THREE.Vector4(1, 0, 0, 0) },
     uRvF: { value: opts.lite ? new THREE.Vector4(160, 700, 2500, 7000) : new THREE.Vector4(250, 1400, 6000, 20000) },
   };
 
@@ -905,7 +950,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v40' + (opts.lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-v42' + (opts.lite ? 'L' : '');
   return mat;
 }
 
