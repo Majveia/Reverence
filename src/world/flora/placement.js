@@ -55,6 +55,7 @@ export function sampleLod(gen, x, y, z, lod, out, slopeStep = 1.5) {
   gen.climate(x, y, z, h, info.c, out);
   out.height = h;
   out.rock = info.rock || 0; out.sand = info.sand || 0; out.lake = info.lake || 0; out.river = info.river || 0; out.cliff = info.cliff || 0;
+  out.bare = info.bare || 0; out.talus = info.talus || 0; out.season = info.season ?? 0.5;
   const e = slopeStep / gen.R;
   let ex = -z, ez = x;
   let el = Math.hypot(ex, ez);
@@ -89,6 +90,22 @@ function zoneW(z, n) {
 }
 
 const _s = {}, _q = [0, 0, 0, 1], _p = [0, 0, 0];
+
+// ------------------------------------------------------------------ season regions (Ghost of Yotei)
+// The terrain generator's season map (0 spring green · 1/3 blossom · 2/3 gold · 1 crimson) is packed
+// into the instance's tint slot: tint' = round(season·64) + tint·0.98 (decoded by rvSeasonOf / the grass
+// shader). sea = [centre, half-width, strength]: 1 inside the region, 1 − strength·seasonAmt outside.
+export const SEASON_Q = 64;
+export function packSeason(v, season) { return Math.round(saturate(season) * SEASON_Q) + saturate(v) * 0.98; }
+// membership of a season state k (0 green · 1 blossom · 2 gold · 3 crimson) on the terrain's ramp:
+// the same interpolation the terrain shader paints (in-between values occur on region borders and in
+// the great mountain's forest belt, where the generator pulls the season toward green)
+export function seaRamp(s, k) {
+  const q = (s < 0 ? 0 : s > 1 ? 1 : s) * 3, i0 = Math.min(2, Math.floor(q)), f = smooth(0, 1, q - i0);
+  return k === i0 ? 1 - f : k === i0 + 1 ? f : 0;
+}
+function seaIn(sea, sv) { return seaRamp(sv, Math.round(sea[0] * 3)); }
+function seaW(sea, sv, amt) { return sea ? 1 - amt * (sea[2] ?? 1) * (1 - seaIn(sea, sv)) : 1; }
 
 /**
  * Place one layer's instances in a cell.
@@ -148,6 +165,7 @@ export function placeLayer(gen, T, layerName, cell, opt = {}) {
           if (sp.alt) w *= rangeW(alt, T.hasSea ? sp.alt : [-9, sp.alt[1]], 0.02);
           if (sp.shore) w *= T.hasSea ? (1 - smooth(sp.shore * 0.5, sp.shore, shoreDist)) : saturate((s.lake + s.river) * 2);
           w *= zoneW(sp.zone, zn);
+          if (sp.sea) w *= seaW(sp.sea, s.season, T.seasonAmt || 0);
         }
         W[q] = w; wsum += w;
       }
@@ -182,7 +200,7 @@ export function placeLayer(gen, T, layerName, cell, opt = {}) {
       inst[o + 4] = _q[0]; inst[o + 5] = _q[1]; inst[o + 6] = _q[2]; inst[o + 7] = _q[3];
       inst[o + 8] = h01(seed + 11, cellId, k, L);                      // seed
       inst[o + 9] = h01(seed + 12, cellId, k, L);                      // rank (distance thinning)
-      inst[o + 10] = saturate(0.5 + (s.moisture - 0.5) * 0.8 + (h01(seed + 13, cellId, k, L) - 0.5) * 0.5); // tint
+      inst[o + 10] = packSeason(0.5 + (s.moisture - 0.5) * 0.8 + (h01(seed + 13, cellId, k, L) - 0.5) * 0.5, T.seasonAmt > 0 ? s.season : 0); // tint + season
       inst[o + 11] = s.biome;
       model[cnt] = sp.models[variant];
       cnt++;
@@ -242,6 +260,8 @@ export function placeGrass(gen, T, cell) {
       // ledges drew contour stripes across hillsides)
       let dens = cov * (0.58 + 0.42 * smooth(0.12, 0.5, pat + cov * 0.3)) * (1 - smooth(0.45, 0.85, s.slope)) * (1 - smooth(0.45, 0.8, s.rock));
       dens *= 1 - smooth(0.4, 0.8, s.sand);
+      // worn soil / gravel patches and scree (incl. the great mountain's ash band) stay bare
+      dens *= (1 - smooth(0.35, 0.75, s.bare)) * (1 - smooth(0.3, 0.7, s.talus));
       // sparse biomes keep real bare ground (soft-edged: a hard density step drew crisp borders)
       if (cov < 0.999) { const th = 0.3 * (1 - cov); dens *= 0.3 + 0.7 * smooth(th - 0.09, th + 0.09, pat); }
       if (dens < 0.04) continue;
@@ -261,16 +281,35 @@ export function placeGrass(gen, T, cell) {
       let o = cnt * STRIDE;
       inst[o] = dx * rr - ax; inst[o + 1] = dy * rr - ay; inst[o + 2] = dz * rr - az; inst[o + 3] = 1;
       inst[o + 4] = _q[0]; inst[o + 5] = _q[1]; inst[o + 6] = _q[2]; inst[o + 7] = _q[3];
-      inst[o + 8] = h01(seed + 5, cellId, k); inst[o + 9] = dens; inst[o + 10] = hgt; inst[o + 11] = dry;
+      const sAmt = T.seasonAmt || 0, sv = sAmt > 0 ? s.season : 0;
+      inst[o + 8] = h01(seed + 5, cellId, k); inst[o + 9] = dens; inst[o + 10] = hgt; inst[o + 11] = packSeason(dry, sv);
       cnt++;
-      // flowers: drifts in meadows
+      // flowers: drifts in meadows; in season regions, one species grows in masses of 30–200 m
+      // (red spider lilies across a crimson field, white blossom-time flowers…), not a uniform scatter
       if (G.flowers.length) {
-        const fn = fieldNoise(seed + 7, px, py, pz, 14);
-        const fchance = G.flowerAmt * smooth(0.5, 0.78, fn) * dens * (1 - dry * 0.7);
-        if (h01(seed + 8, cellId, k) < fchance) {
-          const fsel = fieldNoise(seed + 11, px, py, pz, 22);
-          let pick = fsel * G.flowerWsum, q = 0;
-          for (; q < G.flowers.length - 1; q++) { pick -= G.flowers[q].freq; if (pick <= 0) break; }
+        let q = -1;
+        if (G.massAny && sAmt > 0) {
+          const fm = fieldNoise(seed + 21, px, py, pz, 55) * 0.72 + fieldNoise(seed + 22, px, py, pz, 12) * 0.28;
+          for (let m = 0; m < G.flowers.length; m++) {
+            const F = G.flowers[m];
+            if (!F.mass) continue;
+            const g = sAmt * seaIn(F.sea, sv);
+            if (g > 0.01 && h01(seed + 16 + m, cellId, k) < F.mass * g * smooth(0.32, 0.5, fm) * smooth(0.04, 0.3, dens)) { q = m; break; }
+          }
+        }
+        if (q < 0) {
+          const fn = fieldNoise(seed + 7, px, py, pz, 14);
+          const fchance = G.flowerAmt * smooth(0.5, 0.78, fn) * dens * (1 - dry * 0.7);
+          if (h01(seed + 8, cellId, k) < fchance) {
+            const fsel = fieldNoise(seed + 11, px, py, pz, 22);
+            let wsum = 0;
+            for (const F of G.flowers) wsum += F.massOnly ? 0 : F.freq * seaW(F.sea, sv, sAmt);
+            let pick = fsel * wsum;
+            for (q = 0; q < G.flowers.length - 1; q++) { const F = G.flowers[q]; pick -= F.massOnly ? 0 : F.freq * seaW(F.sea, sv, sAmt); if (pick <= 0 && !F.massOnly) break; }
+            if (G.flowers[q].massOnly) q = -1;
+          }
+        }
+        if (q >= 0) {
           const F = G.flowers[q];
           const mv = F.models[Math.floor(h01(seed + 9, cellId, k) * F.models.length) % F.models.length];
           o = fc * STRIDE;
@@ -279,7 +318,7 @@ export function placeGrass(gen, T, cell) {
           fl[o] = dx * rr - ax + Math.cos(oa) * od * 0; fl[o + 1] = dy * rr - ay; fl[o + 2] = dz * rr - az;
           fl[o + 3] = 0.75 + h01(seed + 13, cellId, k) * 0.6;
           fl[o + 4] = _q[0]; fl[o + 5] = _q[1]; fl[o + 6] = _q[2]; fl[o + 7] = _q[3];
-          fl[o + 8] = h01(seed + 14, cellId, k); fl[o + 9] = h01(seed + 15, cellId, k); fl[o + 10] = 0.5; fl[o + 11] = s.biome;
+          fl[o + 8] = h01(seed + 14, cellId, k); fl[o + 9] = h01(seed + 15, cellId, k); fl[o + 10] = packSeason(0.5, sv); fl[o + 11] = s.biome;
           flm[fc] = mv; fc++;
         }
       }

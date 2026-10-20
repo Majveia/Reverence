@@ -106,7 +106,7 @@ export function buildStyle(body, atlas) {
   const logSp = (o = {}) => ({
     id: 'log', layer: 'under', gen: PL.fallenLog, variants: 2, barkLayer: BARK.furrow, tint2: [0.1, 0.07, 0.04], billboard: 0, windAmp: 0,
     biomes: bw({ FOREST: 1, TAIGA: 1, JUNGLE: 0.6 }), m: [0.25, 1.5], t: [-0.2, 1.3], slope: 0.45, alt: [0, 0.6],
-    zone: -1, dens: 0.16, scale: [0.7, 1.3], lean: 0.02, sink: 0.08, ...o, params: { length: 6, radius: 0.32, bark: mix3(barkBrown, [0.09, 0.07, 0.05], 0.3), ...o.params },
+    zone: -1, dens: 0.07, scale: [0.7, 1.3], lean: 0.02, sink: 0.08, ...o, params: { length: 6, radius: 0.32, bark: mix3(barkBrown, [0.09, 0.07, 0.05], 0.3), ...o.params },
   });
   const shrubDry = (o = {}) => ({
     id: 'dryshrub', layer: 'under', gen: PL.reeds, variants: 2,
@@ -359,6 +359,35 @@ export function buildStyle(body, atlas) {
       S.rock.cover = bw({ DESERT: 0.3, ROCK: 0.5, SAVANNA: 0.2, TUNDRA: 0.3, SNOW: 0.2, VOLCANIC: 0.4, GRASSLAND: 0.15, CRYSTAL: 0.3, TOXIC: 0.2, BEACH: 0.1 });
       break;
     }
+  }
+  // ------------------------------------------------------------------ season regions (Ghost of Yotei)
+  // The terrain's season map paints broad one-hue regions (spring green · blossom · gold pampas ·
+  // crimson). Earthly styles grow the matching trees and flowers there: cherry trees (some weeping)
+  // over blossom fields, ginkgo over gold pampas, maples over red spider-lily fields; generic broadleaf
+  // crowns turn with the region (rvSeasonLeaf). S.season scales how strongly the style follows the map.
+  S.season = { lush: 1, boreal: 0.8, moss: 0.7, sparse: 0.75, giant: 0.45 }[key] ?? 0;
+  if (S.season > 0) {
+    for (const sp of S.canopy.species) if (sp && (sp.gen === T.broadleaf || sp.gen === T.slender || sp.gen === T.umbrella)) sp.seasonLeaf = sp.seasonLeaf ?? 0.9;
+    for (const sp of S.under.species) if (sp && sp.id === 'bush') sp.seasonLeaf = 0.75;
+    const dkBark = [0.045, 0.032, 0.028];
+    const seaTree = (o) => oak({ variants: 2, barkLayer: BARK.furrow, ...o, params: { bark: dkBark, ...o.params } });
+    const grassy = bw({ GRASSLAND: 1, FOREST: 1, SAVANNA: 0.6, JUNGLE: 0.4, TAIGA: 0.35, TUNDRA: 0.1 });
+    // cherry (sakura): low, wide, gnarled, a cloud of pink-white bloom; one variant weeps
+    add('canopy', seaTree({ id: 'cherry', sea: [1 / 3, 0.16, 1], biomes: grassy, dens: 1.5, zone: -1, tint2: [0.07, 0.045, 0.04], scale: [0.8, 1.25],
+      params: { height: 8.5, crownR: 5.4, crownAspect: 0.72, trunkR: 0.34, fork: 1, gnarl: 0.6, leafSize: 2.1, leafDensity: 4.6, flatBottom: 0.6, rects: [R('blossom')], leafA: [0.72, 0.2, 0.33], leafB: [0.8, 0.52, 0.58], weepVariant: 1 } }));
+    // maple (momiji): rounded crowns of palmate crimson and orange leaves
+    add('canopy', seaTree({ id: 'maple', sea: [1, 0.16, 1], biomes: grassy, dens: 2.0, zone: -1, tint2: [0.08, 0.04, 0.03], scale: [0.8, 1.25],
+      params: { height: 10, crownR: 5.0, crownAspect: 0.78, trunkR: 0.34, fork: 0.9, gnarl: 0.4, leafSize: 2.1, leafDensity: 4.2, rects: [R('maple')], leafA: [0.36, 0.028, 0.018], leafB: [0.5, 0.12, 0.02] } }));
+    // ginkgo: tall, upright crowns of golden fans over the pampas
+    add('canopy', seaTree({ id: 'ginkgo', sea: [2 / 3, 0.16, 1], biomes: grassy, dens: 1.6, zone: -1, tint2: [0.1, 0.07, 0.03], scale: [0.85, 1.3],
+      params: { height: 14, crownR: 3.9, crownAspect: 1.4, trunkR: 0.36, fork: 0.25, gnarl: 0.15, leafSize: 2.0, leafDensity: 4.4, rects: [R('ginkgo')], leafA: [0.5, 0.31, 0.025], leafB: [0.62, 0.44, 0.06] } }));
+    // generic broadleaf/conifer species give way inside the seasonal regions (they stay at ~45 %)
+    for (const sp of S.canopy.species) if (sp && !sp.sea && (sp.gen === T.broadleaf || sp.gen === T.conifer)) sp.sea = [0, 0.16, 0.55];
+    S.canopy.cover[B.GRASSLAND] = Math.max(S.canopy.cover[B.GRASSLAND], 0.14);
+    // flowers: red spider lilies in masses over the crimson fields, white blossom-time flowers
+    S.grass.flowers = (S.grass.flowers || []).map((f) => ({ ...f, sea: f.sea || [0, 0.2, 0.7] }));
+    S.grass.flowers.push({ rect: R('lily'), colA: [0.62, 0.02, 0.02], colB: [0.8, 0.06, 0.03], tint2: [0.05, 0.13, 0.025], type: 'cup', height: 0.6, freq: 0.6, sea: [1, 0.2, 1], mass: 0.95, count: 13, radius: 0.46 });
+    S.grass.flowers.push({ rect: R('daisy'), colA: [0.92, 0.88, 0.9], colB: [0.95, 0.62, 0.72], tint2: [0.85, 0.6, 0.1], type: 'daisy', freq: 1.2, sea: [1 / 3, 0.2, 1], mass: 0.5, count: 9 });
   }
   // grass tint for the flower layer and rock species list
   S.rock.species = [{ id: 'rocks', layer: 'rock', rock: true, biomes: S.rock.cover, m: [-5, 5], t: [-5, 5], slope: 3, alt: [-0.02, 1.2], zone: -1, dens: 1, scale: [0.3, 2.8], lean: 0.35, sink: 0.25, collider: 'rock' }];

@@ -43,8 +43,10 @@ void main(){
     if (kind > 1.5) glow = uCardGlow;
   } else if (kind > 3.5) glow = uGlow;
   float ao = vInfo.z;
+  // normal.a: glow for glowing models; otherwise a leaf mask (season recolouring of far crowns)
+  float na = uGlow + uCardGlow > 0.0 ? clamp(glow * 0.25, 0.0, 1.0) : ((kind > 0.5 && kind < 1.5) ? 1.0 : 0.0);
   if (uMode < 0.5) gl_FragColor = vec4(col * mix(0.35, 1.0, ao), 1.0);
-  else gl_FragColor = vec4(normalize(vN) * 0.5 + 0.5, clamp(glow * 0.25, 0.0, 1.0));
+  else gl_FragColor = vec4(normalize(vN) * 0.5 + 0.5, na);
 }`;
 
 /**
@@ -97,7 +99,7 @@ export function bakeImpostors(renderer, atlasTex, models, cellPx = 256) {
         const hw = Math.max(Math.abs(bb.min.x), Math.abs(bb.max.x), Math.abs(bb.min.z), Math.abs(bb.max.z));
         const side = Math.max((y1 - y0) * 0.5, hw) * 1.02;
         const yc = (y0 + y1) * 0.5;
-        dims[m * 4] = side; dims[m * 4 + 1] = yc; dims[m * 4 + 2] = hw * 1.02; dims[m * 4 + 3] = M.glowLevel ?? 0;
+        dims[m * 4] = side; dims[m * 4 + 1] = yc; dims[m * 4 + 2] = hw * 1.02; dims[m * 4 + 3] = (M.glowLevel ?? 0) + (M.seasonLeaf > 0 ? 2 * Math.min(0.99, M.seasonLeaf) + 2 : 0);
         mesh.geometry = g;
         bake.uniforms.uTint2.value.fromArray(M.tint2 || [0.1, 0.08, 0.05]);
         bake.uniforms.uMode.value = pass;
@@ -160,6 +162,8 @@ uniform vec2 uGrid; uniform float uScaleMul; uniform float uStandVar;
 varying vec3 vStand;
 varying vec2 vUvS; varying vec2 vUvT; varying float vTopW; varying vec2 vFade; varying vec3 vR; varying vec3 vU; varying vec3 vV;
 varying vec3 vMX; varying vec3 vMY; varying vec3 vMZ; varying float vTint; varying float vGlowLvl; varying float vSeedI;
+varying float vSeaS; varying float vSeaK;
+uniform float uSeasonAmt;
 vec3 rvQrotI(vec4 q, vec3 v){ return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 vec3 rvImpPos; vec3 rvImpN;
 `;
@@ -206,7 +210,12 @@ const IMP_CORE = /* glsl */`
   vec2 tp = vec2(dot(off, mX), -dot(off, mZ)) / max(dm.z * sc, 1e-3);
   vUvT = (cell1 + clamp(tp * 0.5 + 0.5, 0.0, 1.0)) / uGrid;
   vR = r; vU = u; vV = v; vMX = mX; vMY = up; vMZ = mZ;
-  vTint = iData.z; vGlowLvl = dm.w; vSeedI = iData.x;
+  // dm.w = glow level (0/1) + (season-turning deciduous model ? 2 + 2·amount : 0)
+  float sw = dm.w >= 1.5 ? (dm.w - 2.0) : -1.0;
+  vGlowLvl = sw >= 0.0 ? 0.0 : dm.w;
+  vTint = rvTintOf(iData.z); vSeedI = iData.x;
+  vSeaS = rvSeasonOf(iData.z);
+  vSeaK = sw > 0.0 ? sw * 0.5 * uSeasonAmt * mix(0.35, 1.0, smoothstep(0.15, 0.55, fract(iData.x * 9.13 + 0.3))) : 0.0;
   vStand = rvStandTint(baseW - uPlanetCenter, iData.x, uStandVar);
   rvImpN = v;
   if (vFade.x * vFade.y <= 0.001 || sc <= 1e-4) rvImpPos = iPos.xyz;
@@ -218,7 +227,7 @@ const IMP_FRAG_PARS = /* glsl */`
 uniform sampler2D uImpA; uniform sampler2D uImpN; uniform vec2 uAtlasPx; uniform float uNight; uniform float uTime; uniform float uTransl; uniform float uGlowStr; uniform float uTintVar;
 varying vec2 vUvS; varying vec2 vUvT; varying float vTopW; varying vec2 vFade; varying vec3 vR; varying vec3 vU; varying vec3 vV;
 varying vec3 vMX; varying vec3 vMY; varying vec3 vMZ; varying float vTint; varying float vGlowLvl; varying float vSeedI;
-varying vec3 vStand;
+varying vec3 vStand; varying float vSeaS; varying float vSeaK;
 float rvTransl = 0.0; float rvWrap = 0.0; vec3 rvGlow = vec3(0.0); vec3 rvImpNW = vec3(0.0, 1.0, 0.0);
 float rvImpAlpha(sampler2D t, vec2 uv){
   vec2 px = uv * uAtlasPx; vec2 dx = dFdx(px), dy = dFdy(px);
@@ -245,11 +254,12 @@ const IMP_MAP = /* glsl */`
   rvImpNW = normalize(mix(vR * nS.x + vU * nS.y + vV * nS.z, vMX * nT.x + vMY * nT.y + vMZ * nT.z, wT));
   float tv = (vTint - 0.5) * uTintVar;
   vec3 alb = A.rgb * vec3(1.0 + tv * 0.6, 1.0 + tv * 0.25, 1.0 - tv * 0.35) * vStand;
+  if (vSeaK > 0.0) alb = mix(alb, rvSeasonLeaf(alb, vSeaS, vSeedI, vSeaK), clamp(N.a * 1.4, 0.0, 1.0));
   diffuseColor.rgb *= alb;
   rvTransl = uTransl * 0.8;
   rvWrap = 0.5;
   rvLeafSoft = 0.45; rvLeafAO = clamp(A.a * 0.0 + 0.85, 0.0, 1.0);
-  if (N.a > 0.0) rvGlow = alb * N.a * 4.0 * uGlowStr * vGlowLvl * (0.08 + 0.92 * uNight);
+  if (N.a > 0.0 && vGlowLvl > 0.0) rvGlow = alb * N.a * 4.0 * uGlowStr * vGlowLvl * (0.08 + 0.92 * uNight);
 }
 `;
 
@@ -280,7 +290,7 @@ export function makeImpostorMaterials(bk, p = {}) {
     fs = fs.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += rvGlow;');
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-flora-imp-v2';
+  mat.customProgramCacheKey = () => 'rv-flora-imp-v3';
 
   const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide });
   depth.onBeforeCompile = (shader) => {

@@ -185,12 +185,63 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
   * **Inbox**: grass blades within ~0.5–1.5 m of the camera shrink away; glowing grass tips fade
     within 3 m of the lens.
 
+* **Season 2, round 1 (Ghost of Yotei worlds, 20 Oct)**:
+  * **Season regions** (terrain's `sample().season` map: 0 spring green · ⅓ blossom · ⅔ gold · 1 crimson).
+    Every placed instance packs its season into the tint slot (`placement.js packSeason`: round(s·64) +
+    tint·0.98; GLSL `rvSeasonOf / rvTintOf`), and every consumer uses the **same ramp interpolation the
+    terrain paints with** (`seaRamp`), so trees, grass, flowers, petals and the ground agree, including on
+    region borders and in the great mountain's green forest belt. `FLORA_SEASON` = `surface.seasonAmt` ×
+    the style's weight (`S.season`: lush 1, boreal 0.8, sparse 0.75, moss 0.7, giant 0.45, alien styles 0);
+    `&fseason=0..1` overrides it.
+  * **Seasonal trees** (`styles.js`): **cherry** (low, wide, gnarled, pink-white bloom; one variant is a
+    **weeping** shidare-zakura with curtains of bloom strands, `broadleaf` `weep`), **maple** (palmate
+    crimson/orange) and **ginkgo** (tall, upright golden fans) grow in their regions (`sp.sea =
+    [centre, width, strength]`); generic oaks/conifers give way to ~45 % there, and generic broadleaf
+    crowns + bushes **turn with the region** (`rvSeasonLeaf`: fresh green → ginkgo/larch gold → maple
+    reds), on meshes and impostors alike (impostor normal.a now bakes a leaf mask; `dims.w` carries the
+    season flag), so far forests take the season too (terrain request).
+  * **New atlas cells** (atlas is now 5 × 4): `blossom` (five-petal sprays on dark twigs), `maple`
+    (palmate leaves), `ginkgo` (notched fans), `lily` (red spider lily umbels with long stamens).
+  * **Seasonal fields** (`grass.js`): gold regions grow **pampas / susuki** (blades 1.65× taller and
+    narrower, 40 % seed stalks with long feathery cream-gold **plumes** on the top 40 % that glow when
+    back-lit, matte, straw-gold leaves); crimson regions a **russet autumn sward**; blossom regions fresh
+    green over a **carpet of fallen petals** in the turf. **Red spider lilies** (and blossom-time white /
+    pink flowers) grow in **masses of 30–200 m** that are one species (`mass` flowers, noise-masked),
+    not a scatter. Daisies got greener, thicker stems and a leaf rosette.
+  * **Wind as a living force**: the grass now carries the terrain's long travelling wave (`g3`, same
+    formula as the terrain's far-field sheen) on top of the gusts: gust fronts lay the field over and
+    show the blades' pale, silvery (in season fields: gold) sides as bands sweeping across the meadow.
+  * **Drifting petals and leaves** (`petals.js`, 2 draws): a camera-centred GPU volume (near cube 22 m,
+    2600 petals; far cube 70 m, 2200 specks; × quality) that wraps in planet-local space, rides the
+    shared wind (integrated in float64), swirls, surges in the gust bands and tumbles. What blows comes
+    from the season at the camera: cherry petals (pink/white), maple leaves (crimson/orange), ginkgo
+    fans + pampas fluff (gold), white seed fluff in green meadows; glowing spores on alien styles
+    (night-lit), confetti petals on `wacky`, warm motes of light near the World Tree. Thins out above
+    ~25–115 m altitude. `player:slash` throws a flurry of petals from the cut.
+  * **The World Tree of light** (`sacred.js`, `geom/worldtree.js`): one per world at the terrain's
+    sacred `tree` site (`landmarks.sacred[kind='tree']`): ~195 m tall (× planet size), a braided trunk of
+    four strands over eleven arching roots, six–seven great limbs into a 220 m dome of deep jade/bronze
+    foliage with ~24 % gold **light-cards**, curtains of glowing strands, **veins of light** up the trunk
+    grooves and along the limbs (glow solids; `uDayGlow` keeps them lit by day, they blaze at night).
+    Visible from kilometres (one always-on draw, ~18 k tris, casts shadows < 3 km). Trunk capsule
+    collider, `{kind:'wonder', name:'The World Tree'}` POI, and a clearing of trees/bushes under the
+    crown that keeps the meadow (`clearAround(..., {grass:false})`). Palette per style (teal on
+    bioluminescent, violet on fungal, ice-blue on crystal…).
+  * **Katana cuts** (inbox, player): `player:slash` {pos, dir, radius, kind} → a cut list of 8 discs
+    (`FLORA_CUTS`); grass inside is shorn to ~16 % and flowers lose their heads, regrowing after 25 s over
+    ~20 s; the iai bloom cuts wider.
+  * **Grass off bare ground and scree** (inbox, terrain): `sample().bare` and `.talus` (incl. the
+    volcano's ash band) now thin grass (they were not read before).
+  * **Fewer fallen logs** (critic): density 0.16 → 0.07.
+
 ## API (`world.get('flora')`)
-* `.clearAround(pos, radius, keep = 0)` → id (cull vegetation in a disc around a planet-local
-  position, e.g. a parked ship); `.removeClear(id)`.
+* `.clearAround(pos, radius, keep = 0, {grass = true})` → id (cull vegetation in a disc around a
+  planet-local position, e.g. a parked ship; `grass: false` keeps the meadow); `.removeClear(id)`.
+* `.sacred` (World Tree: `.pos` planet-local base, `.getState()` {lat, lon, height, crownR}), `.petals`,
+  `.seasonAmt`. Events consumed: `player:slash`.
 * `.styleKey`, `.densityAt(dir)` (rough canopy cover 0..1), `.setVisible(bool)`,
   `.getState()` → `{style, ready, readyMs, cells:{band:"cells/jobs/ms"}, instances, drawCalls,
-  trisM, top (heaviest layers), colliders}`.
+  trisM, top (heaviest layers), colliders, season, worldTree, petals {amount, shape}, cuts}`.
 
 ## Capture URLs (verified round 4 at 1280×720 with the default 4 TAA shot samples, ~2–3 min each)
 Round 4 finals: `scratchpad/shots/flora/r4/final_*.png`. `taas=2` is no longer needed (and should not

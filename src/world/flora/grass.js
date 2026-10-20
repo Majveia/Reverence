@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { G } from '../../core/Uniforms.js';
 import { mulberry } from './util.js';
-import { FLORA_DITHER } from './materials.js';
+import { FLORA_DITHER, FLORA_SEASON, FLORA_CUTS } from './materials.js';
 
 /**
  * Patch geometry: `blades` blades with `segs` segments inside a unit disc (scaled by uPatchR).
@@ -94,8 +94,9 @@ attribute vec4 aBlade; attribute vec2 aSeg;
 uniform vec3 uCamPos; uniform vec3 uPlanetCenter; uniform float uTime; uniform vec3 uWindDir; uniform float uWindStrength;
 uniform vec4 uFade; uniform float uPatchR; uniform float uHeight; uniform float uWidth; uniform float uDensity;
 uniform vec4 uKeep; uniform vec4 uPush; uniform float uWidenK; uniform float uStiff;
+uniform float uSeasonAmt; uniform vec4 uCuts[8];
 varying float vT; varying float vDry; varying float vRand; varying vec2 vFade; varying float vAO; varying vec3 vGW; varying float vCarp;
-varying float vHead; varying float vBroad;
+varying float vHead; varying float vBroad; varying vec3 vSea; varying float vGust;
 vec3 rvQrotG(vec4 q, vec3 v){ return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 float gHash(float n){ return fract(sin(n) * 43758.5453); }
 vec3 rvGrassPos; vec3 rvGrassN;
@@ -112,6 +113,16 @@ const GRASS_CORE = /* glsl */`
   float r = aBlade.w - 2.0 * carpet;
   float h1 = gHash(r * 91.7 + iData.x * 13.1), h2 = gHash(r * 47.3 + iData.x * 7.7), h3 = gHash(r * 13.9 + iData.x * 3.3);
   float h4 = gHash(r * 29.1 + iData.x * 5.9);
+  // season region of this patch (packed with the dryness, see placement.js packSeason):
+  // x blossom (petal carpet, fresh green) · y gold (pampas / susuki with seed plumes) · z crimson
+  float seaV = floor(iData.w + 1e-4) / 64.0;
+  // (membership on the terrain's season ramp: the same interpolation the ground is painted with)
+  float sq = clamp(seaV, 0.0, 1.0) * 3.0, si0 = floor(min(sq, 2.999)), sf = smoothstep(0.0, 1.0, sq - si0);
+  vec3 sea = uSeasonAmt * vec3(
+    (1.0 - sf) * (1.0 - step(0.5, abs(si0 - 1.0))) + sf * (1.0 - step(0.5, si0)),
+    (1.0 - sf) * (1.0 - step(0.5, abs(si0 - 2.0))) + sf * (1.0 - step(0.5, abs(si0 - 1.0))),
+    sf * (1.0 - step(0.5, abs(si0 - 2.0))));
+  vSea = sea;
   vec3 rootL = vec3(aBlade.x, 0.0, aBlade.y) * uPatchR * iPos.w;
   vec3 root = rvQrotG(iRot, rootL);
   vec3 rootW = anchorW + root;
@@ -124,8 +135,8 @@ const GRASS_CORE = /* glsl */`
   float alive = smoothstep(0.0, 0.08, mix(keep, min(1.0, keep * 1.8 + 0.15), carpet) - r) * vFade.x * vFade.y;
   // blade types: seed-head stalks (tall, slender, a spikelet at the top), broad-leaf blades (wide,
   // shorter, arching) and ordinary blades over the turf carpet
-  float seedS = step(0.93, h4) * (1.0 - carpet);
-  float broad = step(0.8, h4) * (1.0 - seedS) * (1.0 - carpet);
+  float seedS = step(mix(0.93, 0.6, sea.y), h4) * (1.0 - carpet);
+  float broad = step(0.8, h4) * (1.0 - seedS) * (1.0 - carpet) * (1.0 - step(0.5, sea.y));
   // clumping: blade height follows a world-space field (~2 m tussocks inside ~14 m swales), so the
   // sward has tufts and hollows instead of a uniformly trimmed fur
   vec3 plC = rootW - uPlanetCenter;
@@ -133,11 +144,22 @@ const GRASS_CORE = /* glsl */`
   float swale = sin(dot(plC, vec3(0.31, -0.27, 0.22)) + sin(dot(plC, vec3(-0.13, 0.17, 0.11)) * 2.0));
   float hv = clamp(1.0 + 0.3 * tuft + 0.2 * swale, 0.55, 1.6);
   // per-blade height spans ~0.5×–1.8× (short turf under tall blades and seed stalks)
-  float hb = mix(0.45 + 0.75 * h1 * h1 + 0.3 * h2, 0.34 + 0.34 * h1 * h1, carpet) * mix(1.0, 1.55, seedS) * mix(1.0, 0.72, broad);
+  float hb = mix(0.45 + 0.75 * h1 * h1 + 0.3 * h2, 0.34 + 0.34 * h1 * h1, carpet) * mix(1.0, mix(1.55, 1.85, sea.y), seedS) * mix(1.0, 0.72, broad);
+  // pampas fields stand tall (1–1.6 m plumes over waist-high leaves); crimson fields a little lower
+  hb *= mix(1.0, mix(1.65, 1.0, carpet), sea.y) * mix(1.0, 0.85, sea.z);
+  // katana cuts (player:slash): blades inside a recent cut are shorn short, regrowing over ~40 s
+  float cutK = 0.0;
+  for (int ci = 0; ci < 8; ci++) {
+    vec4 cu = uCuts[ci];
+    if (cu.w > 0.0) { vec3 cv = rootW - cu.xyz; cv -= upP * dot(cv, upP); cutK = max(cutK, 1.0 - smoothstep(cu.w * 0.8, cu.w, length(cv))); }
+  }
+  hb *= mix(1.0, mix(0.16, 0.6, carpet), cutK);
+  seedS *= 1.0 - step(0.5, cutK);
   // blades right at the camera shrink away (low TP / FP angles: single blades must not fill the frame)
-  float nearCam = smoothstep(0.55, 1.5, length(rootW + up * 0.3 - uCamPos));
+  // (tall pampas clears a wider space around the lens: the camera rides at head height)
+  float nearCam = smoothstep(0.55, 1.5 + 1.6 * sea.y, length(rootW + up * 0.3 - uCamPos));
   float H = uHeight * iData.z * hb * mix(hv, 1.0, 0.4 * carpet) * alive * nearCam;
-  float W = uWidth * mix(0.55 + 0.9 * h2, 1.25 + 0.8 * h2, carpet) * mix(1.0, 2.3, broad) * mix(1.0, 0.55, seedS) * (1.0 + d * uWidenK) * iPos.w;
+  float W = uWidth * mix(0.55 + 0.9 * h2, 1.25 + 0.8 * h2, carpet) * mix(1.0, 2.3, broad) * mix(1.0, 0.55, seedS) * mix(1.0, 0.72, sea.y * (1.0 - carpet)) * (1.0 + d * uWidenK) * iPos.w;
   float ang = aBlade.z;
   vec3 fl = rvQrotG(iRot, vec3(cos(ang), 0.0, sin(ang)));       // blade facing (normal)
   // per-blade twist along the length: the width vector rotates toward the tip
@@ -152,7 +174,7 @@ const GRASS_CORE = /* glsl */`
   vec3 e2 = cross(upP, e1);
   vec3 flow = e1 * cos(fa) + e2 * sin(fa);
   // droop: long blades arc over more (grass-like), short ones stay upright
-  float droop = 0.25 + 0.55 * h2 * h2 + 0.3 * h1 + 0.25 * seedS + 0.45 * broad;
+  float droop = 0.25 + 0.55 * h2 * h2 + 0.3 * h1 + 0.25 * seedS + 0.45 * broad + 0.35 * sea.y * (1.0 - carpet);
   vec3 D = (flow * 0.3 + outward * 0.18 + fl * (h3 - 0.5) * 0.5) * H * droop;
   // turf blades splay in all directions (a matted sward), barely combed by the flow field
   D = mix(D, (flow * 0.22 + fl * (h3 - 0.5) * 0.9 + outward * 0.22) * H, carpet);
@@ -165,9 +187,14 @@ const GRASS_CORE = /* glsl */`
   float g1 = sin(along * 0.18 - uTime * 2.3 + sin(across * 0.07 + uTime * 0.3) * 2.0);
   float g2 = sin(along * 0.047 - uTime * 0.9 + across * 0.021);
   float gust = clamp(0.5 + 0.35 * g1 + 0.3 * g2, 0.0, 1.2);
+  // the long travelling wave (same field as the terrain's far-field sheen): gust fronts that lay the
+  // whole field over and show the blades' pale sides, sweeping across the meadow as visible bands
+  float g3 = sin(along * 0.0125 - uTime * 0.42 + sin(across * 0.0061) * 2.4);
+  float gw = smoothstep(0.35, 1.0, 0.5 + 0.3 * g2 + 0.45 * g3 + 0.18 * g1);
+  vGust = gw;
   float ws = uWindStrength;
   float flut = sin(uTime * (3.5 + h1 * 2.5) + h2 * 30.0 + along * 0.9);
-  D += wd * H * (ws * (0.25 + 0.95 * gust) + 0.06 * flut * (0.3 + ws)) / uStiff * (1.0 - 0.6 * carpet);
+  D += wd * H * (ws * (0.25 + 0.95 * gust + 0.7 * gw) + 0.06 * flut * (0.3 + ws) + 0.1 * gw) / uStiff * (1.0 - 0.6 * carpet) * (1.0 + 0.35 * sea.y);
   D += wsd * H * 0.08 * sin(uTime * 1.7 + h3 * 20.0 + across * 0.5) * (0.2 + ws);
   // interactive push away from the player (and flattening under their feet)
   // (a soft, wide falloff and a moderate bend: flattening blades to the ground showed their dark
@@ -192,6 +219,9 @@ const GRASS_CORE = /* glsl */`
   // seed head: a spindle-shaped spikelet on the top fifth of the stalk
   float head = seedS * smoothstep(0.68, 0.8, t) * (1.0 - smoothstep(0.94, 1.0, t));
   prof = mix(prof, 3.2 * (0.6 + 0.4 * sin(clamp((t - 0.68) / 0.32, 0.0, 1.0) * 3.14159)), head);
+  // pampas plume: a long feathery spray on the top 40 % of the stalk, widest in the middle
+  float plume = seedS * sea.y * smoothstep(0.52, 0.62, t);
+  prof = mix(prof, 5.2 * (0.35 + 0.65 * sin(clamp((t - 0.55) / 0.45, 0.0, 1.0) * 3.14159)), plume);
   float wTaper = aSeg.y * W * 0.5 * prof * (0.25 + 0.75 * alive);
   p += sl * wTaper;
   rvGrassPos = iPos.xyz + p;
@@ -203,8 +233,8 @@ const GRASS_CORE = /* glsl */`
   rvGrassN = normalize(mix(bn, upP, 0.5 + 0.3 * carpet));
   // turf reads as the lower part of the sward (base colour, root AO)
   t *= 1.0 - 0.3 * carpet;
-  vT = t; vDry = iData.w; vRand = h1; vAO = mix(mix(0.58, 1.0, smoothstep(0.0, 0.7, t)), 1.0, 0.45 * pf); vCarp = carpet;
-  vHead = seedS * smoothstep(0.66, 0.74, t); vBroad = broad;
+  vT = t; vDry = clamp(fract(iData.w + 1e-4) / 0.98, 0.0, 1.0); vRand = h1; vAO = mix(mix(0.58, 1.0, smoothstep(0.0, 0.7, t)), 1.0, 0.45 * pf); vCarp = carpet;
+  vHead = seedS * mix(smoothstep(0.66, 0.74, t), smoothstep(0.5, 0.6, t), sea.y); vBroad = broad;
   vGW = rootW;
   if (H < 1e-3) rvGrassPos = iPos.xyz;
 }
@@ -215,7 +245,7 @@ const GRASS_FRAG_PARS = /* glsl */`
 uniform vec3 uBase; uniform vec3 uTip; uniform vec3 uDryC; uniform vec3 uGlowTip; uniform float uGlowAmt; uniform float uNight; uniform float uTime;
 uniform float uTransl; uniform vec3 uPlanetCenter;
 varying float vT; varying float vDry; varying float vRand; varying vec2 vFade; varying float vAO; varying vec3 vGW; varying float vCarp;
-varying float vHead; varying float vBroad;
+varying float vHead; varying float vBroad; varying vec3 vSea; varying float vGust;
 uniform vec3 uHeadC; uniform float uHueVar; uniform vec3 uGlowTip2; uniform float uWet; uniform float uSnowG;
 float rvTransl = 0.0; float rvWrap = 0.0;
 vec3 rvGlow = vec3(0.0);
@@ -251,12 +281,37 @@ const GRASS_MAP = /* glsl */`
   c *= vec3(1.0 + (vRand - 0.5) * 0.24, 1.0 + (vRand - 0.5) * 0.06, 1.0 - (vRand - 0.5) * 0.3);
   // pale sunlit tips
   c = mix(c, c * vec3(1.2, 1.14, 0.84) + 0.02, smoothstep(0.7, 1.0, t) * 0.55);
-  c = mix(c, uHeadC * (0.75 + 0.5 * vRand) * (0.85 + 0.3 * m3), vHead);
+  // ---- season regions (Ghost of Yotei): whole fields become one saturated hue
+  if (vSea.x + vSea.y + vSea.z > 0.01) {
+    // gold pampas: straw-gold leaves, green only at the root
+    vec3 gold = mix(vec3(0.26, 0.16, 0.035), mix(vec3(0.74, 0.5, 0.12), vec3(0.66, 0.36, 0.08), smoothstep(0.5, 0.8, m2 + vRand * 0.25)), smoothstep(0.05, 0.85, t)) * (0.86 + 0.3 * vRand) * (0.9 + 0.22 * macro);
+    gold = mix(gold, c * vec3(1.1, 0.95, 0.5), 0.25 * (1.0 - t));
+    // crimson: russet autumn sward with rust-red tips
+    vec3 rus = mix(vec3(0.2, 0.13, 0.04), mix(vec3(0.56, 0.31, 0.08), vec3(0.52, 0.16, 0.05), smoothstep(0.45, 0.75, m2 + vRand * 0.3)), smoothstep(0.05, 0.9, t)) * (0.88 + 0.26 * vRand) * (0.9 + 0.2 * macro);
+    // blossom: fresh spring green over a carpet of fallen petals
+    vec3 frs = c * vec3(1.06, 1.12, 0.8);
+    float petals = vCarp * smoothstep(0.4, 0.62, m3 * 0.55 + m2 * 0.3 + vRand * 0.35);
+    frs = mix(frs, mix(vec3(0.72, 0.38, 0.46), vec3(0.8, 0.7, 0.7), step(0.7, vRand)), petals);
+    c = mix(c, gold, vSea.y);
+    c = mix(c, rus, vSea.z);
+    c = mix(c, frs, vSea.x);
+  }
+  vec3 headC = mix(uHeadC, vec3(0.95, 0.78, 0.5) * (0.92 + 0.16 * m3), vSea.y);
+  c = mix(c, headC * (0.75 + 0.5 * vRand) * (0.85 + 0.3 * m3), vHead);
+  // wind sheen: the gust front lays the blades over and shows their pale, silvery sides
+  {
+    // (season fields keep their hue in the sheen: gold glints gold, not grey)
+    vec3 silver = mix(c, vec3(dot(c, vec3(0.3, 0.59, 0.11))), 0.3 * (1.0 - 0.8 * (vSea.y + vSea.z))) * 1.3 + 0.012;
+    c = mix(c * mix(1.0, 0.86, 1.0 - vGust), silver, vGust * 0.42 * smoothstep(0.2, 0.8, t));
+  }
   // weather: rain darkens the sward; snow settles on the upper blades (deep snow buries the turf)
   c *= 1.0 - 0.3 * uWet;
   c = mix(c, vec3(0.86, 0.89, 0.93), uSnowG * clamp(smoothstep(0.25, 0.9, t) * 0.85 + vCarp * 0.6, 0.0, 1.0));
+  #ifdef RV_SEASON_DBG
+  c = vec3(vSea.z, vSea.y, vSea.x) + 0.02;
+  #endif
   diffuseColor.rgb *= c;
-  rvTransl = uTransl * (0.45 + 0.55 * t);
+  rvTransl = uTransl * (0.45 + 0.55 * t) * (1.0 + 0.9 * vHead * vSea.y);
   rvWrap = 0.6;
   if (uGlowAmt > 0.0) {
     // only some blades carry glowing tips; they breathe slowly in patches
@@ -292,6 +347,9 @@ void RE_Direct_Grass(const in IncidentLight directLight, const in vec3 geometryP
 #define RE_Direct RE_Direct_Grass
 `;
 
+let GRASS_DBG = false;
+try { GRASS_DBG = (new URL(globalThis.location?.href || 'http://x/').searchParams.get('floradbg') || '').includes('season'); } catch (_) { /* no window */ }
+
 export function makeGrassMaterial(p) {
   const u = {
     uFade: { value: new THREE.Vector4(...(p.fade ?? [0, 0, 40, 50])) },
@@ -311,6 +369,7 @@ export function makeGrassMaterial(p) {
     shader.uniforms.uCamPos = G.uCameraPos; shader.uniforms.uPlanetCenter = G.uPlanetCenter; shader.uniforms.uNight = G.uNight;
     shader.uniforms.uDitherF = FLORA_DITHER.frame; shader.uniforms.uDitherA = FLORA_DITHER.amt;
     shader.uniforms.uWet = G.uWetness; shader.uniforms.uSnowG = G.uSnow;
+    shader.uniforms.uSeasonAmt = FLORA_SEASON; shader.uniforms.uCuts = FLORA_CUTS;
     for (const k in u) shader.uniforms[k] = u[k];
     let vs = shader.vertexShader;
     vs = vs.replace('#include <common>', '#include <common>\n' + GRASS_VERT_PARS);
@@ -318,16 +377,16 @@ export function makeGrassMaterial(p) {
     vs = vs.replace('#include <begin_vertex>', 'vec3 transformed = rvGrassPos;');
     shader.vertexShader = vs;
     let fs = shader.fragmentShader;
-    fs = fs.replace('#include <common>', '#include <common>\n' + GRASS_FRAG_PARS);
+    fs = fs.replace('#include <common>', (GRASS_DBG ? '#define RV_SEASON_DBG\n' : '') + '#include <common>\n' + GRASS_FRAG_PARS);
     fs = fs.replace('#include <map_fragment>', GRASS_MAP);
     fs = fs.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal *= faceDirection;');
     fs = fs.replace('#include <lights_physical_pars_fragment>', GRASS_LIGHT_PARS);
-    fs = fs.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.28, uWet * 0.7);');
+    fs = fs.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(mix(roughnessFactor, 0.82, (vSea.y + vSea.z) * 0.8), 0.28, uWet * 0.7);');
     fs = fs.replace('#include <aomap_fragment>', '{ reflectedLight.indirectDiffuse *= vAO; reflectedLight.indirectSpecular *= vAO * 0.6; reflectedLight.directDiffuse *= mix(1.0, vAO, 0.5); reflectedLight.directSpecular *= vAO * 0.5; }\n#include <aomap_fragment>');
     fs = fs.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += rvGlow;');
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-flora-grass-v3';
+  mat.customProgramCacheKey = () => 'rv-flora-grass-v4' + (GRASS_DBG ? 'd' : '');
   return { material: mat, uniforms: u };
 }
 
