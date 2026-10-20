@@ -81,7 +81,9 @@ export class Coat {
         const back = Math.max(0, -Math.cos(a));     // the back hangs a little further out (over the seat)
         const i = idx(pi, c, r);
         this.rest[i * 3] = Math.sin(a) * this.rx * flare * (1 + 0.05 * back);
-        this.rest[i * 3 + 1] = this.y0 - this.seg * r * (1 - 0.06 * t) - REST_POS.hips.y;
+        // the back falls longer than the front (a swallow-tail duster line): one large shape that moves in the wind
+        const kA = 1 + 0.26 * Math.pow(back, 1.6);
+        this.rest[i * 3 + 1] = this.y0 - this.seg * kA * r * (1 - 0.06 * t) - REST_POS.hips.y;
         this.rest[i * 3 + 2] = Math.cos(a) * this.rz * flare * (1 + 0.25 * back * t);
         if (r === 0) this.inv[i] = 0;
       }
@@ -147,7 +149,7 @@ export class Coat {
       normalMap: tex.fabricNormal || tex.woolNormal || null, normalScale: new THREE.Vector2(0.45, 0.45), alphaTest: map ? 0.5 : 0,
     });
     if (hi) { mat.sheen = 0.7; mat.sheenRoughness = 0.45; mat.sheenColor = new THREE.Color(palette.coat).lerp(new THREE.Color(0.62, 0.64, 0.8), 0.42); }
-    patchLighting(mat, { rim: 0.32, sky: 0.16, key: 'coat', sunRim: 1.15, stars: 1, starUv: true });
+    patchLighting(mat, { rim: 0.32, sky: 0.34, key: 'coat', sunRim: 1.15, stars: 1, starUv: true });
     // darker lining on the inside faces
     const prev = mat.onBeforeCompile;
     mat.onBeforeCompile = (sh, r) => {
@@ -273,7 +275,7 @@ export class Coat {
             X[o] += (_v.x - X[o]) * k; X[o + 1] += (_v.y - X[o + 1]) * k; X[o + 2] += (_v.z - X[o + 2]) * k;
             // leash: never further than ~(row length × 1.1) from where the drape would put it
             const dx = X[o] - _v.x, dy = X[o + 1] - _v.y, dz = X[o + 2] - _v.z;
-            const lim = 0.08 + this.len * tr * 1.25;
+            const lim = 0.08 + this.len * 1.26 * tr * 1.25;
             const d2 = dx * dx + dy * dy + dz * dz;
             if (d2 > lim * lim) { const s = lim / Math.sqrt(d2); X[o] = _v.x + dx * s; X[o + 1] = _v.y + dy * s; X[o + 2] = _v.z + dz * s; }
           }

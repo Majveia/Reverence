@@ -2,6 +2,38 @@
 
 Owner paths: `src/world/player/**`, this file.
 
+## Season 2 round 6 — the ring of light, and her edges in the light (20 Oct)
+
+Answers to the round 2 critique (hero a flat dark cut-out, Resonance invisible, mannequin first-person hands, a grey
+meditation with no answer from the sky, a flat iaido crescent).
+
+* **The aureole — the sky answers Commune** (`Abilities.js` `makeAureole`): when she meditates, a ring of light (the
+  sign of the source) draws itself around behind her — a bright gold-white ring (~1.2 m radius) with a soft halo, a
+  fine inner ring of glyph marks, a beaded outer thread and a faint sunburst of rays, breathing at ~0.4 Hz. It is a
+  view-space billboard pushed 0.55 m behind her along the view ray, so her silhouette (and the wolf's) sits inside it.
+  A **pillar of light** (`makeSkyBeam`) descends from the sky onto her (camera-facing column around the planet's up
+  axis, narrow at her feet, widening and fading into the sky, slowly streaming). Both flash for ~2 s on Resonance.
+  `world.player.abilities.aura` (0..1) drives a **warm rim on her body** (`SUIT_LIGHT.uAura` in `patchLighting`): the
+  aureole lights her shoulders from behind.
+* **Resonance reads**: the curtain of light is taller (1.5 → 4.6 m as it runs out), brighter (HDR ×1.75) and lasts
+  3.8 s, holding near its peak for ~1.5 s (the capture at +0.85 s catches it); the aureole and the pillar flash at her.
+  (It did fire in the round 2 capture — `pulse.t` advances — it was simply too faint and too short against the dusk.)
+* **Her edges in the light** (`Explorer.js` `patchLighting`): the sun back-rim is now albedo-independent (like a cloth
+  sheen) and ~2× stronger, so the night-dark coat, the hair and the scarf catch the low sun on their edges; the sky
+  fresnel on the cloth and hair is doubled (the shadow side separates from a bright sky); the night colour is a touch
+  lighter (`#263052`) so folds and the gold thread read in shade.
+* **One large moving shape**: the coat skirt's back falls longer than its front (a duster line, back hem near the
+  ankle, `Coat.js`), and the red scarf tails are longer (1.45 m / 1.05 m, 22 / 16 rows) — they now rest on the ground
+  (a ground sphere constraint in `Cloth.js`, `scarf.groundR`) instead of sinking into it when she sits.
+* **Iaido**: the crescent is white-hot at the edge → cosmic teal → a violet veil inside (brighter, HDR); the cut throws
+  110 petals 1.6× larger (they read when she is small in frame).
+* **First person**: a relaxed, cupped open hand (each finger curls a little more toward the little finger), skin with a
+  red sheen at grazing angles and a faint warm self-light (subsurface stand-in), slimmer sleeves, the Lumen with a wide
+  soft glow (a volume of light, not a disc), the blade with a frosted hamon and a bright honed edge line.
+* **Drift**: a rider's stance on the ring (lead foot ahead, hips turned, chest square, forward lean, the lead hand out
+  for balance, the sword hand trailing low behind); the ring of light is larger under a drift.
+* **The white wolf**: fur with a soft sheen at grazing angles (MeshPhysical sheen) instead of plaster white.
+
 ## Season 2 round 5 — compositions under the vast sky (19 Oct, night)
 
 * **`vistaaz=<deg|sun|parent>`**: the vista finder (`vista=<m>`) now takes a preferred heading — `sun` (into the low

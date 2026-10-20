@@ -463,22 +463,26 @@ export class Animator {
     const t = S.time;
     const bob = Math.sin(t * 1.4) * 0.02;
     L.hipsPos.y = -0.08 + bob;
-    legTarget('L', 0.22 - g.pitch * 0.2, 0.42, 0.04, -0.08, L.footL);
-    legTarget('R', -0.1 - g.pitch * 0.2, 0.3, 0.03, -0.08, L.footR);
-    L.footRotL.set(-0.25, 0.12, 0); L.footRotR.set(-0.35, -0.2, 0);
-    L.kneeL.set(0.2, 0, 1); L.kneeR.set(-0.25, 0, 1);
-    // arms: open, low, a little behind — they lift on the outside of a turn
+    // a rider's stance on the ring (attitude, not a dangling doll): lead foot ahead, hips turned a little,
+    // chest square to the flight, a forward lean into the wind
+    legTarget('L', 0.34 - g.pitch * 0.2, 0.46, 0.05, -0.1, L.footL);
+    legTarget('R', -0.24 - g.pitch * 0.2, 0.36, 0.04, -0.1, L.footR);
+    L.footRotL.set(-0.2, 0.18, 0); L.footRotR.set(-0.3, -0.3, 0);
+    L.kneeL.set(0.25, 0, 1); L.kneeR.set(-0.3, 0, 1);
+    L.hipsRot.y = 0.22; L.chest.y = -0.16; L.head.y = -0.06;
+    // arms: the lead hand forward and out for balance (palm down), the sword hand trailing low behind —
+    // they lift on the outside of a turn
     const bk = g.bank;
-    armTarget('L', -0.22 - g.pitch * 0.3, 0.25, 0.85 + 0.35 * Math.max(0, -bk) + Math.sin(t * 1.1) * 0.05, L.handL);
-    armTarget('R', -0.22 - g.pitch * 0.3, 0.25, 0.85 + 0.35 * Math.max(0, bk) + Math.sin(t * 1.1 + 1.3) * 0.05, L.handR);
-    L.elbowL.set(0.6, -0.3, -1); L.elbowR.set(-0.6, -0.3, -1);
-    L.handRotL.set(0, 0, 0.6); L.handRotR.set(0, 0, -0.6);
+    armTarget('L', 0.42 - g.pitch * 0.2, 0.32, 1.0 + 0.3 * Math.max(0, -bk) + Math.sin(t * 1.1) * 0.05, L.handL);
+    armTarget('R', -0.62 - g.pitch * 0.3, 0.12, 0.62 + 0.35 * Math.max(0, bk) + Math.sin(t * 1.1 + 1.3) * 0.05, L.handR);
+    L.elbowL.set(0.6, -0.4, -0.8); L.elbowR.set(-0.6, -0.3, -1);
+    L.handRotL.set(0, 0, 0.75); L.handRotR.set(0.2, 0, -0.4);
     L.fingers = 0.15;
-    // bank about the feet (the ring), lean into the dive
+    // bank about the feet (the ring), lean into the flight
     L.pivot.set(0, 0.0, 0);
     L.rootRot.z = -bk * 0.55 + g.swayZ * 0.5;
-    L.rootRot.x = g.pitch * 0.35 + g.swayX * 0.5 + 0.08;
-    L.spine.x = -0.04; L.chest.x = -0.08; L.head.x = 0.04 + g.pitch * 0.15;
+    L.rootRot.x = g.pitch * 0.35 + g.swayX * 0.5 + 0.17;
+    L.spine.x = 0.02; L.chest.x = -0.02; L.head.x = -0.08 + g.pitch * 0.15;
     L.chest.z = bk * 0.12;
     L.pack = 1;
   }

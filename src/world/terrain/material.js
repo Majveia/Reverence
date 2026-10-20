@@ -79,6 +79,7 @@ uniform vec4 uRvP;   // radius, seaLevel, amp, detail quality (0..1)
 uniform vec4 uRvS;   // strata, snow bias, volcanic glow, crystal sheen
 uniform vec4 uRvS2;  // lushness, forest darkening, global wetness, global snow
 uniform float uRvTime;
+uniform vec3 uRvWindDir; uniform float uRvWindS;
 uniform float uRvDebug;
 uniform int uRvOff;   // debug A/B (URL tfoff=<bits>): 1 no 8 m rock layer, 2 no 32 m, 4 no macro, 8 no detail-height occlusion, 16 no near layers
 uniform float uRvLite; // 1 = software-GL budget: no micro layer, single-fetch tiling
@@ -590,7 +591,9 @@ void rvTerrain( inout vec3 albedo ) {
   float bRock = rvHB( wRock, 0.6 * hRock + 0.4 * mC.g, 0.12 );
   float bSand = rvHB( wSand, 0.5 * ( 1.0 - hGround ) + 0.5 * mC.r, 0.34 );
   float snowFacing = smoothstep( 0.52 + 0.12 * n1, 0.82, ndu + 0.12 * ( hSnow - 0.5 ) + 0.25 * clamp( curv, 0.0, 1.0 ) );
-  float bSnow = smoothstep( 0.3, 0.7, snowPot * snowFacing + ( hSnow - 0.5 ) * 0.15 );
+  // (micro relief breaks the snow edge from mid distance; within a few metres it is eased off so the
+  //  edge does not break into a white / dark speckle at grazing angles)
+  float bSnow = smoothstep( 0.3, 0.7, snowPot * snowFacing + ( hSnow - 0.5 ) * 0.15 * smoothstep( 2.0, 10.0, dist ) );
   // wave-washed fringe: no snow in the swash zone (dark wet gravel/rock line where snow meets the sea)
   if ( uRvP.y > -1e8 ) bSnow *= smoothstep( 0.3, 1.6 + 1.8 * clamp( n4 + 0.5, 0.0, 1.0 ) + 1.2 * ( mC.b - 0.5 ), alt - uRvP.y );
 
@@ -638,11 +641,40 @@ void rvTerrain( inout vec3 albedo ) {
   bladeC = mix( bladeC, bladeC * vec3( 0.72, 0.86, 0.78 ), smoothstep( 0.55, 0.8, mC.b * 0.6 + max( curv, 0.0 ) * 0.6 + 0.2 * n1 ) * 0.6 );
   if ( sAmt > 0.01 ) bladeC = mix( bladeC, seasonC, sAmt * 0.85 );
   grassC = mix( grassC, bladeC, meadow * mix( 0.25, 0.6, smoothstep( 15.0, 90.0, dist ) ) );
+  // ---- wind sheen (Ghost of Yotei): travelling gust waves sweep the far field, the bent blades showing
+  //      their pale undersides (same along-wind gust field as the flora track's blades, plus a slower
+  //      long wave); beyond ~25 m, where single blades no longer carry the motion
+  {
+    float shF = meadow * smoothstep( 22.0, 110.0, dist ) * ( 1.0 - smoothstep( 4000.0, 9000.0, dist ) ) * ( 0.4 + 0.6 * uRvWindS );
+    vec3 wd = uRvWindDir - up * dot( uRvWindDir, up );
+    if ( shF > 0.01 && dot( wd, wd ) > 1e-6 ) {
+      wd = normalize( wd );
+      float along = dot( Lp, wd ), across = dot( Lp, cross( up, wd ) );
+      float g2 = sin( along * 0.047 - uRvTime * 0.9 + across * 0.021 );
+      float g3 = sin( along * 0.0125 - uRvTime * 0.42 + sin( across * 0.0061 ) * 2.4 );
+      float gw = smoothstep( 0.35, 1.0, 0.5 + 0.3 * g2 + 0.45 * g3 );
+      vec3 silver = mix( grassC, vec3( rvLum( grassC ) ), 0.35 ) * 1.32 + vec3( 0.012, 0.011, 0.006 );
+      grassC = mix( grassC * 0.94, silver, gw * shF * 0.55 );
+    }
+  }
   soilM = max( soilM, bareV * 0.85 );
   vec3 groundC = mix( grassC, uRvSoil, soilM * 0.55 + bareV * 0.3 );
   groundC *= 0.8 + 0.4 * mix( 0.5, dGround.a, fMid );
   vec3 screeC = mix( mix( uRvRock, vec3( rvLum( uRvRock ) ), 0.6 ) * 1.12, uRvSoil, 0.3 + 0.3 * wPebG ) * ( 0.72 + 0.56 * mix( 0.5, dPeb.a, fMid ) ) * ( 0.9 + 0.2 * mC.a );
   groundC = mix( groundC, screeC, clamp( wScree * mix( 0.8, 0.3 + 0.7 * smoothstep( 0.15, 0.55, dPeb.b ), fMid ), 0.0, 1.0 ) );
+  // ---- forest canopy (the great mountain's wooded flanks, wet forests): from a few hundred metres, where
+  //      the flora track's trees thin into impostors, the ground reads as a deep, patchy canopy (dark
+  //      hollows, lighter crowns on ridges, seasonal tint) instead of a lit lawn; the forest floor under
+  //      near trees is a darker, earthier version of the same
+  {
+    float canopy = smoothstep( 0.74, 0.94, moist + 0.08 * n3 ) * ( 1.0 - wSand ) * ( 1.0 - bareV ) * smoothstep( 0.15, 0.35, temp ) * uRvS2.x;
+    if ( canopy > 0.01 ) {
+      float crowns = smoothstep( 0.25, 0.8, mC.g * 0.55 + mA.r * 0.3 + 0.35 * n4 + 0.35 * max( curv, 0.0 ) );
+      vec3 canC = mix( uRvForest * vec3( 0.62, 0.72, 0.62 ), uRvForest * vec3( 1.05, 1.08, 0.86 ), crowns );
+      if ( sAmt > 0.01 ) canC = mix( canC, seasonC * mix( 0.55, 0.85, crowns ), sAmt * 0.45 );
+      groundC = mix( groundC, canC, canopy * mix( 0.45, 0.85, smoothstep( 60.0, 600.0, dist ) ) );
+    }
+  }
 
   // rock tone: palette rock pulled toward neutral grey, strata bands only where the style asks for it
   vec3 rockBase = mix( uRvRock, vec3( rvLum( uRvRock ) ), 0.05 );
@@ -749,7 +781,11 @@ void rvTerrain( inout vec3 albedo ) {
     float sp = step( 0.985, fract( sin( dot( cell, vec3( 12.9898, 78.233, 37.719 ) ) ) * 43758.5453 ) );
     vec3 V = normalize( cameraPosition - W );
     float spec = pow( max( dot( reflect( -uRvSun, rvN ), V ), 0.0 ), 40.0 );
-    rvEmis += vec3( 1.0, 0.98, 0.95 ) * sp * spec * bSnow * ( 1.0 - smoothstep( 20.0, 60.0, dist ) ) * 6.0 * max( dot( up, uRvSun ), 0.0 );
+    // (no glitter where a cell is sub-pixel or the view grazes the snow: that read as a coarse
+    //  white speckle a few metres from the lens)
+    float gPx = length( fwidth( C * 22.0 ) );
+    float gFade = ( 1.0 - smoothstep( 0.3, 0.8, gPx ) ) * smoothstep( 0.12, 0.4, abs( dot( V, rvN ) ) );
+    rvEmis += vec3( 1.0, 0.98, 0.95 ) * sp * spec * bSnow * gFade * ( 1.0 - smoothstep( 20.0, 60.0, dist ) ) * 4.0 * max( dot( up, uRvSun ), 0.0 );
   }
   if ( uRvS.z > 0.0 ) {                   // volcanic: glowing cracks in lowland basalt
     float crack = smoothstep( 0.35, 0.05, hRock ) * smoothstep( 0.0, 0.5, cav + 0.3 ) * smoothstep( 0.4, 0.0, alt / uRvP.z );
@@ -825,6 +861,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
     uRvCam: G.uCameraPos,
     uRvPlanetC: G.uPlanetCenter,
     uRvTime: G.uTime,
+    uRvWindDir: G.uWindDir, uRvWindS: G.uWindStrength,
     uRvDebug: { value: (() => { try { return +(new URLSearchParams(globalThis.location?.search || '').get('tdebug') || 0); } catch (_) { return 0; } })() },
     uRvOff: { value: (() => { try { return (+(new URLSearchParams(globalThis.location?.search || '').get('tfoff') || 0)) | 0; } catch (_) { return 0; } })() },
     uRvBlade: { value: blade },
@@ -868,7 +905,7 @@ export function createTerrainMaterial(body, quality, opts = {}) {
       reflectedLight.directDiffuse *= mix( 1.0, rvAO, 0.35 );`);
     shader.fragmentShader = fs;
   };
-  mat.customProgramCacheKey = () => 'rv-terrain-v39' + (opts.lite ? 'L' : '');
+  mat.customProgramCacheKey = () => 'rv-terrain-v40' + (opts.lite ? 'L' : '');
   return mat;
 }
 

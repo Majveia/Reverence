@@ -1609,6 +1609,7 @@ export class Player {
       this.abilityGlow = this.abilities.glow + this.meditating * 0.6 + ac.drift * 0.35;
     }
     SUIT_LIGHT.uStar.value = clamp((G.uNight.value || 0) * 0.3 + this.abilityGlow * 0.7, 0, 1.6);
+    SUIT_LIGHT.uAura.value = this.abilities && this._visible !== false ? clamp(this.abilities.aura || 0, 0, 1) : 0;
     // ---- glider
     if (this.glider) {
       const open = this.state === 'glide' && this.useGlider;
@@ -1659,6 +1660,8 @@ export class Player {
       // seated / meditating low on the ground she is sheltered: the tails lift and drift instead of streaming out
       // level at shoulder height (from behind, a stiff horizontal tail read as a third arm)
       w.multiplyScalar(1 - 0.6 * (this.restS?.w || 0));
+      // the ground under her: the long tails settle on it instead of sinking in (seated, calm air)
+      this.scarf.groundR = this.heights && this.state !== 'swim' && this.state !== 'glide' && this.grounded ? safe(() => this.heights.groundR(this.pos)) || 0 : 0;
       safe(() => this.scarf.update(dt, this.anchorsW, up, this.g, w, sp, this.gpos));
     }
     if (this.scarf) this.scarf.group.visible = vis && this.view !== 'fp';

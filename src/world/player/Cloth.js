@@ -163,7 +163,7 @@ export class Scarf {
       this.gK = 0.95; this.flK = 0.35; this.aeroK = 0.55; this.cupK = 0.35;
     } else {
       // two generous tails (the one warm accent of the silhouette), tapering
-      this.strips = [new Strip(3, Math.round(17 * q), 0.16, 1.15, 0.45), new Strip(3, Math.round(12 * q), 0.13, 0.82, 0.45)];
+      this.strips = [new Strip(3, Math.round(22 * q), 0.17, 1.45, 0.4), new Strip(3, Math.round(16 * q), 0.14, 1.05, 0.42)];
       // anchors in chest space (back of the loose neck wrap)
       this.anchorsC = [
         [new THREE.Vector3(-0.02, 0.24, -0.1), new THREE.Vector3(0.05, 0.245, -0.096), new THREE.Vector3(0.11, 0.236, -0.075)],
@@ -335,6 +335,19 @@ export class Scarf {
                 const d = Math.sqrt(d2) || 1e-6, k2 = (r - d) / d;
                 X[o] += dx * k2; X[o + 1] += dy * k2; X[o + 2] += dz * k2;
               }
+            }
+          }
+        }
+        // the ground (a sphere of radius groundR about the planet centre): tails rest on it, a little friction
+        if (this.groundR > 0) {
+          const gr = this.groundR + 0.025;
+          for (let pi = s.cols; pi < s.n; pi++) {
+            const o = pi * 3, x = X[o], y = X[o + 1], z = X[o + 2];
+            const d2 = x * x + y * y + z * z;
+            if (d2 < gr * gr) {
+              const kk = gr / Math.sqrt(d2);
+              X[o] = x * kk; X[o + 1] = y * kk; X[o + 2] = z * kk;
+              Pp[o] += (X[o] - Pp[o]) * 0.3; Pp[o + 1] += (X[o + 1] - Pp[o + 1]) * 0.3; Pp[o + 2] += (X[o + 2] - Pp[o + 2]) * 0.3;
             }
           }
         }

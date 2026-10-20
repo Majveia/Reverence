@@ -128,7 +128,11 @@ export class Companion {
     this.rest = this.bones.map((b) => b.position.clone());
     this.bones[C.root].updateMatrixWorld(true); // bind pose = rest (bone inverses from the rest transforms)
     this.skeleton = new THREE.Skeleton(this.bones);
-    const furMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
+    // fur: a soft sheen at grazing angles (light caught in the guard hairs) instead of a plaster-white body
+    const hiQ = quality?.tier !== 'low';
+    const furMat = hiQ
+      ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.92, sheen: 1.0, sheenRoughness: 0.62, sheenColor: new THREE.Color(0.9, 0.86, 0.8) })
+      : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 });
     patchLighting(furMat, { rim: 0.6, sky: 0.25, key: 'wolf', sunRim: 1.5, wear: 0 });
     const glowMat = new THREE.MeshBasicMaterial({ vertexColors: true, color: new THREE.Color(1, 1, 1).multiplyScalar(3.2) });
     this.materials = [furMat, glowMat];

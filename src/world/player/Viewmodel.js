@@ -160,7 +160,8 @@ function buildHand(side, M, add) {
 
 // finger poses: [proximal, middle, distal] curl (negative = toward the palm), spread (per finger, × side)
 const GRIP = { curl: [[-1.32, -1.5, -0.9], [-1.38, -1.52, -0.9], [-1.4, -1.5, -0.85], [-1.42, -1.45, -0.8]], spread: [0.04, 0, -0.03, -0.06], thumb: [-0.36, -0.45, -0.35, -0.3] };
-const OPEN = { curl: [[-0.08, -0.14, -0.1], [-0.18, -0.22, -0.14], [-0.3, -0.34, -0.2], [-0.46, -0.44, -0.3]], spread: [0.16, 0.05, -0.05, -0.17], thumb: [0.5, -0.32, -0.15, -0.12] };
+// open: a relaxed, cupped palm (each finger curls a little more toward the little finger; never straight like a mannequin)
+const OPEN = { curl: [[-0.42, -0.58, -0.4], [-0.52, -0.68, -0.44], [-0.64, -0.78, -0.5], [-0.8, -0.86, -0.56]], spread: [0.13, 0.03, -0.05, -0.15], thumb: [0.5, -0.32, -0.15, -0.12] };
 
 function poseHand(H, side, w) { // w: 0 grip → 1 open
   for (let f = 0; f < 4; f++) {
@@ -194,7 +195,10 @@ export class Viewmodel {
       strap: new THREE.MeshStandardMaterial({ color: P.strap, roughness: 0.7 }),
       brass: new THREE.MeshStandardMaterial({ color: P.brass, roughness: 0.38, metalness: 0.85 }),
       wood: new THREE.MeshStandardMaterial({ color: P.wood, roughness: 0.72 }),
-      skin: new THREE.MeshStandardMaterial({ color: P.skin, roughness: 0.58 }),
+      // skin: a soft red sheen at grazing angles and a faint warm self-light stand in for subsurface wrap
+      skin: quality?.tier !== 'low'
+        ? new THREE.MeshPhysicalMaterial({ color: P.skin, roughness: 0.5, sheen: 0.7, sheenRoughness: 0.5, sheenColor: new THREE.Color(1.0, 0.42, 0.32), emissive: new THREE.Color(P.skin).multiplyScalar(0.05) })
+        : new THREE.MeshStandardMaterial({ color: P.skin, roughness: 0.58 }),
       wrap: new THREE.MeshStandardMaterial({ color: P.wrap, roughness: 0.92 }),
       glass: new THREE.MeshBasicMaterial({ color: new THREE.Color(P.lamp).multiplyScalar(2.4), transparent: true, opacity: 0.92 }),
       core: new THREE.MeshBasicMaterial({ color: new THREE.Color(P.glow).multiplyScalar(10) }),
@@ -204,10 +208,10 @@ export class Viewmodel {
 
     // ---------------------------------------------------------------- arms (wrist at the group origin)
     this.armR = new THREE.Group(); this.group.add(this.armR);
-    add(this.armR, sleeveGeo(0.5, 0.04, 0.056, 1.3, cuffCol), wool);
+    add(this.armR, sleeveGeo(0.5, 0.039, 0.05, 1.3, cuffCol), wool);
     this.handR = buildHand(1, M, add); this.armR.add(this.handR.root); this.handR.root.scale.setScalar(1.15);
     this.armL = new THREE.Group(); this.group.add(this.armL);
-    add(this.armL, sleeveGeo(0.55, 0.04, 0.058, 4.1, cuffCol), wool);
+    add(this.armL, sleeveGeo(0.55, 0.039, 0.05, 4.1, cuffCol), wool);
     this.handL = buildHand(-1, M, add); this.armL.add(this.handL.root); this.handL.root.scale.setScalar(1.15);
     poseHand(this.handR, 1, 0);
     poseHand(this.handL, -1, 0);
@@ -230,14 +234,17 @@ export class Viewmodel {
       c2.fillStyle = gr; c2.fillRect(0, 0, 64, 64);
       const tx = new THREE.CanvasTexture(cv); tx.colorSpace = THREE.SRGBColorSpace;
       this.orbHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: tx, color: new THREE.Color(1.5, 1.3, 1.0), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-      this.orbHalo.scale.setScalar(0.16); this.orb.add(this.orbHalo); this.materials.push(this.orbHalo.material);
+      this.orbHalo.scale.setScalar(0.26); this.orb.add(this.orbHalo); this.materials.push(this.orbHalo.material);
+      // a wide, faint glow around the light in hand (reads as a volume of light, not a disc)
+      this.orbGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: tx, color: new THREE.Color(0.55, 0.45, 0.32), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+      this.orbGlow.scale.setScalar(0.8); this.orb.add(this.orbGlow); this.materials.push(this.orbGlow.material);
       this.lightAnchor = new THREE.Object3D(); this.orb.add(this.lightAnchor);
     }
 
     // ---- poses (camera space): wrist position, forearm direction, palm axis hint, roll
     this.P = {
       // sword hand: low right, forearm rising in from the lower-right corner, the blade up and away into the view
-      swordWrist: new THREE.Vector3(0.29, -0.25, -0.5), swordFore: new THREE.Vector3(-0.5, 0.2, -0.84).normalize(), swordDir: new THREE.Vector3(-0.3, 0.7, -0.64).normalize(),
+      swordWrist: new THREE.Vector3(0.3, -0.29, -0.6), swordFore: new THREE.Vector3(-0.36, 0.42, -0.83).normalize(), swordDir: new THREE.Vector3(-0.3, 0.7, -0.64).normalize(),
       // relaxed right hand (sheathed): lower, loosely closed
       restWrist: new THREE.Vector3(0.36, -0.3, -0.5), restFore: new THREE.Vector3(-0.3, 0.38, -0.87).normalize(), restX: new THREE.Vector3(1, 0.2, 0.2),
       // light hand: low left, palm up and cupped, the Lumen hovering above it
@@ -337,7 +344,7 @@ export class Viewmodel {
     _qa.copy(this._qLight); _qb.copy(this._qReach);
     if (rc > 0) _qb.multiply(_q.setFromAxisAngle(ZA, Math.sin(this.t * 0.7) * 0.05));
     L.quaternion.slerpQuaternions(_qa, _qb, rc);
-    poseHand(this.handL, -1, lerp(0.62, 0.95, rc));
+    poseHand(this.handL, -1, lerp(0.85, 1.0, rc));
     // the Lumen floats a hand's breadth above the palm (it rides forward with the reach and comes back)
     _v.set(0, -0.095 + 0.008 * Math.sin(this.t * 1.7), -0.07).multiplyScalar(1.15).applyQuaternion(_qa).add(L.position);
     _w.set(0, 0.05, -0.32).add(_v);
@@ -345,7 +352,9 @@ export class Viewmodel {
     const li = clamp(ctx.light ?? 1, 0, 1);
     this.orb.visible = li > 0.02 && swim < 0.5;
     this.orbHalo.material.opacity = li;
-    this.orbHalo.scale.setScalar(0.13 + 0.05 * li + 0.01 * Math.sin(this.t * 5.1));
+    this.orbHalo.scale.setScalar(0.2 + 0.07 * li + 0.012 * Math.sin(this.t * 5.1));
+    this.orbGlow.material.opacity = li * 0.85;
+    this.orbGlow.scale.setScalar(0.62 + 0.18 * li + 0.03 * Math.sin(this.t * 2.3));
     L.visible = true;
   }
 
