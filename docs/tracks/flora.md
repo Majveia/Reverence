@@ -317,16 +317,18 @@ must still be checked in-game.
   fewer blades/segments.
 
 ## Known issues
-* Open after season 2 (the round 2 critic, 20 Oct: 4.3 → 6.0/10, blind 2/4 → 3/4; the track's season-2 rounds are
-  used up, so these lead the next pass): the ridge shot (small caped figure, wind-bent grass, ginkgo frame, volcano,
-  floating isles, blossom valley, drifting leaves), the night lantern forest and the red maples with spider lilies read
-  as a polished stylised game, and the blind judges took the blossom valley with the castle, the rainy lantern night
-  and the backlit dusk pairs. Still open: the World Tree reads as a tiny flat mushroom-cap blob at distance instead of
-  a landmark that stops the player, and its dusk version is a dark unlit hill; the camera can enter tree crowns, where
-  the dither shows as concentric rings and a flat screen door; the foreground grass is a few giant flat blades rather
-  than a dense travelling wind sea; crowns are low-poly cut-out clumps with hard alpha edges and visible dither dots;
-  distant impostors read as confetti dots; the night forest lacks scale and a sky moment; the volcano is small, hazy
-  or hidden in flora-led shots. The pair lost went to a reference with volumetric clouds, haze and a muted grade.
+* Open after season 2 (the round 2 critic, 20 Oct: 4.3 → 6.0/10, blind 1/4 → 2/4; the track's season-2 rounds are used
+  up, so these lead the next pass): the ridge shot (small caped figure, wind-bent grass, ginkgo frame, volcano,
+  floating isles, blossom valley, drifting leaves), the night lantern forest and the red maples with spider lilies
+  read as a polished stylised game, and the blind judges took the blossom valley with the castle and the backlit dusk
+  pairs. Still open: the World Tree reads as a tiny flat mushroom-cap blob at distance instead of a landmark that
+  stops the player, and its dusk version is a dark unlit hill; the camera can enter tree crowns, where the dither
+  shows as concentric rings and a flat screen door; the foreground grass is a few giant flat blades rather than a
+  dense travelling wind sea; crowns are low-poly cut-out clumps with hard alpha edges and visible dither dots; distant
+  impostors read as confetti dots; the night forest lacks scale and a sky moment; the volcano is small, hazy or hidden
+  in flora-led shots. The pairs lost went to a reference with volumetric clouds, haze and a muted grade, and to a
+  rainy night with glowing orbs (the judge's winner field named ours there, but its scores and reasons gave the
+  reference the win, so it counts as a loss).
 * (S2 r1) The World Tree is one mesh without LODs (~18 k tris, ~2.8 k large cards): cheap far away, but
   the card fill is heavy when the camera is inside its crown. Its day look is a dark jade dome with gold
   light-cards; it reads best at dusk / night (a pale "cauliflower" by noon from above).
