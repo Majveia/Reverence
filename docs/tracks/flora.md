@@ -243,6 +243,23 @@ Owner paths: `src/world/flora/**` (+ this file). Subsystem `flora`, order 30.
   `.getState()` → `{style, ready, readyMs, cells:{band:"cells/jobs/ms"}, instances, drawCalls,
   trisM, top (heaviest layers), colliders, season, worldTree, petals {amount, shape}, cuts}`.
 
+## Capture URLs — season 2 round 1 (verified at 960×540, ~3–5 min each under load)
+Captures: `scratchpad/shots2/flora/` (a*, b*). W1 = `star=6&planet=1` (Niotolon: volcano at 17.777 / 13.2736,
+World Tree at 13.9842 / 25.987).
+* **W1 ridge facing the volcano over a valley of cherry blossom** (ginkgo, white/pink blossom-time
+  flowers, petals and leaves on the wind, floating isles): `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=16.6718&lon=25.7718&yaw=277&pitch=9&tod=0.3&props=0`
+* **W1 the World Tree at dusk, the volcano behind** (silhouette with light-cards and strands of light):
+  `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=110&lat=13.978&lon=26.62&yaw=271&pitch=7&tod=0.755&disable=fauna,vehicles`
+* **W1 the World Tree of light at night under the Milky Way**: same with `tod=0.02`.
+* **W1 crimson coast: maples, red spider lilies, leaves blowing out to sea**: `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=5&lat=13.7035&lon=27.595&yaw=250&pitch=-2&tod=0.3&disable=fauna,vehicles`
+* **W1 gold pampas field with ginkgo** (front-lit): `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=15.43&lon=25.9&yaw=282.7&pitch=8&tod=0.31&props=0`
+* **W2 a forest of cherry blossom from the air** (one-hue biome, lake): `/?mode=system&galaxy=0&star=11&planet=0&view=fly&alt=90&lat=-25.292&lon=-104.202&yaw=30&pitch=-8&tod=0.3`
+* W4 lantern forest at night (unchanged look + glowing spores): `/?mode=system&galaxy=0&star=2&planet=0&view=surface&lat=16.36&lon=151.86&yaw=0&pitch=3&tod=0.02`
+* Debug: `&floradbg=season` (grass painted by season membership: red crimson, green gold, blue blossom),
+  `&fseason=0..1` (override the season strength), `&floradbg=nopetals`, `&floradbg=hide:worldtree`.
+* Season maps / viewpoints were found with small node scripts over `SurfaceGen` (`sample().season`,
+  `landmarks`): see `scratchpad/season.mjs`, `vf.mjs`, `vf2.mjs` (not in the repo).
+
 ## Capture URLs (verified round 4 at 1280×720 with the default 4 TAA shot samples, ~2–3 min each)
 Round 4 finals: `scratchpad/shots/flora/r4/final_*.png`. `taas=2` is no longer needed (and should not
 be used: the stratified dither resolves exactly over 4 sub-frames).
@@ -300,6 +317,27 @@ must still be checked in-game.
   fewer blades/segments.
 
 ## Known issues
+* Open after season 2 (the round 2 critic, 20 Oct: 4.3 → 6.0/10, blind 2/4 → 3/4; the track's season-2 rounds are
+  used up, so these lead the next pass): the ridge shot (small caped figure, wind-bent grass, ginkgo frame, volcano,
+  floating isles, blossom valley, drifting leaves), the night lantern forest and the red maples with spider lilies read
+  as a polished stylised game, and the blind judges took the blossom valley with the castle, the rainy lantern night
+  and the backlit dusk pairs. Still open: the World Tree reads as a tiny flat mushroom-cap blob at distance instead of
+  a landmark that stops the player, and its dusk version is a dark unlit hill; the camera can enter tree crowns, where
+  the dither shows as concentric rings and a flat screen door; the foreground grass is a few giant flat blades rather
+  than a dense travelling wind sea; crowns are low-poly cut-out clumps with hard alpha edges and visible dither dots;
+  distant impostors read as confetti dots; the night forest lacks scale and a sky moment; the volcano is small, hazy
+  or hidden in flora-led shots. The pair lost went to a reference with volumetric clouds, haze and a muted grade.
+* (S2 r1) The World Tree is one mesh without LODs (~18 k tris, ~2.8 k large cards): cheap far away, but
+  the card fill is heavy when the camera is inside its crown. Its day look is a dark jade dome with gold
+  light-cards; it reads best at dusk / night (a pale "cauliflower" by noon from above).
+* (S2 r1) W1's sacred tree site sits on a coastal hill behind a ridge: from the default spawn and most
+  ground viewpoints it is hidden; the fly views above frame it (see Requests).
+* (S2 r1) Pampas plumes and lily masses exist only inside the grass band (~30 m at the capture profile,
+  ~44 m on high); beyond, the terrain's season colour carries the field. Grass inside the great
+  mountain's forest belt is in-between seasons (the generator pulls the season toward green there).
+* (S2 r1) Leaf-card crowns (maple, cherry) still show cut-out card edges against the sky up close.
+* (S2 r1) `tools/check.mjs` system-surface can exceed its 180 s readiness timeout when other captures
+  run at the same time (flora ready ≈ 100–135 s under load); it passes when run alone.
 * Residual dither: a 4-sample shot resolves dithered fades uniformly, but the TAA sub-pixel jitter
   moves crossfading geometry slightly between sub-frames, so a very faint fine checker can remain
   on trees inside the LOD1 → impostor band (148–172 m); `taas=2` or no TAA shows the raw 2×2
@@ -323,6 +361,15 @@ must still be checked in-game.
 * Removing a clearing (`removeClear`) re-streams all cells (instances are compacted out on accept).
 
 ## Requests
+* **terrain** (S2 r1): pick the sacred `tree` site where it is seen from the spawn / the mountain view
+  (open ground, no ridge between), or expose `landmarks.views.tree` {lat, lon, yaw, pitch} like the
+  arch view, so the World Tree can be framed from the ground (ideally through the arch).
+* **player** (S2 r1): in tall season fields (pampas 1–1.6 m) the TP camera sits inside the grass; a
+  higher, pulled-back camera option (`cam=far`, 8–12 m, figure ≈ 5 % of the frame height) would give
+  the "small figure in a vast field" frames; `view=surface` spawns via `_flatSpot` often face a slope.
+* **atmosphere / post** (S2 r1): at night the World Tree (`world.get('flora').sacred.pos`, ~200 m tall)
+  could light the ground and haze around it (a warm in-scatter / point light), and a wide, soft bloom
+  on its light-cards would turn it into the luminous mist of the reference frames.
 * **terrain** (round 4): on worlds whose flora grass cover is high in FOREST/JUNGLE (e.g. W5
   `wacky`, W11 `fungal`), tint those floors toward the palette grass colour too (the meadow tint
   only covers grassland): `world.get('flora')?.S.grass.cover[biome]` gives flora's grass cover per
