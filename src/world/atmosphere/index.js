@@ -167,7 +167,7 @@ class Atmosphere {
     // blue hour palette: navy zenith (a touch of the world's sky tint), orange last light under the sun
     const tl = Math.max(1e-3, tint.r + tint.g + tint.b);
     eu.uTwiZen.value.set(0.05 * 0.75 + 0.25 * 0.6 * tint.r / tl, 0.11 * 0.75 + 0.25 * 0.6 * tint.g / tl, 0.5 * 0.75 + 0.25 * 0.6 * tint.b / tl).multiplyScalar(E * 0.04);
-    eu.uTwiHor.value.set(1.0, 0.42, 0.13).multiplyScalar(E * 0.08);
+    eu.uTwiHor.value.set(1.0, 0.40, 0.12).multiplyScalar(E * 0.12);
     const ocT = this.weather.overcast || 0;
     eu.uTwi.value.set(twi * (1 - 0.75 * ocT), Math.max(Math.min(1.2, Math.exp(muS / 0.1)), this.eclipse), muS, this.eclipse);
     // stars & the galactic band: hidden by a bright day sky, shown against the dark night sky
@@ -261,7 +261,7 @@ class Atmosphere {
     const rn = W.rain || 0;
     // snow is fog (falling snow swallows the land within ~1 km); a dust storm is a one-colour wall
     const sn = W.snow || 0;
-    let rho = fog * fog * 2.0e-4 + rn * 2.1e-4 + rn * rn * 1.1e-3 + sn * 3.0e-4 + sn * sn * 9e-4 + dust * 1.0e-3 + dust * dust * 1.6e-3 + gold * 2.6e-5 * (1 - 0.5 * (m.moody || 0));
+    let rho = fog * fog * 2.0e-4 + rn * 0.9e-4 + rn * rn * 2.4e-4 + sn * 3.0e-4 + sn * sn * 9e-4 + dust * 1.0e-3 + dust * dust * 1.6e-3 + gold * 2.6e-5 * (1 - 0.5 * (m.moody || 0));
     if (m.lava) rho *= 0.45;
     // bioluminescent worlds at night: a low mist that takes the glow of the flora (coloured fog lit by its
     // light source: teal around W4's glowing forest)
@@ -310,15 +310,16 @@ class Atmosphere {
       const art = 1 + 0.6 * (m.moody || 0) + 0.5 * (m.fog || 0) + 0.3 * (m.dust || 0);
       const wet = 1 + 3.2 * rn + 1.2 * rn * rn + 0.8 * oc * oc + 0.8 * fog;
       const k = m.lava ? 0.35 : 1;
-      L.set(0.62e-4 * art * wet * (1 + 0.35 * gold) * k * highFade / sizeK, 1 / ((1050 + 650 * rn + 300 * oc) * sizeK), m.Rb + Math.max(0, sea), 70000 * sizeK);
+      L.set(0.62e-4 * art * wet * k * highFade / sizeK, 1 / ((1050 + 650 * rn + 300 * oc) * sizeK), m.Rb + Math.max(0, sea), 70000 * sizeK);
       // under a closed / raining deck the veil is the deck-lit air: a pale, lightly desaturated sky colour (the
       // world's fog hue), darker under storms
       const oL = u.uLandOC.value, sky = this.lighting.skyIrr, na = this.nightAmbient;
       const sl = (sky[0] * 0.2126 + sky[1] * 0.7152 + sky[2] * 0.0722) / Math.PI;
       const fhc = fh || _n.set(0.92, 0.95, 1.0);
-      const lift = (0.95 + 0.6 * rn * (1 - storm)) * (1 - 0.55 * storm);
+      const lift = (0.76 + 0.26 * rn * (1 - storm)) * (1 - 0.55 * storm);
       oL.set((sl * (0.55 + 0.45 * fhc.x) + na.r * 0.02) * lift, (sl * (0.55 + 0.45 * fhc.y) + na.g * 0.02) * lift, (sl * (0.55 + 0.45 * fhc.z) + na.b * 0.02) * lift);
       oL.w = THREE.MathUtils.clamp(oc * 0.75 + rn * 0.5, 0, 0.9);
+      u.uLandSun.value.x = THREE.MathUtils.smoothstep(this._sunMu ?? 0.5, -0.012, 0.015) * Math.max(0, Math.min(1, W.sunDim ?? 1));
     }
     // dust storm: the hidden sun glows inside the wall (one bright side), gust bands roll with the wind
     {
