@@ -21,7 +21,7 @@ function palette(key, pal) {
     case 'wacky': return [[0.6, 0.3, 0.55], [0.75, 0.55, 0.3], [1.0, 0.6, 0.9], [1.0, 0.8, 0.4]];
     case 'dead': return [[0.5, 0.48, 0.44], [0.7, 0.68, 0.62], [1.0, 0.9, 0.7], [1.0, 0.85, 0.6]];
     // deep jade and bronze foliage (so the light-cards and veins read as light, not a pale blob)
-    default: return [[0.06, 0.13, 0.08], [0.2, 0.2, 0.08], [1.0, 0.8, 0.45], [1.0, 0.78, 0.4]];
+    default: return [[0.06, 0.13, 0.08], [0.2, 0.2, 0.08], [1.0, 0.64, 0.28], [1.0, 0.68, 0.3]];
   }
 }
 
@@ -56,7 +56,7 @@ export class SacredFlora {
     const geo = gen.lod0.build();
     this.geo = geo;
     const mats = makePlantMaterials({
-      shared: F.shared, barkLayer: 5, barkScale: 0.5, tint2: [0.08, 0.06, 0.05], transl: 1.0, glow: 5.5, cardGlow: 2.6, dayGlow: 0.14,
+      shared: F.shared, barkLayer: 5, barkScale: 0.5, tint2: [0.08, 0.06, 0.05], transl: 1.0, glow: 5.0, cardGlow: 2.0, dayGlow: 0.14,
       moss: F.S.rock?.moss, mossAmt: 0.35, windAmp: 0.35, billboard: 0.8, fade: [0, 0, 1e9, 1e9], dfade: [0, 0, 2600, 3200], tintVar: 0.1,
       leafSoft: 0.55, dome: 0.6, standVar: 0,
     });

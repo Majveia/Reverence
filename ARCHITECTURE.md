@@ -535,3 +535,15 @@ visualizations). What separates AAA from "tech demo":
   sightlines.
 * **terrain → atmosphere** — the W1 sea-of-cloud view reads best at sunrise (tod 0.27–0.3); a warmer, lower key light
   at that hour would match the Yotei sunrise frame.
+
+#### Season 2: flora round 1 requests (20 Oct)
+* **flora → terrain** — put the sacred `tree` site where it can be seen from the spawn or the mountain view (open
+  ground, no ridge in between), or expose `landmarks.views.tree {lat, lon, yaw, pitch}` like the arch view, so the
+  World Tree can be framed from the ground, ideally through the arch. (Done by flora: far crowns now tint by
+  `sample().season`, the terrain round 1 request.)
+* **flora → player** — in tall season fields (pampas 1–1.6 m) the third-person camera sits inside the grass; a higher,
+  pulled-back option (e.g. `cam=far`, 8–12 m, figure ≈ 5% of frame height) would give "small figure in a vast field"
+  frames. `view=surface` spawns via `_flatSpot` often face a slope.
+* **flora → atmosphere, post** — at night the World Tree (`world.get('flora').sacred.pos`, about 200 m tall) could
+  light the ground and the haze around it (warm in-scatter or a light), and a wide soft bloom on its light cards would
+  give the luminous mist of the reference frames.
