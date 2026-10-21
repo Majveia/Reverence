@@ -74,10 +74,10 @@ on that blend; every scale now carries one recognisable main theme; the explorer
 
 | scene / `body.art.key` | style | signature |
 |---|---|---|
-| cosmic | cosmic | lydian, 6-voice gliding warm pads, glass halo, sub drone, granular shimmer & celesta; `cosmicGrowth` opens filters and grain density |
+| cosmic | cosmic | the main theme on a distant shakuhachi + bloom; lydian, 6-voice gliding warm pads, glass halo, sub drone, granular shimmer & celesta; `cosmicGrowth` opens filters and grain density |
 | galaxy | galaxy | formant choir (vowel morphing), low strings, celesta / harp arps |
 | space (system mode above ~0.85 of the atmosphere height, in orbit) | space | beating drones with filter sweeps, glass pad, glass bells, sparse cello |
-| ghibli · botw · bierstadt · rogerdean · nausicaa | pastoral | piano / harp / strings (+ flute, horn, koto, marimba, choir per variant); BotW is sparse piano with rests |
+| ghibli · botw · bierstadt · rogerdean · nausicaa (+ unknown arts) | **chillhop** (season 2) | Rhodes 7/9/11, sub, swung kit + pump, tape & vinyl; koto, shakuhachi, felt piano with rests (BotW), shamisen in town, taiko at vistas; per-art: warm pad (bierstadt), marimba + glass (rogerdean), choir (nausicaa). `pastoral` remains as a style but no art maps to it |
 | outerwilds | hearth | banjo travis picking, strummed guitar, harmonica & whistle, harmonium |
 | moebius | desert | duduk with scoops & grace notes over drones, oud tremolo, maqsum frame drums |
 | villeneuve | dune | brass throat drones, low choir, duduk, taiko |
@@ -150,6 +150,13 @@ node tools/audio_render.mjs --scene surface --art moebius --over '{"night":1,"wi
 
 Best capture URLs (`&audiodebug=1` shows the panel; add a wait so the offline preview finishes):
 
+* **Season 2 — W1 meadow lofi, live** (unlocked, real-time analyser; panel shows the moods/theme):
+  `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.35&audiodebug=1` steps
+  `[{"advance":1},{"eval":"__rv.audioUnlock().state"},{"advance":3},{"wait":6000},{"advance":2},{"wait":8000}]`
+* **Commune, live** (the beat drops out, breathing drone, theme on shakuhachi): same URL + `&act=meditate`, same steps;
+  `{"eval":"JSON.stringify(__rv.audioDebug().music.moods)"}` reports `commune: true`.
+* **Night lofi** (W2): `/?mode=system&galaxy=0&star=11&planet=0&view=surface&tod=0.9&audiodebug=1` steps `[{"advance":1},{"wait":16000}]`
+
 * W3 Moebius duduk: `/?mode=system&galaxy=0&star=9&planet=2&view=surface&tod=0.35&audiodebug=1` steps `[{"advance":1},{"wait":16000}]`
 * W4 Blade Runner rain, night: `/?mode=system&galaxy=0&star=2&planet=0&view=surface&tod=0.9&weather=rain&audiodebug=1` steps `[{"advance":1},{"wait":16000}]`
 * W1 live hoverbike ride (real-time analyser): `/?mode=system&galaxy=0&star=6&planet=1&view=bike&tod=0.4&audiodebug=1` steps
@@ -167,6 +174,27 @@ Native nodes only; per-note voices are 3–8 nodes and auto-disconnect; voice bu
 Headless renders: 14 s of any scene render in ~4–6 s.
 
 ## Known issues
+* Open after season 2 (the round 2 critic, 21 Oct: 3.8 → 6.3/10; the track's season-2 rounds are used up, so these
+  lead the next pass; both rounds were judged from offline renders, spectrograms and metrics, so nobody had listened
+  to the new music when this was written): the engine renders clean (no clipping, true peak −2.4 to −8 dB, −15 to −17
+  LUFS), the grooves sit at 67–81 BPM with real swing, jazz 7th/9th/11th voicings sit under kumoi and miyako-bushi
+  melodies, and the cosmic web, galaxy and surface are distinct beds. Still open: the spectrum is 75–92% mid-band with
+  almost nothing above 2 kHz (dark and slightly dull instead of vibey and shimmering); the drums leave almost no
+  transient (kick, rim and swung hats are not felt); Commune keeps a rhythmic sub-pulse instead of dropping the beat
+  to a breathing drone; there is no goosebump moment (taiko and choir swells and vistas are too subtle); who plays the
+  main theme and when is still random, so it does not behave like a Zelda leitmotif; the cosmic web and galaxy beds
+  are static pads with a steady tremolo; explorer accents are small; surface scenes differ mostly in tempo and mode
+  rather than texture.
+
+* (season 2) Loudness is calibrated per style with BS.1770 from offline renders (`--music-only`, target −16.5 LUFS
+  music; full mixes land −15 to −17.5); the trim now also scales the music's reverb / echo sends (before, a wet style
+  like cosmic ignored its trim). Lofi is intentionally dark: energy above 6 kHz stays below 1 %.
+* The shakuhachi is a synthesis (bore tone + pitched breath + formants), convincing in the mix, not a sample; its
+  meri/kari bends are scheduled per note (not continuous breath control).
+* Koto / shamisen KS buffers are rendered on first use of each pitch on the main thread (≈ 1–2 ms each, ~40 pitches);
+  a worker could pre-render them.
+* `blink`, `draw`, `sheathe`, `slash` and Resonance `pulse` are reached through `audio.play()` from the player;
+  `katana.charging` / `charge` and `meditating` are read live from `world.player` (guarded).
 
 * Loudness per style is hand-calibrated from offline renders (music RMS ≈ −19 dBFS); styles with very
   sparse sections (BotW, eerie) are intentionally quieter at low energy.
@@ -180,6 +208,12 @@ Headless renders: 14 s of any scene render in ~4–6 s.
   quickest way to inspect creature voices.
 
 ## Requests
+
+* **player** (season 2, optional) — `audio.setParam('discovery', 1)` already swells into a taiko + theme at vistas;
+  sending it also when the World Tree or the great mountain first comes into view (`flora.sacred`, `landmarks.mountain`)
+  would give every world its "stop in your tracks" musical moment. A `player:drift` state (levitating on the ring of
+  light) could set `glide` so the music lifts as it does while gliding.
+* **ui** — a music volume slider separate from master (`audio.mix.setBus('music', v)` exists).
 
 * **player / vehicles** — optional: emit `engine.audio.setParam('danger', x)` when the player is hurt, falling
   from a deadly height or chased; and `setParam('discovery', 1)` briefly when a vista/POI is first seen.

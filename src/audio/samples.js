@@ -100,7 +100,7 @@ const GEN = {
     const f0 = 196; for (let i = 0; i < x.length; i++) { const t = i / sr; let s = 0; for (const [m, a, d] of P) s += Math.sin(TAU * f0 * m * t + m) * a * expEnv(t, d * 2.2); x[i] = s * att(t, 0.003) + (r() * 2 - 1) * expEnv(t, 0.004) * 0.6; }
     return norm(x, 0.8);
   },
-  crackle(sr, r) { const x = buf(sr, 4); const lp = new OnePole(sr, 3000); for (let i = 0; i < x.length; i++) { x[i] = lp.run(r() * 2 - 1) * 0.05; if (r() < 12 / sr) { const a = (r() * 2 - 1) * (0.3 + r() * 0.7); for (let j = 0; j < 30 && i + j < x.length; j++) x[i + j] += a * Math.exp(-j / 4); } } return x; },
+  crackle(sr, r) { const x = buf(sr, 4); const lp = new OnePole(sr, 6500); for (let i = 0; i < x.length; i++) { x[i] = lp.run(r() * 2 - 1) * 0.05; if (r() < 12 / sr) { const a = (r() * 2 - 1) * (0.3 + r() * 0.7); for (let j = 0; j < 30 && i + j < x.length; j++) x[i + j] += a * Math.exp(-j / 4); } } return x; },
   tick(sr, r) { const x = buf(sr, 0.08); for (let i = 0; i < x.length; i++) { const t = i / sr; x[i] = (Math.sin(TAU * 2950 * t) * 0.6 + Math.sin(TAU * 1480 * t) * 0.5) * expEnv(t, 0.012) * att(t, 0.001); } return norm(x, 0.5); },
   // rhythmic machine clank (industrial settlements)
   clank(sr, r) { const x = buf(sr, 0.9); const f0 = 210 + r() * 120; for (let i = 0; i < x.length; i++) { const t = i / sr; x[i] = (Math.sin(TAU * f0 * t) * 0.6 + Math.sin(TAU * f0 * 2.76 * t) * 0.4 + Math.sin(TAU * f0 * 5.4 * t) * 0.3) * expEnv(t, 0.18) + (r() * 2 - 1) * expEnv(t, 0.006) * 0.7; } return fadeOut(norm(x, 0.6), sr); },

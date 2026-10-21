@@ -361,7 +361,7 @@ export class Ambience {
     const r = this.r, ctx = this.ctx;
     const S = this._bed('space', () => {
       const gain = this._g(0); const lp = this._f('lowpass', 18000, 0.6); gain.connect(lp); lp.connect(this.out); gain.lpf = lp;
-      const hum = [55, 55.35, 82.6].map((f, i) => { const o = ctx.createOscillator(); o.frequency.value = f; const g = this._g(i === 2 ? 0.18 : 0.26); o.connect(g); g.connect(gain); o.start(t); return o; });
+      const hum = [55, 55.35, 82.6].map((f, i) => { const o = ctx.createOscillator(); o.frequency.value = f; const g = this._g(i === 2 ? 0.11 : 0.15); o.connect(g); g.connect(gain); o.start(t); return o; });
       const rad = this._noise('pink', t), rf = this._f('bandpass', 1400, 14), rg = this._g(0.9); rad.connect(rf); rf.connect(rg); rg.connect(gain);
       const cab = this._noise('brown', t), cf = this._f('lowpass', 140, 0.6), cg = this._g(0); cab.connect(cf); cf.connect(cg); cg.connect(gain);
       // radio events ride their own gate so they cut with the bed (a pulsar train can last 13 s)
