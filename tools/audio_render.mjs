@@ -61,6 +61,17 @@ export const PRESETS = {
     { t: 18, creatures: [{ archetype: 'hopper', dist: 18, az: 20, n: 4, species: 8 }, { archetype: 'whale', dist: 900, az: -30, n: 3, species: 5 }, { archetype: 'jelly', dist: 30, az: 0, n: 6, species: 9 }, { archetype: 'critter', dist: 6, az: -40, n: 2, species: 10 }] }] },
   // scene cut regression: galaxy (space bed) → landed pastoral surface; the space bed must be gone within ~1 s
   landing: { scene: 'galaxy', seconds: 12, events: [{ t: 5, play: 'warp' }, { t: 6, scene: 'surface', art: 'bierstadt' }, { t: 6.2, over: { wind: 0.3, flora: 0.8, hot: 0.8 } }] },
+  // season 2: chillhop × Yotei × Zelda states
+  'day-idle': { art: 'ghibli', seconds: 40, over: { night: 0, wind: 0.35, flora: 0.9 } },
+  night: { art: 'ghibli', seconds: 40, over: { night: 1, wind: 0.25, flora: 0.9 } },
+  settlement: { art: 'ghibli', seconds: 40, over: { city: 0.85, cityStyle: 'village', wind: 0.2, flora: 0.7 } },
+  'botw-walk': { art: 'botw', seconds: 40, over: { night: 0.1, wind: 0.4, flora: 0.8 }, params: { speed: 4 }, walk: 2.1, surface: 'grass' },
+  vista: { art: 'bierstadt', seconds: 36, over: { wind: 0.4, flora: 0.8 }, events: [{ t: 10, param: 'discovery', value: 1 }, { t: 14, param: 'discovery', value: 0.2 }, { t: 22, play: 'discover', opts: { kind: 'monument' } }] },
+  commune: { art: 'ghibli', seconds: 60, over: { wind: 0.2, flora: 0.8, night: 0.6 }, events: [{ t: 8, param: 'meditate', value: 1 }, { t: 44, param: 'meditate', value: 0 }] },
+  katana: { art: 'ghibli', seconds: 24, over: { wind: 0.3, flora: 0.8 }, events: [
+    { t: 3, play: 'draw' }, { t: 4.4, play: 'slash', opts: { kind: 'slash1' } }, { t: 5.1, play: 'slash', opts: { kind: 'slash2' } }, { t: 6, param: 'charge', value: 0.4 }, { t: 7, param: 'charge', value: 1 },
+    { t: 8, param: 'charge', value: 0 }, { t: 8, play: 'slash', opts: { kind: 'iai', intensity: 1 } }, { t: 9.4, play: 'sheathe' }, { t: 12, play: 'pulse', opts: { intensity: 1 } }, { t: 16, play: 'blink' },
+    { t: 19, play: 'discover', opts: { kind: 'discover' } }] },
   'sfx-tour': { art: 'ghibli', seconds: 16, over: { wind: 0.2 }, events: [
     { t: 0.5, play: 'step', opts: { surface: 'grass' } }, { t: 0.9, play: 'step', opts: { surface: 'rock' } }, { t: 1.3, play: 'step', opts: { surface: 'sand' } }, { t: 1.7, play: 'step', opts: { surface: 'snow' } },
     { t: 2.2, play: 'jump' }, { t: 3.0, play: 'land', opts: { intensity: 0.8 } }, { t: 3.6, play: 'glider', opts: { open: true } }, { t: 4.5, play: 'splash', opts: { intensity: 0.7 } },
@@ -152,6 +163,53 @@ for (t, lab) in info.get('timeline', []):
 ax3.set_xlabel('seconds', color='#bbb'); ax3.tick_params(colors='#999')
 for s in ax3.spines.values(): s.set_color('#333')
 fig.savefig(pngf, dpi=90, facecolor=fig.get_facecolor(), bbox_inches='tight')
+# ---- metrics for critics: band balance, tempo from onset autocorrelation, quarter loudness arc
+P = (S ** 2).mean(axis=1)
+tot = P[1:].sum() + 1e-12
+def band(a, b): return round(float(P[(freqs >= a) & (freqs < b)].sum() / tot * 100), 1)
+bands = {'sub<80': band(20, 80), 'low80-200': band(80, 200), 'mid200-2k': band(200, 2000), 'hi2k-6k': band(2000, 6000), 'air>6k': band(6000, sr / 2)}
+flux = np.maximum(0, np.diff(np.log1p(S[(freqs > 40) & (freqs < 8000)] * 100), axis=1)).sum(axis=0)
+flux = flux - np.convolve(flux, np.ones(16) / 16, mode='same')
+flux = np.maximum(flux, 0)
+fps = sr / H
+bpm = None
+if len(flux) > fps * 6:
+    ac = np.correlate(flux, flux, mode='full')[len(flux) - 1:]
+    lags = np.arange(len(ac)); best, bv = None, -1
+    for b in np.arange(60, 181, 0.5):
+        L = fps * 60 / b
+        if L * 4 >= len(ac): continue
+        v = sum(np.interp(L * k, lags, ac) / k ** 0.5 for k in (1, 2, 4))
+        v *= np.exp(-0.5 * (np.log2(b / 85) / 0.9) ** 2)   # mild prior around 85 bpm (perceptual resonance)
+        if v > bv: bv, best = v, b
+    bpm = float(best) if best else None
+q = np.array_split(m, 4)
+quarters = [round(float(20 * np.log10(np.sqrt((x ** 2).mean()) + 1e-9)), 1) for x in q]
+# integrated loudness (ITU-R BS.1770 K-weighting applied in the frequency domain, 400 ms blocks, gated)
+def biq(b, a, w):
+    z = np.exp(-1j * w)
+    return (b[0] + b[1] * z + b[2] * z * z) / (a[0] + a[1] * z + a[2] * z * z)
+def kresp(nf):
+    w = 2 * np.pi * np.fft.rfftfreq(nf, 1 / sr) / sr
+    G, fc, Q = 3.99984385397, 1681.97445095, 0.7071752369554193
+    A = 10 ** (G / 40); w0 = 2 * np.pi * fc / sr; al = np.sin(w0) / (2 * Q); c = np.cos(w0)
+    b1 = [A * ((A + 1) + (A - 1) * c + 2 * np.sqrt(A) * al), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - 2 * np.sqrt(A) * al)]
+    a1 = [(A + 1) - (A - 1) * c + 2 * np.sqrt(A) * al, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - 2 * np.sqrt(A) * al]
+    fc2, Q2 = 38.13547087613982, 0.5003270373253953; w2 = 2 * np.pi * fc2 / sr; al2 = np.sin(w2) / (2 * Q2); c2 = np.cos(w2)
+    b2 = [(1 + c2) / 2, -(1 + c2), (1 + c2) / 2]; a2 = [1 + al2, -2 * c2, 1 - al2]
+    return biq(b1, a1, w) * biq(b2, a2, w)
+nf = len(x); K = kresp(nf)
+y = np.stack([np.fft.irfft(np.fft.rfft(x[:, ch]) * K, nf) for ch in range(2)], axis=1)
+blk, hop = int(0.4 * sr), int(0.1 * sr)
+z = np.array([(y[i:i + blk] ** 2).mean(axis=0).sum() for i in range(0, max(1, nf - blk), hop)])
+lk = -0.691 + 10 * np.log10(z + 1e-12)
+g1 = z[lk > -70]
+lufs = None
+if len(g1):
+    rel = -0.691 + 10 * np.log10(g1.mean()) - 10
+    g2 = z[(lk > -70) & (lk > rel)]
+    lufs = round(float(-0.691 + 10 * np.log10(g2.mean() + 1e-12)), 1)
+print(json.dumps({'bands': bands, 'tempoBpm': bpm, 'quartersDb': quarters, 'lufs': lufs, 'lufsNote': 'BS.1770 integrated (gated)'}))
 `;
 const pyFile = path.join(outDir, '.spectrogram.py');
 fs.writeFileSync(pyFile, PY);
@@ -200,8 +258,10 @@ for (const job of jobs) {
   fs.writeFileSync(base + '.json', JSON.stringify(info, null, 1));
   const py = spawnSync('python3', [pyFile, base + '.wav', base + '.png', base + '.json'], { encoding: 'utf8' });
   const pngOk = py.status === 0;
+  try { const extra = JSON.parse((py.stdout || '').trim().split('\n').pop()); Object.assign(info.metrics, extra); fs.writeFileSync(base + '.json', JSON.stringify(info, null, 1)); } catch { /* metrics optional */ }
   const mu = res.debug?.music || {};
-  console.log(`[audio_render] ${job.name.padEnd(12)} ${((Date.now() - t0) / 1000).toFixed(1)}s  ${mu.style}/${mu.art || '-'} ${mu.key} ${mu.bpm}bpm  peak ${res.metrics.peakDb} rms ${res.metrics.rmsDb} clip ${res.metrics.clipped} silent ${res.metrics.silentPct}%  → ${base}.wav${pngOk ? ' + .png' : ' (no png: ' + (py.stderr || '').split('\n').filter(Boolean).pop() + ')'}`);
+  const xm = info.metrics;
+  console.log(`[audio_render] ${job.name.padEnd(12)} ${((Date.now() - t0) / 1000).toFixed(1)}s  ${mu.style}/${mu.art || '-'} ${mu.key} ${mu.bpm}bpm (est ${xm.tempoBpm ?? '?'})  peak ${xm.peakDb} lufs~${xm.lufs} clip ${xm.clipped} silent ${xm.silentPct}% themes ${mu.theme?.statements ?? 0} bands ${xm.bands ? Object.values(xm.bands).join('/') : '?'} q ${xm.quartersDb ? xm.quartersDb.join(',') : ''}  → ${base}.wav${pngOk ? ' + .png' : ' (no png: ' + (py.stderr || '').split('\n').filter(Boolean).pop() + ')'}`);
 }
 if (errors.length) console.log('[audio_render] page messages:\n  ' + [...new Set(errors)].slice(0, 20).join('\n  '));
 await browser.close();

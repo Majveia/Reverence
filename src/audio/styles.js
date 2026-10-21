@@ -5,29 +5,39 @@
 //   minE = energy needed for the layer to join a section (energy = flow + danger + discovery),
 //   prob = chance the layer plays in a section it qualifies for (contrast between sections).
 // Surface styles are picked from body.art.key (ART_STYLE) and refined by a per-art variant.
+// Season 2 (creator, 19 Oct): "vibey chillhop/lofi and Ghost of Yotei x Zelda inspired" — the surface base is
+// `chillhop`; every style carries the MAIN THEME (theory.js) on a `theme` layer so it returns at every scale.
+// Mood flags read by the Composer: nightOnly · nightOff · nightLevel · settledOnly · lift (forced on while
+//   gliding) · liftOff · liftOnly · breath (plays in breath sections) · pump (kick sidechain) · penta (sings
+//   in the mode's Japanese pentatonic) · theme (can state the theme) · themeOnly (only in theme sections) ·
+//   bloom (rises +4 dB in theme sections) · rests (chance to drop a note: BotW phrasing).
 
 export const STYLES = {
   // ------------------------------------------------------------------ scales
   cosmic: {
-    trim: 0.57, label: 'Cosmic web — vast evolving pads', bpm: [38, 44], meter: 4, swing: 0.5,
-    modes: { day: ['lydian', 'ionian', 'lydian', 'dorian'], night: ['lydian', 'dorian'] }, tonic: [38, 45],
+    trim: 0.37, label: 'Cosmic web — vast evolving pads, the theme on a distant shakuhachi', bpm: [38, 44], meter: 4, swing: 0.5,
+    modes: { day: ['lydian', 'ionian', 'lydian', 'dorian'], night: ['lydian', 'dorian'] }, tonic: [38, 40],
     prog: 'lydian', chordBars: [[2, 2], [3, 1]], exts: [['sus2', 3], ['add9', 3], ['quartal', 2], ['triad', 1]],
-    reverb: 'cosmos', revLevel: 0.8, echo: { beats: 1.5, fb: 0.45, mix: 0.35 }, insert: {}, breath: 0, modulate: 0.45,
+    reverb: 'cosmos', revLevel: 0.8, echo: { beats: 1.5, fb: 0.45, mix: 0.35 }, insert: {}, breath: 0, modulate: 0.45, themeEvery: 3, themeFirst: 2,
     layers: [
       { id: 'pad', core: true, type: 'pad', timbre: 'warm', voices: 6, range: [45, 79], level: 0.42, glide: 2.8, attack: 3, rev: 0.7 },
-      { id: 'halo', type: 'pad', timbre: 'glass', voices: 3, range: [67, 91], level: 0.16, glide: 4, attack: 4, rev: 0.9, echo: 0.2, minE: 0.1 },
-      { id: 'sub', type: 'drone', timbre: 'drone', notes: [-12, -5], level: 0.2, rev: 0.2 },
-      { id: 'grains', type: 'grains', wave: 'glass', range: [74, 101], rate: [2, 14], dur: [0.25, 1.4], level: 0.09, rev: 0.9, echo: 0.3 },
-      { id: 'bells', type: 'bells', inst: 'celesta', range: [72, 96], prob: 0.12, level: 0.35, rev: 0.9, echo: 0.4, minE: 0.2 },
+      { id: 'halo', type: 'pad', timbre: 'glass', voices: 3, range: [67, 91], level: 0.16, glide: 4, attack: 4, rev: 0.9, echo: 0.2, minE: 0.1, bloom: true },
+      { id: 'sub', type: 'drone', timbre: 'drone', notes: [-12, -5], level: 0.17, rev: 0.2 },
+      { id: 'grains', type: 'grains', wave: 'glass', range: [74, 103], rate: [2, 14], dur: [0.25, 1.4], level: 0.09, rev: 0.9, echo: 0.3, bloom: true },
+      { id: 'bells', type: 'bells', inst: 'celesta', range: [72, 96], prob: 0.12, level: 0.35, rev: 0.9, echo: 0.4, minE: 0.2, bloom: true },
+      { id: 'theme', type: 'melody', mono: 'shakuhachi', penta: true, theme: true, themeOnly: true, range: [62, 84], level: 0.52, rev: 0.9, echo: 0.3, pan: 0.18 },
     ],
   },
   galaxy: {
-    trim: 0.52, label: 'Galaxy — choir of stars', bpm: [44, 50], meter: 4, swing: 0.5,
-    modes: { day: ['aeolian', 'dorian', 'lydian'], night: ['aeolian', 'dorian'] }, tonic: [41, 47],
+    trim: 0.41, label: 'Galaxy — choir of stars', bpm: [44, 50], meter: 4, swing: 0.5,
+    modes: { day: ['aeolian', 'dorian', 'lydian'], night: ['aeolian', 'dorian'] }, tonic: [43, 45],
     prog: 'aeolian', chordBars: [[2, 3], [1, 1]], exts: [['triad', 3], ['add9', 2], ['sus2', 1]],
-    reverb: 'cathedral', revLevel: 0.75, echo: { beats: 1.5, fb: 0.35, mix: 0.25 }, insert: {}, breath: 0.05, modulate: 0.3,
+    reverb: 'cathedral', revLevel: 0.75, echo: { beats: 1.5, fb: 0.35, mix: 0.25 }, insert: {}, breath: 0.05, modulate: 0.3, themeEvery: 3, themeFirst: 2,
     layers: [
-      { id: 'choir', core: true, type: 'pad', timbre: 'choir', voices: 5, range: [52, 76], level: 0.55, glide: 1.2, attack: 2.2, rev: 0.8, vowels: ['a', 'o', 'u', 'a', 'e'] },
+      { id: 'choir', core: true, type: 'pad', timbre: 'choir', voices: 5, range: [52, 76], level: 0.4, glide: 1.2, attack: 2.2, rev: 0.8, vowels: ['a', 'o', 'u', 'a', 'e'] },
+      { id: 'glass', type: 'grains', wave: 'glass', range: [96, 112], rate: [3, 10], dur: [0.08, 0.5], level: 0.05, rev: 0.9, echo: 0.35, bloom: true },
+      { id: 'voice', type: 'melody', mono: 'vox', penta: true, theme: true, themeOnly: true, range: [60, 79], level: 0.4, rev: 0.9, echo: 0.25, pan: -0.12 },
+      { id: 'stars', type: 'melody', inst: 'celesta', penta: true, theme: true, themeOnly: true, echoUp: true, range: [72, 96], level: 0.3, rev: 0.9, echo: 0.4, pan: 0.2 },
       { id: 'low', type: 'pad', timbre: 'strings', voices: 2, range: [36, 52], level: 0.3, glide: 1.5, attack: 2.5, rev: 0.5 },
       { id: 'grains', type: 'grains', wave: 'sine', range: [79, 103], rate: [1, 6], dur: [0.15, 0.7], level: 0.06, rev: 0.9, echo: 0.3 },
       { id: 'arp', type: 'arp', inst: 'celesta', range: [67, 91], rate: [1, 2], patterns: ['up', 'updown'], level: 0.22, rev: 0.7, echo: 0.35, minE: 0.3, prob: 0.6 },
@@ -35,20 +45,43 @@ export const STYLES = {
     ],
   },
   space: {
-    trim: 0.6, label: 'Deep space — drones & distant radio', bpm: [34, 40], meter: 4, swing: 0.5,
-    modes: { day: ['dorian', 'aeolian', 'lydian'], night: ['aeolian', 'phrygian'] }, tonic: [33, 40],
+    trim: 0.44, label: 'Deep space — drones, distant radio, the theme on bowed glass', bpm: [34, 40], meter: 4, swing: 0.5,
+    modes: { day: ['dorian', 'aeolian', 'lydian'], night: ['aeolian', 'phrygian'] }, tonic: [33, 35],
     prog: 'planing', chordBars: [[3, 2], [4, 2]], exts: [['sus2', 2], ['quartal', 2], ['power', 1]],
-    reverb: 'cosmos', revLevel: 0.7, echo: { beats: 2, fb: 0.5, mix: 0.3 }, insert: {}, breath: 0.1, modulate: 0.25,
+    reverb: 'cosmos', revLevel: 0.7, echo: { beats: 2, fb: 0.5, mix: 0.3 }, insert: {}, breath: 0.1, modulate: 0.25, themeEvery: 3, themeFirst: 2,
     layers: [
-      { id: 'drone', type: 'drone', timbre: 'drone', notes: [0, 7, 12], level: 0.4, rev: 0.4, sweep: true },
-      { id: 'pad', type: 'pad', timbre: 'glass', voices: 3, range: [57, 81], level: 0.2, glide: 5, attack: 5, rev: 0.9, echo: 0.2 },
-      { id: 'bells', type: 'bells', inst: 'glassBell', range: [60, 84], prob: 0.06, level: 0.3, rev: 0.9, echo: 0.5 },
-      { id: 'grains', type: 'grains', wave: 'sine', range: [84, 100], rate: [0.5, 3], dur: [0.05, 0.3], level: 0.04, rev: 0.9, echo: 0.4, minE: 0.2 },
+      { id: 'drone', type: 'drone', timbre: 'drone', notes: [0, 7, 12, 19], level: 0.26, rev: 0.4, sweep: true },
+      { id: 'pad', type: 'pad', timbre: 'glass', voices: 3, range: [57, 81], level: 0.22, glide: 5, attack: 5, rev: 0.9, echo: 0.2 },
+      { id: 'bells', type: 'bells', inst: 'glassBell', range: [60, 88], prob: 0.07, level: 0.3, rev: 0.9, echo: 0.5, bloom: true },
+      { id: 'grains', type: 'grains', wave: 'sine', range: [84, 104], rate: [0.5, 3], dur: [0.05, 0.3], level: 0.05, rev: 0.9, echo: 0.4, minE: 0.2, bloom: true },
+      { id: 'theme', type: 'melody', mono: 'bowed', penta: true, theme: true, themeOnly: true, range: [64, 86], level: 0.4, rev: 0.95, echo: 0.4 },
       { id: 'cello', type: 'melody', mono: 'cello', range: [45, 64], level: 0.3, density: 0.2, rev: 0.7, minE: 0.45, prob: 0.4 },
     ],
   },
 
   // ------------------------------------------------------------------ surfaces
+  // Season 2 base: chillhop × Ghost of Yotei × Zelda. Rhodes on 7/9/11 close voicings, warm sub, a swung
+  // soft kit with a kick-triggered pump, tape wow + vinyl, low-passed "from another room"; koto figures and
+  // a shakuhachi singing the mode's Japanese pentatonic; sparse felt piano with rests; distant taiko at vistas.
+  chillhop: {
+    trim: 0.55, label: 'Chillhop × Yotei — Rhodes, sub, swung kit, koto & shakuhachi', bpm: [72, 86], meter: 4, swing: 0.6,
+    modes: { day: ['dorian', 'ionian', 'mixolydian', 'dorian', 'aeolian'], night: ['dorian', 'aeolian', 'phrygian'] }, tonic: [46, 53],
+    prog: 'lofi', chordBars: [[1, 3], [2, 2]], exts: [['7', 2], ['9', 3], ['11', 2], ['add9', 1]],
+    reverb: 'valley', revLevel: 0.5, echo: { beats: 0.75, fb: 0.3, mix: 0.12 }, insert: { wow: 0.3, flutter: 0.4, lp: 11000, drive: 0.2, crackle: 0.5 }, nightLp: 0.5,
+    breath: 0.16, modulate: 0.2, themeEvery: 4, themeFirst: 3,
+    layers: [
+      { id: 'keys', core: true, type: 'comp', inst: 'rhodes', range: [53, 72], rhythm: 'lofi', level: 0.5, rev: 0.32, echo: 0.06, minE: 0, pump: 1, autopan: [1.7, 0.45] },
+      { id: 'bass', core: true, type: 'bass', inst: 'sub', style: 'lofi', range: [33, 47], level: 0.6, rev: 0.04, minE: 0, pump: 1, liftOff: true },
+      { id: 'drums', core: true, type: 'perc', kit: 'chill', level: 0.6, rev: 0.12, minE: 0 },
+      { id: 'koto', type: 'arp', inst: 'koto', patterns: ['koto'], range: [57, 81], rate: [2, 2], level: 0.42, rev: 0.45, echo: 0.16, minE: 0.1, prob: 0.6, sparse: 0.35, nightLevel: 0.8 },
+      { id: 'flute', type: 'melody', mono: 'shakuhachi', penta: true, theme: true, range: [62, 84], level: 0.42, density: 0.3, rev: 0.55, echo: 0.18, minE: 0.3, prob: 0.5, rests: 0.12, lift: true },
+      { id: 'piano', type: 'melody', inst: 'felt', penta: true, theme: true, range: [60, 84], level: 0.44, density: 0.32, rev: 0.5, echo: 0.1, minE: 0.06, prob: 0.4, rests: 0.35, breath: true },
+      { id: 'kotoTheme', type: 'melody', inst: 'koto', penta: true, theme: true, themeOnly: true, range: [62, 86], level: 0.44, rev: 0.45, echo: 0.15 },
+      { id: 'pad', type: 'pad', timbre: 'warm', voices: 4, range: [50, 72], level: 0.15, glide: 0.8, attack: 1.6, rev: 0.6, minE: 0.4, prob: 0.5, pump: 1, nightOff: true, lift: true },
+      { id: 'shamisen', type: 'arp', inst: 'shamisen', patterns: ['koto'], range: [50, 70], rate: [2, 2], level: 0.3, rev: 0.25, minE: 0, prob: 0.75, sparse: 0.25, settledOnly: true, core: true },
+      { id: 'taiko', type: 'perc', kit: 'taikoSwell', level: 0.5, rev: 0.7, minE: 0.78, prob: 0.6, liftOff: true, nightOff: true },
+    ],
+  },
   pastoral: {
     trim: 0.72, label: 'Pastoral — piano, harp & strings', bpm: [70, 86], meter: [[4, 3], [3, 1.3]], swing: 0.5,
     modes: { day: ['lydian', 'ionian', 'ionian', 'mixolydian'], night: ['dorian', 'aeolian', 'ionian'] }, tonic: [48, 55],
@@ -186,14 +219,14 @@ export const STYLES = {
 
 // art preset key → [style, variant overrides]
 export const ART_STYLE = {
-  ghibli: ['pastoral', { note: 'Hisaishi-style piano & flute' }],
-  botw: ['pastoral', { note: 'sparse Zelda field piano', breath: 0.3, bpm: [66, 78], modes: { day: ['ionian', 'lydian', 'mixolydian', 'yo'], night: ['dorian', 'yo'] },
-    layerMod: { pad: { level: 0.1, prob: 0.3 }, arp: { inst: 'piano', rate: [2, 2], prob: 0.5, sparse: 0.4 }, mel: { density: 0.3, minE: 0.1, prob: 0.85 }, counter: { mono: 'flute', prob: 0.25 } } }],
-  bierstadt: ['pastoral', { note: 'golden-hour strings & horn', layerMod: { pad: { voices: 5, level: 0.32 }, counter: { mono: 'horn', range: [55, 74], prob: 0.55, minE: 0.35 } }, reverb: 'hall' }],
-  rogerdean: ['pastoral', { note: 'floating marimba & koto', modes: { day: ['lydian', 'lydianDom', 'ionian'], night: ['lydian', 'dorian'] },
-    layerMod: { pad: { timbre: 'glass', level: 0.22 }, arp: { inst: 'marimba', rate: [3, 4] }, mel: { inst: 'koto' }, counter: { mono: 'flute' } } }],
-  nausicaa: ['pastoral', { note: 'Requiem — wooden flute & choir', modes: { day: ['aeolian', 'dorian'], night: ['aeolian', 'in'] }, prog: 'aeolian', bpm: [62, 72],
-    layerMod: { pad: { timbre: 'choir', level: 0.3, vowels: ['u', 'o'] }, mel: { mono: 'flute', inst: null, density: 0.3 }, arp: { inst: 'koto' }, counter: { mono: 'cello', range: [48, 64] } } }],
+  ghibli: ['chillhop', { note: 'meadow lofi — koto & shakuhachi' }],
+  botw: ['chillhop', { note: 'Hyrule field lofi — sparse felt piano with rests', breath: 0.24, bpm: [70, 80], modes: { day: ['ionian', 'mixolydian', 'dorian'], night: ['dorian', 'aeolian'] },
+    layerMod: { piano: { minE: 0, prob: 0.75, rests: 0.42, density: 0.28 }, koto: { prob: 0.45 }, flute: { prob: 0.4 } } }],
+  bierstadt: ['chillhop', { note: 'golden-hour lofi — warm pad & shakuhachi', reverb: 'hall', layerMod: { pad: { level: 0.2, minE: 0.15, prob: 0.7 }, flute: { minE: 0.2, prob: 0.6 } } }],
+  rogerdean: ['chillhop', { note: 'floating lofi — marimba & glass', modes: { day: ['lydian', 'ionian', 'mixolydian'], night: ['dorian', 'lydian'] },
+    layerMod: { pad: { timbre: 'glass', level: 0.18, minE: 0.1 }, koto: { inst: 'marimba' } } }],
+  nausicaa: ['chillhop', { note: 'Requiem lofi — shakuhachi & choir', modes: { day: ['aeolian', 'dorian'], night: ['aeolian', 'phrygian'] }, bpm: [70, 78],
+    layerMod: { pad: { timbre: 'choir', level: 0.2, minE: 0.1, vowels: ['u', 'o'] }, flute: { minE: 0.12, prob: 0.65 } } }],
   outerwilds: ['hearth', { note: 'campfire banjo' }],
   moebius: ['desert', { note: 'Arzach — duduk & oud' }],
   villeneuve: ['dune', { note: 'Arrakeen throat drones' }],
@@ -219,12 +252,15 @@ export function resolveStyle(scene, artKey) {
   let base, variant = {};
   if (scene === 'cosmic' || scene === 'galaxy' || scene === 'space') base = STYLES[scene];
   else {
-    const e = ART_STYLE[artKey] || ['pastoral', {}];
+    const e = ART_STYLE[artKey] || ['chillhop', {}];
     base = STYLES[e[0]]; variant = e[1];
   }
-  const st = { ...base, ...variant, key: scene === 'surface' || !STYLES[scene] ? (ART_STYLE[artKey]?.[0] || 'pastoral') : scene, art: artKey || null };
+  const st = { ...base, ...variant, key: scene === 'surface' || !STYLES[scene] ? (ART_STYLE[artKey]?.[0] || 'chillhop') : scene, art: artKey || null };
   st.layers = base.layers.map((l) => ({ ...l, ...(variant.layerMod?.[l.id] || {}) }));
   if (variant.extraLayers) st.layers.push(...variant.extraLayers);
   for (const l of st.layers) if (l.mono && variant.layerMod?.[l.id]?.inst) delete l.mono;
+  // Zelda rule: every world states the universe's main theme, arranged for its own lead instrument
+  if (!st.layers.some((l) => l.theme)) { const lead = st.layers.find((l) => l.type === 'melody'); if (lead) { lead.theme = true; lead.penta = lead.penta ?? false; } }
+  if (st.themeEvery == null) st.themeEvery = 4;
   return st;
 }

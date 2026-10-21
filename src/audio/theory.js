@@ -17,10 +17,22 @@ export const MODES = {
   pentaMin: [0, 3, 5, 7, 10],
   in: [0, 1, 5, 7, 8],                 // Japanese In scale (koto, eerie)
   yo: [0, 2, 5, 7, 9],                 // Japanese Yo scale (bright folk)
+  miyako: [0, 1, 5, 7, 8],             // miyako-bushi (urban koto / shamisen music)
+  kumoi: [0, 2, 3, 7, 8],              // kumoi-joshi (gentle minor koto tuning)
+};
+
+/**
+ * Japanese pentatonic colour for the MELODY over a 7-note jazz/modal harmony: the flute, koto and theme sing
+ * in a pentatonic subset of the current mode while Rhodes and pads keep the 7th/9th/11th chords.
+ */
+export const MELODIC = {
+  ionian: 'yo', mixolydian: 'yo', dorian: 'yo', lydian: 'pentaMaj', lydianDom: 'pentaMaj',
+  aeolian: 'kumoi', harmonic: 'kumoi', phrygian: 'miyako', hijaz: 'miyako', yo: 'yo', in: 'in', miyako: 'miyako', kumoi: 'kumoi',
+  pentaMaj: 'pentaMaj', pentaMin: 'pentaMin', wholetone: 'wholetone',
 };
 
 /** Relative darkness of each mode (used to shift toward darker modes at night / danger). */
-export const BRIGHTNESS = { lydian: 3, lydianDom: 2.5, ionian: 2, mixolydian: 1, yo: 1.5, pentaMaj: 2, dorian: 0, aeolian: -1, pentaMin: -0.5, harmonic: -1.5, phrygian: -2, hijaz: -2, in: -2.5, wholetone: 0.5 };
+export const BRIGHTNESS = { miyako: -2.5, kumoi: -1.5, lydian: 3, lydianDom: 2.5, ionian: 2, mixolydian: 1, yo: 1.5, pentaMaj: 2, dorian: 0, aeolian: -1, pentaMin: -0.5, harmonic: -1.5, phrygian: -2, hijaz: -2, in: -2.5, wholetone: 0.5 };
 
 export const pcName = (pc) => ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'][((pc % 12) + 12) % 12];
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
@@ -28,6 +40,8 @@ const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
 export class Harmony {
   constructor(tonic = 50, mode = 'ionian') { this.set(tonic, mode); }
   set(tonic, mode) { this.tonic = tonic; this.mode = MODES[mode] ? mode : 'ionian'; this.scale = MODES[this.mode]; return this; }
+  /** Pentatonic melodic subset (MELODIC) of another harmony's mode, same tonic. */
+  melodicOf(h) { return this.set(h.tonic, MELODIC[h.mode] || h.mode); }
   get size() { return this.scale.length; }
   /** Pitch (midi) of scale degree d (any integer, wraps octaves) relative to tonic. */
   deg(d) {
@@ -54,9 +68,16 @@ export class Harmony {
       if (ext === '7' || ext === '9') base.push(d(6));
       return base;
     }
+    const iv = (k) => (((d(k) - d(0)) % 12) + 12) % 12;
+    // avoid notes: a b9 over the root (phrygian i, iii) drops the 9th; a natural 11 over a major third
+    // becomes the 9th (a maj9 / dom9 rather than a clash)
+    if ((ext === '9' || ext === '11') && iv(8) === 1) ext = '7';
+    if (ext === '11' && iv(2) === 4 && iv(10) === 5) ext = '9';
     switch (ext) {
       case '7': return [d(0), d(2), d(4), d(6)];
       case '9': return [d(0), d(2), d(4), d(6), d(8)];
+      case '11': return [d(0), d(2), d(4), d(6), d(8), d(10)];
+      case '69': return [d(0), d(2), d(4), d(5), d(8)];
       case 'sus2': return [d(0), d(1), d(4)];
       case 'sus4': return [d(0), d(3), d(4)];
       case 'add9': return [d(0), d(2), d(4), d(8)];
@@ -72,6 +93,7 @@ export class Harmony {
     const i = ((root % n) + n) % n;
     const third = (this.deg(root + 2) - this.deg(root) + 12) % 12;
     const fifth = (this.deg(root + 4) - this.deg(root) + 12) % 12;
+    if (n >= 7) { const iv = (k) => (((this.deg(root + k) - this.deg(root)) % 12) + 12) % 12; if ((ext === '9' || ext === '11') && iv(8) === 1) ext = '7'; if (ext === '11' && third === 4 && iv(10) === 5) ext = '9'; }
     let r = ROMAN[i] || String(i + 1);
     if (n >= 7 && third === 3) r = r.toLowerCase();
     if (n >= 7 && fifth === 6) r += '°';
@@ -96,6 +118,8 @@ export const PROGRESSIONS = {
   drone: { 0: [[0, 2], [1, 2.5], [6, 2], [3, 1]], 1: [[0, 4], [6, 1]], 3: [[1, 1.5], [0, 2]], 6: [[0, 3], [1, 1]] },
   // jazz: ii-V-I chains, iii-vi turnarounds (use with '7'/'9' chords)
   jazz: { 0: [[5, 2], [1, 2.5], [3, 1.5], [2, 1]], 1: [[4, 5], [6, 0.5]], 2: [[5, 3], [1, 1]], 3: [[4, 1.5], [1, 1.5], [0, 1], [6, 0.8]], 4: [[0, 4], [5, 1.5], [2, 0.6]], 5: [[1, 4], [3, 1]], 6: [[2, 2], [0, 1]] },
+  // lofi / neo-soul: IVmaj7 iii7 vi9, ii9 V I, the ii-I and IV-I plagal sighs
+  lofi: { 0: [[3, 3], [5, 2.5], [1, 2], [2, 1]], 1: [[4, 3], [0, 1.5], [2, 1]], 2: [[5, 3], [1, 1.2], [3, 1]], 3: [[2, 2], [4, 2], [0, 1.5], [1, 1.2]], 4: [[0, 3], [5, 1.5], [3, 0.8]], 5: [[1, 3], [3, 2], [4, 0.8]], 6: [[0, 2], [2, 1]] },
   // planing / non-functional (eerie, Kubrick): any step, mostly by 2nds and 3rds
   planing: { 0: [[1, 1], [2, 1], [5, 1], [6, 1], [4, 0.5]], 1: [[0, 1], [3, 1], [6, 1]], 2: [[0, 1], [4, 1], [5, 1]], 3: [[1, 1], [5, 1], [0, 1]], 4: [[2, 1], [6, 1], [0, 1]], 5: [[3, 1], [0, 1], [2, 1]], 6: [[4, 1], [1, 1], [0, 1]] },
 };
@@ -192,4 +216,39 @@ export function varyMotif(m, r, kind) {
     default: break;
   }
   return { rh, steps, kind: k };
+}
+
+// ------------------------------------------------------------------ leitmotifs
+/**
+ * The universe's MAIN THEME ("Reverence"): a call (a rising fifth that sighs back down) and an answer that
+ * settles home. Notes are [beat, duration, pentatonic index] in 4/4 over 2 + 2 bars, sung in the current
+ * key's MELODIC pentatonic (index 0 = tonic, 5 = octave), so it returns in every world, in every mode:
+ * bright in yo, tender in kumoi, haunted in miyako-bushi. Rests are part of the theme.
+ */
+export const MAIN_THEME = {
+  call: [[0, 1.5, 3], [1.5, 0.5, 4], [2, 2, 6], [4, 1, 5], [5, 0.5, 4], [5.5, 2.5, 3]],
+  answer: [[0, 1, 2], [1, 0.5, 3], [1.5, 1.5, 4], [3, 1, 3], [4, 1, 1], [5, 0.5, 2], [5.5, 2.5, 0]],
+  // chord degrees (one per bar, 7-note mode) that carry the theme, by mode family
+  prog: { bright: [0, 5, 3, 0], dorian: [0, 6, 3, 0], minor: [0, 5, 3, 0], phrygian: [0, 1, 5, 0], other: [0, 3, 0, 0] },
+};
+/** Discovery jingle: a short rising "da-da-da-DAAA" (pentatonic indices from the tonic), its own shape. */
+export const JINGLE = [[0, 3], [1, 4], [2, 6], [3.2, 8]];
+
+export function themeProg(mode) {
+  if (mode === 'ionian' || mode === 'lydian' || mode === 'mixolydian' || mode === 'lydianDom') return MAIN_THEME.prog.bright;
+  if (mode === 'dorian') return MAIN_THEME.prog.dorian;
+  if (mode === 'aeolian' || mode === 'harmonic') return MAIN_THEME.prog.minor;
+  if (mode === 'phrygian' || mode === 'hijaz') return MAIN_THEME.prog.phrygian;
+  return MAIN_THEME.prog.other;
+}
+
+/** A one-bar fragment of the main theme as a motif (so generative lines grow from the same seed). */
+export function themeMotif(r, beats = 4) {
+  const src = r.chance(0.5) ? MAIN_THEME.call : MAIN_THEME.answer;
+  const half = r.chance(0.5) ? 0 : 4;
+  const k = beats / 4;
+  const notes = src.filter(([b]) => b >= half && b < half + 4);
+  if (!notes.length) return null;
+  const p0 = notes[0][2];
+  return { rh: notes.map(([b, d]) => [(b - half) * k, Math.min(d, half + 4 - b) * k]), steps: notes.map((n) => n[2] - p0), kind: 'theme' };
 }
