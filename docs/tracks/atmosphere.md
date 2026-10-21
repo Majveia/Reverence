@@ -349,6 +349,17 @@ it) and `overcast`.
   pixels near towns; the far rain sheet is one extra instanced draw while it rains.
 
 ## Known issues
+* Open after season 2 (the round 3 critic, 21 Oct: 5.2 → 5.3 → 5.6/10, blind 1/4 → 0/4 → 1/4; the track's season-2
+  rounds are used up, so these lead the next pass): the critic calls the sky the strongest part of the game, naming
+  the golden-hour fan with the floating isles, the double rainbow, the aurora over the galactic band with a ringed
+  neighbour and the cloud sea with peaks poking through; the blind judges took the night pair (aurora, Milky Way, the
+  glowing World Tree and the floating isles). Still open: the hero sunrise is washed out (a pale beige cone, no sun
+  disc, a milky veil, none of the hot orange glow of the Yotei sunrise frame); the land never carries the sky's light
+  or colour (an unlit slab at golden hour, a flat brown-violet slab at blue hour); haze is one smeared tint instead of
+  stepped, paler ridges; the water is a grey striped sheet that reflects nothing of the sky (water's, see section 6);
+  cloud shading is flat, with weak lit edges and sun silhouetting; the cloud-sea floor is featureless; the aurora
+  curtains sit low and blocky and the sky lacks a warm horizon; the rainbow is thin and low in saturation. The critic
+  took no extra views because the render queue was saturated.
 * S2 r3: in rain (W2 `weather=rain`) the near hill still sits under a flat, light-grey film (overcast light plus
   the rain pass); the far ridges step paler as intended, but the creator's rain frame keeps the nearest ridge
   darker and bluer. The source of the near film was not isolated this round (not the far rain sheet, not the
