@@ -23,6 +23,8 @@ uniform float uVignette, uChromatic, uBlackPoint, uLutSize, uUseLUT; uniform int
 uniform vec2 uRes;
 uniform vec2 uSunUv; uniform vec3 uSunCol; uniform float uFlare, uGhosts, uStarburst, uStreak, uHalo, uDirt, uSSGhost, uHasDirt, uFlareRot;
 uniform float uPurkinje, uTonemapHue, uSpaceGlow;
+uniform vec2 uPlayerA, uPlayerB, uLookD, uWindUv; uniform float uPlayerR, uPlayerDist, uPlayerOn;
+uniform float uGolden, uNightSky, uMist, uLandDrop; uniform vec2 uProjXY, uProjZW; uniform vec3 uSunView; uniform vec3 uGoldTint;
 varying vec2 vUv;
 
 vec3 agxContrast(vec3 x){
@@ -72,7 +74,9 @@ vec3 sunFlare(vec2 uv, float vis){
   // is too small to resolve; over a rendered disc it just saturates)
   f += uSunCol * uHalo * (1.6 / (1.0 + r * r * 90000.0) + 0.05 / (1.0 + r * r * 1400.0) + 0.012 * exp(-r * 6.0));
   // above the air: the star tints a wide patch of space around it (rule 6) — soft, ~a quarter of the frame
-  f += uSunCol * uSpaceGlow * (0.022 / (1.0 + r * r * 60.0) + 0.006 * exp(-r * 2.5));
+  // (tinted by the star's own colour, a little more saturated than the core so the halo reads as colour)
+  vec3 gcol = max(mix(vec3(1.0), uSunCol, 1.6), vec3(0.0));
+  f += gcol * uSpaceGlow * (0.055 / (1.0 + r * r * 36.0) + 0.022 * exp(-r * 2.8));
   // starburst: 6-blade aperture diffraction spikes (thin, tapering) + fine ragged rays
   float ang = atan(d.y, d.x) + uFlareRot;
   float spikes = pow(abs(cos(ang * 3.0)), 400.0);
@@ -124,6 +128,40 @@ float inkEdge(vec2 uv){
   float lap = abs(n + s + e + w - 4.0 * c) / mx;
   return smoothstep(0.12, 0.32, lap);
 }
+// rim: this pixel is land and a neighbour ~1.5 px away is much farther (or sky) → the silhouette's edge
+// against what lies behind it (the backlit fringe that keeps a black figure readable on a dark ground)
+float rimEdge(vec2 uv, float c){
+  if (c <= 0.0) return 0.0;
+  vec2 px = uInkWidth * 1.1 / uRes;
+  float r = 0.0;
+  for (int i = 0; i < 8; i++) {
+    float a = float(i) * 0.7853982 + 0.39;
+    float n = invDepth(uv + vec2(cos(a), sin(a)) * px);
+    r = max(r, smoothstep(0.45, 0.8, 1.0 - n / c));
+  }
+  return r;
+}
+// the explorer: a capsule between her projected feet and head, depth-matched (so grass in front of or
+// ground behind her is not part of it)
+float playerMask(vec2 uv, float dist, bool sky){
+  if (uPlayerOn <= 0.0 || sky) return 0.0;
+  vec2 asp = vec2(uRes.x / uRes.y, 1.0);
+  vec2 pa = uPlayerA * asp, pb = uPlayerB * asp, p = uv * asp;
+  vec2 ab = pb - pa;
+  float t0 = dot(p - pa, ab) / max(dot(ab, ab), 1e-8);
+  float t = clamp(t0, 0.0, 1.0);
+  float d = length(p - (pa + ab * t));
+  // the legs are narrower than the coat and shoulders; nothing below the ankles (the ground there is hers too)
+  float R = uPlayerR * mix(0.55, 1.0, smoothstep(0.05, 0.45, t0));
+  float inCap = (1.0 - smoothstep(R * 0.75, R, d)) * smoothstep(0.03, 0.09, t0);
+  float dz = abs(dist - uPlayerDist);
+  return inCap * (1.0 - smoothstep(0.45, 0.9, dz)) * uPlayerOn;
+}
+// log-depth layer 0 (at the lens) .. 1 (far ridges): the looks build value structure from depth (rule 4:
+// each layer back paler), not from noisy lit/shadowed texture
+float layerT(float dist){
+  return clamp((log2(max(dist, 0.05)) - log2(uLookD.x)) / max(log2(uLookD.y) - log2(uLookD.x), 1e-3), 0.0, 1.0);
+}
 float accentMask(vec3 e){
   float I = 0.596 * e.r - 0.274 * e.g - 0.322 * e.b, Q = 0.211 * e.r - 0.523 * e.g + 0.312 * e.b;
   float C = length(vec2(I, Q));
@@ -131,8 +169,11 @@ float accentMask(vec3 e){
   d = min(d, 6.2831853 - d);
   return (1.0 - smoothstep(0.2, 0.46, d)) * smoothstep(0.15, 0.26, C);   // saturated reds only (scarf, lanterns), not pink sand
 }
-vec3 gradMap3(float g, vec3 a, vec3 b, vec3 c){
-  return g < 0.62 ? mix(a, b, smoothstep(0.0, 1.0, g / 0.62)) : mix(b, c, smoothstep(0.0, 1.0, (g - 0.62) / 0.38));
+// four-stop ramp a (0) → b (s1) → c (s2) → d (1)
+vec3 ramp4(float g, vec3 a, vec3 b, vec3 c, vec3 d, float s1, float s2){
+  return g < s1 ? mix(a, b, smoothstep(0.0, 1.0, g / s1))
+       : g < s2 ? mix(b, c, smoothstep(0.0, 1.0, (g - s1) / (s2 - s1)))
+                : mix(c, d, smoothstep(0.0, 1.0, (g - s2) / (1.0 - s2)));
 }
 // soft (anti-aliased) quantisation of x into n bands, 0..1
 float bands(float x, float n){
@@ -141,52 +182,95 @@ float bands(float x, float n){
   float q = floor(f) + smoothstep(1.0 - w, 1.0, fract(f));
   return clamp(q / max(n - 1.0, 1.0), 0.0, 1.0);
 }
+// hard 2-level step with an anti-aliased edge
+float step2(float x, float t){ float w = max(fwidth(x), 1e-3) * 0.75; return smoothstep(t - w, t + w, x); }
 vec3 palette4(float q, vec3 a, vec3 b, vec3 c, vec3 d){
   return q < 0.3334 ? mix(a, b, q * 3.0) : q < 0.6667 ? mix(b, c, q * 3.0 - 1.0) : mix(c, d, q * 3.0 - 2.0);
 }
-// display luminance of a small disc around uv (linear HDR average → exposure → tone curve → sRGB): the
-// poster and woodcut looks band THIS, so grass blades and leaf speckle merge into flat shapes
-float smoothL(vec2 uv, float expo){
-  vec3 a = vec3(0.0);
-  vec2 px = max(2.0, uRes.y / 270.0) / uRes;
-  for (int i = 0; i < 12; i++) {
-    float r = sqrt((float(i) + 0.5) / 12.0);
+// display luminance of a disc around uv (linear HDR average → exposure → tone curve → sRGB): the poster,
+// woodcut and ink looks band THIS, so grass blades, leaf speckle and shadow dapples merge into flat shapes;
+// depth-aware (taps across a silhouette are dropped) so shapes keep crisp edges
+float smoothL(vec2 uv, float expo, float radiusPx){
+  vec3 a = vec3(0.0); float wsum = 0.0;
+  vec2 px = radiusPx * max(1.0, uRes.y / 540.0) / uRes;
+  float c = invDepth(uv);
+  for (int i = 0; i < 16; i++) {
+    float r = sqrt((float(i) + 0.5) / 16.0);
     float th = float(i) * 2.39996323;
-    a += min(texture2D(tColor, uv + vec2(cos(th), sin(th)) * r * px).rgb, vec3(64.0));
+    vec2 o = uv + vec2(cos(th), sin(th)) * r * px;
+    float n = invDepth(o);
+    float w = (c <= 0.0) == (n <= 0.0) ? 1.0 - smoothstep(0.25, 0.5, abs(n - c) / max(max(n, c), 1e-6)) : 0.0;
+    w = i == 0 ? 1.0 : w;
+    a += min(texture2D(tColor, o).rgb, vec3(64.0)) * w; wsum += w;
   }
-  vec3 c = clamp(agx(a / 12.0 * expo), 0.0, 1.0);
-  return rv_luma(linearToSRGB(c));
+  vec3 cc = clamp(agx(a / max(wsum, 1e-3) * expo), 0.0, 1.0);
+  return rv_luma(linearToSRGB(cc));
 }
-vec3 photoLook(vec3 e, vec2 uv, bool sky, vec3 bloomW, float Ls){
+// a touch of wind blur (Kurosawa): luminance averaged along the screen-space wind direction
+float windL(vec2 uv, float expo){
+  vec2 dir = uWindUv * max(1.0, uRes.y / 540.0) / uRes;
+  vec3 a = vec3(0.0);
+  for (int i = 0; i < 7; i++) a += min(texture2D(tColor, uv + dir * (float(i) - 3.0)).rgb, vec3(64.0));
+  vec3 cc = clamp(agx(a / 7.0 * expo), 0.0, 1.0);
+  return rv_luma(linearToSRGB(cc));
+}
+float vnoise(vec2 p){
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(rv_hash12(i), rv_hash12(i + vec2(1, 0)), f.x), mix(rv_hash12(i + vec2(0, 1)), rv_hash12(i + vec2(1, 1)), f.x), f.y);
+}
+vec3 photoLook(vec3 e, vec2 uv, bool sky, vec3 bloomW, float expo, float dist, float skyRel){
   float L = dot(e, vec3(0.2126, 0.7152, 0.0722));
   float acc = uLookAccent > 0.0 ? accentMask(e) * uLookAccent : 0.0;
   vec3 eSat = clamp(vec3(L) + (e - vec3(L)) * 1.35, 0.0, 1.0);
   float id = uLookId;
+  float c0 = sky ? 0.0 : 1.0 / max(dist, 1e-3);
+  float pm = playerMask(uv, dist, sky);
+  float lay = sky ? 1.0 : layerT(dist);
+  float rim = (id < 1.5 || (id > 3.5 && id < 4.5) || id > 6.5) && uHasDepth > 0.5 ? rimEdge(uv, c0) : 0.0;
+  // the poured sky: value from the sky's own luminance relative to the metered sky, plus a slow vertical pour
+  float pour = clamp(0.62 * pow(clamp(skyRel, 0.0, 6.0), 0.85) - 0.14 * (uv.y - 0.45), 0.0, 1.0);
   vec3 o = e;
-  if (id < 1.5) {                       // two-tone: black → hue → pale, the land in silhouette
-    float g = pow(smoothstep(0.03, 0.97, L * (sky ? 1.0 : uLookLand)), 0.7);
-    // most of the range is the hue; only the hottest highlights go pale (a poured magenta sky)
-    o = g < 0.8 ? mix(uToneA, uToneB, smoothstep(0.0, 1.0, g / 0.8)) : mix(uToneB, uToneC, smoothstep(0.0, 1.0, (g - 0.8) / 0.2));
+  bool ink = uLookInk > 0.0;
+  if (id < 1.5) {                       // two-tone: black → crimson → magenta → pale, land in layered silhouette
+    float g;
+    if (sky) g = max(pour, 0.42);
+    else {
+      // near land is a lifted floor in the dark hue, each layer back a step toward the sky; her figure is pure black
+      g = 0.075 + 0.36 * pow(lay, 1.7) + 0.06 * L * lay;
+      g *= 1.0 - pm;
+      g = max(g, rim * 0.7);
+    }
+    o = ramp4(g, uToneA, uToneB, uToneC, uToneD, 0.4, 0.8);
   } else if (id < 2.5) {                // high-key black and white with halation
     float h = 1.0 - exp(-rv_luma(bloomW) * 0.6);
     float g = clamp((L - 0.025) * 1.32 + h * 0.18, 0.0, 1.0);
     g = pow(g, 0.72);
     g = mix(g, g * g * (3.0 - 2.0 * g), 0.55);
     o = vec3(g);
-  } else if (id < 3.5) {                // flat poster: n value bands → 4-colour palette + ink
-    float q = bands(pow(mix(L, Ls, 0.75), 0.8), uLookBands);
-    o = uLookBands < 3.5 ? (q < 0.5 ? mix(uToneA, uToneB, q * 2.0) : mix(uToneB, uToneC, q * 2.0 - 1.0))
-                         : palette4(q, uToneA, uToneB, uToneC, uToneD);
-  } else if (id < 4.5) {                // candy sky over a near-black land
-    if (sky) {
-      // candy ramp by height in the sky + brightness: deep rose at the top → coral → pale gold at the sun
-      float g = clamp(L * 1.1 + (0.35 - uv.y) * 0.35, 0.0, 1.0);
-      vec3 ramp = g < 0.55 ? mix(uToneB, uToneC, smoothstep(0.0, 1.0, g / 0.55)) : mix(uToneC, uToneD, smoothstep(0.0, 1.0, (g - 0.55) / 0.45));
-      vec3 sat = clamp(vec3(L) + (e - vec3(L)) * uPLSat, 0.0, 1.0);
-      o = mix(ramp, ramp * (0.6 + 0.8 * sat), 0.35);
+  } else if (id < 3.5) {                // flat poster: three colours (dark ground, sky hue, cream light) + red accent
+    float Ls = smoothL(uv, expo, 7.0);
+    if (sky) o = mix(uToneB, uToneC, step2(pour, 0.74));          // clouds and the bright sun side in cream
+    else {
+      // flat shapes from depth layers; light only lifts big sunlit planes (smoothed, dapples ignored)
+      // (the ground at her feet is the light band so her dark figure reads; the middle distance is the dark mass)
+      float v = max(0.78 * pow(lay, 1.3), 0.62 * (1.0 - smoothstep(0.06, 0.2, lay))) + 0.3 * smoothstep(0.3, 0.75, Ls);
+      o = mix(uToneA, mix(uToneA, uToneB, 0.62), step2(v, 0.55));
+      o = mix(o, uToneC, step2(Ls * lay, 0.72));           // far sunlit snow / cliffs: the light colour
+      o = mix(o, uToneA, pm);
+      o = mix(o, uToneC, rimEdge(uv, c0) * step(0.3, playerMask(uv, dist, false)) * 0.85);   // her outline in cream
     }
-    else o = mix(uToneA, e, uLookLand);
-  } else {                              // woodcut: stepped two-colour sky, engraved land
+  } else if (id < 4.5) {                // candy sky over a near-black land, layered in plum
+    if (sky) {
+      vec3 rmp = ramp4(pour, uToneB * 0.55, uToneB, uToneC, uToneD, 0.3, 0.68);
+      vec3 sat = clamp(vec3(L) + (e - vec3(L)) * uPLSat, 0.0, 1.0);
+      o = mix(rmp, rmp * (0.6 + 0.8 * sat), 0.25);
+    } else {
+      vec3 plum = mix(uToneA, uToneB * 0.5, pow(lay, 1.6) * 0.85);
+      o = mix(plum, e * 0.35, uLookLand) * (1.0 - pm);
+      o = mix(o, uToneC * 0.9, rim * 0.75);
+    }
+  } else if (id < 5.5) {                // woodcut: stepped two-colour sky, engraved land
+    float Ls = smoothL(uv, expo, 4.0);
     if (sky) {
       float q = bands(mix(L, Ls, 0.6), uLookBands);
       o = mix(uToneB, uToneC, q);
@@ -200,8 +284,50 @@ vec3 photoLook(vec3 e, vec2 uv, bool sky, vec3 bloomW, float Ls){
       if (dk > 0.62) t *= smoothstep(dk - 0.62 - 0.12, dk - 0.62 + 0.12, s2 * 0.6);
       o = mix(uToneA, uToneD, t);
     }
+  } else if (id < 6.5) {                // Kurosawa: red-filter black and white film, deep contrast, wind blur, halation
+    float Lw = windL(uv, expo);
+    float Lr = dot(e, vec3(0.5, 0.42, 0.08));          // red filter: blue sky darkens, clouds stand out
+    float g = mix(Lr, Lw * (Lr / max(L, 1e-3)), 0.4);
+    g = clamp((g - 0.03) * 1.18, 0.0, 1.0);
+    g = g * g * (3.0 - 2.0 * g);
+    g = mix(g, smoothstep(0.0, 1.0, g), 0.5);
+    g += (1.0 - exp(-rv_luma(bloomW) * 0.5)) * 0.12;   // halation off the highlights
+    float vr = length((uv - 0.5) * vec2(uRes.x / uRes.y, 1.0));
+    g *= 1.0 - 0.32 * smoothstep(0.35, 1.05, vr);
+    o = vec3(clamp(g, 0.0, 1.0)) * vec3(1.0, 0.985, 0.96);
+  } else {                              // ink wash (sumi-e): paper, layered washes, wet edges, a vermilion sun
+    vec2 fc = gl_FragCoord.xy / max(1.0, uRes.y / 720.0);
+    float paperN = vnoise(fc * 0.9) * 0.5 + vnoise(fc * 0.13 + 7.1) * 0.5;
+    vec3 paper = uToneD * (0.955 + 0.06 * paperN);
+    float dens;
+    if (sky) {
+      // the sky is the paper; clouds and the darker zenith are the faintest grey washes
+      dens = clamp(0.16 * (1.0 - pour * 1.3) + 0.1 * (uv.y - 0.5), 0.0, 0.2) * smoothstep(0.1, 0.9, vnoise(fc * 0.02 + uv * 3.0) + 0.4);
+    } else {
+      float Ls = smoothL(uv, expo, 5.0);
+      // ink density falls with distance (each ridge a paler wash); sunlit planes are left lighter
+      // ink density: the ground at her feet is left almost as paper (so her figure reads), the middle distance
+      // is the darkest wash, each ridge beyond a paler one; sunlit planes are left lighter
+      dens = 0.34 + 0.6 * pow(1.0 - lay, 1.3) * smoothstep(0.02, 0.26, lay);
+      // the value of the scene still speaks inside each wash: snow and sunlit planes are left as paper,
+      // shaded forest is the deeper wash
+      dens *= clamp(0.15 + 1.5 * (1.0 - Ls), 0.2, 1.4);
+      dens = mix(dens, 0.95, pm);
+      dens += rim * (0.45 * (1.0 - dens) + 0.12);          // ink pools at each ridge's upper edge (wet edge)
+      dens *= 0.93 + 0.14 * vnoise(fc * 0.06 + vec2(dist * 0.002, 0.0));   // soft brush texture
+    }
+    o = mix(paper, uToneA, clamp(dens, 0.0, 1.0));
+    // the sun as a vermilion seal disc
+    float sv = uFlare > 0.0 ? texture2D(tSunVis, vec2(0.5)).r : 0.0;
+    vec2 sd = (uv - uSunUv) * vec2(uRes.x / uRes.y, 1.0);
+    float sunDisc = 1.0 - smoothstep(0.034, 0.037, length(sd));
+    o = mix(o, uToneC, sunDisc * smoothstep(0.05, 0.4, sv) * (sky ? 1.0 : 0.0) * 0.92);
+    acc *= 1.0;
+    o = mix(o, uToneC, acc);
+    acc = 0.0;
   }
-  if (uLookInk > 0.0 && uHasDepth > 0.5) o = mix(o, uToneA, inkEdge(uv) * uLookInk);
+  // (ink lines thin out on the clutter right at the lens: grass blades are drawn by the wash, not outlined)
+  if (ink && uHasDepth > 0.5) o = mix(o, uToneA, inkEdge(uv) * uLookInk * (sky ? 1.0 : mix(0.35, 1.0, smoothstep(0.08, 0.3, lay))));
   return mix(o, eSat, acc);
 }
 
@@ -239,14 +365,15 @@ void main(){
 
   // depth-layered aerial perspective (rule 4): each layer back drifts toward the colour of the sky near
   // the horizon (metered from the frame), paler and a touch cooler; the sky itself is untouched
-  vec3 hz = vec3(0.0); float hzOk = 0.0;
-  if (uHaze > 0.0 || uDuskDesat > 0.0) {
+  vec3 hz = vec3(0.0); float hzOk = 0.0, skyRel = 1.0;
+  if (uHaze > 0.0 || uDuskDesat > 0.0 || uLookId > 0.5) {
     vec4 sm = texture2D(tSky, vec2(0.5));
     float metered = smoothstep(0.002, 0.03, sm.a);
     // no sky in frame (looking down at the land): the sky's radiance from its irradiance (E ≈ π·L,
     // horizon a little brighter than the mean)
     hz = mix(uHazeFallback, sm.rgb / max(sm.a, 1e-5), metered);
     hzOk = max(metered, step(1e-6, rv_luma(uHazeFallback)));
+    skyRel = rv_luma(col) / max(rv_luma(hz), 1e-6);
     float hl = rv_luma(hz);
     hz = mix(hz, vec3(hl) * vec3(0.93, 0.98, 1.08), 0.22);
   }
@@ -285,6 +412,30 @@ void main(){
     if (uHasDirt > 0.5) col += max(bloomW - 0.8, 0.0) * texture2D(tDirt, uv).r * uDirt;
   }
 
+  // golden hour (sun low over the horizon): expose for the sky and split the tones — shadows lean to
+  // indigo, highlights to the sun's colour (multiplicative: black stays 0)
+  if (uGolden > 0.0) {
+    float l = rv_luma(col);
+    // warmth: on the land the lit planes; in the sky the half toward the sun (the aureole side), the far side
+    // stays cool — the same sun-elevation curve drives both
+    vec3 vd = normalize(vec3((uv * 2.0 - 1.0 + uProjZW) / uProjXY, -1.0));
+    float toward = clamp(dot(vd, uSunView) * 0.5 + 0.5, 0.0, 1.0);
+    float hiW = sky ? smoothstep(0.25, 0.95, toward) * (0.6 + 0.4 * smoothstep(0.0, 0.6, l))
+                    : smoothstep(0.04, 0.8, l) * (0.55 + 0.45 * toward);
+    // mid-tones and highlights go warm (the whole frame shifts toward the low sun), only the deep shadows stay cool
+    hiW = mix(0.0, max(hiW, 0.72), smoothstep(0.0, 0.1, l));
+    vec3 cool = vec3(0.78, 0.88, 1.36);
+    vec3 tint = mix(cool, mix(uGoldTint, vec3(1.32, 0.98, 0.66), 0.5), hiW);
+    tint /= max(rv_luma(tint), 1e-3);
+    col *= max(mix(vec3(1.0), tint, uGolden), vec3(0.0));
+  }
+  // low sun / blue hour: expose for the sky — the land goes deep (a graduated filter; far, hazy layers keep
+  // more of their light so the ridges still step back)
+  if (uLandDrop > 0.0 && !sky) col *= 1.0 - uLandDrop * (1.0 - 0.65 * (1.0 - exp(-dist / uHazeDist)));
+  // night: wide soft glow around the brightest emitters (lanterns, the World Tree's light): luminous mist
+  // (soft-capped so one very hot lamp does not become a hard orb)
+  if (uMist > 0.0) { vec3 m = max(bloomW - vec3(1.0), 0.0); col += m / (1.0 + 0.6 * m) * uMist; }
+
   // Purkinje shift: in scotopic adaptation dim tones drift toward indigo (never grey or green) and lose
   // saturation; the land's dim tones are lifted multiplicatively (black stays 0) so nights stay readable
   if (uPurkinje > 0.0 && uAuto > 0.5) {
@@ -296,6 +447,11 @@ void main(){
   if (uNightLift > 0.0 && !sky) {
     float l = rv_luma(col);
     col *= 1.0 + uNightLift * (1.0 - smoothstep(0.0, 0.1, l));
+  }
+  // night sky: deep indigo, never grey or muddy mauve (bright stars keep their colour)
+  if (uNightSky > 0.0 && sky) {
+    float l = rv_luma(col);
+    col = mix(col, l * vec3(0.5, 0.68, 1.85), uNightSky * (1.0 - smoothstep(0.08, 1.2, l)));
   }
   // blue hour / dusk: the sky keeps its colour, the land loses it (desaturated toward the sky's hue)
   if (uDuskDesat > 0.0 && !sky) {
@@ -328,10 +484,7 @@ void main(){
     vec3 lc = enc * ((uLutSize - 1.0) / uLutSize) + 0.5 / uLutSize;
     enc = texture(tLUT, lc).rgb;
   }
-  if (uLookId > 0.5) {
-    float Ls = (uLookId > 2.5 && uLookId < 3.5) || uLookId > 4.5 ? smoothL(uv, expo) : 0.0;
-    enc = photoLook(enc, uv, sky, bloomW, Ls);
-  }
+  if (uLookId > 0.5) enc = photoLook(enc, uv, sky, bloomW, expo, dist, skyRel);
   gl_FragColor = vec4(enc, 1.0);
 }`;
 

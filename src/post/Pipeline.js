@@ -160,6 +160,9 @@ export class Pipeline {
         get stats() { return this.pipeline.stats; },
         meter: () => this.ae.read(this.renderer),
         G,
+        /** switch the photo look and re-grade the last frame (no scene render) */
+        look: (name, opts) => { const n = this.setPhotoLook(name, opts); this.recomposite(); return n; },
+        recomposite: () => this.recomposite(),
         skyColor: () => {
           const px = new Uint16Array(4);
           try { this.renderer.readRenderTargetPixels(this.skyMeter.m1, 0, 0, 1, 1, px); } catch (e) { return String(e); }
@@ -360,6 +363,10 @@ export class Pipeline {
       uHaze: { value: 0 }, uHazeDist: { value: 5000 }, uTwilight: { value: 0 }, uNightLift: { value: 0 }, uEclipse: { value: 0 }, uDuskDesat: { value: 0 },
       uLookId: { value: 0 }, uLookLand: { value: 1 }, uLookAccent: { value: 0 }, uLookInk: { value: 0 }, uLookBands: { value: 4 }, uPLSat: { value: 1 }, uInkWidth: { value: 1.5 },
       uToneA: { value: new THREE.Vector3() }, uToneB: { value: new THREE.Vector3(1, 0, 0.5) }, uToneC: { value: new THREE.Vector3(1, 1, 1) }, uToneD: { value: new THREE.Vector3(1, 1, 1) }, uHazeFallback: { value: new THREE.Vector3() },
+      uPlayerA: { value: new THREE.Vector2() }, uPlayerB: { value: new THREE.Vector2() }, uPlayerR: { value: 0 }, uPlayerDist: { value: 0 }, uPlayerOn: { value: 0 },
+      uLookD: { value: new THREE.Vector2(6, 4000) }, uWindUv: { value: new THREE.Vector2(1.2, 0) },
+      uProjXY: { value: new THREE.Vector2(1, 1) }, uProjZW: { value: new THREE.Vector2() }, uSunView: { value: new THREE.Vector3(0, 0, -1) },
+      uGolden: { value: 0 }, uLandDrop: { value: 0 }, uGoldTint: { value: new THREE.Vector3(1, 1, 1) }, uNightSky: { value: 0 }, uMist: { value: 0 },
     });
     this.finalMat = makeFullscreenMaterial(FINAL_FRAG, {
       tSrc: { value: this.ldrRT.texture }, uInvRes: { value: new THREE.Vector2(1 / this.width, 1 / this.height) },
@@ -610,8 +617,10 @@ export class Pipeline {
     const wth = atm?.weather;
     const overcast = THREE.MathUtils.clamp((+wth?.overcast || 0) * (+wth?.storm || 0), 0, 1);
     const dusk = s.dusk || {};
+    const golden = world && persp ? this._golden(camera, world, spaceK0) * (s.golden?.enabled === false ? 0 : 1) : 0;
     const aeKey = this._resolve(aes.key, prof.key) * (1 - (aes.nightDrop ?? 0.32) * night)
       * (1 - (dusk.keyDrop ?? 0.42) * twilight)     // blue hour: meter for the sky, the land goes dark
+      * (1 - (s.golden?.keyDrop ?? 0.36) * golden)    // low sun: expose for the sky (≈ -0.6 EV), the land goes deep
       * (1 - 0.35 * overcast) * (1 - 0.4 * ecl);
     if (aeOn) {
       const o = this._aeOpts || (this._aeOpts = {});
@@ -652,7 +661,8 @@ export class Pipeline {
     const under = !!water?.under;
     const hazeOn = !!this._resolve(hz.enabled, modeName === 'system') && persp && !under && spaceK0 < 0.999;
     const duskDesat = (dusk.desat ?? 0.5) * twilight * (under ? 0 : 1);
-    if (hazeOn || duskDesat > 0) { try { this.skyMeter.update(r, this.quad, hdr.texture, this.depthTexture); } catch (e) { /* optional */ } }
+    const lookOn = this._lookActive();
+    if (hazeOn || duskDesat > 0 || lookOn) { try { this.skyMeter.update(r, this.quad, hdr.texture, this.depthTexture); } catch (e) { /* optional */ } }
 
     // ---- composite
     const u = this.compositeMat.uniforms;
@@ -703,8 +713,32 @@ export class Pipeline {
     { const a = G.uAmbientSky.value, k = hz.fallback ?? 1.1; u.uHazeFallback.value.set(a.r * k, a.g * k, a.b * k); }
     u.uNightLift.value = aeOn && modeName === 'system' && !under ? (s.night?.lift ?? 0.9) * night * (1 - spaceK0) : 0;
     u.uEclipse.value = ecl;
+    u.uGolden.value = golden * (s.golden?.strength ?? 1.3) * (under ? 0 : 1);
+    { const c = G.uSunColor.value, l = Math.max(1e-4, 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b), w = s.golden?.warmth ?? 0.6;
+      u.uGoldTint.value.set(1 + (c.r / l - 1) * w, 1 + (c.g / l - 1) * w, 1 + (c.b / l - 1) * w); }
+    { const mp = this.motion.proj; u.uProjXY.value.set(mp.x, mp.y); u.uProjZW.value.set(mp.z, mp.w);
+      const d = G.uSunDir.value, e = camera.matrixWorldInverse.elements;
+      u.uSunView.value.set(e[0] * d.x + e[4] * d.y + e[8] * d.z, e[1] * d.x + e[5] * d.y + e[9] * d.z, e[2] * d.x + e[6] * d.y + e[10] * d.z).normalize(); }
+    u.uLandDrop.value = aeOn && !under ? (s.golden?.landDrop ?? 0.5) * Math.max(golden, twilight * (1 - night)) : 0;
+    u.uNightSky.value = aeOn && !under ? (s.night?.sky ?? 0.55) * night * (1 - spaceK0) : 0;
+    u.uMist.value = aeOn && !under ? (s.night?.mist ?? 0.12) * night * (1 - spaceK0) : 0;
+    u.uLookD.value.set(6, THREE.MathUtils.clamp(atmH * 0.55, 1200, 9000));
+    this._updatePlayerMask(u, camera, world);
+    this._updateWind(u, camera);
+    this._lastCam = camera;
+    this._finish(world, aa, samples);
+    st.harmony = !!harm; st.haze = hazeOn; st.golden = +golden.toFixed(3);
+    st.taa = useTAA; st.ssao = this._ssaoOn; st.ae = aeOn; st.flare = +flareVis.toFixed(3); st.samples = samples;
+    st.dof = dofOn; st.aa = aa; st.mode = modeName; st.ms = +(performance.now() - t0).toFixed(1);
+  }
+
+  /** composite → spatial AA → final (re-runnable on the last frame's HDR result: see recomposite()). */
+  _finish(world, aa, samples) {
+    const r = this.renderer, s = this.settings, q = this.q, st = this.stats;
+    const u = this.compositeMat.uniforms;
+    this._lastFinish = { world, aa, samples };
     this._applyPhotoLook(u, world);
-    st.harmony = !!harm; st.haze = hazeOn; st.look = this._look.name || 'none';
+    st.look = this._look.name || 'none';
     this.quad.draw(r, this.compositeMat, this.ldrRT);
 
     // ---- spatial AA (display-encoded): SMAA 1x on low/med; on TAA tiers SMAA cleans up a young
@@ -735,8 +769,85 @@ export class Pipeline {
     fu.tSrc.value = ldr.texture;
     this.quad.draw(r, this.finalMat, null);
 
-    st.taa = useTAA; st.ssao = this._ssaoOn; st.ae = aeOn; st.flare = +flareVis.toFixed(3); st.samples = samples;
-    st.dof = dofOn; st.aa = aa; st.mode = modeName; st.ms = +(performance.now() - t0).toFixed(1);
+  }
+
+  /**
+   * Re-grade the last rendered frame without rendering the scene again (photo mode: switching looks is
+   * instant; captures iterate looks cheaply). No-op before the first frame.
+   */
+  recomposite() {
+    const f = this._lastFinish;
+    if (!f || this._legacyMode) return false;
+    try {
+      const u = this.compositeMat.uniforms;
+      if (this._lookActive() && u.tColor.value) {
+        try { this.skyMeter.update(this.renderer, this.quad, u.tColor.value, this.depthTexture); } catch (_) { /* optional */ }
+        if (this._lastCam) this._updatePlayerMask(u, this._lastCam, f.world);
+      }
+      this._finish(f.world, f.aa, f.samples); return true;
+    } catch (e) { console.error('[pipeline] recomposite failed', e); return false; }
+  }
+
+  _lookActive() {
+    const s = this.settings;
+    const name = s.photoLook && s.photoLook !== 'none' ? s.photoLook : (this._urlLook || 'none');
+    return !!(PHOTO_LOOKS[name] && PHOTO_LOOKS[name].id > 0);
+  }
+
+  /** 0..1: the sun is low over the horizon (≈ 22° → 3°), fading out below it (twilight takes over) and in space. */
+  _golden(camera, world, spaceK) {
+    if (spaceK >= 0.999) return 0;
+    const sd = G.uSunDir.value;
+    camera.matrixWorld.decompose(_v3, _q, _v3b);
+    const rp = world.root?.position;
+    if (rp) _v3.sub(rp);                       // planet centre is the local origin → scene position = root.position
+    const len = _v3.length();
+    if (!(len > 1)) return 0;
+    const sinE = (_v3.x * sd.x + _v3.y * sd.y + _v3.z * sd.z) / (len * Math.max(1e-6, Math.hypot(sd.x, sd.y, sd.z)));
+    const k = (1 - THREE.MathUtils.smoothstep(sinE, 0.05, 0.37)) * THREE.MathUtils.smoothstep(sinE, -0.05, 0.01);
+    return k * (1 - spaceK);
+  }
+
+  /** Screen-space capsule of the explorer (feet → head), depth-matched in the shader; 0 when she is not drawn. */
+  _updatePlayerMask(u, camera, world) {
+    u.uPlayerOn.value = 0;
+    if (!this._lookActive()) return;
+    try {
+      const pl = world?.player;
+      if (!pl?.pos || !camera.isPerspectiveCamera || (world.controller && world.controller !== pl)) return;
+      if (pl.view === 'fp' || pl.view === 'orbit' || pl.group?.visible === false) return;
+      const rp = world.root?.position;
+      const up = pl.up || _v3b.set(0, 1, 0);
+      const toUv = (out, h) => {
+        _v3.copy(pl.pos).addScaledVector(up, h);
+        if (rp) _v3.add(rp);
+        _v3.applyMatrix4(camera.matrixWorldInverse);
+        if (_v3.z > -0.05) return -1;
+        const mp = this.motion.proj;
+        out.set(((mp.x * _v3.x) / -_v3.z - mp.z) * 0.5 + 0.5, ((mp.y * _v3.y) / -_v3.z - mp.w) * 0.5 + 0.5);
+        return -_v3.z;
+      };
+      const d0 = toUv(u.uPlayerA.value, 0.05), d1 = toUv(u.uPlayerB.value, 1.72);
+      if (d0 < 0 || d1 < 0) return;
+      const dist = (d0 + d1) * 0.5;
+      u.uPlayerDist.value = dist;
+      u.uPlayerR.value = 0.42 * this.motion.proj.y * 0.5 / Math.max(dist, 0.3);   // ≈ 0.42 m half-width in uv-height units
+      u.uPlayerOn.value = 1;
+    } catch (_) { u.uPlayerOn.value = 0; }
+  }
+
+  /** Screen-space wind direction for the Kurosawa look's wind blur (px per tap at 540p). */
+  _updateWind(u, camera) {
+    const w = G.uWindDir?.value;
+    let x = 1, y = 0;
+    if (w && camera.matrixWorldInverse) {
+      const e = camera.matrixWorldInverse.elements;
+      x = e[0] * w.x + e[4] * w.y + e[8] * w.z; y = e[1] * w.x + e[5] * w.y + e[9] * w.z;
+      const l = Math.hypot(x, y);
+      if (l > 1e-4) { x /= l; y /= l; } else { x = 1; y = 0; }
+    }
+    const k = 1.1 + 0.6 * THREE.MathUtils.clamp(+(G.uWindStrength?.value ?? 0.5), 0, 1.5);
+    u.uWindUv.value.set(x * k, y * k);
   }
 
   /** Two-hue harmony for the grade LUT: 'auto' derives it from the current body's art palette (system mode). */

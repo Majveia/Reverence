@@ -43,6 +43,36 @@ scene (Halton-jittered projection on TAA tiers) → HDR sceneRT (RGBA16F + Float
   mirrored the lit planet into big brown discs from orbit — civ's W1 `view=orbit&tod=0.22` report).
 * `stats.avgLum` for the HUD (ui request), see API.
 
+### Season 2 round 3 (21 Oct): silhouettes that read, golden hour, Kurosawa and ink wash
+* **Looks build value from depth, not from noisy texture.** `layerT(dist)` (log depth, 6 m → 0.55 × atmosphere
+  height) gives each look its layers: the ground at the lens, the middle distance, the far ridges (rule 4).
+  Two-tone and candy map land to a lifted floor in the look's dark hue that steps toward the sky hue with distance
+  (u_177: black figure, magenta mid-ground, poured sky); poster bands depth layers + heavily smoothed light
+  (shadow dapples and grass ignored), ink-wash turns layers into washes.
+* **Rim**: a land pixel whose neighbour ~1.5 px away is much farther (or sky) gets a fine fringe in the look's
+  light hue (twotone, candy) or a wet ink edge (ink): silhouettes, ridges and the figure keep crisp shapes.
+* **The explorer mask** (`_updatePlayerMask`): her feet → head capsule projected to the screen, depth-matched
+  (±0.7–1.4 m), only while she is drawn (not fp/orbit/vehicles) and only when a look is on. Looks make her the
+  darkest, cleanest shape in frame (pure black in twotone/candy/poster, ink in sumi-e); reds keep the accent.
+* **The poured sky**: sky value from the sky's own luminance relative to the metered sky (SkyMeter) plus a slow
+  vertical pour, so a flat sky gets deep crimson at the zenith, hot magenta and a pale cap where the clouds burn.
+* **Golden hour (no look, system mode)**: `_golden()` from the sun's elevation at the camera (≈ 21° → 3°, gone
+  0.5° below the horizon): exposure key −36 % (expose for the sky), split tone (shadows indigo, highlights the sun's
+  colour; multiplicative, black stays 0) and a graduated land drop (`landDrop`, also at blue hour) so the land goes
+  deep while far hazy ridges keep their light. `settings.golden = { enabled, strength 1.3, keyDrop 0.36, landDrop 0.5, warmth 0.6 }`.
+* **Night**: the sky is pulled to deep indigo (`night.sky` 0.55; bright stars keep their colour) and the brightest
+  emitters (lanterns, the World Tree's light cards) get a wide soft luminous mist from the wide bloom
+  (`night.mist` 0.12, soft-capped; flora request).
+* **Space**: the star's wide halo is ~3× stronger and tinted by its own colour (more saturated than the core) so
+  the space around a star is coloured, not neutral grey (rule 6, u_14).
+* **New looks**: `kurosawa` (red-filter black-and-white film: deep contrast, halation, a touch of wind blur along
+  the screen-space wind, heavy grain, vignette) and `ink` (sumi-e: paper texture, depth-layered washes, the ground at
+  her feet left as paper so her figure reads, wet ridge edges, depth ink lines, the sun as a vermilion seal, the
+  scarf in vermilion).
+* **Instant look switching**: `pipeline.recomposite()` re-grades the last frame without rendering the scene (photo
+  mode UI can switch looks instantly); `__rvPost.look(name, opts)` = setPhotoLook + recomposite (captures iterate
+  every look from one scene render).
+
 ### Photo looks (UI photo mode)
 `pipeline.setPhotoLook(name, opts?)`, `pipeline.cyclePhotoLook(dir)`, `pipeline.photoLooks` (names), URL `&look=name`.
 The look survives `resetLook()` (it is the player's choice). Applied after the LUT, so the output is exactly the look's
@@ -50,11 +80,13 @@ colours (plus the accent where enabled).
 
 | name | what | creator checklist |
 |---|---|---|
-| `twotone` | black → magenta → pale-pink gradient map, land pushed to silhouette | "Two colours: magenta and black" |
+| `twotone` | black → crimson → magenta → pale-pink poured sky; land layered by depth (lifted dark floor), rim on silhouettes, the explorer pure black | "Two colours: magenta and black" |
 | `bw` | high-key black and white with halation from the wide bloom | "High-key black and white" |
-| `poster` | 3 flat value bands (banding a 12-tap smoothed luminance so grass/leaves merge into shapes) → navy / world sky hue / cream, depth ink lines, red accent kept | "Poster flatness: hard shapes, three colours" |
-| `candy` | sky remapped to a rose → coral → pale-gold ramp, land near black, red accent | "A candy sky over a near-black foreground" |
+| `poster` | sky in 2 flat bands (sky hue / cream), land in depth layers (dark mass, lighter ground at her feet and far ridges) from a depth-aware 16-tap smoothed light, depth ink lines 2 px, red accent kept | "Poster flatness: hard shapes, three colours" |
+| `candy` | poured rose → coral → pale-gold sky, land in plum layers with a coral rim, red accent | "A candy sky over a near-black foreground" |
 | `woodcut` | stepped two-colour sky, engraved cross-hatched land, ink lines | "A two-colour sky with black line-work in front" |
+| `kurosawa` | red-filter B&W film: deep contrast, halation, wind blur, heavy grain | Ghost of Yotei "Kurosawa mode" |
+| `ink` | sumi-e: paper, depth-layered washes, wet ridge edges, vermilion sun and scarf | Ghost of Yotei ink-wash looks |
 
 `opts` overrides: `{ toneA, toneB, toneC, toneD (css colours), land, accent, ink, bands, sat, grain, inkWidth }`,
 e.g. `setPhotoLook('twotone', { toneB: '#2a6cff' })` for a blue/black two-tone.
@@ -87,7 +119,7 @@ e.g. `setPhotoLook('twotone', { toneB: '#2a6cff' })` for a blue/black two-tone.
 ## API (all old fields kept)
 
 `pipeline.addEffect(effect) → unregister`, `removeEffect`, `setLook(look)`, `resetLook()`, `settings`, `render`,
-`setFade(v, color)`, `depthTexture`, `makeFullscreenMaterial(frag, uniforms, extra)`, `FullscreenQuad` (now also
+`setFade(v, color)`, `recomposite()` (re-grade the last frame, no scene render), `depthTexture`, `makeFullscreenMaterial(frag, uniforms, extra)`, `FullscreenQuad` (now also
 `quad.draw(renderer, material, target)`), `width/height`, `quad`, `sceneRT`, `stats` (last frame's features).
 
 `settings` (merge with `setLook`; nested objects merge one level):
@@ -105,6 +137,7 @@ purkinje, motionBlur: { enabled, strength }, dof: { enabled: true|false|'photo',
 harmony: 'auto'|false|{hueA, hueB, strength, splitShadow, splitHigh, warmHue, accentHue, accentWidth, accentSat, otherSat},
 harmonyStrength, haze: { enabled, strength, distance, fallback }, night: { lift }, dusk: { desat, keyDrop },
 eclipse: 'auto'|0..1, photoLook, photoLookOpts, flare.spaceGlow,
+golden: { enabled, strength, keyDrop, landDrop, warmth }, night: { lift, sky, mist },
 debugView: 'scene'   // composite the raw scene target (bisecting)
 ```
 The grade LUT is rebuilt only when grade-relevant settings change (`gradeSignature`).
@@ -117,6 +150,22 @@ Debug: `window.__rvPost.stats`, `__rvPost.meter()` (adapted luminance), `__rvPos
 `&post=legacy` renders through the original scaffold pipeline for A/B comparisons.
 
 ## Capture URLs
+
+Season 2 round 3 (looks are captured by URL `&look=name`, or switched on the same frame with
+`{"eval":"__rvPost.look('ink')"}` followed by a `shot` step: no new scene render):
+* **Two-tone, the explorer as a black silhouette against a poured magenta sky (u_177)**:
+  `/?mode=system&galaxy=0&star=9&planet=2&tod=0.745&look=twotone` steps
+  `[{"advance":1},{"eval":"__rv.world.space.look('sun', 28, 14)"},{"advance":0.3}]`
+* **Candy sky over the arch and the volcano, red spider lilies as the accent**:
+  `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=16.7394&lon=27.123&yaw=276.5&pitch=9&tod=0.3&props=0&look=candy`
+  steps `[{"advance":1}]`
+* **Kurosawa black and white on the flowered ridge facing the mountain**:
+  `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=16.6718&lon=25.7718&yaw=277&pitch=9&tod=0.37&props=0&look=kurosawa`
+  steps `[{"advance":1}]`
+* **Ink wash through the arch** (vermilion lilies and scarf): the arch URL with `&look=ink`
+* **Poster** on the W3 dunes: the two-tone URL with `&look=poster`
+* Golden hour grade (no look): the W3 URL without `look`; W1 sea of cloud at sunrise:
+  `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=700&lat=5.79&lon=13.2736&yaw=0&pitch=7&tod=0.28&disable=fauna,vehicles`
 
 Season 2 (best views, composed sky-first):
 * Diamond ring from orbit (black disc, thin bright coloured edge, corona, star-tinted space):
@@ -141,6 +190,11 @@ Earlier:
 * AO only: add `{"eval":"(__rvPost.pipeline.settings.ssao.debug=true,__rv.render(),1)"}`.
 
 ## Known issues
+* The explorer mask is a projected capsule (0.42 m half-width, depth-matched ±0.45–0.9 m): a katana or scarf
+  flying far outside it is graded as land; a rock touching her at the same depth joins her shape.
+* Looks band depth layers from `layerT` (6 m → 0.55 × atmosphere height); on very small moons the far layers come
+  closer and the mid-ground reads paler.
+* The jagged lit limb from orbit is still the terrain LOD (see Requests); the green night-side ring is gone (atmosphere).
 * The hard green ring around the night side of planets from orbit is drawn by the atmosphere effect (order 100):
   it disappears with that effect disabled, and is unchanged by harmony / chromatic aberration (bisected, see Requests).
 * The jagged lit crescent from orbit is the coarse terrain LOD at the limb (terrain), not post.
@@ -154,13 +208,19 @@ Earlier:
   resolves it better.
 
 ## Requests
+* **terrain** — from orbit (W1 `view=orbit`, `orbitLimbShot(0.8, 35)`) the lit limb is a stair-stepped, notched
+  silhouette (coarse displaced LOD poking through the atmosphere ring). Clamp the limb chunks to a smooth sphere LOD
+  or fade relief toward the silhouette (n·v → 0) at orbit distance.
+* **ui** — photo mode: the two new looks `kurosawa` and `ink` are in `engine.pipeline.photoLooks`; switch with
+  `setPhotoLook(name)` then `recomposite()` while paused (instant).
 * **atmosphere** — from orbit, a 3–4 px saturated green ring outlines the whole night side of W1 (`view=orbit`,
   `orbitSunShot(23, 35)`); bisected to the atmosphere effect (order 100). If it is airglow, make it far fainter and
   thinner (a hairline at ~1–2 % of the day limb), or tint the limb from the sun side: `pow(1 − mu, 5) · mix(sunTint,
   skyBlue, …)` fading to ~0 on the night side.
 * **ui** — photo mode looks: a selector (or one button / key cycling) calling `engine.pipeline.setPhotoLook(name)` /
-  `cyclePhotoLook(±1)`; names in `engine.pipeline.photoLooks` (`none, twotone, bw, poster, candy, woodcut`). Show the
-  look name briefly when it changes. `stats.avgLum` is now available for the HUD contrast shades.
+  `cyclePhotoLook(±1)`; names in `engine.pipeline.photoLooks` (`none, twotone, bw, poster, candy, woodcut, kurosawa, ink`). Show the
+  look name briefly when it changes. Call `engine.pipeline.recomposite()` after `setPhotoLook` while the game is
+  paused in photo mode: the look switches instantly without a new scene render. `stats.avgLum` is now available for the HUD contrast shades.
 * **space** — (still open) draw the star disc into the HDR target (far depth) from orbit too: the probe now trusts depth
   in space, but the disc itself is not visible, only the flare core stands in for it.
 * **flora** — alpha-tested leaf cards: with TAA available (`engine.pipeline.stats.taa`), consider alpha-to-coverage
