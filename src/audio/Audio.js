@@ -5,7 +5,10 @@
 //   audio.setParam(name, value)         'speed' m/s, 'altitude' m, 'wind' 0..1, 'engine' 0..1, 'boost' 0..1,
 //                                       'glide', 'swim', 'rain', 'night', 'danger', 'discovery', 'cosmicGrowth',
 //                                       'volume' 0..1  (unknown names are stored and shown in audioDebug)
-//   audio.play(name, opts)              one-shots: step {surface,speed,side} · jump · land {intensity} · glider {open}
+//                                       'meditate' 0..1 (Commune; also read live from world.player.meditating),
+//                                       'rest' 0..1 (seated: the theme comes sooner), 'charge' 0..1 (iaido stance)
+//   audio.play(name, opts)              explorer: draw · sheathe · slash {kind} · pulse (Resonance: no `on`) · blink
+//                                       one-shots: step {surface,speed,side} · jump · land {intensity} · glider {open}
 //                                       boost · splash · vehicle.enter/exit {type} · takeoff · pulse {on} · impact
 //                                       whoosh · warp · arrive · select / ui.* · discover {kind} · photo
 //   audio.setVolume(v)                  master volume 0..1
@@ -36,7 +39,8 @@ export class Audio {
   constructor(engine, opts = {}) {
     this.engine = engine;
     this.ctx = null;
-    this.params = { speed: 0, altitude: 0, wind: 0, engine: 0, boost: 0, glide: 0, swim: 0, danger: 0, discovery: 0, cosmicGrowth: 0, volume: 1 };
+    this.params = { speed: 0, altitude: 0, wind: 0, engine: 0, boost: 0, glide: 0, swim: 0, danger: 0, discovery: 0, cosmicGrowth: 0, volume: 1, meditate: 0, rest: 0, charge: 0 };
+    this._lift = 0; this._med = 0;
     this.scene = null; this.sceneParams = {};
     this.over = {};            // test overrides of derived params
     this.P = { scene: 'cosmic', wind: 0.3, rush: 0, altitude: 0, rain: 0, snow: 0, storm: 0, flash: 0, night: 0, shore: 0, city: 0, cityStyle: 'village', shorePan: 0, cityPan: 0, underwater: 0, swim: 0, wading: 0, flora: 0, fauna: 0, hot: 0, cold: false, wet: 0, space: 0, air: 1, reentry: 0, inShip: false, dawn: 0 };
@@ -211,6 +215,12 @@ export class Audio {
       }
       const c = world.controller;
       P.inShip = c?.type === 'ship';
+      // the explorer: Commune (meditating), iaido stance — read live (the player sets 'rest' itself)
+      const pl = world.player;
+      if (pl) {
+        p.meditate = +pl.meditating || 0;
+        const K = pl.katana; p.charge = K?.charging ? clamp(+K.charge || 0, 0, 1) : 0; this._charging = !!K?.charging;
+      }
       const alt = p.altitude || 0;
       P.altitude = alt;
       // flow: how "in motion" the player is (drives arrangement density)
@@ -341,9 +351,18 @@ export class Audio {
       this.discoveryPulse = Math.max(0, this.discoveryPulse - dt / 20);
       const M = this.music;
       M.night = P.night; M.danger = Math.max(this.params.danger || 0, (P.storm || 0) * 0.5); M.growth = this.params.cosmicGrowth || 0;
+      // moods: in town (warmer, busier), gliding / drifting (the floor drops away), Commune, resting
+      this._lift = smooth(this._lift, this.params.glide ? 1 : 0, this.params.glide ? 1.5 : 0.8, dt);
+      this._med = smooth(this._med, clamp(this.params.meditate || 0, 0, 1), 1.2, dt);
+      M.settled = P.city || 0; M.lift = this._lift; M.med = this._med; M.rest = this.params.rest || 0;
+      this.sfx.stance?.(t, this.params.charge || 0, !!this._charging || (this.params.charge || 0) > 0.01);
+      // a vista opens (the player's first-sight swell): a distant taiko swell and the theme comes next
+      const disc = this.params.discovery || 0;
+      if (disc > 0.85 && !this._discEdge) { this._discEdge = true; try { M.taiko(t); M._lastTheme = -99; } catch (_) { /* optional */ } }
+      else if (disc < 0.3) this._discEdge = false;
       // altitude / open sky → a little more space in the mix
       setT(this.mix.revOut.gain, (this.music.style?.revLevel ?? 0.6) * (1 + 0.35 * clamp((P.altitude || 0) / 300, 0, 1) + 0.25 * P.space), t, 1.5, 0.01);
-      const E = 0.24 + 0.6 * this.flow + 0.35 * M.danger + 0.25 * this.discoveryPulse + (this.params.discovery || 0) * 0.2 - 0.1 * P.night;
+      const E = 0.24 + 0.6 * this.flow + 0.35 * M.danger + 0.25 * this.discoveryPulse + (this.params.discovery || 0) * 0.45 - 0.1 * P.night + 0.12 * clamp(P.city || 0, 0, 1) + 0.12 * (M.rest > 0.5 ? 1 : 0);
       M.energy = clamp(E, 0, 1);
       M.tick(t);
       this.mix.setMuffle(P.underwater, t);

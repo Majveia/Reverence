@@ -3,6 +3,56 @@
 Everything is synthesized live with WebAudio native nodes (no audio files). The same graph renders
 in real time in the game and offline (OfflineAudioContext) for tests, previews and critics.
 
+## Season 2 round 2 — chillhop × Ghost of Yotei × Zelda (21 Oct)
+
+The creator's direction: "vibey chillhop/lofi and Ghost of Yotei x Zelda inspired". The surface music is rebuilt
+on that blend; every scale now carries one recognisable main theme; the explorer's moments are wired into the music.
+
+* **`chillhop` is the surface base** (ghibli · botw · bierstadt · rogerdean · nausicaa, and any unknown art):
+  72–86 BPM, 4/4, 8th swing 0.6. Rhodes (FM) on 7/9/11 chords in close rootless 3-7-9-11 voicings with a suitcase
+  stereo autopan, rolled and pushed on the 4&; warm `sub` bass (long root, lazy fifth on 2&, chromatic approach);
+  a soft swung kit (`chill`: kick on 1 and 2&, cross-stick rim on 2 and 4 laid back 16 ms, ghost notes, shuffled
+  hats, open hat on 4&) whose every kick dips a **sidechain pump bus** (`mix.pumpIn` / `pumpAt`) that the Rhodes,
+  sub and pad route through; tape wow + flutter, drive, vinyl crackle and a low-pass "from another room"
+  (11 kHz day, ×0.5 at night, ×1.15 in town). Progression graph `lofi` (IVmaj7 iii7 vi9, ii9 V I, plagal sighs).
+  Avoid-note guards in `Harmony.chord`: a b9 over the root drops the 9th, a natural 11 over a major third becomes the 9th.
+* **Ghost of Yotei colour.** `ks.js`: real **Karplus-Strong** strings rendered once per pitch in JS (fractional
+  all-pass tuning, loop-filter brightness, pluck-position comb, body resonances): **koto** (oshi-de press bends via
+  playbackRate), **shamisen** (sawari bridge buzz + bachi click and skin "pa"), biwa, nylon. **Shakuhachi** MonoVoice:
+  near-sine bore + *pitched breath* (noise band-passed at the sounding pitch) + air through three breath formants
+  (720/1450/2650 Hz), meri scoops from up to −2 semitones, breath swells (crescendo through long notes), muraiki
+  bursts, delayed yuri vibrato, falling releases. **Rin** singing bowl (beating partial pairs, 7 s) and wind
+  **chime** modal voices, **felt** piano, distant **taiko swells** (`taikoSwell` kit at vistas/discoveries).
+  Melodies sing in the mode's **Japanese pentatonic** (`MELODIC`: yo over ionian/dorian/mixolydian, kumoi over
+  aeolian, miyako-bushi over phrygian) while the Rhodes keeps the jazz harmony. Koto idiom generator: falling
+  runs, broken octaves, pressed long notes, rests.
+* **Zelda leitmotifs.** `theory.js MAIN_THEME`: a call (a rising fifth that sighs back down) and an answer that
+  settles home, in pentatonic indices, so it is the same tune in every key and mode (bright in yo, tender in kumoi,
+  haunted in miyako-bushi). Theme sections (8 bars, every `themeEvery` sections, sooner while resting or after a
+  vista) force a supporting progression (`themeProg`) and rotate the lead: shakuhachi, felt piano or koto on the
+  surface, restated by another instrument in bars 5–8 (or ornamented by the lead). Generative lines grow from theme
+  fragments (`themeMotif`). Every other surface style states the theme on its own lead (duduk, CS-80, harmonica,
+  theremin, horn, bowed glass…). Cosmic web: the theme on a distant shakuhachi over the pads, with a **bloom**
+  (halo, grains and bells +4 dB) — galaxy: a wordless **vox** answered by celesta an octave up, a 8–14 kHz glass
+  shimmer, quieter choir — space: the theme on bowed glass, lighter drone (notes 0/7/12/19, swept). Each scale has its
+  own tonal centre (cosmic D–E, galaxy G–A, space A–B). The **discovery jingle** (`JINGLE`) is its own rising
+  "da-da-da-DAAA" on koto + celesta blooming into a rin; monuments / wonders / vistas get a taiko swell first.
+* **Moods** (Composer flags with hysteresis; a change ends the section so the music answers within a bar):
+  *night* (Rhodes + felt piano + kick and rim only, no hats or pad, darker insert, bpm ×0.92, dorian / aeolian /
+  phrygian), *settled* (in town: brushed snare + rim, busier hats and shaker, a shamisen figure, +3.5 % tempo,
+  warmer), *lift* (gliding / drifting: kick and bass drop out, only air on the kit, pad and shakuhachi rise),
+  *rest* (sitting: the theme comes sooner, energy +0.12), *Commune* (`world.player.meditating`): the beat drops out
+  over a bar, a breathing drone (inhale / exhale over alternate bars) holds tonic, fifth, octave and ninth, the
+  shakuhachi sings the theme at half speed, a rin rings every 4 bars; on release a 2-bar **resolve** cadences to
+  the tonic with a low rin and koto, and the groove returns through an intro.
+* **The explorer.** `draw`: a shamisen root + fifth with a bachi snap on the next 16th, plus a steel "shing";
+  `sheathe`: blade hiss, the tsuba click, a koto harmonic; `slash`: a blade whoosh (iai: shamisen double-stop +
+  distant taiko + a duck); `pulse` without `on` (Resonance, from Abilities): a rin on the tonic and the current chord
+  tones rung as chimes, low to high, on the next 8th (the ship's `pulse {on}` is unchanged); `blink`: an airy rise and
+  two glass chimes; the iaido stance (`katana.charging`) holds a low tonic/fifth drone that opens with the charge.
+  A vista (`setParam('discovery', 1)` from the player) triggers a taiko swell and brings the theme next.
+* **Mix.** BS.1770 loudness calibrated: all scenes −15 to −17 LUFS integrated, peaks ≤ −2 dBFS, no clipping.
+
 ## What was built
 
 | file | role |
@@ -63,7 +113,8 @@ vehicles) → more layers join; discoveries → sting + energy pulse; altitude /
 ```js
 engine.audio.unlock();                          // first gesture (engine does it); &audio=1 auto-unlocks (not in shot mode)
 engine.audio.setScene('surface', { body });     // 'cosmic'|'galaxy'|'space'|'surface'|'city'|'underwater'
-engine.audio.setParam('speed', 12);             // speed, altitude, wind, glide, swim, engine, boost, danger, discovery, cosmicGrowth, volume
+engine.audio.setParam('speed', 12);             // speed, altitude, wind, glide, swim, engine, boost, danger, discovery, cosmicGrowth, volume,
+                                                // meditate (also read live from world.player.meditating), rest, charge (also katana.charging)
 engine.audio.play('step', { surface: 'grass', speed: 3, side: 1 });
 engine.audio.setVolume(0.8);
 window.__rv.audioDebug();                        // full graph state (locked: pending style); .creatures = {live, near:{arch:{d,n,pan}}, calls}
@@ -73,13 +124,20 @@ await window.__rv.audioRender({ seconds: 10, scene: 'surface', art: 'bebop' }); 
 ```
 
 One-shots: `step jump land glider boost splash vehicle.enter vehicle.exit takeoff pulse impact whoosh warp
-arrive select ui.click ui.hover ui.back ui.open ui.close photo discover`. Events listened to: `mode:leaving`
+arrive select ui.click ui.hover ui.back ui.open ui.close photo discover`, explorer: `draw sheathe slash {kind} pulse
+(no on → Resonance chime) blink`. Composer API: `music.accent(kind, t)` ('draw'|'sheathe'|'iai'|'pulse'|'blink'|
+'resolve', lands on the grid), `music.taiko(t)`, `music.sting(strip, t, kind)` (jingle), `music.grid(t, div)`.
+`audioDebug().music` now has `melodic` (the pentatonic in use), `moods`, `theme {statements, leads}`. Events listened to: `mode:leaving`
 (warp), `mode:enter` (arrival bloom), `discovery` (sting), `vehicle:enter`.
 
 ## Testing / capture
 
 ```bash
 node tools/audio_render.mjs --list
+# season 2 states (40-60 s): day-idle night settlement botw-walk vista commune katana (+ cosmic galaxy space botw-glide)
+node tools/audio_render.mjs --all --only day-idle,night,settlement,commune,katana,vista,cosmic,galaxy,space,botw-glide --out /tmp/a
+#   JSON metrics: lufs (BS.1770 integrated, gated), peakDb, clipped, bands {sub<80, low80-200, mid200-2k, hi2k-6k,
+#   air>6k} (% energy), tempoBpm (onset autocorrelation), quartersDb (loudness arc), width; debug.music.theme/moods
 node tools/audio_render.mjs --preset bebop --seconds 30 --out /tmp/audio         # → bebop.wav / .png / .json
 node tools/audio_render.mjs --all --seconds 16 --out /tmp/audio                   # 24 scenarios
 node tools/audio_render.mjs --all --music-only --only cosmic,bebop --out /tmp/a   # music bus only (loudness calibration)

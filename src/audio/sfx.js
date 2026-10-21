@@ -98,7 +98,38 @@ export class Sfx {
         this.buf('thud', t, { vel: 0.6, rate: 0.5, rev: 0.3 });
         m.duck('music', 0.3, t, 0.1, 2.5, 2);
         break;
+      // ---- the explorer (season 2): katana, Resonance, Blink — musical accents land on the composer's grid
+      case 'draw': {
+        const tq = this.host.music?.accent?.('draw', t) ?? t;
+        this._shing(tq, 0.32, 1);                        // steel leaving the lacquered scabbard
+        this.buf('cloth', t, { vel: 0.18, rate: 1.5, rev: 0.05 });
+        break;
+      }
+      case 'sheathe': {
+        this.sweep(t, 0.32, 5200, 2600, { vel: 0.07, q: 3, curve: 'decay', kind: 'white', rev: 0.1 });
+        this.buf('tick', t + 0.3, { vel: 0.4, rate: 0.55, rev: 0.12 });   // the tsuba clicks home
+        this.buf('clunk', t + 0.3, { vel: 0.12, rate: 2.2, rev: 0.05 });
+        this.host.music?.accent?.('sheathe', t + 0.3);
+        break;
+      }
+      case 'slash': {
+        const iai = o.kind === 'iai', k = clamp(o.intensity ?? 0.6, 0.2, 1);
+        this.sweep(t, iai ? 0.32 : 0.2, iai ? 7000 : 5200, iai ? 900 : 1300, { vel: (iai ? 0.32 : 0.2) * k, q: 1.6, curve: 'decay', kind: 'white', pan0: -0.4, pan1: 0.4, rev: 0.2 });
+        this.buf('whoosh', t, { vel: 0.22 * k, rate: iai ? 1.8 : 2.3, rev: 0.1 });
+        if (iai) { this.host.music?.accent?.('iai', t); this._shing(t + 0.02, 0.4, 0.8); m.duck('music', 0.3, t, 0.02, 0.6, 1.4); }
+        break;
+      }
+      case 'blink':
+        this.sweep(t, 0.45, 900, 9000, { vel: 0.12, q: 1.2, curve: 'rise', kind: 'white', rev: 0.4 });
+        this.host.music?.accent?.('blink', t + 0.3);
+        break;
       case 'pulse':
+        if (o.on === undefined) { // Resonance (the explorer's ability): a chime in the current key, not the ship drive
+          this.host.music?.accent?.('pulse', t);
+          this.sweep(t, 1.2, 300, 5200, { vel: 0.08, q: 2.5, curve: 'bell', rev: 0.6 });
+          m.duck('music', 0.18, t, 0.2, 1.2, 2);
+          break;
+        }
         if (o.on !== false) {
           this.sweep(t, 1.6, 200, 7000, { vel: 0.35, q: 2, curve: 'rise', rev: 0.5 });
           [0, 7, 12, 19].forEach((iv, i) => this.tone(t + i * 0.08, 2.2, mtof(45 + iv), mtof(57 + iv), { vel: 0.07, type: 'sawtooth', attack: 0.4, rev: 0.6 }));
@@ -222,6 +253,40 @@ export class Sfx {
   }
 
   _keyNote(near) { const h = this.host.music?.h; return h ? h.snap(near) : near; }
+
+  /** Katana ring: inharmonic steel partials, a quick bright scrape into a long shimmer. */
+  _shing(t, vel = 0.3, len = 1) {
+    const ctx = this.ctx, out = this._g(0), p = ctx.createStereoPanner(); p.pan.value = 0.15;
+    out.connect(p); p.connect(this.mix.sfxIn);
+    const sd = this._g(0.35); p.connect(sd); sd.connect(this.mix.ambRev);
+    const f0 = 2350 * this.r.range(0.97, 1.03), oscs = [];
+    [[1, 1, 1], [1.52, 0.6, 0.7], [2.31, 0.45, 0.5], [3.07, 0.25, 0.35], [4.6, 0.15, 0.2]].forEach(([k, a, d]) => {
+      const o = ctx.createOscillator(); o.frequency.value = f0 * k; const g = this._g(0);
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(a, t + 0.006); g.gain.setTargetAtTime(0, t + 0.01, 0.35 * d * len);
+      o.connect(g); g.connect(out); o.start(t); o.stop(t + 2.2 * len); oscs.push(o, g);
+    });
+    out.gain.value = vel * 0.25;
+    this.sweep(t, 0.16, 9000, 4000, { vel: vel * 0.35, q: 2, curve: 'decay', kind: 'white', rev: 0.05 });
+    oscs[0].addEventListener('ended', () => { for (const n of [...oscs, out, p, sd]) try { n.disconnect(); } catch (_) { /* ignore */ } });
+  }
+
+  /** The iaido stance (katana.charging): a low drone on the tonic that opens as the charge builds. */
+  stance(t, charge = 0, on = false) {
+    if (!on && !this._stance) return;
+    if (!this._stance) {
+      const ctx = this.ctx, g = this._g(0), lp = this._f('lowpass', 200, 4);
+      const o1 = ctx.createOscillator(), o2 = ctx.createOscillator(); o1.type = 'sawtooth'; o2.type = 'sawtooth';
+      o1.connect(lp); o2.connect(lp); lp.connect(g); g.connect(this.mix.sfxIn);
+      const sd = this._g(0.4); g.connect(sd); sd.connect(this.mix.ambRev);
+      this._stance = { g, lp, o1, o2 };
+    }
+    const S = this._stance, h = this.host.music?.h;
+    let root = h ? h.tonic : 45; while (root > 40) root -= 12; while (root < 28) root += 12;
+    if (!S.started) { S.o1.frequency.value = mtof(root); S.o2.frequency.value = mtof(root + 7) * 1.003; S.o1.start(t); S.o2.start(t); S.started = true; }
+    setT(S.o1.frequency, mtof(root), t, 0.3); setT(S.o2.frequency, mtof(root + 7) * 1.003, t, 0.3);
+    setT(S.lp.frequency, 160 + 1500 * charge * charge, t, 0.12);
+    setT(S.g.gain, on ? 0.05 + 0.1 * charge : 0, t, on ? 0.25 : 0.12);
+  }
 
   // ------------------------------------------------------------------ engines
   _engine(type, t) {

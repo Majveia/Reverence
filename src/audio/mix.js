@@ -62,6 +62,8 @@ export class Mixer {
     this.driveOut.connect(this.musicDuck); this.musicDuck.connect(this.musicVol); this.musicVol.connect(this.pre);
     this.crackleG = g(0);
     this.crackleG.connect(this.musicLP);
+    // sidechain pump: strips flagged `pump` (Rhodes, sub, pads) route through here; every soft kick dips it
+    this.pumpIn = g(1); this.pump = g(1); this.pumpIn.connect(this.pump); this.pump.connect(this.musicIn);
 
     // ---- ambience / sfx / ui
     this.ambIn = g(1); this.ambLP = f('lowpass', ny, 0.5); this.ambDuck = g(1); this.ambVol = g(0.9);
@@ -154,6 +156,13 @@ export class Mixer {
     p.cancelScheduledValues(t);
     p.setTargetAtTime(1 - depth, t, attack / 3);
     p.setTargetAtTime(1, t + attack + hold, release / 3);
+  }
+
+  /** Kick-triggered pump on the `pump` strips (lofi breathing): dip by `depth`, recover over `release` s. */
+  pumpAt(t, depth = 0.28, release = 0.22) {
+    const p = this.pump.gain;
+    p.setTargetAtTime(1 - depth, t, 0.006);
+    p.setTargetAtTime(1, t + 0.035, release / 3);
   }
 
   setVolume(v, t = this.ctx.currentTime) { this.volume = clamp(v, 0, 1); this.master.gain.setTargetAtTime(0.85 * this.volume, t, 0.05); }

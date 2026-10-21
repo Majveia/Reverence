@@ -9,6 +9,7 @@
 //   hit()       sample-based percussion (samples.js) · grain() shimmer grains
 import { waves, noiseBuffer, mtof, clamp, cleanupOnEnd } from './dsp.js';
 import { sample } from './samples.js';
+import { KS, ksPluck } from './ks.js';
 
 const VOWELS = { a: [700, 1220, 2600], o: [570, 840, 2410], u: [320, 870, 2240], e: [530, 1840, 2480], i: [300, 2200, 2950] };
 
@@ -135,6 +136,13 @@ const MONO = {
   cello: { wave: 'saw', lp: 1900, q: 1.2, form: [[480, 2, 1], [1400, 2.5, 0.4]], vib: 5.3, vibD: 17, breath: 0.03, breathF: 3000, att: 0.2, rel: 0.4, scoop: -15, glide: 0.1, lvl: 0.55 },
   lead: { wave: 'square', lp: 2400, q: 1.5, vib: 5.5, vibD: 10, breath: 0, att: 0.03, rel: 0.25, scoop: 0, glide: 0.07, lvl: 0.35, fenv: 1.5 },
   bowed: { wave: 'glass', lp: 3000, q: 8, vib: 0.4, vibD: 8, breath: 0.25, breathF: 0, att: 1.2, rel: 2.5, scoop: 0, glide: 0.6, lvl: 0.7 },
+  // shakuhachi: a near-sine bore tone + PITCHED breath (noise band-passed at the fundamental) + air through
+  // three breath formants; meri/kari scoops from up to 2 semitones below, breath swells (crescendo through long
+  // notes), muraiki breath bursts, delayed "yuri" vibrato, falling releases.
+  shakuhachi: { wave: 'flute', lp: 4200, q: 0.4, vib: 4.6, vibD: 16, vibDelay: 0.55, breath: 0.26, breathForm: [[720, 9, 1], [1450, 10, 0.7], [2650, 12, 0.45]], track: 0.55, trackQ: 7,
+    att: 0.22, rel: 0.35, scoop: -190, scoopTc: 0.085, glide: 0.11, lvl: 0.78, swell: 0.45, muraiki: 0.3, fall: -140 },
+  // wordless distant voice (galaxy hero timbre): choir wave through vowel formants
+  vox: { wave: 'choir', lp: 3800, q: 0.4, form: [[700, 5, 1], [1150, 6, 0.6], [2700, 7, 0.3]], vib: 5.1, vibD: 14, vibDelay: 0.4, breath: 0.04, breathF: 3000, att: 0.35, rel: 0.9, scoop: -30, glide: 0.18, lvl: 0.6, swell: 0.3 },
 };
 
 export class MonoVoice {
@@ -158,35 +166,58 @@ export class MonoVoice {
     this.nodes = [mixg, this.lp, this.amp, this.vib, head];
     if (c.breath) {
       this.noise = ctx.createBufferSource(); this.noise.buffer = noiseBuffer(ctx, 'white'); this.noise.loop = true;
-      this.bf = ctx.createBiquadFilter(); this.bf.type = 'bandpass'; this.bf.frequency.value = c.breathF || 1000; this.bf.Q.value = c.breathF ? 1.2 : 30;
       this.bg = ctx.createGain(); this.bg.gain.value = 0;
-      this.noise.connect(this.bf); this.bf.connect(this.bg); this.bg.connect(this.amp);
-      this.noise.start(t); this.nodes.push(this.bf, this.bg);
+      if (c.breathForm) { // air through breath formants (the player's mouth / the bore's open holes)
+        for (const [f, q, g] of c.breathForm) { const b = ctx.createBiquadFilter(); b.type = 'bandpass'; b.frequency.value = f; b.Q.value = q; const gg = ctx.createGain(); gg.gain.value = g * 2.2; this.noise.connect(b); b.connect(gg); gg.connect(this.bg); this.nodes.push(b, gg); }
+      } else {
+        this.bf = ctx.createBiquadFilter(); this.bf.type = 'bandpass'; this.bf.frequency.value = c.breathF || 1000; this.bf.Q.value = c.breathF ? 1.2 : 30;
+        this.noise.connect(this.bf); this.bf.connect(this.bg); this.nodes.push(this.bf);
+      }
+      if (c.track) { // pitched breath: noise resonating at the sounding pitch (the hollow, "windy" shakuhachi tone)
+        this.tf = ctx.createBiquadFilter(); this.tf.type = 'bandpass'; this.tf.frequency.value = 440; this.tf.Q.value = c.trackQ || 6;
+        this.tg = ctx.createGain(); this.tg.gain.value = c.track * 3.2;
+        this.noise.connect(this.tf); this.tf.connect(this.tg); this.tg.connect(this.bg); this.nodes.push(this.tf, this.tg);
+      }
+      this.bg.connect(this.amp);
+      this.noise.start(t); this.nodes.push(this.bg);
     }
     this.osc.start(t); this.osc2.start(t); this.lfo.start(t);
     this.lastEnd = 0; this.midi = 0;
   }
   /** Schedule one note. legato: the next note follows immediately (no release). */
-  note(t, midi, dur, vel = 0.8, { legato = false, glide } = {}) {
+  note(t, midi, dur, vel = 0.8, opts = {}) {
+    const { legato = false, glide } = opts;
     const c = this.cfg; const f = mtof(midi);
     const connected = this.midi && t - this.lastEnd < 0.08;
     const g = glide ?? c.glide;
+    const scoop = (opts.scoop ?? c.scoop) * (c.scoopTc ? 0.5 + Math.random() * 0.7 : 1);
     for (const o of [this.osc, this.osc2]) {
       if (connected) o.frequency.setTargetAtTime(f, t, g / 3);
       else o.frequency.setValueAtTime(f, t);
-      if (c.scoop && !connected) { o.detune.setValueAtTime(c.scoop + (o === this.osc2 ? 4 : 0), t); o.detune.setTargetAtTime(o === this.osc2 ? 4 : 0, t, 0.05); }
+      const base = o === this.osc2 ? 4 : 0;
+      if (scoop && !connected) { o.detune.setValueAtTime(scoop + base, t); o.detune.setTargetAtTime(base, t, c.scoopTc || 0.05); }
     }
-    if (this.bf && !c.breathF) this.bf.frequency.setTargetAtTime(f * 2, t, 0.02);
+    if (this.bf && !c.breathF && !c.breathForm) this.bf.frequency.setTargetAtTime(f * 2, t, 0.02);
+    if (this.tf) this.tf.frequency.setTargetAtTime(f, t, connected ? g / 3 : 0.005);
     const pk = vel * c.lvl;
     if (!connected) { this.amp.gain.setTargetAtTime(0, t - 0.02, 0.008); }
-    this.amp.gain.setTargetAtTime(pk, t, c.att / 3);
+    if (c.swell && dur > 0.7) { // breath swell: enter softer, crescendo through the note
+      this.amp.gain.setTargetAtTime(pk * (1 - c.swell), t, c.att / 3);
+      this.amp.gain.setTargetAtTime(pk, t + c.att, dur * 0.35);
+    } else this.amp.gain.setTargetAtTime(pk, t, c.att / 3);
     // delayed vibrato: bloom after ~0.35 s on long notes
     this.vib.gain.setTargetAtTime(0, t, 0.05);
-    if (dur > 0.5) this.vib.gain.setTargetAtTime(c.vibD * (0.6 + 0.5 * vel), t + Math.min(0.4, dur * 0.4), 0.25);
-    if (this.bg) { this.bg.gain.setTargetAtTime(c.breath * (connected ? 0.4 : 1.4), t, 0.02); this.bg.gain.setTargetAtTime(c.breath * 0.5, t + 0.08, 0.1); }
+    if (dur > 0.5) this.vib.gain.setTargetAtTime(c.vibD * (0.6 + 0.5 * vel), t + Math.min(c.vibDelay ?? 0.4, dur * 0.45), 0.3);
+    if (this.bg) {
+      const burst = !connected && c.muraiki && Math.random() < c.muraiki ? 3.2 : 1.4; // muraiki: an explosive breath attack
+      this.bg.gain.setTargetAtTime(c.breath * (connected ? 0.4 : burst), t, 0.02); this.bg.gain.setTargetAtTime(c.breath * 0.55, t + (burst > 2 ? 0.14 : 0.08), 0.12);
+    }
     if (c.fenv) { this.lp.frequency.setTargetAtTime(c.lp * 0.35, t, 0.01); this.lp.frequency.setTargetAtTime(c.lp * c.fenv, t + 0.02, c.att * 0.5); this.lp.frequency.setTargetAtTime(c.lp, t + c.att, 0.6); }
     const end = t + dur;
-    if (!legato) { this.amp.gain.setTargetAtTime(0, end, c.rel / 3); if (this.bg) this.bg.gain.setTargetAtTime(0, end, 0.05); }
+    if (!legato) {
+      this.amp.gain.setTargetAtTime(0, end, c.rel / 3); if (this.bg) this.bg.gain.setTargetAtTime(0, end, 0.08);
+      if (c.fall && dur > 0.6 && (opts.fall || Math.random() < 0.3)) for (const o of [this.osc, this.osc2]) { o.detune.setTargetAtTime(c.fall, end - 0.05, 0.12); o.detune.setTargetAtTime(o === this.osc2 ? 4 : 0, end + 0.5, 0.05); }
+    }
     this.lastEnd = end; this.midi = midi;
   }
   silence(t) { this.amp.gain.setTargetAtTime(0, t, 0.3); this.midi = 0; }
@@ -219,13 +250,17 @@ function pluckWaves(ctx) {
 const PL = {
   piano: { w: 'piano', dec: 3.2, lp: 7, lpEnd: 1.6, att: 0.003, det: 1.6, hammer: 0.1, lvl: 0.55 },
   harp: { w: 'harp', dec: 2.6, lp: 9, lpEnd: 2.5, att: 0.004, det: 0.6, lvl: 0.6 },
-  koto: { w: 'koto', dec: 1.8, lp: 14, lpEnd: 3, att: 0.002, det: 0, bend: 22, lvl: 0.55 },
+  kotoTable: { w: 'koto', dec: 1.8, lp: 14, lpEnd: 3, att: 0.002, det: 0, bend: 22, lvl: 0.55 },
   oud: { w: 'koto', dec: 1.2, lp: 7, lpEnd: 2, att: 0.003, det: 3, bend: 12, lvl: 0.6 },
   banjo: { w: 'banjo', dec: 0.9, lp: 18, lpEnd: 4, att: 0.001, det: 2, lvl: 0.4 },
   guitar: { w: 'guitar', dec: 2.2, lp: 8, lpEnd: 2, att: 0.002, det: 1.2, lvl: 0.55 },
   upright: { w: 'upright', dec: 1.1, lp: 5, lpEnd: 2.4, att: 0.012, det: 0, lvl: 0.95, thump: true },
   synthBass: { w: 'synth', dec: 0.9, lp: 6, lpEnd: 1.4, att: 0.005, det: 6, q: 4, lvl: 0.55 },
   synthPluck: { w: 'synth', dec: 0.5, lp: 10, lpEnd: 1.2, att: 0.002, det: 9, q: 5, lvl: 0.35 },
+  // felt piano (lofi / BotW): muted hammer, dark and close, soft mechanical thump
+  felt: { w: 'piano', dec: 2.6, lp: 3.4, lpEnd: 1.15, att: 0.006, det: 1.2, hammer: 0.05, lvl: 0.62, felt: true },
+  // warm sub bass: round low-passed saw, slow decay (lofi foundation)
+  sub: { w: 'synth', dec: 1.9, lp: 2.4, lpEnd: 1.05, att: 0.01, det: 0, q: 0.8, lvl: 0.95 },
 };
 // inharmonic modal instruments: [ratio, amp, decayScale]
 const MODAL = {
@@ -235,15 +270,21 @@ const MODAL = {
   celesta: { p: [[1, 1, 1], [4, 0.18, 0.25], [10, 0.04, 0.08]], dec: 2.0, att: 0.002, lvl: 0.45 },
   vibes: { p: [[1, 1, 1], [3.98, 0.25, 0.3], [9.9, 0.05, 0.08]], dec: 3.2, att: 0.003, lvl: 0.45, trem: 5.5 },
   glassBell: { p: [[1, 1, 1], [2.32, 0.4, 0.5], [4.25, 0.25, 0.3], [6.63, 0.1, 0.15]], dec: 5.0, att: 0.01, lvl: 0.3 },
+  // rin (Buddhist singing bowl): beating partial pairs, very long decay — Resonance / Commune / resolution
+  rin: { p: [[1, 1, 1], [1.0035, 0.6, 1], [2.71, 0.42, 0.55], [2.716, 0.3, 0.55], [5.15, 0.16, 0.25], [8.2, 0.06, 0.12]], dec: 7.5, att: 0.004, lvl: 0.3 },
+  // small wind chime (resonance pulse sparkle)
+  chime: { p: [[1, 1, 1], [2.76, 0.32, 0.4], [5.4, 0.14, 0.2], [8.93, 0.05, 0.1]], dec: 2.6, att: 0.001, lvl: 0.32 },
 };
 
-export const PLUCKS = [...Object.keys(PL), 'rhodes', ...Object.keys(MODAL)];
+export const PLUCKS = [...Object.keys(PL), 'rhodes', ...Object.keys(MODAL), ...Object.keys(KS)];
 
 /**
  * Play a plucked / struck note. Returns nothing. `quality` scales partial counts.
  */
-export function pluck(ctx, strip, inst, t, midi, vel = 0.7, { pan = 0, dur = 0, bright = 1, quality = 1 } = {}) {
+export function pluck(ctx, strip, inst, t, midi, vel = 0.7, extra = {}) {
+  const { pan = 0, dur = 0, bright = 1, quality = 1 } = extra;
   if (!canVoice(vel, t)) return;
+  if (KS[inst]) { const end = ksPluck(ctx, strip.input, inst, t, midi, vel, { pan, dur, bright, bend: extra.bend, slide: extra.slide, bachi: extra.bachi }); track(null, end); return; }
   const f = mtof(midi);
   const out = ctx.createGain(); out.gain.value = 0;
   const pn = ctx.createStereoPanner(); pn.pan.value = clamp(pan, -1, 1);
