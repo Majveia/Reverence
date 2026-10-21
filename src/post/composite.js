@@ -24,7 +24,7 @@ uniform vec2 uRes;
 uniform vec2 uSunUv; uniform vec3 uSunCol; uniform float uFlare, uGhosts, uStarburst, uStreak, uHalo, uDirt, uSSGhost, uHasDirt, uFlareRot;
 uniform float uPurkinje, uTonemapHue, uSpaceGlow;
 uniform vec2 uPlayerA, uPlayerB, uLookD, uWindUv; uniform float uPlayerR, uPlayerDist, uPlayerOn;
-uniform float uGolden, uNightSky, uMist, uLandDrop; uniform vec2 uProjXY, uProjZW; uniform vec3 uSunView; uniform vec3 uGoldTint;
+uniform float uGolden, uGoldGlow, uNightSky, uMist, uLandDrop; uniform vec2 uProjXY, uProjZW; uniform vec3 uSunView; uniform vec3 uGoldTint;
 varying vec2 vUv;
 
 vec3 agxContrast(vec3 x){
@@ -379,7 +379,22 @@ void main(){
   }
   if (uHaze > 0.0 && !sky && hzOk > 0.0) {
     float h = uHaze * hzOk * (1.0 - exp(-dist / uHazeDist));
-    col = mix(col, hz, h);
+    vec3 hzc = hz;
+    // low sun: the haze scatters it forward (Mie, Henyey-Greenstein g 0.7, normalised to 1 at the sun), so the
+    // layers toward the sun become luminous gold veils, each ridge a step paler (the Yotei sunrise sea of light);
+    // away from the sun the haze stays the cool metered sky
+    if (uGoldGlow > 0.0) {
+      vec3 vd = normalize(vec3((uv * 2.0 - 1.0 + uProjZW) / uProjXY, -1.0));
+      float mu = dot(vd, uSunView);
+      float hg = pow(0.09 / max(1.49 - 1.4 * mu, 1e-3), 1.5);
+      float gk = uGoldGlow;
+      vec3 gold = uGoldTint * vec3(1.12, 0.96, 0.74);
+      gold /= max(rv_luma(gold), 1e-3);
+      float warm = gk * clamp(0.2 + 1.6 * hg, 0.0, 1.0);
+      hzc = mix(hz, rv_luma(hz) * gold, warm) * (1.0 + 1.5 * gk * hg);
+      h = min(0.92, h * (1.0 + 1.6 * gk * hg));
+    }
+    col = mix(col, hzc, h);
   }
 
   // exposure: manual × eye adaptation
