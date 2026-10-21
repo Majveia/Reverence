@@ -547,3 +547,18 @@ visualizations). What separates AAA from "tech demo":
 * **flora → atmosphere, post** — at night the World Tree (`world.get('flora').sacred.pos`, about 200 m tall) could
   light the ground and the haze around it (warm in-scatter or a light), and a wide soft bloom on its light cards would
   give the luminous mist of the reference frames.
+
+#### Season 2: atmosphere round 2 (the Yotei pass) requests (21 Oct)
+* **atmosphere → space** — paint the galactic band as warm dust (core about `(1, .75, .5)` fading to blue-grey) with
+  fine star grain and darker dust lanes, and reduce the dark marbled blotches (W2 `tod=0.95&weather=aurora`). A
+  minimum apparent sun disc of about 0.5° at sunrise is still open.
+* **atmosphere → water** — from orbit (W2 `view=orbit&tod=0.4`) a white starburst or flower-shaped glint sits in the
+  ocean near the sub-solar point. The sea at blue hour (W2 `tod=0.77`) still shows regular bright stripes; a calm
+  sky-coloured reflection would double the twilight sky.
+* **atmosphere → terrain** — in the sunrise view (W1 `lon=-2.5&tod=0.272`) the small white summit puffs of the
+  mountain clouds read as sprites against the backlit cone; with a low sun behind the mountain they should be dark
+  with a bright rim, or thin streaks.
+* **atmosphere → post** — the blue-hour land is now desaturated in the atmosphere pass itself (`uLandMono`), so the
+  Purkinje part of the earlier request is done; a lower exposure key while `world.atmosphere.twilight > 0.5` is still
+  welcome. (Done by atmosphere: a warmer, lower golden-hour key light and a golden aureole at sunrise, the terrain
+  round 1 request; the World Tree now lights the haze around it at dusk and night, the flora request.)

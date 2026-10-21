@@ -50,6 +50,11 @@ Subsystem `atmosphere` (order 20) auto-loaded by `World`. Every pass is fault-is
 * **Orbit**: the limb line takes the world's own sky hue (near white, a breath of tint), warm at the terminator,
   a ~1 % airglow hairline on the night side (no saturated green ring, post request); the cloud tops' terminator is
   graded over ~12° (`smoothstep(−0.03, 0.2, μ)`).
+* **Wavy horizontal stripes across distant clouds fixed** (the "comb" in grazing views from altitude): the
+  weather cube was read with the implicit, derivative-based mip choice inside the jittered march, where
+  neighbouring pixels sample points kilometres apart → the level jumped in bands across the screen. It is now
+  read with an explicit LOD (`textureLod`, 0 near, up to 1.5 in the orbit far field). Cloud forms everywhere are
+  smoother (fewer hard sprite-like edges and speckle).
 * **Clouds cleaner**: (1) the seam at altitude is gone (rays that dip under the base and miss the ground
   continue to the far exit of the layer instead of stopping at the base tangent); (2) quadratic step spacing for
   long grazing paths from inside / above the layer; (3) the light march uses the base shape only, its steps are
@@ -266,6 +271,9 @@ world.atmosphere = {
   `atmo_transSegment(p0, p1)` (planet-centred metres).
 * G uniforms written every frame: `uSunDir, uSunColor, uSunIntensity, uAmbientSky, uAmbientGround,
   uNight, uWindDir, uWindStrength, uWetness, uSnow`.
+* S2 r3: `world.atmosphere.meditating` (0..1, read from `world.player.meditating`); effect uniforms `uLand`,
+  `uLandOC` (rain veil colour / share), `uGold` (golden aureole), `uLandMono` (blue-hour land desaturation),
+  `uGlowP/uGlowC` (World Tree glow), `uSource` (ring of the source), `uFogGlow` (dust-wall sun glow).
 * `__rv.state().atmosphere` → `{ sunElev, key, night, env, shadows, clouds, weather{…}, wet, snowCover, twilight,
   eclipse, rainbow, shafts{fan, gate, cover, …} }`; `world.atmosphere.twilight` (0..1 blue-hour dome),
   `.eclipse` (0..1), `.weather.rainbow` (0..1).
@@ -275,6 +283,13 @@ Finals of this round (1280×720) are listed first; all are plain URLs (steps onl
 
 | view | URL / steps |
 |---|---|
+| **Sunrise behind the volcano** (S2 r3, Yotei): the sun bursts from behind W1's great mountain, god rays fanning over a sea of cloud, golden aureole, the cone fading into haze | `star=6&planet=1&view=fly&alt=800&lat=17.777&lon=-2.5&yaw=87&pitch=6&tod=0.272&disable=fauna,vehicles` |
+| **Golden-hour fan** (S2 r3): shafts from the sun behind the ridge, each ridge one step paler (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.74&pitch=6&yaw=270&cover=0.8` |
+| **Blue hour** (S2 r3): the sky keeps its colour, the land has none (W2) | `star=11&planet=0&view=fly&alt=300&tod=0.77&pitch=8&yaw=262` |
+| **World Tree lights the mist** (S2 r3, W1 night) | `star=6&planet=1&view=fly&alt=110&lat=13.978&lon=26.62&yaw=271&pitch=7&tod=0.02&disable=fauna,vehicles` |
+| **Above the weather** (S2 r3, no stripes): cumulus bank, sea of cloud, peaks through (W2) | `star=11&planet=0&view=fly&alt=3500&tod=0.6&pitch=2&yaw=200&cover=0.9` |
+| **Aurora + ringed neighbour** (S2 r3): thin green curtains, starry night (W2) | `star=11&planet=0&view=fly&alt=200&tod=0.95&pitch=22&yaw=270&weather=aurora` |
+| Rain veil (S2 r3, W2) | `star=11&planet=0&view=fly&alt=300&tod=0.4&pitch=4&yaw=262&weather=rain` |
 | **Blue hour** (S2 r2): sky keeps its colour, afterglow clouds, land in silhouette (W2) | `star=11&planet=0&view=fly&alt=300&tod=0.77&pitch=8&yaw=262` |
 | **Rainbow after rain** (S2 r2): double bow over the sea, soft violet sky (W2) | `star=11&planet=0&view=fly&alt=300&tod=0.31&pitch=8&yaw=275&weather=rainbow` |
 | **Golden-hour fan** (S2 r2): shafts fanning up from the sun behind the ridge through broken cumulus (W2) | `star=11&planet=0&view=fly&alt=800&tod=0.74&pitch=6&yaw=270&cover=0.8` |
@@ -312,6 +327,10 @@ Debug: `&atmoDebug=5` shows the volumetric-light terms (R: added light, G: shado
 it) and `overcast`.
 
 ## Performance
+* S2 r3 costs: landscape haze = 6 cheap exp samples + 3 LUT fetches per geometry pixel (atmosphere pass), 5
+  samples per cloud pixel for the far-cloud fade; World Tree glow = one atan pair per pixel only at dusk / night
+  on worlds with a tree; blue-hour mono = a few ALU; the light-march jitter and the explicit weather LOD are free;
+  the still-only 4×4 cloud denoise runs only in `shot=1` at full res.
 * high: atmosphere pass (≤ 10–20 samples/pixel, full res) + clouds (half res, ≤ 56 steps (84 in shot mode),
   5 light steps + 2 column samples, early exit, distance LOD skips the detail fetches far away) +
   volumetric light (quarter res, 36 steps: 14 near with the sun cascades, 22 far with the cloud shadow map)
@@ -330,6 +349,17 @@ it) and `overcast`.
   pixels near towns; the far rain sheet is one extra instanced draw while it rains.
 
 ## Known issues
+* S2 r3: in rain (W2 `weather=rain`) the near hill still sits under a flat, light-grey film (overcast light plus
+  the rain pass); the far ridges step paler as intended, but the creator's rain frame keeps the nearest ridge
+  darker and bluer. The source of the near film was not isolated this round (not the far rain sheet, not the
+  volumetric pass, not the clouds).
+* S2 r3: on moonless nights (W1 `tod=0.02`) thick cumulus still reads as dark navy smoke against the starry sky
+  (the brown sodium cast is gone: the city tint is now limited to neon-noir worlds, and the night-sky ambient on
+  clouds was raised ×2.2); dense cores need a stronger multiple-scattering floor at night to sit in the sky.
+* S2 r3: the golden aureole and the land haze use the sky colour, but far clouds fade into the plain sky LUT
+  (no golden aureole on the far cloud fade).
+* S2 r3: the sunrise frame's white puffs at the summit are the terrain track's mountain clouds; the radial
+  streak above the sun (screen-space streaks) reads a little like a lens star.
 * S2 r2: the landscape fan is screen-space: it needs the sun within ~a screen of the frame and cloud gaps in
   view; a sun far behind the camera gives no anti-crepuscular fan (the 3D volumetric pass still does). Over a
   clear sky a faint angular modulation (±9 %) remains.
@@ -370,6 +400,16 @@ it) and `overcast`.
 * Lightning bolts are camera-facing ribbons (no volumetric glow halo; the cloud flash provides that).
 
 ## Requests
+* **space** (S2 r3, still open, from the critic): the galactic band reads as a marbled grey-beige streak with dark
+  blotches (W2 `tod=0.95&weather=aurora`); the creator's frames paint warm dust (core ≈ (1, .75, .5) fading to
+  blue-grey) with fine star grain and darker dust lanes. The sun disc is still tiny at sunrise (see round 3b).
+* **water** (S2 r3): from orbit (W2 `view=orbit&tod=0.4`) a white starburst / flower-shaped glint sits in the
+  ocean near the sub-solar point; the sea at blue hour still shows regular bright stripes (W2 `tod=0.77`).
+* **terrain** (S2 r3): in the sunrise view (W1 `lon=-2.5`, `tod=0.272`) the small white summit puffs of the
+  mountain clouds read as sprites against the backlit cone; at a low sun behind the mountain they should be dark
+  with a bright rim (backlit), or thin streaks.
+* **post** (S2 r3): the blue-hour land is now desaturated in the atmosphere pass itself (`uLandMono`); the
+  Purkinje part of the earlier request is done here. A lower exposure key at twilight is still welcome.
 * **space** (S2 r2): the galactic band is now allowed through at night (`uStarVis` drops to 0.45) but it is still
   too faint to read in W2 / W3 night and late-dusk frames; the creator's frames paint it as warm dust with fine
   star grain — a brighter, warmer band. (`space.eclipse` is now read directly; thanks.)
@@ -380,6 +420,14 @@ it) and `overcast`.
   sky-coloured reflection would double the twilight sky (rule 11: still water doubles the sky).
 * **terrain** (still open): angular lit facets of the coarse orbit LOD near the terminator; the atmosphere now
   fades lit ground past the terminator (`smoothstep(-0.07, 0.16, μ)`), which hides most of them.
+
+### Done (inbox, S2 r3)
+* flora: the World Tree lights the haze around it at dusk and night (`landmarkGlow`).
+* player: meditation lets the sky answer (stars, the ring of the source, the wind stills) and warms the key
+  light (round 2 request, W9 dusk).
+* post: no saturated green ring on the night side from orbit (limb hairline ≈ 1 % of the day limb, tinted from
+  the world's sky).
+* terrain: warmer, lower key light at sunrise (golden key + golden aureole); the W1 sunrise view is listed above.
 
 ### Done (inbox, S2 r2)
 * space → atmosphere: eclipses (`space.eclipse` or `sunVisibility`) dim the sunlight and turn the sky into a
