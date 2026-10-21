@@ -48,11 +48,16 @@ export function harmonyFromArt(art, strength = 0.42) {
 //   id 1 two-tone, 2 high-key B&W, 3 poster, 4 candy sky, 5 woodcut
 export const PHOTO_LOOKS = {
   none: { id: 0 },
-  twotone: { id: 1, toneA: '#000000', toneB: '#d0105e', toneC: '#ffd6ec', land: 0.45, accent: 0, ink: 0, grain: 0.035 },
+  // black → crimson → magenta → pale pink; land in depth-layered silhouette, the explorer pure black with a rim
+  twotone: { id: 1, toneA: '#000000', toneB: '#7c0632', toneC: '#e0157a', toneD: '#ffd4ec', accent: 0, ink: 0, grain: 0.012 },
   bw: { id: 2, toneA: '#000000', toneB: '#7a7a7a', toneC: '#ffffff', land: 1.0, accent: 0, ink: 0, grain: 0.05 },
-  poster: { id: 3, toneA: '#14102a', toneB: 'auto', toneC: '#f6e7cf', land: 1.0, accent: 1, ink: 1, bands: 3, grain: 0.0 },
-  candy: { id: 4, toneA: '#07040d', toneB: '#c2306e', toneC: '#ff7a5c', toneD: '#ffe2a8', land: 0.08, accent: 1, ink: 0, sat: 1.4, grain: 0.02 },
+  poster: { id: 3, toneA: '#14102a', toneB: 'auto', toneC: '#f6e7cf', land: 1.0, accent: 1, ink: 1, bands: 3, grain: 0.0, inkWidth: 2 },
+  candy: { id: 4, toneA: '#07040d', toneB: '#c2306e', toneC: '#ff7a5c', toneD: '#ffe2a8', land: 0.0, accent: 1, ink: 0, sat: 1.4, grain: 0.012 },
   woodcut: { id: 5, toneA: '#0a0710', toneB: 'auto', toneC: 'auto', toneD: '#f4ead6', land: 1.0, accent: 1, ink: 1, bands: 5, grain: 0.0 },
+  // Kurosawa: red-filter black-and-white film, deep contrast, a touch of wind blur, heavy grain
+  kurosawa: { id: 6, toneA: '#000000', toneB: '#808080', toneC: '#ffffff', accent: 0, ink: 0, grain: 0.075 },
+  // ink wash (sumi-e): paper, depth-layered washes, wet ridge edges, the sun and the scarf in vermilion
+  ink: { id: 7, toneA: '#15120f', toneB: '#6b655c', toneC: '#c62f1c', toneD: '#efe7d4', accent: 1, ink: 0.85, grain: 0.012 },
 };
 export const PHOTO_LOOK_NAMES = Object.keys(PHOTO_LOOKS);
 
