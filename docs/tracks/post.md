@@ -73,6 +73,19 @@ scene (Halton-jittered projection on TAA tiers) → HDR sceneRT (RGBA16F + Float
   mode UI can switch looks instantly); `__rvPost.look(name, opts)` = setPhotoLook + recomposite (captures iterate
   every look from one scene render).
 
+### Season 2 round 4 (21 Oct)
+* **Backlit golden haze**: at low sun (`uGolden`) the aerial-perspective haze scatters the sun forward
+  (Henyey-Greenstein g 0.7, normalised to 1 at the sun): toward the sun each depth layer becomes a luminous gold
+  veil (haze up to ×2.6 denser, ×2.5 brighter, warm), away from the sun it stays the cool metered sky. The land
+  drop still applies after it, so the near land goes deep and the far ridges glow: "each ridge one step paler".
+  `settings.golden.glow` (default 1, 0 disables); it is applied in `_finish`, so `recomposite()` A/Bs it:
+  `{"eval":"(__rvPost.pipeline.settings.golden=Object.assign({},__rvPost.pipeline.settings.golden,{glow:0}),__rvPost.recomposite(),1)"}`.
+  Verified on the W1 sunrise behind the volcano (the cone's upper slopes and the sea of cloud turn gold) and the
+  W3 sunset (a red luminous veil at the cliff foot under the sun). Note: other render-time grade uniforms are NOT
+  refreshed by `recomposite()` (only looks and the glow); toggle them with a real render.
+* **Blue hour no longer desaturated twice**: the atmosphere drains the land's colour itself now (`uLandMono`), so
+  post's `dusk.desat` only tops up what it leaves (`× (1 − uLandMono.x)`).
+
 ### Photo looks (UI photo mode)
 `pipeline.setPhotoLook(name, opts?)`, `pipeline.cyclePhotoLook(dir)`, `pipeline.photoLooks` (names), URL `&look=name`.
 The look survives `resetLook()` (it is the player's choice). Applied after the LUT, so the output is exactly the look's
@@ -137,7 +150,7 @@ purkinje, motionBlur: { enabled, strength }, dof: { enabled: true|false|'photo',
 harmony: 'auto'|false|{hueA, hueB, strength, splitShadow, splitHigh, warmHue, accentHue, accentWidth, accentSat, otherSat},
 harmonyStrength, haze: { enabled, strength, distance, fallback }, night: { lift }, dusk: { desat, keyDrop },
 eclipse: 'auto'|0..1, photoLook, photoLookOpts, flare.spaceGlow,
-golden: { enabled, strength, keyDrop, landDrop, warmth }, night: { lift, sky, mist },
+golden: { enabled, strength, keyDrop, landDrop, warmth, glow }, night: { lift, sky, mist },
 debugView: 'scene'   // composite the raw scene target (bisecting)
 ```
 The grade LUT is rebuilt only when grade-relevant settings change (`gradeSignature`).
@@ -164,6 +177,9 @@ Season 2 round 3 (looks are captured by URL `&look=name`, or switched on the sam
   steps `[{"advance":1}]`
 * **Ink wash through the arch** (vermilion lilies and scarf): the arch URL with `&look=ink`
 * **Poster** on the W3 dunes: the two-tone URL with `&look=poster`
+* **Sunrise behind the volcano, backlit gold haze (no look)**:
+  `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=800&lat=17.777&lon=-2.5&yaw=87&pitch=6&tod=0.272&disable=fauna,vehicles`
+  steps `[{"advance":1}]`
 * Golden hour grade (no look): the W3 URL without `look`; W1 sea of cloud at sunrise:
   `/?mode=system&galaxy=0&star=6&planet=1&view=fly&alt=700&lat=5.79&lon=13.2736&yaw=0&pitch=7&tod=0.28&disable=fauna,vehicles`
 
@@ -190,6 +206,19 @@ Earlier:
 * AO only: add `{"eval":"(__rvPost.pipeline.settings.ssao.debug=true,__rv.render(),1)"}`.
 
 ## Known issues
+* Open after season 2 (the round 3 critic, 21 Oct: 4.5 → 5.0 → 5.5/10, blind 1/4 → 3/4 → 1/4; the track's season-2
+  rounds are used up, so these lead the next pass): the critic credits real art direction (the kurosawa grade, the
+  sunrise god-ray fan on the volcano, the diamond-ring eclipse limb, the red lilies and scarf kept as the warm
+  accent), and the blind judges took the layered black-and-white valley with the floating isles. Still open: the
+  two-tone look collapses the land into a flat black slab with a pink outline, and candy and ink crush the land and
+  foreground to black with a cut-out outline, where the references keep layered silhouettes with atmosphere and a
+  poured sky; the kurosawa look is high-key and flat (no deep blacks, weak mid-tone separation); the sunrise frame is
+  low-contrast and desaturated with no foreground, figure or sun disc; the orbit limb is jagged (terrain LOD, see
+  section 6); the night reads muddy teal with a visible grain pattern instead of indigo. The cosmic view stayed
+  byte-identical to the baseline through this pass (checked 21 Oct).
+* Ink wash: a large rock right at the lens becomes a flat soft grey wash (no edges inside it); poster: a sunlit cliff
+  top can show a soft grey band where the smoothed light crosses the threshold.
+* The backlit gold haze follows the sun's colour (`uGoldTint`): on red-star worlds (W3) the veil is red, not gold.
 * The explorer mask is a projected capsule (0.42 m half-width, depth-matched ±0.45–0.9 m): a katana or scarf
   flying far outside it is graded as land; a rock touching her at the same depth joins her shape.
 * Looks band depth layers from `layerT` (6 m → 0.55 × atmosphere height); on very small moons the far layers come

@@ -562,3 +562,12 @@ visualizations). What separates AAA from "tech demo":
   Purkinje part of the earlier request is done; a lower exposure key while `world.atmosphere.twilight > 0.5` is still
   welcome. (Done by atmosphere: a warmer, lower golden-hour key light and a golden aureole at sunrise, the terrain
   round 1 request; the World Tree now lights the haze around it at dusk and night, the flora request.)
+
+#### Season 2: post round 2 (the Yotei pass) requests (21 Oct)
+* **post → ui** (updates the earlier photo-mode request) — the look names in `engine.pipeline.photoLooks` are now none,
+  twotone, bw, poster, candy, woodcut, kurosawa and ink; while paused, call `engine.pipeline.recomposite()` after
+  `setPhotoLook` / `cyclePhotoLook` so the look changes instantly.
+* **post → terrain** — from orbit (W1 `view=orbit`, `orbitLimbShot(0.8, 35)`) the lit edge is a stair-stepped
+  silhouette: clamp the edge chunks to a smooth sphere LOD, or fade the relief toward the silhouette at orbit distance.
+  (Still open from earlier: space drawing the star disc into HDR from orbit at far-plane depth; flora dithered leaf
+  alpha keyed to `G.uFrame`; optional core depth of field via `pipeline.settings.dof` in cinematic transitions.)

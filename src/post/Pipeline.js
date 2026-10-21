@@ -366,7 +366,7 @@ export class Pipeline {
       uPlayerA: { value: new THREE.Vector2() }, uPlayerB: { value: new THREE.Vector2() }, uPlayerR: { value: 0 }, uPlayerDist: { value: 0 }, uPlayerOn: { value: 0 },
       uLookD: { value: new THREE.Vector2(6, 4000) }, uWindUv: { value: new THREE.Vector2(1.2, 0) },
       uProjXY: { value: new THREE.Vector2(1, 1) }, uProjZW: { value: new THREE.Vector2() }, uSunView: { value: new THREE.Vector3(0, 0, -1) },
-      uGolden: { value: 0 }, uLandDrop: { value: 0 }, uGoldTint: { value: new THREE.Vector3(1, 1, 1) }, uNightSky: { value: 0 }, uMist: { value: 0 },
+      uGolden: { value: 0 }, uGoldGlow: { value: 0 }, uLandDrop: { value: 0 }, uGoldTint: { value: new THREE.Vector3(1, 1, 1) }, uNightSky: { value: 0 }, uMist: { value: 0 },
     });
     this.finalMat = makeFullscreenMaterial(FINAL_FRAG, {
       tSrc: { value: this.ldrRT.texture }, uInvRes: { value: new THREE.Vector2(1 / this.width, 1 / this.height) },
@@ -660,7 +660,10 @@ export class Pipeline {
     const hz = s.haze || {};
     const under = !!water?.under;
     const hazeOn = !!this._resolve(hz.enabled, modeName === 'system') && persp && !under && spaceK0 < 0.999;
-    const duskDesat = (dusk.desat ?? 0.5) * twilight * (under ? 0 : 1);
+    // the atmosphere now drains the blue-hour land itself (uLandMono, 21 Oct): only top up what it leaves, so the
+    // land is not desaturated twice into grey
+    const atmMono = THREE.MathUtils.clamp(+atm?.effect?.u?.uLandMono?.value?.x || 0, 0, 1);
+    const duskDesat = (dusk.desat ?? 0.5) * twilight * (under ? 0 : 1) * (1 - atmMono);
     const lookOn = this._lookActive();
     if (hazeOn || duskDesat > 0 || lookOn) { try { this.skyMeter.update(r, this.quad, hdr.texture, this.depthTexture); } catch (e) { /* optional */ } }
 
@@ -714,6 +717,7 @@ export class Pipeline {
     u.uNightLift.value = aeOn && modeName === 'system' && !under ? (s.night?.lift ?? 0.9) * night * (1 - spaceK0) : 0;
     u.uEclipse.value = ecl;
     u.uGolden.value = golden * (s.golden?.strength ?? 1.3) * (under ? 0 : 1);
+    this._goldK = golden * (under ? 0 : 1);   // backlit haze (set in _finish so recomposite() follows settings)
     { const c = G.uSunColor.value, l = Math.max(1e-4, 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b), w = s.golden?.warmth ?? 0.6;
       u.uGoldTint.value.set(1 + (c.r / l - 1) * w, 1 + (c.g / l - 1) * w, 1 + (c.b / l - 1) * w); }
     { const mp = this.motion.proj; u.uProjXY.value.set(mp.x, mp.y); u.uProjZW.value.set(mp.z, mp.w);
@@ -737,6 +741,8 @@ export class Pipeline {
     const r = this.renderer, s = this.settings, q = this.q, st = this.stats;
     const u = this.compositeMat.uniforms;
     this._lastFinish = { world, aa, samples };
+    // backlit haze: the low sun scattered forward by the haze layers (settings.golden.glow, 0 disables)
+    u.uGoldGlow.value = s.golden?.enabled === false ? 0 : Math.min(1, (this._goldK || 0) * (s.golden?.strength ?? 1.3)) * (s.golden?.glow ?? 1);
     this._applyPhotoLook(u, world);
     st.look = this._look.name || 'none';
     this.quad.draw(r, this.compositeMat, this.ldrRT);
