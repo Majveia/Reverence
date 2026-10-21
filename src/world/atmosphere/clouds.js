@@ -948,7 +948,7 @@ export class Clouds {
     // night: the clouds sit IN the indigo starlit sky (not black holes cut into it), and town light lifts their
     // bases (light pollution glows on the deck)
     const nsk = this.atmo.shared?.uNightSky?.value, eu = this.atmo.effect?.u;
-    if (nsk) at.addScaledVector(nsk, 0.9);
+    if (nsk) { at.addScaledVector(nsk, 2.0); u.uAmbBot.value.addScaledVector(nsk, 1.3); }   // (≈ the sky radiance around them: no black smoke)
     // (on neon-noir worlds the light pollution lights the whole cloud, its base most: clouds sit in the
     // glowing night sky instead of reading as black smoke; elsewhere only a faint warm underside)
     if (eu && eu.uCitySky.value > 0) { const cc = eu.uCityCol.value, cs = eu.uCitySky.value, moodyC = this.atmo.model?.moody || 0; u.uAmbBot.value.addScaledVector(cc, cs * (0.5 + 5.5 * moodyC)); at.addScaledVector(cc, cs * 2.2 * moodyC); }
