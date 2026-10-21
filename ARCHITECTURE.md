@@ -571,3 +571,11 @@ visualizations). What separates AAA from "tech demo":
   silhouette: clamp the edge chunks to a smooth sphere LOD, or fade the relief toward the silhouette at orbit distance.
   (Still open from earlier: space drawing the star disc into HDR from orbit at far-plane depth; flora dithered leaf
   alpha keyed to `G.uFrame`; optional core depth of field via `pipeline.settings.dof` in cinematic transitions.)
+
+#### Season 2: audio round 1 requests (21 Oct; the music is now chillhop/lofi × Ghost of Yotei × Zelda)
+* **audio → player** (optional) — also send `audio.setParam('discovery', 1)` when the World Tree (`flora.sacred`) or
+  the great mountain (`terrain.landmarks.mountain`) first comes into view: each world then gets a taiko swell and a
+  statement of the main theme; while drifting on the ring of light (Drift), set `audio.setParam('glide', 1)` so the
+  music lifts as it does while gliding. (Commune already reads `world.player.meditating` live.)
+* **audio → ui** (optional) — a music volume slider separate from the master volume (`audio.mix.setBus('music', v)`
+  already exists).

@@ -131,6 +131,30 @@ info = json.load(open(jsonf))
 w = wave.open(wavf); sr = w.getframerate(); n = w.getnframes()
 x = np.frombuffer(w.readframes(n), dtype=np.int16).reshape(-1, 2).astype(np.float32) / 32768
 m = x.mean(axis=1)
+# integrated loudness (ITU-R BS.1770 K-weighting applied in the frequency domain, 400 ms blocks, gated)
+def biq(b, a, w):
+    z = np.exp(-1j * w)
+    return (b[0] + b[1] * z + b[2] * z * z) / (a[0] + a[1] * z + a[2] * z * z)
+def kresp(nf):
+    w = 2 * np.pi * np.fft.rfftfreq(nf, 1 / sr) / sr
+    G, fc, Q = 3.99984385397, 1681.97445095, 0.7071752369554193
+    A = 10 ** (G / 40); w0 = 2 * np.pi * fc / sr; al = np.sin(w0) / (2 * Q); c = np.cos(w0)
+    b1 = [A * ((A + 1) + (A - 1) * c + 2 * np.sqrt(A) * al), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - 2 * np.sqrt(A) * al)]
+    a1 = [(A + 1) - (A - 1) * c + 2 * np.sqrt(A) * al, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - 2 * np.sqrt(A) * al]
+    fc2, Q2 = 38.13547087613982, 0.5003270373253953; w2 = 2 * np.pi * fc2 / sr; al2 = np.sin(w2) / (2 * Q2); c2 = np.cos(w2)
+    b2 = [(1 + c2) / 2, -(1 + c2), (1 + c2) / 2]; a2 = [1 + al2, -2 * c2, 1 - al2]
+    return biq(b1, a1, w) * biq(b2, a2, w)
+nf = len(x); K = kresp(nf)
+y = np.stack([np.fft.irfft(np.fft.rfft(x[:, ch]) * K, nf) for ch in range(2)], axis=1)
+blk, hop = int(0.4 * sr), int(0.1 * sr)
+z = np.array([(y[i:i + blk] ** 2).mean(axis=0).sum() for i in range(0, max(1, nf - blk), hop)])
+lk = -0.691 + 10 * np.log10(z + 1e-12)
+g1 = z[lk > -70]
+lufs = None
+if len(g1):
+    rel = -0.691 + 10 * np.log10(g1.mean()) - 10
+    g2 = z[(lk > -70) & (lk > rel)]
+    lufs = round(float(-0.691 + 10 * np.log10(g2.mean() + 1e-12)), 1)
 N, H = 4096, 1024
 win = np.hanning(N)
 frames = 1 + max(0, (len(m) - N) // H)
@@ -148,7 +172,7 @@ mu = info.get('debug', {}).get('music', {}) or {}
 title = f"{info['name']}  ·  {mu.get('label') or ''}  {('· ' + mu['note']) if mu.get('note') else ''}"
 ax.set_title(title, color='#eee', fontsize=12, loc='left')
 met = info['metrics']
-ax.text(0.995, 0.98, f"key {mu.get('key','?')} · {mu.get('bpm','?')} bpm · {mu.get('meter','?')}/4\npeak {met['peakDb']} dBFS · RMS {met['rmsDb']} dBFS · LUFS≈{met['lufs']}\ncentroid {met['centroid']} Hz · width {met['width']} · clipped {met['clipped']}",
+ax.text(0.995, 0.98, f"key {mu.get('key','?')} · {mu.get('bpm','?')} bpm · {mu.get('meter','?')}/4\npeak {met['peakDb']} dBFS · RMS {met['rmsDb']} dBFS · {lufs} LUFS (BS.1770)\ncentroid {met['centroid']} Hz · width {met['width']} · clipped {met['clipped']}",
         transform=ax.transAxes, ha='right', va='top', color='#ddd', fontsize=9, family='monospace', bbox=dict(facecolor='#000a', edgecolor='#333'))
 ax2 = fig.add_subplot(gs[1], sharex=ax); ax2.set_facecolor('#000')
 blk = int(sr * 0.05); nb = len(m) // blk
@@ -185,30 +209,6 @@ if len(flux) > fps * 6:
     bpm = float(best) if best else None
 q = np.array_split(m, 4)
 quarters = [round(float(20 * np.log10(np.sqrt((x ** 2).mean()) + 1e-9)), 1) for x in q]
-# integrated loudness (ITU-R BS.1770 K-weighting applied in the frequency domain, 400 ms blocks, gated)
-def biq(b, a, w):
-    z = np.exp(-1j * w)
-    return (b[0] + b[1] * z + b[2] * z * z) / (a[0] + a[1] * z + a[2] * z * z)
-def kresp(nf):
-    w = 2 * np.pi * np.fft.rfftfreq(nf, 1 / sr) / sr
-    G, fc, Q = 3.99984385397, 1681.97445095, 0.7071752369554193
-    A = 10 ** (G / 40); w0 = 2 * np.pi * fc / sr; al = np.sin(w0) / (2 * Q); c = np.cos(w0)
-    b1 = [A * ((A + 1) + (A - 1) * c + 2 * np.sqrt(A) * al), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - 2 * np.sqrt(A) * al)]
-    a1 = [(A + 1) - (A - 1) * c + 2 * np.sqrt(A) * al, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - 2 * np.sqrt(A) * al]
-    fc2, Q2 = 38.13547087613982, 0.5003270373253953; w2 = 2 * np.pi * fc2 / sr; al2 = np.sin(w2) / (2 * Q2); c2 = np.cos(w2)
-    b2 = [(1 + c2) / 2, -(1 + c2), (1 + c2) / 2]; a2 = [1 + al2, -2 * c2, 1 - al2]
-    return biq(b1, a1, w) * biq(b2, a2, w)
-nf = len(x); K = kresp(nf)
-y = np.stack([np.fft.irfft(np.fft.rfft(x[:, ch]) * K, nf) for ch in range(2)], axis=1)
-blk, hop = int(0.4 * sr), int(0.1 * sr)
-z = np.array([(y[i:i + blk] ** 2).mean(axis=0).sum() for i in range(0, max(1, nf - blk), hop)])
-lk = -0.691 + 10 * np.log10(z + 1e-12)
-g1 = z[lk > -70]
-lufs = None
-if len(g1):
-    rel = -0.691 + 10 * np.log10(g1.mean()) - 10
-    g2 = z[(lk > -70) & (lk > rel)]
-    lufs = round(float(-0.691 + 10 * np.log10(g2.mean() + 1e-12)), 1)
 print(json.dumps({'bands': bands, 'tempoBpm': bpm, 'quartersDb': quarters, 'lufs': lufs, 'lufsNote': 'BS.1770 integrated (gated)'}))
 `;
 const pyFile = path.join(outDir, '.spectrogram.py');

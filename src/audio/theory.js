@@ -229,13 +229,14 @@ export const MAIN_THEME = {
   call: [[0, 1.5, 3], [1.5, 0.5, 4], [2, 2, 6], [4, 1, 5], [5, 0.5, 4], [5.5, 2.5, 3]],
   answer: [[0, 1, 2], [1, 0.5, 3], [1.5, 1.5, 4], [3, 1, 3], [4, 1, 1], [5, 0.5, 2], [5.5, 2.5, 0]],
   // chord degrees (one per bar, 7-note mode) that carry the theme, by mode family
-  prog: { bright: [0, 5, 3, 0], dorian: [0, 6, 3, 0], minor: [0, 5, 3, 0], phrygian: [0, 1, 5, 0], other: [0, 3, 0, 0] },
+  prog: { lydian: [0, 5, 1, 0], bright: [0, 5, 3, 0], dorian: [0, 6, 3, 0], minor: [0, 5, 3, 0], phrygian: [0, 1, 5, 0], other: [0, 3, 0, 0] },
 };
 /** Discovery jingle: a short rising "da-da-da-DAAA" (pentatonic indices from the tonic), its own shape. */
 export const JINGLE = [[0, 3], [1, 4], [2, 6], [3.2, 8]];
 
 export function themeProg(mode) {
-  if (mode === 'ionian' || mode === 'lydian' || mode === 'mixolydian' || mode === 'lydianDom') return MAIN_THEME.prog.bright;
+  if (mode === 'lydian' || mode === 'lydianDom') return MAIN_THEME.prog.lydian;
+  if (mode === 'ionian' || mode === 'mixolydian') return MAIN_THEME.prog.bright;
   if (mode === 'dorian') return MAIN_THEME.prog.dorian;
   if (mode === 'aeolian' || mode === 'harmonic') return MAIN_THEME.prog.minor;
   if (mode === 'phrygian' || mode === 'hijaz') return MAIN_THEME.prog.phrygian;

@@ -55,8 +55,7 @@ export class Composer {
     m.setEcho(this.beat * e.beats, e.fb, e.mix, t);
     m.setInsert(style.insert || {}, t);
     m.musicTrim.gain.setTargetAtTime(style.trim ?? 1, t, 0.8);
-    // the trim also scales the music's reverb / echo sends, so a style's loudness is its trim (wet included)
-    m.reverbIn.gain.setTargetAtTime(style.trim ?? 1, t, 0.8); m.echoIn.gain.setTargetAtTime(style.trim ?? 1, t, 0.8);
+    m.musicOut?.gain.setTargetAtTime(style.out ?? 1, t, 0.8);   // loudness normaliser (dry + reverb + echo)
     const q = this.host.quality;
     for (const def of style.layers) {
       const L = { def, on: false, voicing: null, motif: null, anchor: null, last: null };
@@ -73,7 +72,7 @@ export class Composer {
       this.layers.push(L);
     }
     this.bar = 0; this.section = null; this.sectionCount = 0; this.queue = []; this.chord = null; this.chordBarsLeft = 0;
-    this._lastTheme = -99; this._insertKey = null;
+    this._lastTheme = -99; this._insertKey = null; this._themeRot = r.int(0, 5);
     this.nextBar = t + 0.25;
   }
 
@@ -168,6 +167,7 @@ export class Composer {
     const st = this.style, r = this.r, E = this.energy;
     this.sectionCount++;
     this._moodInsert(t0);
+    this.mix.musicOut?.gain.setTargetAtTime((st.out ?? 1) * (this._liftOn ? 0.84 : 1) * (this.night > 0.5 && st.nightLp ? 1.22 : 1), t0, 1.2);
     if (this.sectionCount > 1 && this.sectionCount % 3 === 0) this._pickMode(false);
     else if ((this.night > 0.5) !== this._wasNight || (this.danger > 0.5) !== this._wasDanger) this._pickMode(false);
     this._wasNight = this.night > 0.5; this._wasDanger = this.danger > 0.5;
@@ -269,7 +269,10 @@ export class Composer {
       if (lastBar && (this.style.prog === 'tonal' || this.style.prog === 'jazz') && r.chance(0.5)) this.chord = { deg: 0, ext: this.chord.ext, bars: 1 };
       if (sec.kind === 'intro' || sec.kind === 'resolve' || (sec.kind === 'breath' && r.chance(0.5))) this.chord = { deg: 0, ext: sec.kind === 'resolve' ? 'add9' : r.weighted(this.style.exts), bars: sec.kind === 'resolve' ? 2 : 1 };
       if (sec.kind === 'theme') { this.chord = { deg: themeProg(this.modeName)[phraseBar] % this.h.size, ext: r.weighted(this.style.exts), bars: 1 }; this.queue.length = 0; }
-      if (sec.kind === 'commune') this.chord = { deg: r.chance(0.7) ? 0 : r.pick([3, 5]) % this.h.size, ext: r.pick(['add9', 'sus2']), bars: 2 };
+      if (sec.kind === 'commune') { // hold home; now and then lean to a consonant neighbour (never a diminished triad)
+        const alt = [3, 5, 6, 4].filter((k) => k < this.h.size && (this.h.deg(k + 4) - this.h.deg(k) + 12) % 12 === 7);
+        this.chord = { deg: r.chance(0.7) || !alt.length ? 0 : r.pick(alt), ext: r.pick(['add9', 'sus2']), bars: 2 };
+      }
       this.chordBarsLeft = Math.min(this.chord.bars, sec.left);
       this.chordChanged = true;
       this.chordMidis = this.h.chord(this.chord.deg, this.chord.ext);
@@ -636,7 +639,7 @@ export class Composer {
           for (let b = 0; b < M; b += 0.5) {
             if (r.chance(0.08)) continue;
             const on = !(b % 1);
-            H('hat', b, (on ? 0.24 : 0.15) * (town ? 1.15 : 1), { lp: 9500, pan: 0.32, variant: on ? 0 : 1 });
+            H('hat', b, (on ? 0.3 : 0.19) * (town ? 1.15 : 1), { lp: 12000, pan: 0.32, variant: on ? 0 : 1 });
             if (town && !on && r.chance(0.5)) H('shaker', b + 0.25, 0.12, { pan: -0.35 });
           }
           if (r.chance(0.25)) H('hat', M - 0.25, 0.08, { lp: 7800, pan: 0.28 });

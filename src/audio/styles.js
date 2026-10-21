@@ -1,6 +1,8 @@
 // Music styles (AUDIO track). A style is data read by the Composer (music.js):
 //   bpm, meter, swing, modes {day, night}, tonic range, progression graph, chord length (bars),
 //   chord extensions, reverb / echo / tape insert, breath (probability of resting sections), layers.
+//   trim = dry level into the insert (sets the dry/wet balance); out = loudness normaliser after dry + reverb + echo
+//   (calibrated with BS.1770 offline renders to about -16.5 LUFS music-only).
 // Layer types: pad · drone · arp · melody · bass · comp · perc · grains · bells · counter
 //   minE = energy needed for the layer to join a section (energy = flow + danger + discovery),
 //   prob = chance the layer plays in a section it qualifies for (contrast between sections).
@@ -15,7 +17,7 @@
 export const STYLES = {
   // ------------------------------------------------------------------ scales
   cosmic: {
-    trim: 0.37, label: 'Cosmic web — vast evolving pads, the theme on a distant shakuhachi', bpm: [38, 44], meter: 4, swing: 0.5,
+    trim: 0.57, out: 0.427, label: 'Cosmic web — vast evolving pads, the theme on a distant shakuhachi', bpm: [38, 44], meter: 4, swing: 0.5,
     modes: { day: ['lydian', 'ionian', 'lydian', 'dorian'], night: ['lydian', 'dorian'] }, tonic: [38, 40],
     prog: 'lydian', chordBars: [[2, 2], [3, 1]], exts: [['sus2', 3], ['add9', 3], ['quartal', 2], ['triad', 1]],
     reverb: 'cosmos', revLevel: 0.8, echo: { beats: 1.5, fb: 0.45, mix: 0.35 }, insert: {}, breath: 0, modulate: 0.45, themeEvery: 3, themeFirst: 2,
@@ -29,7 +31,7 @@ export const STYLES = {
     ],
   },
   galaxy: {
-    trim: 0.41, label: 'Galaxy — choir of stars', bpm: [44, 50], meter: 4, swing: 0.5,
+    trim: 0.52, out: 0.66, label: 'Galaxy — choir of stars', bpm: [44, 50], meter: 4, swing: 0.5,
     modes: { day: ['aeolian', 'dorian', 'lydian'], night: ['aeolian', 'dorian'] }, tonic: [43, 45],
     prog: 'aeolian', chordBars: [[2, 3], [1, 1]], exts: [['triad', 3], ['add9', 2], ['sus2', 1]],
     reverb: 'cathedral', revLevel: 0.75, echo: { beats: 1.5, fb: 0.35, mix: 0.25 }, insert: {}, breath: 0.05, modulate: 0.3, themeEvery: 3, themeFirst: 2,
@@ -45,7 +47,7 @@ export const STYLES = {
     ],
   },
   space: {
-    trim: 0.44, label: 'Deep space — drones, distant radio, the theme on bowed glass', bpm: [34, 40], meter: 4, swing: 0.5,
+    trim: 0.6, out: 0.556, label: 'Deep space — drones, distant radio, the theme on bowed glass', bpm: [34, 40], meter: 4, swing: 0.5,
     modes: { day: ['dorian', 'aeolian', 'lydian'], night: ['aeolian', 'phrygian'] }, tonic: [33, 35],
     prog: 'planing', chordBars: [[3, 2], [4, 2]], exts: [['sus2', 2], ['quartal', 2], ['power', 1]],
     reverb: 'cosmos', revLevel: 0.7, echo: { beats: 2, fb: 0.5, mix: 0.3 }, insert: {}, breath: 0.1, modulate: 0.25, themeEvery: 3, themeFirst: 2,
@@ -64,7 +66,7 @@ export const STYLES = {
   // soft kit with a kick-triggered pump, tape wow + vinyl, low-passed "from another room"; koto figures and
   // a shakuhachi singing the mode's Japanese pentatonic; sparse felt piano with rests; distant taiko at vistas.
   chillhop: {
-    trim: 0.55, label: 'Chillhop × Yotei — Rhodes, sub, swung kit, koto & shakuhachi', bpm: [72, 86], meter: 4, swing: 0.6,
+    trim: 0.55, out: 0.838, label: 'Chillhop × Yotei — Rhodes, sub, swung kit, koto & shakuhachi', bpm: [72, 86], meter: 4, swing: 0.6,
     modes: { day: ['dorian', 'ionian', 'mixolydian', 'dorian', 'aeolian'], night: ['dorian', 'aeolian', 'phrygian'] }, tonic: [46, 53],
     prog: 'lofi', chordBars: [[1, 3], [2, 2]], exts: [['7', 2], ['9', 3], ['11', 2], ['add9', 1]],
     reverb: 'valley', revLevel: 0.5, echo: { beats: 0.75, fb: 0.3, mix: 0.12 }, insert: { wow: 0.3, flutter: 0.4, lp: 11000, drive: 0.2, crackle: 0.5 }, nightLp: 0.5,
@@ -83,7 +85,7 @@ export const STYLES = {
     ],
   },
   pastoral: {
-    trim: 0.72, label: 'Pastoral — piano, harp & strings', bpm: [70, 86], meter: [[4, 3], [3, 1.3]], swing: 0.5,
+    trim: 0.72, out: 1, label: 'Pastoral — piano, harp & strings', bpm: [70, 86], meter: [[4, 3], [3, 1.3]], swing: 0.5,
     modes: { day: ['lydian', 'ionian', 'ionian', 'mixolydian'], night: ['dorian', 'aeolian', 'ionian'] }, tonic: [48, 55],
     prog: 'tonal', chordBars: [[1, 3], [2, 2]], exts: [['triad', 3], ['add9', 2], ['7', 1], ['sus2', 1]],
     reverb: 'valley', revLevel: 0.6, echo: { beats: 0.75, fb: 0.25, mix: 0.12 }, insert: {}, breath: 0.12, modulate: 0.25,
@@ -97,7 +99,7 @@ export const STYLES = {
     ],
   },
   hearth: {
-    trim: 1.5, label: 'Hearth — banjo, guitar & harmonica by the campfire', bpm: [76, 92], meter: [[4, 3], [3, 1]], swing: 0.54,
+    trim: 1.5, out: 1.259, label: 'Hearth — banjo, guitar & harmonica by the campfire', bpm: [76, 92], meter: [[4, 3], [3, 1]], swing: 0.54,
     modes: { day: ['mixolydian', 'ionian', 'yo'], night: ['dorian', 'mixolydian'] }, tonic: [45, 52],
     prog: 'mixolydian', chordBars: [[1, 2], [2, 2]], exts: [['triad', 4], ['sus4', 1], ['7', 1]],
     reverb: 'outdoor', revLevel: 0.55, echo: { beats: 0.5, fb: 0.15, mix: 0.05 }, insert: { wow: 0.15, lp: 12000 }, breath: 0.2, modulate: 0.15,
@@ -111,7 +113,7 @@ export const STYLES = {
     ],
   },
   desert: {
-    trim: 0.85, label: 'Desert — duduk over drones, frame drums', bpm: [84, 98], meter: 4, swing: 0.5,
+    trim: 0.85, out: 0.617, label: 'Desert — duduk over drones, frame drums', bpm: [84, 98], meter: 4, swing: 0.5,
     modes: { day: ['lydianDom', 'mixolydian', 'hijaz'], night: ['hijaz', 'phrygian', 'aeolian'] }, tonic: [45, 51],
     prog: 'drone', chordBars: [[2, 2], [4, 1]], exts: [['power', 3], ['sus2', 1], ['triad', 1]],
     reverb: 'valley', revLevel: 0.65, echo: { beats: 0.75, fb: 0.3, mix: 0.12 }, insert: { drive: 0.1 }, breath: 0.15, modulate: 0.1,
@@ -124,7 +126,7 @@ export const STYLES = {
     ],
   },
   dune: {
-    trim: 0.62, label: 'Arrakeen — throat drones, war drums', bpm: [58, 66], meter: 4, swing: 0.5,
+    trim: 0.62, out: 0.741, label: 'Arrakeen — throat drones, war drums', bpm: [58, 66], meter: 4, swing: 0.5,
     modes: { day: ['hijaz', 'phrygian', 'aeolian'], night: ['phrygian', 'hijaz'] }, tonic: [36, 41],
     prog: 'drone', chordBars: [[2, 2], [4, 2]], exts: [['power', 3], ['triad', 1]],
     reverb: 'cathedral', revLevel: 0.7, echo: { beats: 1, fb: 0.3, mix: 0.1 }, insert: { drive: 0.35 }, breath: 0.2, modulate: 0.05,
@@ -136,7 +138,7 @@ export const STYLES = {
     ],
   },
   vangelis: {
-    trim: 0.7, label: 'Neon Monsoon — CS-80 brass, bells in the rain', bpm: [60, 70], meter: 4, swing: 0.5,
+    trim: 0.7, out: 0.861, label: 'Neon Monsoon — CS-80 brass, bells in the rain', bpm: [60, 70], meter: 4, swing: 0.5,
     modes: { day: ['aeolian', 'dorian', 'lydian'], night: ['aeolian', 'dorian', 'phrygian'] }, tonic: [43, 50],
     prog: 'aeolian', chordBars: [[2, 3], [1, 1]], exts: [['add9', 2], ['triad', 2], ['sus2', 1], ['7', 1]],
     reverb: 'cathedral', revLevel: 0.85, echo: { beats: 0.75, fb: 0.45, mix: 0.3 }, insert: { drive: 0.1 }, breath: 0.08, modulate: 0.2,
@@ -149,7 +151,7 @@ export const STYLES = {
     ],
   },
   lofi: {
-    trim: 0.58, label: 'Bebop — walking bass, brushes, rhodes', bpm: [80, 92], meter: 4, swing: 0.64,
+    trim: 0.58, out: 0.881, label: 'Bebop — walking bass, brushes, rhodes', bpm: [80, 92], meter: 4, swing: 0.64,
     modes: { day: ['dorian', 'ionian', 'mixolydian'], night: ['dorian', 'aeolian'] }, tonic: [45, 52],
     prog: 'jazz', chordBars: [[1, 4], [2, 1]], exts: [['7', 3], ['9', 2]],
     reverb: 'room', revLevel: 0.45, echo: { beats: 0.5, fb: 0.2, mix: 0.05 }, insert: { wow: 0.35, flutter: 0.5, lp: 7200, drive: 0.25, crackle: 0.6 }, breath: 0.08, modulate: 0.3,
@@ -162,7 +164,7 @@ export const STYLES = {
     ],
   },
   drift: {
-    trim: 0.5, label: 'Loop Lowlands — melancholic synths on worn tape', bpm: [72, 84], meter: 4, swing: 0.5,
+    trim: 0.5, out: 0.622, label: 'Loop Lowlands — melancholic synths on worn tape', bpm: [72, 84], meter: 4, swing: 0.5,
     modes: { day: ['aeolian', 'dorian', 'ionian'], night: ['aeolian', 'dorian'] }, tonic: [45, 52],
     prog: 'aeolian', chordBars: [[1, 2], [2, 3]], exts: [['add9', 3], ['triad', 2], ['sus2', 2], ['7', 1]],
     reverb: 'hall', revLevel: 0.65, echo: { beats: 0.75, fb: 0.4, mix: 0.25 }, insert: { wow: 0.7, flutter: 0.8, lp: 9000, drive: 0.2, crackle: 0.15 }, breath: 0.12, modulate: 0.2,
@@ -176,7 +178,7 @@ export const STYLES = {
     ],
   },
   quirky: {
-    trim: 0.84, label: 'C-137 Wilds — theremin, bleeps & bouncy bass', bpm: [100, 116], meter: 4, swing: 0.56,
+    trim: 0.84, out: 0.902, label: 'C-137 Wilds — theremin, bleeps & bouncy bass', bpm: [100, 116], meter: 4, swing: 0.56,
     modes: { day: ['mixolydian', 'lydianDom', 'dorian'], night: ['dorian', 'wholetone'] }, tonic: [45, 52],
     prog: 'mixolydian', chordBars: [[1, 3], [2, 1]], exts: [['triad', 2], ['7', 2], ['sus4', 1], ['6', 1]],
     reverb: 'plate', revLevel: 0.5, echo: { beats: 0.75, fb: 0.35, mix: 0.2 }, insert: { wow: 0.25, drive: 0.15 }, breath: 0.1, modulate: 0.5, mediant: 0.35,
@@ -189,7 +191,7 @@ export const STYLES = {
     ],
   },
   eerie: {
-    trim: 0.66, label: 'The Zone — sparse, eerie, sacred', bpm: [42, 50], meter: 4, swing: 0.5,
+    trim: 0.66, out: 0.638, label: 'The Zone — sparse, eerie, sacred', bpm: [42, 50], meter: 4, swing: 0.5,
     modes: { day: ['aeolian', 'phrygian', 'dorian'], night: ['phrygian', 'in', 'aeolian'] }, tonic: [40, 47],
     prog: 'planing', chordBars: [[2, 2], [3, 1]], exts: [['cluster', 2], ['sus2', 2], ['quartal', 2], ['triad', 1]],
     reverb: 'cathedral', revLevel: 0.85, echo: { beats: 1.5, fb: 0.4, mix: 0.2 }, insert: { wow: 0.1 }, breath: 0.4, modulate: 0.3,
@@ -202,7 +204,7 @@ export const STYLES = {
     ],
   },
   sublime: {
-    trim: 0.8, label: 'Sublime — romantic strings, choir & horn', bpm: [56, 66], meter: [[4, 2], [3, 1]], swing: 0.5,
+    trim: 0.8, out: 1.035, label: 'Sublime — romantic strings, choir & horn', bpm: [56, 66], meter: [[4, 2], [3, 1]], swing: 0.5,
     modes: { day: ['aeolian', 'dorian', 'ionian'], night: ['aeolian', 'dorian'] }, tonic: [43, 50],
     prog: 'aeolian', chordBars: [[1, 1], [2, 3]], exts: [['triad', 3], ['add9', 1], ['sus4', 1]],
     reverb: 'cathedral', revLevel: 0.72, echo: { beats: 1, fb: 0.2, mix: 0.08 }, insert: {}, breath: 0.12, modulate: 0.25,
