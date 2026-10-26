@@ -106,11 +106,12 @@ export default class CosmicMode extends Mode {
     this.startTau = params.returning ? T_OPEN + 6 : (num('ct') ?? params.ct ?? 0);
     this.focusCluster = Math.max(0, Math.floor(num('cl') ?? 0));
     this.focusGalaxy = num('gal');
+    this._schedTest = num('simsched');
 
     // --- GPU sim + renderer
     this.sim = new CosmicSim(e.renderer, { N, M, sub: subGrowth });
     if (num('pm') === 0) this.sim.ok = false;
-    this.view = new CosmicRenderer(e, this.sim, { L: BOX, K, drawCount: this.cfg.drawCount, h0: this.cfg.h0, maxPx: this.cfg.maxPx, accumScale: this.cfg.accumScale, fog: 60, sph: num('sph'), kt: num('kt'), aniso: num('an') ?? (N === 64 ? 0 : 1), aspect: num('asp') });
+    this.view = new CosmicRenderer(e, this.sim, { L: BOX, K, drawCount: this.cfg.drawCount, h0: this.cfg.h0, maxPx: this.cfg.maxPx, accumScale: this.cfg.accumScale, fog: 60, sph: num('sph'), kt: num('kt'), aniso: num('an') ?? (N === 64 ? 0 : 1), aspect: num('asp'), split: num('split') !== 0, splitFogOnly: !!q.software && num('split') !== 1 });
     this.scene.add(this.view.comp);
     // look tuning (URL overrides are for art-direction iteration)
     const cu0 = this.view.compMat.uniforms, au0 = this.view.accMat.uniforms;
@@ -148,8 +149,9 @@ export default class CosmicMode extends Mode {
       r0._dist = 3; r0.distance = MEMORY.distance;       // pull back out of the galaxy we left
     }
 
-    // --- initial conditions (worker)
+    // --- initial conditions (worker); meanwhile the sim and render shaders compile in the background
     this._startWorker();
+    this._precompile();
 
     e.ui?.setLocation?.({ scale: 'Universe', title: 'Cosmic Web', subtitle: `${BOX} Mpc/h · ΛCDM` });
     if (!params.returning) e.ui?.showTitle?.('REVERENCE', 'a universe, alive', 5200);
@@ -175,6 +177,24 @@ export default class CosmicMode extends Mode {
       cmd: 'ic', seed: e.universe.seed >>> 0, N, M, box: BOX, tilesX,
       galaxyMax: this.cfg.galaxyMax, formBoost: 2.0, clusterMax: 160, clusterSep: 16, rGlow: 7, rGal: 1.6, rCluster: 5, rEnv: 9,
     });
+  }
+
+  /**
+   * Compile every sim and render program while the IC worker runs (KHR_parallel_shader_compile where
+   * available), so neither the first frames nor the first PM step stall on a driver compile.
+   */
+  _precompile() {
+    const r = this.engine.renderer, s = this.sim, v = this.view;
+    if (!r?.compileAsync || !s || !v) return;
+    try {
+      const scene = new THREE.Scene();
+      for (const m of [s.mFold, s.mFFT, s.mK, s.mFoldHi, s.mKick, v.resolveMat, v.layersMat, v.lvMat, v.gatherMat]) {
+        if (!m) continue;
+        const q = new THREE.Mesh(s.tri, m); q.frustumCulled = false; scene.add(q);
+      }
+      for (const p of [s.depPts, s.depHiPts, v.accPts]) { const c = new THREE.Points(p.geometry, p.material); c.frustumCulled = false; scene.add(c); }
+      r.compileAsync(scene, s.qCam).catch(() => { /* compiled on first use instead */ });
+    } catch (_) { /* optional */ }
   }
 
   _tex(data) {
@@ -293,6 +313,43 @@ export default class CosmicMode extends Mode {
     return a >= s.aState;
   }
 
+  /** Display time τ at which the opening timeline reaches scale factor `a` (Infinity if never). */
+  _tauOfA(a) {
+    if (a <= A_START) return 0;
+    let lo = 0, hi = T_OPEN;
+    if (aAt(hi) < a) { lo = T_OPEN; hi = T_OPEN + 4000; if (aAt(hi) < a) return Infinity; }
+    for (let k = 0; k < 30; k++) { const m = 0.5 * (lo + hi); if (aAt(m) < a) lo = m; else hi = m; }
+    return hi;
+  }
+
+  /**
+   * Live play: the next COLA step is planned as soon as the previous one is committed and its GPU units are
+   * spread over the frames before it is due (a few units per frame instead of a ~50-pass stall in one frame).
+   * It is committed exactly when the legacy code would have run it (display a reaches the state's a), so the
+   * picture is the same; if the frame rate cannot keep up, the rest runs at the commit (the old behaviour).
+   */
+  _scheduleSim(dt) {
+    const s = this.sim;
+    if (!s?.ok || this.icStage < 2) return;
+    if (s.job && this._needStep()) s.commitStep();
+    if (this._needStep()) this._advanceSim(3);     // more than one step due at once (a long stall): catch up
+    if (!s.job) {
+      const from = s.aState ?? A_PM0;
+      const tDue = this._tauOfA(from);
+      if (!Number.isFinite(tDue)) return;
+      s.beginStep(from, from + DA, true);
+      s.job.tDue = tDue;
+      s.job.credit = 0;
+    }
+    const left = s.jobLeft;
+    if (!left) return;
+    // finish with ~40 % of the interval to spare: frames left at the current frame rate
+    const frames = Math.max(1, (s.job.tDue - this.tau) / Math.max(dt, 1 / 240) * 0.6);
+    s.job.credit += left / frames;
+    const n = Math.min(left, Math.floor(s.job.credit));
+    if (n > 0) { s.job.credit -= n; s.runStep(n); }
+  }
+
   _advanceSim(maxSteps) {
     const s = this.sim;
     let n = 0;
@@ -326,7 +383,9 @@ export default class CosmicMode extends Mode {
   update(dt) {
     if (this.disposed) return;
     const e = this.engine;
-    this._frame++;
+    // (captures: the harness ticks dt = 0 frames while it waits, so only simulated frames count — the gather
+    // and hero framing cadence then never depend on wall-clock time)
+    if (dt > 0 || !e.params.shot) this._frame++;
     this._syncSize();
     const input = e.input;
 
@@ -334,7 +393,13 @@ export default class CosmicMode extends Mode {
     if (this.icStage >= 1) this.tau += dt;
     const a = this.a = aAt(this.tau);
     const shot = !!e.params.shot;
-    if (this.icStage === 2) this._advanceSim(shot || this.tauJumped ? 64 : 3);
+    if (this.icStage === 2) {
+      // (testing: simsched=1 runs the live scheduler under deterministic capture, simsched=0 the old
+      // one-frame steps in live play)
+      const sync = shot ? this._schedTest !== 1 : this._schedTest === 0;
+      if (sync || this.tauJumped) this._advanceSim(shot || this.tauJumped ? 64 : 3);
+      else this._scheduleSim(dt);
+    }
     if (this.tauJumped && !this._needStep()) this.tauJumped = false;
     // no PM (unsupported / pm=0): keep a 2LPT render density fresh
     if (this.icStage === 2 && !this.sim.ok && this.sim.floatRT && a >= A_PM0 && Math.abs(a - (this._lptFieldA ?? 0)) > DA * 0.5) {
@@ -362,11 +427,11 @@ export default class CosmicMode extends Mode {
     U.uD1.value = D1(a); U.uD2.value = s.hasB ? D2(a) : 0; U.uDS.value = s.hasS ? subGrowth(a) : 0;
     U.uG.value = s.aState !== null && a < s.aState ? Math.max(0, driftTo(a, s.aState)) : 0;
     U.uTime.value += dt;
-    const nf = (s.field.a[0] !== null) + (s.field.a[1] !== null);
+    const nf = s.fieldCount;
     U.uFieldOn.value = nf > 0 ? 1 : 0;
     U.tFieldB.value = s.fieldTexB;
     U.tFieldA.value = nf > 1 ? s.fieldTexA : s.fieldTexB;
-    const aNew = s.field.a[s.field.cur] ?? 0;
+    const aNew = s.fieldANew ?? 0;
     U.uFieldMix.value = nf > 1 ? Math.min(1, Math.max(0, (a - aNew) / DA)) : 1;
     const camBox = this._v3.copy(this.camC).multiplyScalar(1 / BOX);
     const lead = Math.min(dC, 0.3 * BOX) / BOX;
@@ -400,6 +465,9 @@ export default class CosmicMode extends Mode {
     cu.uClarity.value = this.clarity * mature; cu.uRelief.value = this.relief * mature;
     cu.uNoiseSeed.value = shot ? 0 : (this._frame % 64) * 17.31;
     U.uSeedMix.value = 1 - smooth(0.1, 0.35, U.uD1.value);
+    // the primordial fog (kernels ~2-3x wider) is splatted mostly at quarter resolution (render.js)
+    const fogF = 1 + 1.3 * U.uSeedMix.value + U.uEarly.value;
+    this.view.fogPhase = fogF >= 2.6 ? 2 : fogF >= 1.8 ? 1 : 0;
     this.view.galMat.uniforms.uGalGain.value = 1.0;
 
     // ---- picking / hover / fly-to

@@ -131,6 +131,8 @@ uniform float uSpacing;   // lattice spacing (mean particle spacing at ρ = 1), 
 uniform float uSph;       // kernel diameter / sample spacing once the lattice is resolved on screen
 uniform float uDpr;       // accumulation px per CSS px
 uniform float uKt;        // 1: sheet tracers hand their mass back to the particle in close-ups (fill rate)
+uniform float uLvLo, uLvHi; // mixed-resolution layer: draw only kernels whose minor-axis variance (px²) is in [lo, hi)
+uniform float uLvS;       // layer scale: 1 = accumulation resolution, 2 = half, 4 = quarter
 out vec3 vW;
 out vec4 vQ;              // sprite half-size (px), inverse screen covariance (xx, xy, yy) in px⁻²
 void main() {
@@ -237,10 +239,27 @@ void main() {
   // a kernel larger than the sprite limit (a clump right in front of the lens) becomes a faint bokeh disc:
   // drawn at the limit with its surface brightness further dimmed by the size ratio
   float Lc = (sz - 1.0) / 5.88; Lc *= Lc;
-  if (L1 > Lc) { float k = Lc / L1; w *= sqrt(k); S2 *= k; }
-  float det = max(S2.x * S2.z - S2.y * S2.y, 1e-8);
-  gl_PointSize = sz;
-  vQ = vec4(0.5 * sz, S2.z / det, -S2.y / det, S2.x / det);
+  if (L1 > Lc) { float k = Lc / L1; w *= sqrt(k); S2 *= k; L1 *= k; L2 *= k; }
+  // mixed-resolution splatting: wide kernels are splatted into a half- or quarter-resolution layer that is
+  // upsampled bilinearly and added back (most of the fill rate of the soft primordial fog). The upsample is
+  // a tent of variance s²/6 px², taken off the kernel here (flux kept), so the sum is the same picture.
+  if (L2 < uLvLo || L2 >= uLvHi) { ${OFF} return; }
+  vec3 Sc = S2;
+  float szc = sz;
+  if (uLvS > 1.0) {
+    // (a kernel narrower than the layer resolves keeps its flux and just lands a little softer)
+    float s2 = uLvS * uLvS, cv = s2 / 6.0, fl = 0.2025 * s2;
+    float l1 = max(L1 - cv, fl), l2 = max(L2 - cv, fl);
+    w *= sqrt(L1 * L2 / (l1 * l2));
+    // same axes, new eigenvalues: Σ' = l2·I + (l1 − l2)·e·eᵀ with e·eᵀ = (Σ − L2·I) / (L1 − L2)
+    vec3 Sn = vec3(l2, 0.0, l2);
+    if (L1 - L2 > 1e-4 * L1) Sn += (l1 - l2) / (L1 - L2) * vec3(S2.x - L2, S2.y, S2.z - L2);
+    Sc = Sn / s2;
+    szc = max((sz - 1.0) / uLvS, 5.88 * sqrt(l1) / uLvS) + 1.0;
+  }
+  float det = max(Sc.x * Sc.z - Sc.y * Sc.y, 1e-8);
+  gl_PointSize = szc;
+  vQ = vec4(0.5 * szc, Sc.z / det, -Sc.y / det, Sc.x / det);
   // fade: distance attenuation, the wrap sphere edge, and foreground matter in front of the focus
   w *= exp(-max(0.0, d - 0.75 * uFocus) / uFog) * smoothstep(uFade, uFade * 0.72, wv.w) * smoothstep(0.3, 3.0, d) * smoothstep(0.08, 0.4, d / uFocus);
   // voids are nearly empty in reality; tracer particles left there are dimmed further (OLED black)
@@ -264,6 +283,19 @@ void main() {
   float m = vQ.y * c.x * c.x + 2.0 * vQ.z * c.x * c.y + vQ.w * c.y * c.y;
   if (m > 8.64) discard;
   o = vec4(vW * exp(-0.5 * m), 0.0);
+}
+`;
+
+// Adds the half- and quarter-resolution layers (bilinear) into the full accumulation target.
+const LAYERS_FRAG = S.GLSL_HEAD + /* glsl */`
+uniform sampler2D tHalf, tQuarter;
+uniform vec2 uSize;
+uniform float uQuarter;
+layout(location = 0) out vec4 o;
+void main() {
+  vec2 uv = gl_FragCoord.xy / uSize;
+  o = texture(tHalf, uv);
+  if (uQuarter > 0.5) o += texture(tQuarter, uv);
 }
 `;
 
@@ -586,6 +618,7 @@ export class CosmicRenderer {
       uniforms: {
         ...U, uPxScale: { value: 500 }, uK: { value: opt.K }, uMass: { value: Math.pow(opt.L / sim.N / 2, 3) }, uH0: { value: opt.h0 }, uMaxPx: { value: Math.min(opt.maxPx, maxPt) },
         uFocus: { value: 80 }, uCoc: { value: 0 }, uSpacing: { value: opt.L / sim.N }, uSph: { value: opt.sph ?? 2.6 }, uKt: { value: opt.kt ?? 1 }, uDpr: { value: 1 },
+        uLvLo: { value: 0 }, uLvHi: { value: 1e30 }, uLvS: { value: 1 },
       },
     });
     const g = new THREE.BufferGeometry();
@@ -594,6 +627,20 @@ export class CosmicRenderer {
     this.accPts.frustumCulled = false;
     this.accScene = new THREE.Scene();
     this.accScene.add(this.accPts);
+    // mixed-resolution layers (opt.split === false keeps the single full-resolution pass)
+    this.split = opt.split !== false;
+    this.splitFogOnly = !!opt.splitFogOnly;   // software rasterizers: vertex-bound, so only the fog pays off
+    this.fogPhase = 0;
+    const layerRT = () => new THREE.WebGLRenderTarget(2, 2, {
+      type: accType, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false,
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false,
+    });
+    this.accHalf = layerRT();
+    this.accQuarter = layerRT();
+    this.layersMat = new THREE.RawShaderMaterial({
+      glslVersion: THREE.GLSL3, vertexShader: S.GLSL_HEAD + S.FS_VERT, fragmentShader: LAYERS_FRAG, ...ADD,
+      uniforms: { tHalf: { value: this.accHalf.texture }, tQuarter: { value: this.accQuarter.texture }, uSize: { value: new THREE.Vector2(1, 1) }, uQuarter: { value: 0 } },
+    });
 
     // composite quad (lives in the mode scene so the HDR pipeline blooms/tonemaps it)
     this.compMat = new THREE.ShaderMaterial({
@@ -679,6 +726,9 @@ export class CosmicRenderer {
     const s = this.accScale;
     const aw = Math.max(4, Math.round(w * s)), ah = Math.max(4, Math.round(h * s));
     this.accum.setSize(aw, ah);
+    this.accHalf.setSize(Math.max(2, Math.ceil(aw / 2)), Math.max(2, Math.ceil(ah / 2)));
+    this.accQuarter.setSize(Math.max(2, Math.ceil(aw / 4)), Math.max(2, Math.ceil(ah / 4)));
+    this.layersMat.uniforms.uSize.value.set(aw, ah);
     this.compMat.uniforms.uTexel.value.set(1 / aw, 1 / ah);
     // clarity radius: ~5 px of a 720p frame whatever the resolution
     this.compMat.uniforms.uClarR.value = Math.max(2, 5 * ah / 720);
@@ -695,10 +745,31 @@ export class CosmicRenderer {
       this.sim.quad.material = this.resolveMat;
       r.setRenderTarget(this.posRT);
       r.render(this.sim.qScene, this.sim.qCam);
-      r.setRenderTarget(this.accum);
       r.setClearColor(0x000000, 0);
-      r.clear(true, false, false);
-      r.render(this.accScene, camera);
+      const u = this.accMat.uniforms;
+      if (!this.split || (this.splitFogOnly && !this.fogPhase)) {
+        u.uLvLo.value = 0; u.uLvHi.value = 1e30; u.uLvS.value = 1;
+        r.setRenderTarget(this.accum); r.clear(true, false, false);
+        r.render(this.accScene, camera);
+        return;
+      }
+      // kernels narrower than σ = 2 px at full resolution, wider ones at half resolution; while the primordial
+      // fog is on screen σ ≥ 4 px goes to quarter resolution, and in the pure fog (no kernel under σ ≈ 2 px)
+      // the full-resolution pass is skipped
+      const fog = this.fogPhase || 0;      // 0 web, 1 emerging (3 layers), 2 pure fog (half + quarter)
+      const layer = (target, lo, hi, s) => {
+        u.uLvLo.value = lo; u.uLvHi.value = hi; u.uLvS.value = s;
+        r.setRenderTarget(target); r.clear(true, false, false);
+        r.render(this.accScene, camera);
+      };
+      if (fog < 2) layer(this.accum, 0, 4, 1);
+      else { r.setRenderTarget(this.accum); r.clear(true, false, false); }
+      layer(this.accHalf, fog < 2 ? 4 : 0, fog ? 16 : 1e30, 2);
+      if (fog) layer(this.accQuarter, 16, 1e30, 4);
+      this.layersMat.uniforms.uQuarter.value = fog ? 1 : 0;
+      this.sim.quad.material = this.layersMat;
+      r.setRenderTarget(this.accum);
+      r.render(this.sim.qScene, this.sim.qCam);
     } finally {
       r.autoClear = autoClear; r.setClearColor(cc, ca); r.setRenderTarget(prev);
     }
@@ -771,6 +842,7 @@ export class CosmicRenderer {
 
   dispose() {
     this.accum.dispose(); this.posRT.dispose(); this.resolveMat.dispose(); this.accMat.dispose(); this.accPts.geometry.dispose();
+    this.accHalf.dispose(); this.accQuarter.dispose(); this.layersMat.dispose();
     this.compMat.dispose(); this.comp.geometry.dispose();
     this.galMat.dispose(); this.galaxies?.geometry.dispose();
     this.ringMat.dispose(); this.ring.geometry.dispose();

@@ -45,7 +45,8 @@ export function detectQuality(requested, renderer) {
     if (isMobile()) name = 'med';
     else if (software) name = 'high'; // headless capture: keep visuals honest
     else if (/Intel|Mali|Adreno [1-5]|PowerVR/i.test(gpu)) name = 'med';
-    else if (/RTX|RX 6|RX 7|RX 9|Apple M[2-9]|M[1-9] (Pro|Max|Ultra)/i.test(gpu)) name = 'ultra';
+    // (base Apple M chips — MacBook Air class — stay 'high': ultra's 2x Retina buffers swamp them)
+    else if (/RTX|RX 6|RX 7|RX 9|M[1-9] (Pro|Max|Ultra)/i.test(gpu)) name = 'ultra';
     else name = 'high';
   }
   const q = { ...TIERS[name] };

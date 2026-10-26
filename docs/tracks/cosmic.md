@@ -161,6 +161,8 @@ Mode `cosmic` (standard Mode contract). URL extras (all optional):
 | `veil`, `vlo`, `vhi`, `vsteps` | ray-marched veil gain (1; 0 = particles only), partition ρ range (3 → 10 today), march steps |
 | `sub`, `shell` | subhalo and accretion-shock gains (1; 0 disables) |
 | `slab` | young-web depth-slab strength (0.85) |
+| `split` | mixed-resolution splatting: `0` off (one full-resolution pass), `1` forces it on software GL, which otherwise splits only during the fog |
+| `simsched` | `1` runs the live step scheduler under capture (`shot=1`), `0` the old one-frame steps in live play (testing) |
 
 Test helpers on the mode (`__rv.mode`): `visibleCluster()`, `screenOfCluster(k)`, `hoverAt(x, y)`,
 `debugStats()` (column-density percentiles R, their log levels l, current toe/toeW/knee/bright), `getState()` → `{tau, a, z, ageGyr, pmSteps, particles,
@@ -226,6 +228,32 @@ move the rig with an eval step, e.g.
 - (done, thanks) ui: marker kind `'cosmic'`; cosmic now passes `sub` explicitly.
 - (done) ui → cosmic: "sharper, earlier first frame": structure now forms earlier (shell crossing ~12 s) and
   the first seconds show the real primordial ripples instead of a near-uniform fog.
+
+## Opening performance (lead, 26 Oct)
+
+The user found the opening laggy. Three causes, three fixes, with the same picture: captures of the old
+and new paths at 3, 17 and 26 s differ by 0.06–0.19/255 on average.
+
+1. **Fill during the fog**: the primordial fog's kernels are 2–3× wider than the mature web's, so the first
+   seconds blended ~10× more fp32 fragments per frame. The accumulation now routes each kernel by its
+   minor-axis variance L2 (px²): full resolution below 4, half resolution from 4, and quarter resolution
+   from 16 while the fog lasts (`fogPhase`, from the same `1 + 1.3·uSeedMix + uEarly` width factor). A coarse
+   layer gives each kernel back the blur of its bilinear upsample (variance s²/6, floored, flux kept), and
+   the layers are added into the full-resolution target before the composite. About a ninth of the fill in
+   the fog phase. Software GL is vertex-bound once the web matures, so it splits only during the fog.
+2. **Gravity steps in one frame**: a COLA step is ~50 passes; from 14 s one landed in a single frame about
+   every second. `sim.beginStep` now plans a step as GPU units (4 deposit quarters, fold, one FFT axis each,
+   Green's function, 4 density quarters, density fold, kick). `_scheduleSim` plans the next step as soon as
+   the previous one is committed, spreads its units over the frames before it is due, and commits it exactly
+   when the old code would have run it. The render density fields are triple-buffered (newest, previous, and
+   the spare a planned step writes), so nothing on screen changes before the commit. Captures keep the
+   synchronous path; `simsched=1` runs the scheduler under capture and gives bit-identical frames.
+3. **Shader compiles**: the sim and render programs compile in the background (`compileAsync`) while the
+   initial-conditions worker runs.
+
+The engine also drops resolution within half a second when the frame rate falls far below target, and base
+Apple M chips use the `high` tier. Captures now count only simulated frames (the harness's idle `dt = 0`
+ticks no longer move the gather and hero-framing cadence).
 
 ## Round 4 changes (critic round 2)
 
