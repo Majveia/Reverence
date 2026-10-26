@@ -221,11 +221,9 @@ class Terrain {
   }
 
   _softGL() {
-    try {
-      const gl = this.engine.renderer.getContext();
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      return /SwiftShader|llvmpipe|Software/i.test(String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER)));
-    } catch (_) { return false; }
+    // (Quality read the renderer string once at boot. Asking the GL context again is a round trip to the GPU
+    //  process that waits for every queued frame: it stalled the planet load mid-transition)
+    return !!this.q.software;
   }
 
   // ------------------------------------------------------------------ per frame
@@ -338,7 +336,8 @@ class Terrain {
       // (shot mode: the camera is static, so queue every pending build at once. Software-GL progress
       //  frames block the main thread for seconds; with a shallow queue the workers sat idle through
       //  them — the W1 hero spent ~190 s on 466 builds that take ~30 s of worker CPU.)
-      const cap = this.shot ? 1e6 : this.workers.length * 2;
+      // (behind the transition veil — engine.loading — the view is held still too: same deep queue)
+      const cap = this.shot || this.engine?.loading ? 1e6 : this.workers.length * 2;
       let i = 0;
       while (this.inflight < cap && i < pend.length) {
         let w = this.workers[0];
@@ -367,10 +366,12 @@ class Terrain {
     this.changed = ups.length > 0;
     if (!ups.length) return;
     const t0 = performance.now();
+    // (behind the transition veil nobody sees the frame rate: upload in big batches)
+    const budget = !this.shot && this.engine?.loading ? 40 : this.uploadBudgetMs;
     // coarse first so fallbacks exist
     if (ups.length > 1) ups.sort((a, b) => a[0].level - b[0].level || a[0].closest - b[0].closest);
     let k = 0;
-    while (k < ups.length && (k < 2 || performance.now() - t0 < this.uploadBudgetMs)) {
+    while (k < ups.length && (k < 2 || performance.now() - t0 < budget)) {
       const [n, m] = ups[k++];
       if (n.dead) continue;
       this._makeMesh(n, m);

@@ -455,6 +455,15 @@ body.rv-shot #rv-ui * { transition: none !important; animation: none !important;
 .rv-warp-label .bar { width: 160px; height: 1.5px; margin: 18px auto 0; background: rgba(255,255,255,.16); overflow: hidden; position: relative; border-radius: 1px; }
 @media (max-width: 760px), (max-height: 460px) { .rv-warp-label .n { font-size: 17px; letter-spacing: .28em; text-indent: .28em; } }
 .rv-warp-label .bar i { position: absolute; top: 0; bottom: 0; width: 40%; left: var(--x, 0); background: linear-gradient(90deg, transparent, rgba(255,255,255,.85), transparent); }
+/* the warp drawn in a worker (Warp.js): the caption animates on the compositor, so it keeps moving while the
+   main thread builds the next scale */
+.rv-warp-label.rv-warp-css .bar i { left: 0; animation: rv-warp-bar 1.75s linear infinite; }
+.rv-warp-label.rv-warp-on { animation: rv-warp-in .8s cubic-bezier(.4,0,.2,1) .3s both; }
+.rv-warp-label.rv-warp-off { animation: rv-warp-out .45s cubic-bezier(.4,0,.2,1) both; }
+@keyframes rv-warp-bar { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@keyframes rv-warp-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rv-warp-out { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .rv-warp-label.rv-warp-css .bar i { animation: none; } }
 body.rv-shot .rv-warp:not(.rv-warp-force), body.rv-shot .rv-warp-label:not(.rv-warp-force) { display: none !important; }
 .rv-warp.rv-warp-force { background: #000; }
 

@@ -1,0 +1,565 @@
+// Warp cutscene renderer (ui/Warp.js): every layer of the transition tunnel, drawn into one 2D canvas.
+// Live play runs it in a worker on an OffscreenCanvas (warp.worker.js), so the warp keeps its frame rate while the
+// main thread builds the next scale; captures (&uipanel=warp) and browsers without OffscreenCanvas run it on
+// the main thread. Environment-free: canvases come from `mk(w, h)`, the destination from a plain descriptor
+// (describeDest, built on the main thread from the Universe).
+//
+// Layers (2D canvas at CSS resolution × ≤1.5 dpr; everything pre-rendered to sprites once per transition):
+//   1. a tinted nebula tunnel — soft gas clouds in the destination's palette rushing past the camera
+//   2. the destination itself looming out of the dark: a procedural portrait of the target galaxy
+//      (its real arm count / pitch / colours / type from Universe.galaxy), the target star (blackbody
+//      colour, diffraction spikes, orbit + planet crescent) or the cosmic web (filaments + clusters)
+//   3. star streaks (≤ 340, seeded → deterministic captures): tapered head-bright sprites in a black-body
+//      ramp with baked chromatic fringes, width/brightness by depth, additive; then a radial zoom-blur /
+//      chromatic split pass (half-res copies scaled about the centre) proportional to warp speed
+
+export const N = 340;
+const NB = 9; // nebula clouds
+
+function rng(seed) {
+  let a = (seed >>> 0) || 0x9e3779b9;
+  return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+const easeInOutCubic = (x) => { const t = clamp01(x); return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
+const easeInQuad = (x) => { const t = clamp01(x); return t * t; };
+// black-body ramp for streaks (≈ 3200 K → 12000 K) with rough stellar frequencies
+const BB = [['255,176,104', 0.12], ['255,212,160', 0.2], ['255,240,226', 0.3], ['226,234,255', 0.24], ['178,202,255', 0.14]];
+/** THREE.Color-like (linear) or {r,g,b} → 'r,g,b' sRGB 0..255 string, optionally lifted towards white. */
+export function rgbStr(c, lift = 0, lin = true) {
+  const f = (v) => Math.round(255 * Math.min(1, (lin ? Math.pow(Math.max(0, v), 1 / 2.2) : v) * (1 - lift) + lift));
+  return `${f(c.r)},${f(c.g)},${f(c.b)}`;
+}
+function hexStr(h) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(h || ''));
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+}
+
+/**
+ * The transition's destination as plain data (structured-cloneable, so it can be posted to the worker):
+ * { kind: 'galaxy', g } | { kind: 'system', col, base, seed } | { kind: 'cosmic' }, plus `sub` (caption line).
+ */
+export function describeDest(U, to, p = {}) {
+  try {
+    if (to === 'galaxy') {
+      const g = U.galaxy(parseInt(p.galaxy ?? 0, 10) || 0);
+      const c = (x) => ({ r: x.r, g: x.g, b: x.b });
+      return {
+        kind: 'galaxy', sub: `${g.type} galaxy`,
+        g: { seed: g.seed, type: g.type, flatten: g.flatten, arms: g.arms, pitch: g.pitch, armStrength: g.armStrength, bulgeFrac: g.bulgeFrac,
+          barLength: g.barLength, tilt: g.tilt, rotation: g.rotation, colors: { core: c(g.colors.core), arms: c(g.colors.arms), hii: c(g.colors.hii) } },
+      };
+    }
+    if (to === 'system') {
+      const gi = parseInt(p.galaxy ?? 0, 10) || 0, si = parseInt(p.star ?? 0, 10) || 0;
+      const sys = U.system(gi, si);
+      const st = sys.star || U.star(gi, si);
+      const col = st.color ? rgbStr(st.color, 0.15) : '255,236,210';
+      let body = null;
+      try { body = p.planet !== undefined && p.planet !== null && p.planet !== '' ? U.body(sys, p.planet) : U.bestPlanet(sys); } catch (_) { body = null; }
+      const pal = body?.art?.palette;
+      const base = hexStr(pal?.water && (body?.ocean || body?.hasOcean || body?.seaLevel) ? pal.water : pal?.grass || pal?.rock) || '130,150,170';
+      return { kind: 'system', col, base, seed: st.seed ?? si,
+        sub: st.name ? `${st.name}${st.cls ? ` · class ${st.cls}` : ''}${st.temperature ? ` · ${Math.round(st.temperature / 100) * 100} K` : ''}` : '' };
+    }
+    if (to === 'cosmic') return { kind: 'cosmic', sub: 'large-scale structure' };
+  } catch (e) { console.warn('[ui] warp dest', e); }
+  return null;
+}
+
+export class WarpRenderer {
+  /** @param canvas HTMLCanvasElement | OffscreenCanvas  @param opts { mk(w, h) → canvas, mobile } */
+  constructor(canvas, { mk, mobile = false } = {}) {
+    this.canvas = canvas;
+    this.ctx = null;
+    this.mk = mk;
+    this.mobile = mobile;
+    this.white = false;       // the veil behind is white (streaks drawn dark, no gas)
+    this.rand = rng(0x5eed);
+    this.stars = { x: new Float32Array(N), y: new Float32Array(N), z: new Float32Array(N), pz: new Float32Array(N), hue: new Uint8Array(N), mag: new Float32Array(N) };
+    this.streaks = BB.map(([c]) => this._streakSprite(c));
+    this.headGlow = this._blob('255,255,255');
+    this.stretch = 0;
+    this.neb = { a: new Float32Array(NB), r: new Float32Array(NB), z: new Float32Array(NB), c: new Uint8Array(NB), s: new Float32Array(NB) };
+    this.phase = 'idle';     // idle | in | out | boot
+    this.t = 0;
+    this.speed = 0;
+    this.dir = 1;             // +1 forward (diving in), -1 backward (climbing out)
+    this.alpha = 0;
+    this.labelA = 0;
+    this.dest = null;         // { kind, sprite, spin, tilt, rot }
+    this.destA = 0;
+    this.dpr = 1;
+    this._pal(null);
+    for (let i = 0; i < N; i++) this._reset(i, true);
+    for (let i = 0; i < NB; i++) this._resetNeb(i, true);
+  }
+
+  _ctx() { return this.ctx || (this.ctx = this.canvas.getContext('2d', { alpha: true })); }
+
+  /** Drawing-buffer size: CSS px × dpr. */
+  resize(w, h, dpr) {
+    const cw = Math.max(1, Math.round(w * dpr)), ch = Math.max(1, Math.round(h * dpr));
+    if (this.canvas.width !== cw || this.canvas.height !== ch) { this.canvas.width = cw; this.canvas.height = ch; }
+    this.dpr = dpr;
+  }
+
+  boot() {
+    this.phase = 'boot'; this.t = 0; this.dir = 1; this.speed = 0.05; this.alpha = 0;
+    this.dest = null; this._pal(null);
+  }
+
+  begin(dir, dest) {
+    this.dir = dir;
+    this.phase = 'in'; this.t = 0; this.destA = 0;
+    this.setDest(dest);
+    for (let i = 0; i < N; i++) this._reset(i, true);
+    for (let i = 0; i < NB; i++) this._resetNeb(i, true);
+  }
+
+  end() {
+    if (this.phase === 'idle') return;
+    this.phase = 'out'; this.t = 0;
+  }
+
+  /** Build the destination portrait + tunnel palette from a describeDest() descriptor. */
+  setDest(d) {
+    this.dest = null;
+    try {
+      if (d?.kind === 'galaxy') {
+        const g = d.g;
+        this.dest = { kind: 'galaxy', sprite: this._galaxySprite(g), spin: 0.05, tilt: 0.42 + 0.4 * Math.abs(Math.cos(g.tilt || 0)), rot: g.rotation || 0 };
+        this._pal([rgbStr(g.colors.arms), rgbStr(g.colors.hii), rgbStr(g.colors.core)].map((c) => c.split(',').map((v, i, arr) => {
+          const m = (+arr[0] + +arr[1] + +arr[2]) / 3; return Math.round(Math.max(0, Math.min(255, (m + (v - m) * 1.8) * 0.62)));
+        }).join(',')));
+      } else if (d?.kind === 'system') {
+        this.dest = { kind: 'system', sprite: this._starSprite(d.col, d.base, d.seed), spin: 0, tilt: 1, rot: 0 };
+        this._pal([d.col, '70,90,150', '120,80,140']);
+      } else if (d?.kind === 'cosmic') {
+        this.dest = { kind: 'cosmic', sprite: this._webSprite(), spin: 0.012, tilt: 1, rot: 0 };
+        this._pal(null);
+      } else this._pal(null);
+    } catch (e) { console.warn('[ui] warp dest', e); this.dest = null; this._pal(null); }
+  }
+
+  /** Advance (and draw). Returns false once the warp has faded out completely (phase → 'idle'). */
+  step(dt, draw) {
+    this.t += dt;
+    const ph = this.phase;
+    if (ph === 'idle') return false;
+    let targetSpeed = 0, targetAlpha = 0, targetLabel = 0, targetDest = 0;
+    if (ph === 'boot') { targetSpeed = 0.06; targetAlpha = 0.9; targetLabel = this.t > 0.25 ? 1 : 0; }
+    else if (ph === 'in') { targetSpeed = Math.min(2.4, 0.15 + this.t * 2.2); targetAlpha = 1; targetLabel = this.t > 0.35 ? 1 : 0; targetDest = 1; }
+    else if (ph === 'out') { targetSpeed = 0.02; targetAlpha = 0; targetLabel = 0; targetDest = 0; }
+    const k = 1 - Math.exp(-dt * (ph === 'out' ? 3.2 : 4));
+    this.speed += (targetSpeed - this.speed) * k;
+    // streak length ramps in on an ease-in-out curve (no pop), relaxes as the warp ends
+    this.stretch = ph === 'in' ? easeInOutCubic(this.t / 1.4) : ph === 'boot' ? 0.15 : this.stretch * Math.exp(-dt * 3);
+    this.alpha += (targetAlpha - this.alpha) * (1 - Math.exp(-dt * (ph === 'out' ? 2.6 : 5)));
+    this.labelA += (targetLabel - this.labelA) * (1 - Math.exp(-dt * (ph === 'out' ? 6 : 3)));
+    this.destA += (targetDest - this.destA) * (1 - Math.exp(-dt * (ph === 'out' ? 3 : 1.6)));
+    if (ph === 'out' && this.alpha < 0.01 && this.labelA < 0.01) {
+      this.phase = 'idle';
+      if (draw) this._ctx().clearRect(0, 0, this.canvas.width, this.canvas.height);
+      return false;
+    }
+    this._draw(dt, draw);
+    return true;
+  }
+
+  _reset(i, anywhere) {
+    const s = this.stars, R = this.rand;
+    const a = R() * Math.PI * 2, r = 0.02 + Math.pow(R(), 0.7) * 1.2;
+    s.x[i] = Math.cos(a) * r; s.y[i] = Math.sin(a) * r;
+    // z² distribution: most stars far away (thin, faint), a few close (thick, bright)
+    s.z[i] = anywhere ? 0.05 + Math.sqrt(R()) * 1.05 : (this.dir > 0 ? 1.0 + R() * 0.1 : 0.03 + R() * 0.05);
+    s.pz[i] = s.z[i];
+    let u = R(), h = 0;
+    while (h < BB.length - 1 && u > BB[h][1]) { u -= BB[h][1]; h++; }
+    s.hue[i] = h;
+    const m = R();
+    s.mag[i] = 0.3 + 0.7 * m * m;
+  }
+
+  _resetNeb(i, anywhere) {
+    const n = this.neb, R = this.rand;
+    n.a[i] = R() * Math.PI * 2;
+    n.r[i] = 0.25 + R() * 0.75;
+    n.z[i] = anywhere ? 0.25 + R() * 1.1 : (this.dir > 0 ? 1.2 + R() * 0.3 : 0.2 + R() * 0.1);
+    n.c[i] = Math.floor(R() * 3);
+    n.s[i] = 0.5 + R() * 0.8;
+  }
+
+  _pal(cols) {
+    // three nebula tints ('r,g,b'); default: cool cosmic violet / blue / warm dust
+    this.palette = cols || ['92,70,170', '60,110,200', '190,120,90'];
+    this.nebSprites = this.palette.map((c) => this._blob(c));
+  }
+
+  _blob(c) {
+    const S = 128, cv = this.mk(S, S), x = cv.getContext('2d');
+    const g = x.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    g.addColorStop(0, `rgba(${c},0.55)`); g.addColorStop(0.35, `rgba(${c},0.26)`); g.addColorStop(0.7, `rgba(${c},0.07)`); g.addColorStop(1, `rgba(${c},0)`);
+    x.fillStyle = g; x.fillRect(0, 0, S, S);
+    return cv;
+  }
+
+  /** Tapered streak: transparent tail → bright head (x = 244 of 256), soft halo, red/blue fringes. */
+  _streakSprite(c) {
+    const Wd = 256, Ht = 24, cv = this.mk(Wd, Ht), x = cv.getContext('2d'), cy = Ht / 2, hx = 244;
+    x.globalCompositeOperation = 'lighter';
+    const line = (col, a, off, h) => {
+      const g = x.createLinearGradient(0, 0, hx + off, 0);
+      g.addColorStop(0, `rgba(${col},0)`); g.addColorStop(0.55, `rgba(${col},${(a * 0.18).toFixed(3)})`);
+      g.addColorStop(0.9, `rgba(${col},${(a * 0.7).toFixed(3)})`); g.addColorStop(1, `rgba(${col},${a})`);
+      x.fillStyle = g;
+      x.beginPath(); x.moveTo(0, cy - h * 0.15); x.lineTo(hx + off, cy - h / 2); x.arc(hx + off, cy, h / 2, -Math.PI / 2, Math.PI / 2); x.lineTo(0, cy + h * 0.15); x.closePath(); x.fill();
+    };
+    line(c, 0.22, 0, 7);            // halo
+    line('255,90,70', 0.38, 2, 2.4);  // red fringe leads
+    line('80,120,255', 0.38, -3, 2.4); // blue fringe trails
+    line(c, 1, 0, 2);               // core
+    line('255,255,255', 0.85, 0, 0.9); // hot centre
+    return cv;
+  }
+
+  _galaxySprite(g) {
+    const S = 512, cv = this.mk(S, S), x = cv.getContext('2d'), R = rng((g.seed >>> 0) ^ 0xa11ce);
+    const cx = S / 2, rad = S * 0.46;
+    const core = rgbStr(g.colors.core, 0.2), arms = rgbStr(g.colors.arms, 0.02), hii = rgbStr(g.colors.hii, 0.0);
+    x.globalCompositeOperation = 'lighter';
+    // diffuse disc / halo
+    const flat = g.type === 'elliptical' ? (g.flatten || 0.7) : 1;
+    x.save(); x.translate(cx, cx); x.scale(1, flat);
+    let gr = x.createRadialGradient(0, 0, 0, 0, 0, rad);
+    gr.addColorStop(0, `rgba(${core},0.6)`); gr.addColorStop(0.18, `rgba(${core},0.26)`); gr.addColorStop(0.45, `rgba(${arms},0.13)`); gr.addColorStop(0.8, `rgba(${arms},0.04)`); gr.addColorStop(1, `rgba(${arms},0)`);
+    x.fillStyle = gr; x.fillRect(-rad, -rad, rad * 2, rad * 2);
+    x.restore();
+    const armsN = g.arms || 0, spiral = armsN >= 2 && g.type !== 'elliptical' && g.type !== 'irregular';
+    const ring = g.type === 'ring', irr = g.type === 'irregular';
+    const k = 1 / Math.tan(((g.pitch || 16) * Math.PI) / 180);
+    const n = spiral || ring ? 3200 : 2000;
+    const glowA = this._blob(arms), glowH = this._blob(hii), glowC = this._blob(core);
+    const clumps = irr ? Array.from({ length: 7 }, () => [(R() - 0.5) * rad * 1.1, (R() - 0.5) * rad * 0.8, 0.08 + R() * 0.18]) : null;
+    for (let i = 0; i < n; i++) {
+      let px, py, col, a, sz, glow = null;
+      if (ring && R() < 0.6) {
+        const th = R() * Math.PI * 2, rr = rad * (0.62 + (R() + R() - 1) * 0.07);
+        px = Math.cos(th) * rr; py = Math.sin(th) * rr;
+        const knot = R() < 0.1;
+        col = knot ? hii : arms; a = knot ? 0.85 : 0.4 + R() * 0.3; sz = knot ? 1.3 + R() * 1.5 : 0.6 + R() * 1.2;
+        if (i % 9 === 0) glow = knot ? glowH : glowA;
+      } else if (irr && R() < 0.75) {
+        const c = clumps[Math.floor(R() * clumps.length)];
+        px = c[0] + (R() + R() - 1) * rad * c[2]; py = c[1] + (R() + R() - 1) * rad * c[2];
+        const knot = R() < 0.12;
+        col = knot ? hii : R() < 0.5 ? arms : core; a = 0.35 + R() * 0.4; sz = 0.6 + R() * 1.4;
+        if (i % 8 === 0) glow = knot ? glowH : glowA;
+      } else if (spiral && R() < (g.armStrength || 0.7)) {
+        const arm = Math.floor(R() * armsN);
+        const t = Math.pow(R(), 0.8);
+        const r = (0.08 + t * 0.92) * rad;
+        const th = (arm / armsN) * Math.PI * 2 + Math.log(r / (rad * 0.08)) * k * 0.62;
+        const sc = (0.05 + t * 0.13) * rad * (R() + R() + R() - 1.5);
+        px = Math.cos(th) * r + Math.cos(th + Math.PI / 2) * sc;
+        py = Math.sin(th) * r + Math.sin(th + Math.PI / 2) * sc;
+        const knot = R() < 0.07 && t > 0.25;
+        col = knot ? hii : t < 0.2 ? core : arms;
+        a = knot ? 0.8 : 0.2 + 0.36 * (1 - t);
+        sz = knot ? 1.4 + R() * 1.6 : 0.6 + R() * 1.3;
+        if (i % 7 === 0) glow = knot ? glowH : t < 0.25 ? glowC : glowA;
+      } else {
+        // bulge / elliptical population (gaussian)
+        const u = R() + R() + R() - 1.5, v = R() + R() + R() - 1.5;
+        const s = rad * (spiral ? 0.26 : 0.55) * (g.bulgeFrac ? 0.6 + g.bulgeFrac : 1);
+        px = u * s; py = v * s * flat;
+        col = core; a = 0.18 + R() * 0.3; sz = 0.5 + R() * 1.1;
+        if (spiral && R() < 0.45) {
+          // exponential disc population between the arms
+          const th = R() * Math.PI * 2, rr = -Math.log(1 - R() * 0.95) * rad * 0.28;
+          px = Math.cos(th) * rr; py = Math.sin(th) * rr; col = R() < 0.5 ? arms : core; a = 0.16 + R() * 0.22;
+        }
+      }
+      if (glow) { const gs = 14 + R() * 26; x.globalAlpha = 0.16; x.drawImage(glow, cx + px - gs, cx + py - gs, gs * 2, gs * 2); x.globalAlpha = 1; }
+      x.fillStyle = `rgba(${col},${a.toFixed(3)})`;
+      x.beginPath(); x.arc(cx + px, cx + py, sz, 0, Math.PI * 2); x.fill();
+    }
+    // dust lanes (subtractive) trailing the arms
+    if (spiral) {
+      x.globalCompositeOperation = 'destination-out';
+      for (let i = 0; i < 260; i++) {
+        const arm = Math.floor(R() * armsN), t = 0.12 + R() * 0.6, r = (0.08 + t * 0.92) * rad;
+        const th = (arm / armsN) * Math.PI * 2 + Math.log(r / (rad * 0.08)) * k * 0.55 - 0.16;
+        const gs = 5 + R() * 9;
+        x.globalAlpha = 0.18; x.drawImage(this._dust || (this._dust = this._blob('0,0,0')), cx + Math.cos(th) * r - gs, cx + Math.sin(th) * r - gs, gs * 2, gs * 2);
+      }
+      x.globalAlpha = 1; x.globalCompositeOperation = 'lighter';
+    }
+    // bar
+    if (g.barLength > 0) {
+      x.save(); x.translate(cx, cx); x.rotate(0.3);
+      gr = x.createLinearGradient(-rad * g.barLength * 1.6, 0, rad * g.barLength * 1.6, 0);
+      gr.addColorStop(0, `rgba(${core},0)`); gr.addColorStop(0.5, `rgba(${core},0.35)`); gr.addColorStop(1, `rgba(${core},0)`);
+      x.fillStyle = gr; x.fillRect(-rad * g.barLength * 1.6, -rad * 0.035, rad * g.barLength * 3.2, rad * 0.07);
+      x.restore();
+    }
+    // bright nucleus
+    gr = x.createRadialGradient(cx, cx, 0, cx, cx, rad * 0.14);
+    gr.addColorStop(0, 'rgba(255,248,236,0.95)'); gr.addColorStop(0.3, `rgba(${core},0.5)`); gr.addColorStop(1, `rgba(${core},0)`);
+    x.fillStyle = gr; x.fillRect(cx - rad * 0.14, cx - rad * 0.14, rad * 0.28, rad * 0.28);
+    return cv;
+  }
+
+  _starSprite(col, base, seed) {
+    const S = 512, cv = this.mk(S, S), x = cv.getContext('2d'), R = rng((seed >>> 0) ^ 0x57a2);
+    const cx = S / 2;
+    x.globalCompositeOperation = 'lighter';
+    let gr = x.createRadialGradient(cx, cx, 0, cx, cx, S * 0.5);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.035, `rgba(${col},0.95)`); gr.addColorStop(0.12, `rgba(${col},0.32)`);
+    gr.addColorStop(0.35, `rgba(${col},0.07)`); gr.addColorStop(1, `rgba(${col},0)`);
+    x.fillStyle = gr; x.fillRect(0, 0, S, S);
+    // diffraction spikes (6, telescope-like) + a faint anamorphic streak
+    x.save(); x.translate(cx, cx);
+    for (let i = 0; i < 6; i++) {
+      x.rotate(Math.PI / 3);
+      const L = S * (i % 3 === 0 ? 0.48 : 0.3);
+      gr = x.createLinearGradient(0, 0, L, 0);
+      gr.addColorStop(0, `rgba(${col},0.55)`); gr.addColorStop(1, `rgba(${col},0)`);
+      x.fillStyle = gr; x.beginPath(); x.moveTo(0, -1.6); x.lineTo(L, 0); x.lineTo(0, 1.6); x.fill();
+    }
+    x.restore();
+    gr = x.createLinearGradient(0, cx, S, cx);
+    gr.addColorStop(0, 'rgba(160,190,255,0)'); gr.addColorStop(0.5, 'rgba(170,200,255,0.25)'); gr.addColorStop(1, 'rgba(160,190,255,0)');
+    x.fillStyle = gr; x.fillRect(0, cx - 1, S, 2);
+    x.globalCompositeOperation = 'source-over';
+    // orbit hairline + the destination world as a lit crescent on it
+    x.save(); x.translate(cx, cx); x.scale(1, 0.34);
+    x.strokeStyle = 'rgba(255,255,255,0.13)'; x.lineWidth = 1.2;
+    x.beginPath(); x.arc(0, 0, S * 0.36, 0, Math.PI * 2); x.stroke();
+    x.restore();
+    const pa = -0.35 + R() * 0.2;
+    const px = cx + Math.cos(pa) * S * 0.36, py = cx + Math.sin(pa) * S * 0.36 * 0.34;
+    const pr = 9;
+    x.fillStyle = 'rgba(0,0,0,0.9)'; x.beginPath(); x.arc(px, py, pr, 0, Math.PI * 2); x.fill();
+    const lx = (cx - px), ly = (cx - py), ll = Math.hypot(lx, ly) || 1;
+    gr = x.createRadialGradient(px + lx / ll * pr * 0.7, py + ly / ll * pr * 0.7, 0, px, py, pr * 1.05);
+    gr.addColorStop(0, `rgba(${base},1)`); gr.addColorStop(0.55, `rgba(${base},0.55)`); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = gr; x.beginPath(); x.arc(px, py, pr, 0, Math.PI * 2); x.fill();
+    x.strokeStyle = 'rgba(150,200,255,0.35)'; x.lineWidth = 1;
+    x.beginPath(); x.arc(px, py, pr + 0.8, Math.atan2(ly, lx) - 1.2, Math.atan2(ly, lx) + 1.2); x.stroke();
+    return cv;
+  }
+
+  _webSprite() {
+    const S = 512, cv = this.mk(S, S), x = cv.getContext('2d'), R = rng(0xc05a1c);
+    x.globalCompositeOperation = 'lighter';
+    const fil = this._blob('120,90,230'), knot = this._blob('255,226,210');
+    const nodes = [];
+    for (let i = 0; i < 70; i++) {
+      const a = R() * Math.PI * 2, r = Math.pow(R(), 0.55) * S * 0.47;
+      nodes.push([S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, 0.3 + R() * 0.7]);
+    }
+    const edges = new Set();
+    for (let i = 0; i < nodes.length; i++) {
+      const d = nodes.map((n, j) => [j, Math.hypot(n[0] - nodes[i][0], n[1] - nodes[i][1])]).sort((a, b) => a[1] - b[1]);
+      for (let k = 1; k <= 3; k++) {
+        const j = d[k][0], L = d[k][1];
+        const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+        if (L > S * 0.2 || edges.has(key)) continue;
+        edges.add(key);
+        const [x0, y0] = nodes[i], [x1, y1] = nodes[j];
+        const mx = (x0 + x1) / 2 + (R() - 0.5) * L * 0.35, my = (y0 + y1) / 2 + (R() - 0.5) * L * 0.35;
+        const nd = Math.floor(L * 0.9);
+        for (let q = 0; q < nd; q++) {
+          const t = R(), u = 1 - t;
+          const px = u * u * x0 + 2 * u * t * mx + t * t * x1, py = u * u * y0 + 2 * u * t * my + t * t * y1;
+          const j2 = (R() + R() + R() - 1.5) * 5;
+          const b = R();
+          x.fillStyle = b < 0.12 ? 'rgba(255,225,210,0.55)' : `rgba(${b < 0.5 ? '170,150,255' : '120,110,235'},${(0.22 + R() * 0.3).toFixed(3)})`;
+          x.fillRect(px + j2, py - j2 * 0.6, 1.2, 1.2);
+          if (q % 6 === 0) { const gs = 7 + R() * 9; x.globalAlpha = 0.12; x.drawImage(fil, px - gs, py - gs, gs * 2, gs * 2); x.globalAlpha = 1; }
+        }
+      }
+    }
+    for (const [nx, ny, m] of nodes) {
+      const r = 5 + m * 15;
+      x.globalAlpha = 0.35 + 0.5 * m; x.drawImage(knot, nx - r, ny - r, r * 2, r * 2);
+      x.globalAlpha = 0.25; x.drawImage(fil, nx - r * 2.2, ny - r * 2.2, r * 4.4, r * 4.4);
+    }
+    x.globalAlpha = 1;
+    return cv;
+  }
+
+  _zoomBlur(ctx, W, H, cx, cy, k) {
+    const sc = this.mobile ? 0.25 : 0.5;
+    const bw = Math.max(2, Math.round(W * sc)), bh = Math.max(2, Math.round(H * sc));
+    if (!this.zb || this.zb.width !== bw || this.zb.height !== bh) {
+      this.zb = this.mk(bw, bh); this.zbR = this.mk(bw, bh); this.zbB = this.mk(bw, bh);
+      this.zbx = this.zb.getContext('2d'); this.zbRx = this.zbR.getContext('2d'); this.zbBx = this.zbB.getContext('2d');
+    }
+    const b = this.zbx;
+    b.globalCompositeOperation = 'copy'; b.drawImage(this.sl, 0, 0, bw, bh);
+    // tinted copies (multiply by a colour, then restore the alpha of the source)
+    const tint = (tx, col) => {
+      tx.globalCompositeOperation = 'copy'; tx.drawImage(this.zb, 0, 0);
+      tx.globalCompositeOperation = 'multiply'; tx.fillStyle = col; tx.fillRect(0, 0, bw, bh);
+      tx.globalCompositeOperation = 'destination-in'; tx.drawImage(this.zb, 0, 0);
+    };
+    tint(this.zbRx, 'rgb(255,120,90)'); tint(this.zbBx, 'rgb(90,140,255)');
+    ctx.globalCompositeOperation = 'lighter';
+    const put = (img, s, a) => { ctx.globalAlpha = Math.min(1, a); ctx.drawImage(img, cx - (W * s) / 2, cy - (H * s) / 2, W * s, H * s); };
+    put(this.zbR, 1.03, 0.5 * k);
+    put(this.zb, 1.06, 0.32 * k);
+    put(this.zbB, 1.1, 0.45 * k);
+    put(this.zb, 1.16, 0.2 * k);
+    ctx.globalAlpha = 1;
+  }
+
+  _draw(dt, draw = true) {
+    let ctx = this._ctx();
+    const W = this.canvas.width, H = this.canvas.height;
+    if (draw) ctx.clearRect(0, 0, W, H);
+    if (this.alpha < 0.004) return;
+    const cx = W / 2, cy = H / 2, f = Math.max(W, H) * 0.5;
+    const s = this.stars, v = this.speed * this.dir;
+    const onWhite = this.white;
+    const A = this.alpha;
+
+    // ---- 1. nebula tunnel (tinted gas rushing past) — additive sprites over a faint destination haze
+    if (!onWhite) {
+      const nb = this.neb;
+      if (draw) {
+        ctx.globalCompositeOperation = 'lighter';
+        const hz = Math.max(W, H) * 0.9;
+        ctx.globalAlpha = A * 0.2; ctx.drawImage(this.nebSprites[0], cx - hz * 0.85, cy - hz * 0.5, hz * 1.2, hz * 0.85);
+        ctx.globalAlpha = A * 0.14; ctx.drawImage(this.nebSprites[1], cx - hz * 0.3, cy - hz * 0.35, hz * 1.1, hz * 0.8);
+      }
+      for (let i = 0; i < NB; i++) {
+        nb.z[i] -= v * dt * 0.55;
+        if (nb.z[i] < 0.12 || nb.z[i] > 1.6) { this._resetNeb(i, false); continue; }
+        if (!draw) continue;
+        const z = nb.z[i];
+        const r = nb.r[i] / z * f * 0.9;
+        const px = cx + Math.cos(nb.a[i]) * r, py = cy + Math.sin(nb.a[i]) * r;
+        const size = nb.s[i] / z * f * 0.75;
+        const near = clamp01((1.5 - z) / 1.2);
+        const a = A * near * (1 - clamp01((0.35 - z) / 0.23)) * 0.95 * (0.4 + 0.6 * clamp01(Math.abs(this.speed) / 1.2 + 0.3));
+        if (a < 0.01) continue;
+        ctx.globalAlpha = a;
+        ctx.drawImage(this.nebSprites[nb.c[i] % this.nebSprites.length], px - size, py - size * 0.8, size * 2, size * 1.6);
+      }
+      if (draw) { ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; }
+    }
+
+    // ---- 2. destination portrait looming out of the dark
+    const D = this.dest;
+    if (D && draw && !onWhite && this.destA > 0.01) {
+      // diving in, the destination grows from ~15 % to ~60 % of the screen height (ease-in over the second
+      // half of the warp); climbing out it recedes from beyond the frame
+      const p = 1 - Math.exp(-this.t * 0.75);
+      const grow = easeInQuad((this.t - 0.25) / 2.0);
+      const frac = this.dir > 0 ? 0.16 + 0.42 * grow : 1.3 - p * 0.75;
+      const size = frac * H * (D.kind === 'system' ? 1.35 : D.kind === 'cosmic' ? 1.15 : 1.05);
+      const ga = A * this.destA * (D.kind === 'system' ? 1 : 0.85);
+      const py = cy - H * 0.05 * (this.dir > 0 ? grow : 0); // keep the portrait clear of the caption
+      // bloom halo behind the destination (its own colour)
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = Math.min(1, ga * (D.kind === 'system' ? 0.4 : 0.26));
+      const hs = size * 1.7;
+      ctx.drawImage(this.nebSprites[0], cx - hs / 2, py - hs / 2, hs, hs);
+      ctx.save();
+      ctx.translate(cx, py);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = Math.min(1, ga);
+      ctx.rotate(D.rot + this.t * D.spin);
+      ctx.scale(1, D.tilt);
+      ctx.drawImage(D.sprite, -size / 2, -size / 2, size, size);
+      ctx.restore();
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // ---- 3. star streaks (tapered sprites, additive; width + brightness by depth)
+    const pal = this.palette;
+    const stretch = this.stretch;
+    // streaks render into their own layer so the zoom blur smears only them (not the portrait or the gas)
+    const main = ctx;
+    if (draw && !onWhite) {
+      if (!this.sl || this.sl.width !== W || this.sl.height !== H) { this.sl = this.mk(W, H); this.slx = this.sl.getContext('2d'); }
+      ctx = this.slx;
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over'; ctx.clearRect(0, 0, W, H);
+    }
+    if (draw) ctx.globalCompositeOperation = onWhite ? 'source-over' : 'lighter';
+    for (let i = 0; i < N; i++) {
+      s.pz[i] = s.z[i];
+      s.z[i] -= v * dt * 0.9;
+      if (s.z[i] < 0.03 || s.z[i] > 1.12) { this._reset(i, false); continue; }
+      if (!draw) continue;
+      const z = s.z[i];
+      const tz = Math.min(1.12, Math.max(0.03, z + v * (0.012 + 0.07 * stretch))); // tail depth → streak length
+      const x1 = cx + (s.x[i] / z) * f, y1 = cy + (s.y[i] / z) * f;
+      const x0 = cx + (s.x[i] / tz) * f, y0 = cy + (s.y[i] / tz) * f;
+      if (x1 < -80 || x1 > W + 80 || y1 < -80 || y1 > H + 80) { if (this.dir > 0) this._reset(i, false); continue; }
+      const near = clamp01((1.1 - z) / 1.05);
+      const n2 = near * near;
+      const a = A * s.mag[i] * (0.18 + n2 * 0.82);
+      if (a < 0.015) continue;
+      const w = (0.55 + 2.1 * n2) * this.dpr * (0.7 + 0.3 * s.mag[i]);
+      const dx = x1 - x0, dy = y1 - y0;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const L = Math.max(len, w * 1.5);
+      const cs = len > 1e-3 ? dx / len : 1, sn = len > 1e-3 ? dy / len : 0;
+      if (onWhite) {
+        ctx.strokeStyle = `rgba(90,110,150,${(a * 0.55).toFixed(3)})`; ctx.lineWidth = w;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1 + 0.01, y1); ctx.stroke();
+        continue;
+      }
+      ctx.globalAlpha = Math.min(1, a);
+      ctx.setTransform(cs, sn, -sn, cs, x1, y1);
+      ctx.drawImage(this.streaks[s.hue[i]], -L * (244 / 256), -6 * w, L * (256 / 244) , 12 * w);
+      if (near > 0.45) { // head glow on the close ones
+        const g = (2.5 + 5 * n2) * this.dpr;
+        ctx.globalAlpha = Math.min(1, a * 0.55);
+        ctx.drawImage(this.headGlow, -g, -g, g * 2, g * 2);
+      }
+    }
+    if (draw) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; }
+    if (draw && !onWhite) {
+      ctx = main;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.drawImage(this.sl, 0, 0);
+      // ---- 4. radial zoom blur + chromatic split of the streak layer (half-res copies scaled about the centre)
+      const zb = Math.min(1, Math.abs(this.speed) / 2.2) * A * (0.4 + 0.6 * stretch);
+      if (zb > 0.04) this._zoomBlur(ctx, W, H, cx, cy, zb);
+    }
+    if (draw) ctx.globalCompositeOperation = 'source-over';
+    // quiet band behind the destination label
+    if (draw && this.labelA > 0.02 && !onWhite) {
+      const ly = H - H * 0.14 - 40 * this.dpr, rx = Math.min(W * 0.4, 360 * this.dpr);
+      ctx.save(); ctx.translate(cx, ly); ctx.scale(1, 0.28);
+      const g2 = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+      g2.addColorStop(0, `rgba(0,0,0,${(0.85 * this.labelA).toFixed(3)})`); g2.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g2; ctx.fillRect(-rx, -rx, rx * 2, rx * 2); ctx.restore();
+    }
+    // soft central bloom while accelerating (tinted by the destination)
+    const glow = Math.min(1, Math.abs(this.speed) / 2.4) * A;
+    if (glow > 0.02 && draw) {
+      const c0 = D ? pal[0] : '200,220,255';
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, f * 0.55);
+      g.addColorStop(0, `rgba(${c0},${(glow * 0.14).toFixed(3)})`);
+      g.addColorStop(1, `rgba(${c0},0)`);
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    }
+    // cinematic vignette
+    if (draw && !onWhite) {
+      const vg = this._vig && this._vigW === W && this._vigH === H ? this._vig : (() => {
+        const g = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.35, cx, cy, Math.hypot(W, H) * 0.6);
+        g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.6, 'rgba(0,0,0,0.3)'); g.addColorStop(1, 'rgba(0,0,0,0.82)');
+        this._vig = g; this._vigW = W; this._vigH = H; return g;
+      })();
+      ctx.globalAlpha = A; ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
+    }
+  }
+}

@@ -74,6 +74,9 @@ export class Engine {
     this._dynTimer = 0;
     this._readyFrames = 0;
     this.isReady = false;
+    // a mode is streaming in behind the transition veil (Director.go): nobody sees the frame rate, so
+    // streaming subsystems may spend far more per frame (terrain uploads, flora jobs, civ placement)
+    this.loading = false;
 
     if (this.shot) {
       document.body.classList.add('rv-shot');
@@ -225,6 +228,9 @@ export class Engine {
   // ---------------------------------------------------------------- perf
   _trackPerf(dt) {
     const ft = this._frameTimes;
+    // behind the transition veil frames are deliberately heavy (streaming with big budgets): they say nothing
+    // about the scene's real cost, and must not leave the revealed world at a low resolution
+    if (this.loading) { ft.length = 0; this._dynTimer = 0; return; }
     ft.push(dt);
     if (ft.length > 90) ft.shift();
     this._dynTimer += dt;

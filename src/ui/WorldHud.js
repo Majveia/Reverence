@@ -63,6 +63,8 @@ export class WorldHud {
     this.revealDur = 5.2;
 
     events.on('mode:enter', () => { this.discovered.clear(); this.revealQ.length = 0; this.revealT = -1; this.reveal.style.display = 'none'; this.world = null; this.discT = -3.5; });
+    // (the director may hold the veil a few seconds after 'mode:enter': discoveries start counting at the reveal)
+    events.on('mode:shown', () => { this.discT = -3.5; });
   }
 
   _mkMarker(type) {

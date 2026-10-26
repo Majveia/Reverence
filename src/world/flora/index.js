@@ -628,7 +628,7 @@ class Flora {
     const alive = this.workers.filter((w) => !w.dead);
     if (alive.length) {
       for (const w of alive) {
-        const cap = this.shot ? 6 : 3;
+        const cap = this._fast ? 6 : 3;
         while (w.busy < cap && this.queue.length) {
           const job = this.queue.shift();
           const id = this.jobId++;
@@ -640,7 +640,7 @@ class Flora {
     } else {
       // main-thread fallback, time-sliced
       const t0 = performance.now();
-      while (this.queue.length && performance.now() - t0 < (this.shot ? 200 : 4)) {
+      while (this.queue.length && performance.now() - t0 < (this.shot ? 200 : this._fast ? 40 : 4)) {
         const job = this.queue.shift();
         this.pending.delete(job.key);
         let res = null;
@@ -802,7 +802,7 @@ class Flora {
     const altG = this._groundAlt(alt);
     this._streamT = (this._streamT || 0) + dt;
     if (!this._streamed) { try { this._refreshClears(); } catch (_) { /* ignore */ } }
-    if (this._streamT > (this.shot ? 0 : 0.2) || !this._streamed) {
+    if (this._streamT > (this._fast ? 0 : 0.2) || !this._streamed) {
       this._streamT = 0; this._streamed = true;
       this._stream(_cam, altG);
     } else if (this.queue.length) this._dispatch();
@@ -816,7 +816,7 @@ class Flora {
       if (!b.enabled) continue;
       const moved = b.last.distanceToSquared(_cam) > b.step * b.step;
       if (b.dirty || moved) {
-        if (done > 0 && !this.shot) continue;
+        if (done > 0 && !this._fast) continue;
         b.dirty = false; b.last.copy(_cam);
         try { this._rebuildBand(b, _cam); } catch (e) { console.warn('[flora] rebuild failed', b.name, e); }
         done++;
@@ -879,6 +879,9 @@ class Flora {
   }
 
   isReady() { return this.ready; }
+
+  /** Captures, or streaming in behind the transition veil (engine.loading): spend freely per frame. */
+  get _fast() { return this.shot || !!this.engine?.loading; }
 
   setVisible(v) { this.visible = !!v; this.group.visible = this.visible; }
 

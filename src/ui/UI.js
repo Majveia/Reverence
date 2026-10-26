@@ -617,13 +617,15 @@ export class UI {
   _updateTitle(dt) {
     const s = this.titleS;
     if (!s) return;
-    // Hold the card until the scene behind it has something to show: never during a director fade, and on
-    // the cosmic web until structure has visibly formed (z < ~26; the first seconds are a near-uniform
-    // primordial fog). Max 5 s of hold so a slow/failed renderer never swallows the title.
+    // Hold the card until the scene behind it has something to show: never during a director transition (it
+    // keeps the veil up while the new world streams in), and on the cosmic web until structure has visibly
+    // formed (z < ~26; the first seconds are a near-uniform primordial fog). Max 5 s of that second hold so a
+    // slow/failed renderer never swallows the title.
+    if (s.t === 0 && this.engine.director.busy) return;
     if (s.t === 0 && s.wait < 5) {
       const d = this.engine.director;
-      let hold = !!d.busy;
-      if (!hold && d.currentName === 'cosmic') {
+      let hold = false;
+      if (d.currentName === 'cosmic') {
         const m = d.current;
         const a = m?.a;
         hold = !(m?.icStage >= 1) || (Number.isFinite(a) && a > 0 && 1 / a - 1 > 26);

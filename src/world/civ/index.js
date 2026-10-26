@@ -1001,7 +1001,7 @@ class Civ {
     }
     // nearest jobs first
     this.jobs.sort((a, b) => (a.kind === 'far') - (b.kind === 'far') || (a.site.pos.distanceTo(cam) - b.site.pos.distanceTo(cam)));
-    const budget = this.world.engine?.shot && !this.world.engine?.isReady ? 250 : (dt === 0 ? 60 : 5);
+    const budget = this.world.engine?.shot && !this.world.engine?.isReady ? 250 : (dt === 0 ? 60 : this.world.engine?.loading ? 40 : 5);
     const t0 = now();
     while (this.jobs.length && now() - t0 < budget) {
       const j = this.jobs[0];

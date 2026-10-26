@@ -395,11 +395,15 @@ export default class CosmicMode extends Mode {
     if (this.icStage >= 1) this.tau += dt;
     const a = this.a = aAt(this.tau);
     const shot = !!e.params.shot;
+    // the web has formed: fetch the galaxy scale's code in idle time (a click then dives without a download)
+    if (!this._preGal && this.tau > T_OPEN) { this._preGal = true; e.director?.preloadIdle?.('galaxy', 1000); }
     if (this.icStage === 2) {
       // (testing: simsched=1 runs the live scheduler under deterministic capture, simsched=0 the old
       // one-frame steps in live play)
       const sync = shot ? this._schedTest !== 1 : this._schedTest === 0;
-      if (sync || this.tauJumped) this._advanceSim(shot || this.tauJumped ? 64 : 3);
+      // (a return to the web catches gravity up ~20 steps: behind the transition veil a few per frame, so the
+      //  GPU keeps drawing the warp between them)
+      if (sync || this.tauJumped) this._advanceSim(shot ? 64 : this.tauJumped ? (e.loading ? 4 : 64) : 3);
       else this._scheduleSim(dt);
     }
     if (this.tauJumped && !this._needStep()) this.tauJumped = false;
@@ -637,6 +641,7 @@ export default class CosmicMode extends Mode {
       const galaxy = this.galIndex[gi] ?? 0;
       const dist = best.kind === 'galaxy' ? 0.35 : Math.max(2.5, 1.5 + this.cl.radius[best.i] * 2);
       this.rig.flyTo(best.pos, dist * sVis(this.a), 2.2);
+      e.director?.preload?.('galaxy');
       this.pending = { galaxy, t: 0, dur: 2.2, backDist: best.d * 0.6, name: best.kind === 'galaxy' ? this._galName(gi) : this.clNames[best.i] };
       e.audio?.play?.('whoosh', { gain: 0.6 });
     }

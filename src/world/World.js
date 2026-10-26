@@ -27,8 +27,15 @@ import { events } from '../core/events.js';
 import { Celestial } from './Celestial.js';
 
 const SUBSYSTEMS = import.meta.glob('./*/index.js');
+// (a macrotask, not a microtask: lets worker replies and the browser's own work in between subsystem builds)
+const yieldTask = () => new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage(0); });
 
 export class World {
+  /** Fetch every subsystem's code (all at once) without building anything: called ahead of a planet visit. */
+  static preload() {
+    return Promise.all(Object.values(SUBSYSTEMS).map((load) => load().catch(() => null)));
+  }
+
   constructor(engine, mode, params = {}) {
     this.engine = engine;
     this.mode = mode;
@@ -75,15 +82,19 @@ export class World {
   }
 
   async init() {
-    const defs = [];
-    for (const [path, load] of Object.entries(SUBSYSTEMS)) {
+    const now = () => performance.now();
+    const stats = this.loadStats = { importMs: 0, create: {}, totalMs: 0 };
+    const t0 = now();
+    // all subsystem modules in parallel (each is its own chunk: one network round trip instead of one each)
+    const defs = (await Promise.all(Object.entries(SUBSYSTEMS).map(async ([path, load]) => {
       const folder = path.split('/')[1];
       try {
         const mod = await load();
-        if (!mod.default || typeof mod.default.create !== 'function') { console.warn(`[world] ${folder}/index.js has no default {create}`); continue; }
-        defs.push({ folder, def: mod.default });
-      } catch (e) { console.error(`[world] failed to load subsystem "${folder}"`, e); }
-    }
+        if (!mod.default || typeof mod.default.create !== 'function') { console.warn(`[world] ${folder}/index.js has no default {create}`); return null; }
+        return { folder, def: mod.default };
+      } catch (e) { console.error(`[world] failed to load subsystem "${folder}"`, e); return null; }
+    }))).filter(Boolean);
+    stats.importMs = Math.round(now() - t0);
     defs.sort((a, b) => (a.def.order ?? 100) - (b.def.order ?? 100));
     // Debug/capture isolation: ?disable=fauna,vehicles skips those subsystems; ?only=terrain,atmosphere
     // loads just those (plus planet). Handy for profiling and for judging one track in isolation.
@@ -98,11 +109,15 @@ export class World {
     this.celestial.update(this.time);
     for (const { folder, def } of defs) {
       const name = def.name ?? folder;
+      const tc = now();
       try {
         const inst = await def.create(this);
         if (inst) { inst.__name = name; this.systems.set(name, inst); this.order.push(inst); }
       } catch (e) { console.error(`[world] subsystem "${name}" create() failed`, e); }
+      stats.create[name] = Math.round(now() - tc);
+      await yieldTask();
     }
+    stats.totalMs = Math.round(now() - t0);
     events.emit('world:ready', { world: this });
   }
 
