@@ -115,7 +115,18 @@ feature (a city, a vehicle, a creature herd), make it easy to frame: e.g. docume
 ## 4. Core APIs (stable — add, don't rename)
 
 * `engine`: `renderer`, `quality`, `input`, `director`, `pipeline`, `universe`, `ui`, `audio`,
-  `events`, `time {t, dt, frame}`, `params`, `shot`, `width/height`, `reversedDepth`.
+  `events`, `time {t, dt, frame}`, `params`, `shot`, `width/height`, `reversedDepth`, `loading`.
+* **Transitions** (`Director`, live play): `go(name, params, {transition, hold})` closes the veil (black; a
+  `'white'` transition flashes white only on arrival) while the warp cutscene starts (`mode:leaving`); the old
+  mode exits, the new one is built (`enter`), its shaders are linked in parallel (`mode.warmup()`), and it
+  **streams in behind the veil until `mode.isReady()`** (cap `hold` / `mode.holdMs`, default 6.5 s;
+  `mode.revealWhenReady = false` opts out) — then `mode:shown` ends the warp and the veil opens on a complete
+  scene. While the veil is up `engine.loading` is true: streaming subsystems may spend far more per frame
+  (terrain uploads and queue depth, flora jobs, civ placement, cloud bakes) and dynamic resolution ignores
+  those frames. `director.preload(name)` / `preloadIdle(name, delay)` fetch a mode's code — plus its module's
+  own `preload` export (system: every world subsystem) — ahead of time; the cosmic and galaxy modes call them
+  on fly-tos and in idle time. Shot mode (`transition: 'none'`) skips all of this. `world.loadStats` records
+  per-subsystem import / create times, `mode.settleMs` how long the veil was held.
 * `Input` (`src/core/Input.js`): `axis('move'|'look')`, `held/down/up(action)`, `zoom`,
   `pointer {nx, ny, clicked, doubleClicked, dragging}`, `setScheme('orbit'|'character'|'vehicle'|'flight')`,
   `setVirtual(action, bool)` (touch buttons), `touchSticks` (for UI rendering),
@@ -152,7 +163,9 @@ feature (a city, a vehicle, a creature herd), make it easy to frame: e.g. docume
   them; the player/vehicles collide against them (spatial hash recommended).
 * POIs (`world.pois`): `{ kind: 'city'|'village'|'monument'|'ruin'|'landing'|'creature'|'wonder',
   name, pos, radius }` — used by UI markers, discovery toasts, audio, spawn selection.
-* Events (`engine.events` / `world.events`): `discovery {kind,name}`, `mode:enter`,
+* Events (`engine.events` / `world.events`): `discovery {kind,name}`, `mode:leaving {from,to,params}` (the
+  warp starts), `mode:enter` (built, still behind the veil), `mode:shown` (revealed — arrival sounds, title cards
+  and discovery timers key on this one),
   `origin:shift {delta}`, `vehicle:enter|exit {type}`, `player:land`, `player:jump`,
   `poi:add`, `input:gesture`, `input:scheme`, `ready`.
 * `UI` (`src/ui/UI.js`): `setLocation`, `showTitle`, `prompt(id,text,action)`, `clearPrompt`,

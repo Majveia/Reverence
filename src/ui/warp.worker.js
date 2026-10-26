@@ -14,7 +14,7 @@ let stats = null;
 
 function loop(now) {
   const gap = now - last;
-  const dt = Math.min(0.05, Math.max(0, gap / 1000));
+  const dt = Math.min(0.25, Math.max(0, gap / 1000));   // (the renderer caps it per phase)
   last = now;
   stats.frames++; stats.maxGapMs = Math.max(stats.maxGapMs, gap); if (gap > 50) stats.slow++;
   if (R.step(dt, true)) raf(loop);

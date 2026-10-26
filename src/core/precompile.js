@@ -34,13 +34,21 @@ export function harvestMaterials(roots, depth = 4) {
 }
 
 /**
- * Compile `scene` and every not-yet-compiled material harvested from `owners`. Resolves when the driver has
- * finished (compileAsync); `sync: true` compiles synchronously (tests, drivers without parallel compile).
+ * Compile `scene` (into `target`: the program variant depends on the bound render target's colour space) and
+ * every not-yet-compiled material harvested from `owners`. Resolves when the driver has finished
+ * (compileAsync); `sync: true` compiles synchronously (tests, drivers without parallel compile).
  */
-export async function precompileAll(renderer, { scene, camera, owners = [], sync = false } = {}) {
+export async function precompileAll(renderer, { scene, camera, target = null, owners = [], sync = false } = {}) {
   const stats = { scene: 0, passes: 0, before: renderer.info.programs?.length ?? 0, after: 0 };
   const props = renderer.properties;
-  if (scene) { if (sync) renderer.compile(scene, camera); else await renderer.compileAsync(scene, camera); }
+  if (scene) {
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(target);
+    try {
+      if (sync) renderer.compile(scene, camera);
+      else { const p = renderer.compileAsync(scene, camera); renderer.setRenderTarget(prev); await p; }
+    } finally { renderer.setRenderTarget(prev); }
+  }
   stats.scene = (renderer.info.programs?.length ?? 0) - stats.before;
   // full-screen passes: one triangle per material, drawn (for program selection) into a render target
   const mats = [...harvestMaterials(owners)].filter((m) => (m.isShaderMaterial || m.isRawShaderMaterial) && !props.get(m).currentProgram);

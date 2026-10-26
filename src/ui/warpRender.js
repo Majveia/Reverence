@@ -144,10 +144,15 @@ export class WarpRenderer {
     } catch (e) { console.warn('[ui] warp dest', e); this.dest = null; this._pal(null); }
   }
 
-  /** Advance (and draw). Returns false once the warp has faded out completely (phase → 'idle'). */
+  /**
+   * Advance (and draw). Returns false once the warp has faded out completely (phase → 'idle').
+   * `dt` may be a long frame: the tunnel advances at most 50 ms per frame (no jumps), the fade-out follows real
+   * time (≤ 250 ms per frame) so a slow device is rid of the warp in about a second, not after dozens of frames.
+   */
   step(dt, draw) {
-    this.t += dt;
     const ph = this.phase;
+    dt = Math.min(dt, ph === 'out' ? 0.25 : 0.05);
+    this.t += dt;
     if (ph === 'idle') return false;
     let targetSpeed = 0, targetAlpha = 0, targetLabel = 0, targetDest = 0;
     if (ph === 'boot') { targetSpeed = 0.06; targetAlpha = 0.9; targetLabel = this.t > 0.25 ? 1 : 0; }

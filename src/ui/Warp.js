@@ -67,9 +67,15 @@ export class Warp {
     this.boot();
   }
 
-  /** Move drawing to a worker (OffscreenCanvas). Returns false when unsupported. */
+  /**
+   * Move drawing to a worker (OffscreenCanvas). Returns false when unsupported — and on software GL (VMs, remote
+   * desktops, blocklisted GPUs): there one CPU-emulated GPU serves both, and a warp drawing every frame starved
+   * the scale being built (~24 s more to load a galaxy). The main-thread warp only draws while that thread is
+   * free. (`&warpworker=1` forces the worker, for tests.)
+   */
   _startWorker() {
     if (typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || !this.canvas.transferControlToOffscreen) return false;
+    if (this.engine.quality?.software && Params.raw.get('warpworker') !== '1') return false;
     try {
       const off = this.canvas.transferControlToOffscreen();
       const w = new Worker(new URL('./warp.worker.js', import.meta.url), { type: 'module' });
@@ -175,7 +181,10 @@ export class Warp {
 
   _size() {
     const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
-    return { cw: w, ch: h, dpr: Math.min(1.5, window.devicePixelRatio || 1) };
+    // ≤ 1.5 device px per CSS px and ≤ ~2.2 MP in all: the tunnel is motion-blurred light over black, and on big
+    // or HiDPI screens its full-screen composites (zoom blur) would cost real GPU time while a world loads
+    const dpr = Math.min(1.5, window.devicePixelRatio || 1, Math.sqrt(2.2e6 / (w * h)));
+    return { cw: w, ch: h, dpr };
   }
 
   _resize() {
@@ -199,7 +208,7 @@ export class Warp {
   _frame(now) {
     this._raf = 0;
     if (!this.R) return;
-    const dt = Math.min(0.05, Math.max(0, (now - this._last) / 1000));
+    const dt = Math.min(0.25, Math.max(0, (now - this._last) / 1000));   // (the renderer caps it per phase)
     this._last = now;
     if (this._step(dt, true)) this._raf = requestAnimationFrame(this._loop);
   }
