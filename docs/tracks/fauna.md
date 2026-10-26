@@ -187,6 +187,19 @@ W9 hexapod whale* · W10 giant* ray* jelly* · W11 whale*.
 
 ## Known issues
 
+* Open after season 2 (the round 2 critic, 26 Oct: 4.5 → 4.5/10, blind 3/4 → 1/4; the track's season-2 rounds are used
+  up, so these lead the next pass): the moon jellies with fireflies are the best creature read, and the god-ray
+  murmuration is the nearest to a goosebumps frame. Still open: the far colossus has no aerial perspective (a small,
+  saturated shape pasted before the volcano, feet no clearer than its head; `weather=fog` barely changes the scene)
+  where the photos show a cool, pale, backlit silhouette lost in mist; up close it is a clean toy (smooth legs, thin
+  stick antlers, nothing growing, drifting or dripping from it), and the face-to-face frame looks from behind the
+  explorer at a head pressed into the legs, with no profile against the sky; sky whales are flat and under-lit (no
+  translucency, backlight, haze or ground shadow); horses are pale, identical, idle lumps behind a wall of foreground
+  grass (no coat colours, no wind in manes, no gallop or dust); the murmuration is a sparse speckle, not wheeling
+  sheets, over a near-black foreground; the spirit fox reads as plastic white (no glow, fur or tail motion); the jelly
+  scene is muddy (small bells, not overhead, no light cast on the flora); colossus views take 165–216 s to become
+  ready under software GL (3.1 M triangles, 300 draw calls).
+
 * Riding the colossus needs the player track (the mount API and seat sockets are live; see Requests).
 * Seen from below and to the side, the near flipper of a crossing sky whale points at the camera and foreshortens into
   a pale oval; whales crossing diagonally read best. Whales have no trailing motes or attendant birds for scale yet.
