@@ -108,6 +108,36 @@ export function makeLook(rng, art, archetype, st, glowing) {
   };
 }
 
+/** The colossus is made of the world: bark and root (back), lichen (belly), moss (pattern), blossom
+ *  (accent, from the world's flora palette when it has a pink / white / warm flower), pale old wood
+ *  (antlers, sapling) and a faint spirit glow in the world's accent hue at night. */
+export function colossusLook(rng, art, cold) {
+  const pal = art.palette || {};
+  const flora = (pal.flora || []).map(hexCol);
+  const accentC = hexCol(pal.accent || '#ffd9a0');
+  const back = col(rng.range(0.065, 0.09), rng.range(0.24, 0.32), rng.range(0.23, 0.28));
+  const belly = col(rng.range(0.12, 0.18), rng.range(0.12, 0.2), rng.range(0.44, 0.52));
+  // moss: the world's greenest flora colour, darkened (snowy worlds: frosted grey-green lichen)
+  let moss = col(0.25, 0.42, 0.2);
+  let best = -1;
+  for (const f of flora) { const h = hslOf(f); const sc = (1 - Math.min(1, Math.abs(h.h - 0.28) * 5)) * h.s; if (sc > best) { best = sc; moss = col(h.h, Math.min(0.55, h.s * 0.85), 0.2); } }
+  if (cold) moss = col(0.3, 0.1, 0.5);
+  // blossom: a warm / pink / white flower from the palette, else sakura
+  let bloom = col(0.95, 0.45, 0.82);
+  for (const f of flora) { const h = hslOf(f); if ((h.h > 0.85 || h.h < 0.08) && h.l > 0.45) { bloom = col(h.h, Math.min(0.6, h.s), Math.max(0.72, h.l)); break; } }
+  if (rng.chance(0.3)) bloom = col(0.12, 0.25, 0.88);       // white blossom
+  const hg = hslOf(accentC);
+  return {
+    back, belly, pattern: moss, accent: bloom, keratin: col(0.09, 0.12, 0.6), eye: col(hg.h, 0.7, 0.55),
+    glow: col(hg.h, Math.max(0.6, hg.s), 0.55),
+    patternParams: [8, 1, 0.5, 1],
+    glowParams: [1.1, 4, 0.5, 0.9],
+    surf: [0.86, 0.1, 1.6, 0.0],
+    extra: [0, 0, 0.9, 0.6],
+    haze: [1, 0, 0, 0],
+  };
+}
+
 function speciesName(rng, archetype) {
   const w = word(rng, 2, 3);
   return `${w} ${rng.pick(NOUNS[archetype] || ['Creature'])}`;
@@ -142,6 +172,13 @@ export function makeRoster(body) {
       if (HABITAT[archetype]) sp.habitat = HABITAT[archetype];
     }
     sp.look = makeLook(r, art, archetype, st, glowing);
+    if (archetype === 'jelly') {
+      // jellies glow in the world's own bioluminescent hue (its most saturated flora colour), not a
+      // stray accent: one colour of light per night biome
+      let best = null, bs = 0.3;
+      for (const f of (art.palette?.flora || []).map(hexCol)) { const h = hslOf(f); if (h.s * (0.5 + h.l) > bs) { bs = h.s * (0.5 + h.l); best = h; } }
+      if (best) sp.look.glow = col(best.h, Math.max(0.7, best.s), 0.58);
+    }
     list.push(sp);
     return sp;
   };
@@ -166,6 +203,20 @@ export function makeRoster(body) {
   // serpents (added last with their own RNG so every other species of existing worlds is unchanged)
   const rs = new RNG(hashCombine(body.seed, 0x5e7e));
   if (!cold && rs.chance(0.35 + st.exotic * 0.4)) add('serpent', 'ground', { group: [1, 3], density: 0.45, temper: rs.weighted([['skittish', 2], ['calm', 1], ['curious', 1]]) });
+  // season 2: every living world has its gentle colossi (made of the world: wood, roots, moss, blossom).
+  // Own RNG and appended last: every other species of existing worlds is unchanged.
+  if (atmo) {
+    const rc = new RNG(hashCombine(body.seed, 0xc0105));
+    const sp = {
+      id: list.length, archetype: 'colossus', layer: 'colossus',
+      name: `${word(rc, 2, 3)} ${rc.pick(['Colossus', 'Wanderer', 'Old One', 'Mosswalker', 'Treebearer'])}`,
+      seed: hashCombine(body.seed, 0x5fec, list.length), glowing: true, temper: 'calm', nocturnal: false,
+      group: [1, 1], density: 0,
+    };
+    sp.genome = leggedGenome(rc, 'colossus', st);
+    sp.look = colossusLook(rc, art, cold);
+    list.push(sp);
+  }
   return list;
 }
 

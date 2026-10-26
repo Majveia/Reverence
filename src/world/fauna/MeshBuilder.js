@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 
 // part ids (shader decodes floor(aInfo.x / 8))
-export const PART = { BODY: 0, HEAD: 1, LEG: 2, EAR: 3, HORN: 4, EYE: 5, FIN: 6, SPIKE: 7, TENTACLE: 8, SHELL: 9 };
+export const PART = { BODY: 0, HEAD: 1, LEG: 2, EAR: 3, HORN: 4, EYE: 5, FIN: 6, SPIKE: 7, TENTACLE: 8, SHELL: 9, MOSS: 10, BLOSSOM: 11 };
 // material ids (aInfo.x mod 8)
 export const MAT = { SKIN: 0, KERATIN: 1, EYE: 2, MEMBRANE: 3, CARAPACE: 4, GLOW: 5, JELLY: 6, DARK: 7 };
 

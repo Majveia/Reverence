@@ -507,7 +507,7 @@ function jellyGeo(mb, rig, hi) {
     }
   }
   // tentacles
-  const nT = hi ? g.tent : Math.ceil(g.tent / 2);
+  const nT = hi ? Math.max(4, Math.ceil(g.tent * 0.6)) : Math.ceil(g.tent / 3);   // fewer, thicker ribbons
   const Lt = g.tentLen;
   for (let k = 0; k < nT; k++) {
     const a = (k / nT) * Math.PI * 2 + 0.2;
@@ -518,7 +518,7 @@ function jellyGeo(mb, rig, hi) {
     for (let i = 0; i <= n; i++) {
       const t = i / n;
       pts.push([Math.sin(a) * rr * (1 - t * 0.35), H * 0.3 - Lt * t * (0.85 + 0.15 * ((k * 7) % 3) / 2), Math.cos(a) * rr * (1 - t * 0.35)]);
-      w.push(R * 0.025 * (1 - t * 0.8) + 0.004);
+      w.push(R * 0.042 * (1 - t * 0.75) + 0.006);
     }
     mb.loft({ pts, w, segs: hi ? 5 : 3, up: [1, 0, 0],
       skin: (i, t, out) => chainSkin(t, [0.05, 0.36, 0.7], [rig.extra.bell, chain[0], chain[1], chain[2]], 0.08, out),
