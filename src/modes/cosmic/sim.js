@@ -48,7 +48,10 @@ export class CosmicSim {
     this.steps = 0;
     this.aState = null;          // a of the positions stored in X (a_{i+1} after a step)
     this.aPrevHalf = null;       // a at which P lives (a_{i+1/2})
-    this.field = { a: [null, null], cur: 0 };
+    // render density fields, triple-buffered: newest (cur), the one before (prev), and a spare that a step
+    // computed ahead of time fills without touching what is on screen
+    this.field = { a: [null, null, null], cur: 0, prev: 1 };
+    this.job = null;             // a step being computed over several frames (beginStep → runStep → commitStep)
 
     // ------------------------------------------------------------------ shared uniforms
     const zeroTex = new THREE.DataTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat, THREE.FloatType);
@@ -76,7 +79,7 @@ export class CosmicSim {
     this.FW = this.tilesX * (this.N + 2); this.FH = (this.N / this.tilesX) * (this.N + 2);
     this.depHi = rt(this.FW, this.FH, { type: this.floatBlend ? THREE.FloatType : THREE.HalfFloatType });
     const fieldOpts = { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
-    this.fields = [rt(this.FW, this.FH, fieldOpts), rt(this.FW, this.FH, fieldOpts)];
+    this.fields = [rt(this.FW, this.FH, fieldOpts), rt(this.FW, this.FH, fieldOpts), rt(this.FW, this.FH, fieldOpts)];
     this.targets = [...this.xp, this.dep, this.depHi, this.fold, this.meshA, this.meshB, ...this.fields];
 
     // ------------------------------------------------------------------ passes
@@ -118,8 +121,13 @@ export class CosmicSim {
 
   get X() { return this.xp[this.xpCur].textures[0]; }
   get P() { return this.xp[this.xpCur].textures[1]; }
-  get fieldTexA() { return this.fields[1 - this.field.cur].texture; }   // older
+  get fieldTexA() { return this.fields[this.field.prev].texture; }      // older
   get fieldTexB() { return this.fields[this.field.cur].texture; }       // newer
+  /** Number of render fields on screen (0, 1 or 2) and the a of the newest. */
+  get fieldCount() { return (this.field.a[this.field.cur] !== null) + (this.field.a[this.field.prev] !== null); }
+  get fieldANew() { return this.field.a[this.field.cur]; }
+  _spareField() { return 3 - this.field.cur - this.field.prev; }
+  _pushField(slot, a) { const f = this.field; f.prev = f.cur; f.cur = slot; f.a[slot] = a; }
 
   setIC({ psiA, psiB, psiS }) {
     if (psiA) this.U.tPsiA.value = psiA;
@@ -139,7 +147,8 @@ export class CosmicSim {
   reset() {
     this._clearAll();
     this.xpCur = 0; this.steps = 0; this.aState = null; this.aPrevHalf = null;
-    this.field.a = [null, null];
+    this.field = { a: [null, null, null], cur: 0, prev: 1 };
+    this.job = null;
   }
 
   _pass(mat, target) {
@@ -148,91 +157,148 @@ export class CosmicSim {
     this.r.render(this.qScene, this.qCam);
   }
 
-  _fft(srcTex, sign) {
-    // Stockham radix-2 along x, y, z; ping-pong meshA/meshB. Returns the RT holding the result.
+  /** Draw `count` points of a deposit cloud starting at vertex `start` (gl_VertexID keeps its offset). */
+  _points(scene, pts, start, count) {
+    const g = pts.geometry, s0 = g.drawRange.start, c0 = g.drawRange.count;
+    g.setDrawRange(start, count);
+    this.r.render(scene, this.qCam);
+    g.setDrawRange(s0, c0);
+  }
+
+  /** Stockham radix-2 FFT along x, y, z as three units (one axis each), ping-pong meshA/meshB from job.src. */
+  _fftUnits(units, job, sign) {
     const m = this.mFFT, L = Math.round(Math.log2(this.M));
-    let src = srcTex, dst = srcTex === this.meshA.texture ? this.meshB : this.meshA;
-    m.uniforms.uSign.value = sign;
     for (let axis = 0; axis < 3; axis++) {
-      for (let s = 1; s <= L; s++) {
-        m.uniforms.tIn.value = src;
-        m.uniforms.uAxis.value = axis;
-        m.uniforms.uSub.value = 1 << s;
-        this._pass(m, dst);
-        src = dst.texture;
-        dst = dst === this.meshA ? this.meshB : this.meshA;
-      }
+      units.push(() => {
+        m.uniforms.uSign.value = sign;
+        let src = job.src, dst = src === this.meshA.texture ? this.meshB : this.meshA;
+        for (let s = 1; s <= L; s++) {
+          m.uniforms.tIn.value = src;
+          m.uniforms.uAxis.value = axis;
+          m.uniforms.uSub.value = 1 << s;
+          this._pass(m, dst);
+          src = dst.texture;
+          dst = dst === this.meshA ? this.meshB : this.meshA;
+        }
+        job.src = src;
+      });
     }
-    return src === this.meshA.texture ? this.meshA : this.meshB;
   }
 
   /**
-   * One COLA step: positions known at aFrom (this.aState, or pure 2LPT for the first step),
-   * momentum known at this.aPrevHalf. Advances X to aTo, P to (aFrom+aTo)/2.
+   * Plan one COLA step as a list of GPU units: positions known at aFrom (this.aState, or pure 2LPT for the
+   * first step), momentum at this.aPrevHalf. Advances X to aTo, P to (aFrom+aTo)/2. The units only write the
+   * sim's private targets, the spare render field and the other state buffer, so they can run over several
+   * frames ahead of time; nothing on screen changes until commitStep().
    */
-  step(aFrom, aTo, withField = true) {
-    const r = this.r;
-    const prevRT = r.getRenderTarget();
-    const autoClear = r.autoClear;
-    const cc = r.getClearColor(_cc1), ca = r.getClearAlpha();
-    r.autoClear = false;
-    try {
-      const aHalf = 0.5 * (aFrom + aTo);
-      const aKick0 = this.aPrevHalf ?? aFrom;
-      const su = this.SU;
+  beginStep(aFrom, aTo, withField = true) {
+    const job = { aFrom, aTo, withField, i: 0, units: [], src: null, nxt: 1 - this.xpCur, slot: withField ? this._spareField() : -1 };
+    const u = job.units, su = this.SU, r = this.r;
+    const setSU = () => {
       su.uD1.value = D1(aFrom); su.uD2.value = this.hasB ? D2(aFrom) : 0; su.uDS.value = this.hasS ? this.dsOf(aFrom) : 0; su.uG.value = 0;
       this.U.tX.value = this.X; this.U.tP.value = this.P;
-
-      // 1. CIC deposit of the M³ source lattice
-      r.setClearColor(0x000000, 0);
-      r.setRenderTarget(this.dep); r.clear(true, false, false);
-      r.render(this.depScene, this.qCam);
-      // 2. fold ghosts → (δ, 0, ρ, 0)
-      this._pass(this.mFold, this.fold);
-      // 3. forward FFT, Green's function, inverse FFT
-      const res = this._fft(this.fold.texture, -1);
+    };
+    // 1. CIC deposit of the M³ source lattice (two vertices per source; drawn in four parts)
+    const deposit = (target, scene, pts, n) => {
+      const q = n / 4;
+      for (let k = 0; k < 4; k++) {
+        u.push(() => {
+          setSU();
+          r.setRenderTarget(target);
+          if (k === 0) r.clear(true, false, false);
+          this._points(scene, pts, k * q, q);
+        });
+      }
+    };
+    deposit(this.dep, this.depScene, this.depPts, 2 * this.M * this.M * this.M);
+    // 2. fold ghosts → (δ, 0, ρ, 0)
+    u.push(() => { this._pass(this.mFold, this.fold); job.src = this.fold.texture; });
+    // 3. forward FFT, Green's function, inverse FFT (the potential survives in meshA/meshB until the kick)
+    this._fftUnits(u, job, -1);
+    u.push(() => {
+      const res = job.src === this.meshA.texture ? this.meshA : this.meshB;
       const kDst = res === this.meshA ? this.meshB : this.meshA;
       this.mK.uniforms.tIn.value = res.texture;
       this._pass(this.mK, kDst);
-      const potRT = this._fft(kDst.texture, 1);
-      // the potential must survive until kick + field: copy target identity
-      // 4. particle-resolution render density (all particles, incl. sub-mesh displacements)
-      if (withField) this.renderField(aFrom, false);
-      // 5. COLA kick + drift
-      const nxt = 1 - this.xpCur;
+      job.src = kDst.texture;
+    });
+    this._fftUnits(u, job, 1);
+    // 4. particle-resolution render density (all particles, incl. sub-mesh displacements) → spare field
+    if (withField) {
+      deposit(this.depHi, this.depHiScene, this.depHiPts, 2 * this.N * this.N * this.N);
+      u.push(() => { this._pass(this.mFoldHi, this.fields[job.slot]); });
+    }
+    // 5. COLA kick + drift into the other state buffer
+    u.push(() => {
+      setSU();
+      const potRT = job.src === this.meshA.texture ? this.meshA : this.meshB;
       this.mKick.uniforms.tPot.value = potRT.texture;
-      this.mKick.uniforms.uKick.value = kickFactor(aKick0, aHalf);
+      this.mKick.uniforms.uKick.value = kickFactor(this.aPrevHalf ?? aFrom, 0.5 * (aFrom + aTo));
       this.mKick.uniforms.uDrift.value = driftFactor(aFrom, aTo);
-      this.U.tX.value = this.X; this.U.tP.value = this.P;
-      this._pass(this.mKick, this.xp[nxt]);
-      this.xpCur = nxt;
-      this.U.tX.value = this.X; this.U.tP.value = this.P;
-      this.aState = aTo; this.aPrevHalf = aHalf; this.steps++;
+      this._pass(this.mKick, this.xp[job.nxt]);
+    });
+    this.job = job;
+    return job;
+  }
+
+  /** Units of the planned step still to run. */
+  get jobLeft() { return this.job ? this.job.units.length - this.job.i : 0; }
+
+  /** Run up to maxUnits units of the planned step. Returns true when all of them have run. */
+  runStep(maxUnits = Infinity) {
+    const job = this.job;
+    if (!job) return true;
+    const r = this.r;
+    const prevRT = r.getRenderTarget(), autoClear = r.autoClear;
+    const cc = r.getClearColor(_cc1), ca = r.getClearAlpha();
+    r.autoClear = false;
+    r.setClearColor(0x000000, 0);
+    try {
+      for (let n = 0; job.i < job.units.length && n < maxUnits; n++) job.units[job.i++]();
     } finally {
       r.autoClear = autoClear;
       r.setClearColor(cc, ca);
       r.setRenderTarget(prevRT);
     }
+    return job.i >= job.units.length;
+  }
+
+  /** Finish the planned step (if needed) and make it the current state. */
+  commitStep() {
+    const job = this.job;
+    if (!job) return;
+    this.runStep(Infinity);
+    this.xpCur = job.nxt;
+    this.U.tX.value = this.X; this.U.tP.value = this.P;
+    if (job.withField) this._pushField(job.slot, job.aFrom);
+    this.aState = job.aTo; this.aPrevHalf = 0.5 * (job.aFrom + job.aTo); this.steps++;
+    this.job = null;
+  }
+
+  /** One COLA step, synchronously (a step already planned for the same interval is finished instead). */
+  step(aFrom, aTo, withField = true) {
+    if (this.job && this.job.aFrom === aFrom) { this.commitStep(); return; }
+    this.job = null;
+    this.beginStep(aFrom, aTo, withField);
+    this.commitStep();
   }
 
   /** Deposit every particle at the current state (positions at aState, or pure 2LPT at `a`). */
-  renderField(a, standalone = true) {
+  renderField(a) {
     const r = this.r;
     const prevRT = r.getRenderTarget(), autoClear = r.autoClear;
     const cc = r.getClearColor(_cc2), ca = r.getClearAlpha();
     try {
       r.autoClear = false;
       const su = this.SU;
-      if (standalone) {
-        su.uD1.value = D1(a); su.uD2.value = this.hasB ? D2(a) : 0; su.uDS.value = this.hasS ? this.dsOf(a) : 0; su.uG.value = 0;
-        this.U.tX.value = this.X; this.U.tP.value = this.P;
-      }
+      su.uD1.value = D1(a); su.uD2.value = this.hasB ? D2(a) : 0; su.uDS.value = this.hasS ? this.dsOf(a) : 0; su.uG.value = 0;
+      this.U.tX.value = this.X; this.U.tP.value = this.P;
       r.setClearColor(0x000000, 0);
       r.setRenderTarget(this.depHi); r.clear(true, false, false);
       r.render(this.depHiScene, this.qCam);
-      const slot = 1 - this.field.cur;
+      const slot = this._spareField();
       this._pass(this.mFoldHi, this.fields[slot]);
-      this.field.cur = slot; this.field.a[slot] = a;
+      this._pushField(slot, a);
     } finally {
       r.autoClear = autoClear; r.setClearColor(cc, ca); r.setRenderTarget(prevRT);
     }

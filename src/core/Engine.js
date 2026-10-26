@@ -99,6 +99,30 @@ export class Engine {
     installTestAPI(this);
     if (Params.stats) this._installStats();
     this.resize();
+    this._autoAudio();
+  }
+
+  /**
+   * Music from the first moment: the audio context starts at boot, which plays at once wherever the browser
+   * (or the page embedding us) allows sound without a gesture. Browsers that hold sound back until the
+   * visitor interacts get it on the very first click, tap or key anywhere on the page (not only the canvas),
+   * and a short notice says so.
+   */
+  _autoAudio() {
+    const a = this.audio;
+    if (!a || a.isNoop || this.shot || !a.unlock) return;
+    const types = ['pointerdown', 'pointerup', 'mousedown', 'touchstart', 'touchend', 'keydown', 'click'];
+    const running = () => a.ctx?.state === 'running';
+    const off = () => { for (const t of types) document.removeEventListener(t, kick, true); };
+    const kick = () => { a.unlock(); if (running()) off(); };
+    for (const t of types) document.addEventListener(t, kick, { capture: true, passive: true });
+    a.unlock();
+    if (a.ctx) a.ctx.addEventListener?.('statechange', () => { if (running()) off(); });
+    setTimeout(() => {
+      if (running() || !a.ctx) return;
+      const touch = this.quality.touch && !matchMedia?.('(pointer: fine)')?.matches;
+      this.ui?.toast?.(touch ? 'Tap anywhere to start the music' : 'Click anywhere or press a key to start the music', { eyebrow: 'Sound', icon: 'tap', ms: 6000 });
+    }, 1800);
   }
 
   resize() {
@@ -204,14 +228,20 @@ export class Engine {
     ft.push(dt);
     if (ft.length > 90) ft.shift();
     this._dynTimer += dt;
-    if (this._dynTimer < 1.5 || ft.length < 60) return;
-    this._dynTimer = 0;
-    const avg = ft.reduce((a, b) => a + b, 0) / ft.length;
     const target = 1 / 55;
+    // a device that is far too slow (under ~27 fps over the last 20 frames) is answered within half a
+    // second and a bigger step, instead of lagging for several seconds while the 1.5 s average catches up
+    const n = ft.length;
+    let recent = 0;
+    if (n >= 20) { for (let i = n - 20; i < n; i++) recent += ft[i]; recent /= 20; }
+    const slow = n >= 20 && recent > target * 2 && this._dynTimer >= 0.5;
+    if (!slow && (this._dynTimer < 1.5 || n < 60)) return;
+    this._dynTimer = 0;
+    const avg = slow ? recent : ft.reduce((a, b) => a + b, 0) / n;
     let s = this.renderScale;
-    if (avg > target * 1.18 && s > 0.5) s = Math.max(0.5, s - 0.1);
+    if (avg > target * 1.18 && s > 0.5) s = Math.max(0.5, s - (avg > target * 2 ? 0.2 : 0.1));
     else if (avg < target * 0.72 && s < 1) s = Math.min(1, s + 0.05);
-    if (s !== this.renderScale) { this.renderScale = s; this.resize(); }
+    if (s !== this.renderScale) { this.renderScale = s; this.resize(); ft.length = 0; }
   }
   get fps() {
     const ft = this._frameTimes;
