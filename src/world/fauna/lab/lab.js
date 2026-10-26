@@ -195,7 +195,7 @@ function solo() {
   const hd = f.clone().multiplyScalar(Math.cos(tr)).addScaledVector(right, Math.sin(tr));
   const rng = { next: () => 0.5, range: (a, b) => (a + b) / 2, int: (a) => a, chance: () => false, pick: (a) => a[0], fork() { return this; } };
   const rt = fauna.runtime(sp);
-  const c = fauna.LEGGED_ARCH?.has?.(sp.archetype) || ['grazer', 'giant', 'hexapod', 'hopper', 'critter'].includes(sp.archetype)
+  const c = fauna.LEGGED_ARCH?.has?.(sp.archetype) || ['grazer', 'giant', 'hexapod', 'hopper', 'critter', 'colossus'].includes(sp.archetype)
     ? fauna._makeCreature(sp, rt, [P.x, P.y, P.z], [hd.x, hd.y, hd.z], num('scale', 1), 0.5, rng)
     : fauna._makeFlyer(sp, rt, [P.x + up.x * num('agl', 2), P.y + up.y * num('agl', 2), P.z + up.z * num('agl', 2)], [hd.x, hd.y, hd.z], num('scale', 1), rng);
   c.grazeTarget = num('graze', 0);

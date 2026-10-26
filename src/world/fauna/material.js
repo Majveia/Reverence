@@ -86,7 +86,7 @@ vec2 rvWor(vec3 p){
 // pattern mask 0..1 (1 = pattern color)
 float rvPattern(vec3 P, float u, float dors, float part){
   float type = pPattern.x; float sc = pPattern.y; float th = pPattern.z;
-  if (type < 0.5) return 0.0;
+  if (type < 0.5 || type > 8.5) return 0.0;
   float m = 0.0;
   if (type < 1.5) {           // stripes (zebra / tiger) wrapping the body
     float w = rvFbm(P * sc * 0.7) * 1.6;
@@ -217,11 +217,16 @@ float rvEyeM = 0.0;
   }
   if (rvPart > 2.5 && rvPart < 3.5 && rvMat < 0.5) rvThin = 0.6;   // ears are thin skin
   rvGlowM = rvGlowMask(vRest, rvU, rvDors, rvPart, rvMat);
-  if (pPattern.x > 7.5) {
+  if (pPattern.x > 7.5 && pPattern.x < 8.5) {
     rvGlowM *= smoothstep(0.15, 0.7, uNight);     // its spirit light shows only at dusk and night
     // ---- made of the world (colossus): bark and twisted root, lichen, moss cushions, blossom, old wood
     bool legP = rvPart > 1.5 && rvPart < 2.5;
-    vec3 fp = legP ? vRest * vec3(1.9, 0.22, 1.9) : vRest * vec3(1.3, 1.3, 0.24);
+    // the neck (above the back, in the rest pose) is old wood: furrows run along its axis (~53 deg up),
+    // moss only in streaks, so a lowered head comes down on a neck of bark, not a green tube
+    float neckK = legP ? 0.0 : smoothstep(0.7, 0.8, vRest.y / max(pHaze.y, 0.01));
+    vec3 fp = legP ? vRest * vec3(1.9, 0.22, 1.9)
+            : neckK > 0.5 ? vec3(vRest.x * 1.3, dot(vRest.yz, vec2(0.6, -0.8)) * 1.3, dot(vRest.yz, vec2(0.8, 0.6)) * 0.24)
+            : vRest * vec3(1.3, 1.3, 0.24);
     float fib = rvFbm(fp * 1.6 + 3.0);
     float crev = smoothstep(0.32, 0.62, rvVN(fp * 3.4 + fib * 1.7));
     vec3 bark = mix(cBack * 0.42, cBack * 1.18, crev) * (0.82 + 0.36 * rvVN(vRest * 0.45 + 11.0));
@@ -232,8 +237,9 @@ float rvEyeM = 0.0;
     // moss creeping over every up-facing surface and the upper legs
     float mn = rvFbm(vRest * 0.55 + 2.0) - 0.5;
     float mossM = legP ? smoothstep(0.62, 0.15, rvU + mn * 0.5) * smoothstep(-0.6, 0.2, rvDors + mn)
-                       : smoothstep(-0.25, 0.35, rvDors + mn * 1.2);
+                       : smoothstep(0.0, 0.55, rvDors + mn * 1.5);   // patchy: bark shows through on the flanks and neck
     mossM = max(mossM, smoothstep(0.62, 0.78, rvFbm(vRest * 0.32 + 7.0)) * 0.85);     // moss patches anywhere
+    mossM *= mix(1.0, 0.15 + 0.85 * smoothstep(0.5, 0.72, rvFbm(fp * vec3(1.6, 1.6, 0.5) + 4.0)), neckK);
     vec3 mossC = cPattern * (0.7 + 0.6 * rvVN(vRest * 2.6 + 5.0));
     if (rvMat < 0.5 || rvMat > 6.5) {
       rvCol = mix(bark, mossC, mossM * pPattern.w * (rvMat > 6.5 ? 0.2 : 1.0));
@@ -261,14 +267,51 @@ float rvEyeM = 0.0;
       rvRough = 0.96; rvSheen = 0.45; rvBumpAmt = 0.5; rvThin = 0.25;
     } else if (rvPart > 10.5) {
       // blossom: florets packed over leafy shrubs, translucent petals glowing when backlit
+      // a mass of blossom (petal colour throughout, florets in two sizes, shadowed gaps) with a few
+      // leafy sprigs showing through; not dots painted on a brown ball
       vec2 wv = rvWor(vRest * 4.6 + 9.0);
-      float fl = 1.0 - smoothstep(0.3, 0.52, wv.x);
+      float fl = 1.0 - smoothstep(0.22, 0.55, wv.x);
+      vec3 fp2 = vRest * 12.0 + 3.0;
+      float f2k = 1.0 - smoothstep(0.3, 0.8, length(fwidth(fp2)));
+      vec2 wv2 = rvWor(fp2);
+      float fl2 = mix(0.5, 1.0 - smoothstep(0.18, 0.5, wv2.x), f2k);
       float vary = rvVN(vRest * 1.3);
-      vec3 petal = cAccent * (0.82 + 0.3 * vary);
-      rvCol = mix(cPattern * 1.15, petal, clamp(fl * 1.1 + 0.25, 0.0, 1.0));
+      vec3 petal = cAccent * (0.86 + 0.24 * vary);
+      vec3 cc = petal * (0.58 + 0.27 * fl + 0.22 * fl2);
+      float leaf = smoothstep(0.64, 0.82, rvFbm(vRest * 1.6 + 2.0)) * 0.55;
+      rvCol = mix(cc, cPattern * 1.1, leaf);
       rvRough = 0.72; rvSheen = 0.2; rvBumpAmt = 0.4; rvThin = 0.85;
       rvGlowM = max(rvGlowM, fl * 0.35);
     }
+  }
+  if (pPattern.x > 8.5 && rvMat < 0.5) {
+    // ---- sky whale skin (after the humpback): slate back with an irregular splashy flank boundary,
+    // pale throat with ventral pleats from chin to navel, the long mouth line, tubercles on the
+    // rostrum, barnacle clusters on chin and flipper tips, a few pale scars raked over the back
+    float iR = pPattern.z;                  // 1 / body radius
+    vec3 q = vRest * iR;                    // body in radius units (L ~ 7 R)
+    float zl = q.z * 0.14;                  // ~ z / L
+    float fwq = length(fwidth(q));
+    float n1 = rvFbm(vRest * iR * 1.3 + 3.0);
+    float bound = rvDors + (n1 - 0.5) * 0.55 + 0.1 * sin(q.z * 2.3 + n1 * 4.0);
+    vec3 c = mix(cBelly, cBack, smoothstep(-0.28, 0.12, bound));
+    c = mix(c, cBack * 0.85, smoothstep(0.66, 0.78, rvFbm(vRest * iR * 2.6 + 9.0)) * smoothstep(0.0, -0.45, rvDors) * 0.35);
+    float pleatZone = smoothstep(-0.3, -0.62, rvDors) * smoothstep(-0.04, 0.08, zl) * smoothstep(0.52, 0.43, zl) * step(rvPart, 1.5);
+    float pl = abs(fract(q.x * 5.0 + (rvVN(vRest * iR * 3.0) - 0.5) * 0.45) - 0.5);
+    float pleat = smoothstep(0.14, 0.04, pl) * (1.0 - smoothstep(0.1, 0.3, fwq * 5.0));
+    c *= 1.0 - pleat * pleatZone * 0.42;
+    float my = mix(-0.12, -0.36, smoothstep(0.515, 0.33, zl));
+    float mouth = smoothstep(0.04, 0.015, abs(q.y - my)) * smoothstep(0.3, 0.34, zl) * step(0.22, abs(q.x)) * step(rvPart, 1.5);
+    c = mix(c, cBack * 0.12, mouth * 0.85);
+    vec2 tw = rvWor(vRest * iR * 9.0 + 2.0);
+    float knob = (1.0 - smoothstep(0.12, 0.24, tw.x)) * smoothstep(0.37, 0.43, zl) * (1.0 - smoothstep(0.1, 0.35, fwq * 9.0));
+    c = mix(c, mix(cBelly, cBack, 0.4) * 1.1, knob * 0.65);
+    float barn = smoothstep(0.6, 0.8, rvFbm(vRest * iR * 4.0 + 1.0)) * (smoothstep(0.4, 0.47, zl) * smoothstep(-0.2, -0.6, rvDors) + (rvPart > 5.5 && rvPart < 6.5 ? smoothstep(0.65, 1.0, rvU) : 0.0));
+    c = mix(c, vec3(0.6, 0.6, 0.56) * (0.8 + 0.4 * rvVN(vRest * iR * 20.0)), clamp(barn, 0.0, 1.0) * 0.55);
+    float scar = smoothstep(0.035, 0.0, abs(fract(q.z * 0.9 + q.y * 1.7 + rvFbm(vRest * iR * 0.8) * 1.2) - 0.5) - 0.465) * smoothstep(0.0, 0.5, rvDors) * smoothstep(0.55, 0.7, rvVN(vRest * iR * 1.1 + 5.0));
+    c = mix(c, mix(cBack, cBelly, 0.6), scar * 0.5);
+    rvCol = c * (0.9 + 0.2 * rvSeed);
+    rvRough = mix(0.48, 0.62, smoothstep(0.0, -0.5, rvDors)); rvSheen = 0.25; rvBumpAmt = 0.45;
   }
 }
 vec4 diffuseColor = vec4(rvCol, opacity);
@@ -307,7 +350,16 @@ const FRAG_EMISSIVE = /* glsl */`
   {
     vec3 Vj = normalize(vViewPosition);
     float frj = pow(1.0 - clamp(abs(dot(normal, Vj)), 0.0, 1.0), 2.0);
-    if (rvMat > 5.5 && rvMat < 6.5) rvGk = 0.18 + 1.7 * frj + 0.35 * smoothstep(0.2, 1.0, rvU);          // translucent bell: glowing rim, clear centre
+    if (rvMat > 5.5 && rvMat < 6.5) {
+      rvGk = 0.18 + 1.7 * frj + 0.35 * smoothstep(0.2, 1.0, rvU);          // translucent bell: glowing rim, clear centre
+      if (rvPart < 0.5) {
+        // the four glowing horseshoes seen through the bell (a moon jelly's clover), and radial canals
+        float ang = atan(vRest.z, vRest.x);
+        float lobe = 0.5 + 0.5 * cos(ang * 4.0);
+        rvGk += 1.5 * smoothstep(0.06, 0.0, abs(rvU - (0.2 + 0.15 * lobe))) * smoothstep(0.2, 0.85, lobe);
+        rvGk += 0.35 * smoothstep(0.9, 1.0, cos(ang * 8.0)) * smoothstep(0.3, 0.9, rvU);
+      }
+    }
     else if (rvMat > 4.5 && rvMat < 5.5 && rvPart > 7.5 && rvPart < 8.5)                                   // tentacles: a trail of glowing beads
       rvGk = (0.3 + 0.9 * smoothstep(0.55, 1.0, sin(rvU * 46.0 - rvTime * 2.2 + rvSeed * 9.0))) * (1.0 - 0.6 * rvU);
   }
@@ -331,7 +383,7 @@ const FRAG_EMISSIVE = /* glsl */`
   // eyeshine: retroreflection in the dark
   totalEmissiveRadiance += cEye * rvEyeM * pGlow.w * night * 2.5;
   // the colossus' eyes keep a soft inner light by day too (a gentle spirit looking at you)
-  if (pPattern.x > 7.5 && rvMat > 1.5 && rvMat < 2.5) totalEmissiveRadiance += cGlow * (0.35 + 0.65 * smoothstep(0.86, 0.95, rvU)) * (0.6 + 2.0 * night);
+  if (pPattern.x > 7.5 && pPattern.x < 8.5 && rvMat > 1.5 && rvMat < 2.5) totalEmissiveRadiance += cGlow * (0.35 + 0.65 * smoothstep(0.86, 0.95, rvU)) * (0.6 + 2.0 * night);
 }
 `;
 const FRAG_LIGHT = /* glsl */`
