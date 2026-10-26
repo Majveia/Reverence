@@ -98,6 +98,28 @@ rate-limited to one per 1.2 s (audio: alarm calls, stampede / wing bursts).
 * **Resonance** (`player:pulse`): the curtain of light (25 m/s) reaches creatures, they lift their heads to the
   sky for ~4 s; colossi in 2.5x the radius bow.
 
+### Season 2, round 3 (this round)
+
+* **Sky whales rebuilt after the humpback** (`bodies/chain.js` `whaleGeo`, `material.js` pattern type 9): a broad flat
+  rostrum, a deep pleated throat, a long laterally-compressed tail stock, a low dorsal hump, very long pale flippers
+  (0.34-0.42 of the body) with a knobbly leading edge, a wide notched fluke with a scalloped trailing edge (pale
+  underside, dark rim). Humpback skin in the shader: slate back with a splashy flank boundary, ventral pleats from chin
+  to navel, the long mouth line, tubercles on the rostrum, barnacle clusters on chin and flipper tips, a few pale
+  scars; matte, not the old glossy "tuna". The flippers beat slowly around the horizontal like wings in a glide. A
+  second pair of flippers only on exotic worlds (it read as an aeroplane). Seen from below, the plan silhouette reads
+  at once as a whale.
+* **Fixed: a striped ring around the whale's neck** — the body loft switched part id BODY -> HEAD between two rings,
+  and the packed material id interpolated through every other material (same bug as the pad feet last round).
+* **Whale showcase looks up at the pod** (`&fauna=whales` without `pitch`): the explorer turns and the camera pitches
+  toward the pod with `player.lookAt` (player track API), so the whales are always framed above her, never clipped.
+* **Colossus face**: a long deer-like face with leaf ears and a taller crown of branching antlers (the short broad head
+  read as a turtle or a snake when it bowed); moss is patchier so bark shows on the flanks; the blossom on its back
+  is a mass of petals in two floret sizes with shadowed gaps and a few leafy sprigs (it read as pink polka-dot balls).
+* **Wild horses**: a deeper crested neck, a broader head, sturdier legs; the mane falls to one side only (stray locks on
+  the far side read as straps), fuller locks that taper to points with varied lengths.
+* **Moon-jelly bells**: four glowing horseshoes (the clover) and faint radial canals seen through the bell.
+* Fauna lab (`lab/`): `sp=colossus&solo=1` now poses a colossus.
+
 ## API
 
 ```js
@@ -135,7 +157,7 @@ night) are framed anyway.
 
 All verified at 1280×720 with the default post pipeline (`post=legacy` also works).
 
-Season 2 (round 2):
+Season 2 (rounds 2-3):
 * **Gentle giant, face to face** (W2 meadow, the colossus bows its head to her, the spirit fox at her side):
   `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=5.3479&lon=24.1607&yaw=241.5&pitch=14&tod=0.33&props=0&fauna=colossus&faunadist=0.15` steps `[{"advance":4}]`
   (`faunadist <= 0.25` = face to face; otherwise the showcase colossus walks across the view at `230 x faunadist` m
@@ -144,8 +166,8 @@ Season 2 (round 2):
   `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=5.3479&lon=24.1607&yaw=241.5&pitch=10&tod=0.3&weather=fog&props=0&fauna=colossus&faunadist=0.5`
 * **Murmuration across the setting sun** (W1):
   `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.74&fauna=murmuration&faunadist=0.8&lat=9.08&lon=30.92&yaw=270&pitch=8&props=0`
-* **Sky whales overhead** (W3 dunes, the white spires below):
-  `/?mode=system&galaxy=0&star=9&planet=2&view=surface&tod=0.3&pitch=14&fauna=whales&faunadist=0.6&props=0`
+* **Sky whales overhead** (W3, humpback pod over the savanna and the white spires; no `pitch` so the camera looks up at them):
+  `/?mode=system&galaxy=0&star=9&planet=2&view=surface&tod=0.3&yaw=300&fauna=whales&faunadist=0.6&props=0` steps `[{"advance":3}]`
 * **Wild horses in the autumn field** (W1):
   `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=9.08&lon=30.92&yaw=297&pitch=4&tod=0.3&fauna=horse&faunadist=1.4&props=0`
 
@@ -166,6 +188,10 @@ W9 hexapod whale* · W10 giant* ray* jelly* · W11 whale*.
 ## Known issues
 
 * Riding the colossus needs the player track (the mount API and seat sockets are live; see Requests).
+* Seen from below and to the side, the near flipper of a crossing sky whale points at the camera and foreshortens into
+  a pale oval; whales crossing diagonally read best. Whales have no trailing motes or attendant birds for scale yet.
+* The colossus antlers are thin with few tines at a distance; the face is a lofted head (no sculpted mask geometry).
+* Horses are still lofted bodies (no fur cards); their manes and tails have no wind sway of their own.
 * The far colossus can be hidden by a tree line in forested spawns (the showcase checks terrain and nearby
   colliders only); streamed colossi walk 420-1800 m out and are often behind ridges.
 * Horse manes and tails are skinned rigidly to the neck and tail bones (they follow the gait and head, but

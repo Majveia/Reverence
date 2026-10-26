@@ -54,9 +54,9 @@ export function chainGenome(rng, kind, style = {}) {
     g.R = g.L * r2(rng, 0.125, 0.16);
     g.flatK = r2(rng, 0.8, 1.0);
     g.headK = r2(rng, 0.9, 1.15);
-    g.finLen = g.L * r2(rng, 0.3, 0.4);      // long humpback "wings" (season 2: gentle giants overhead)
-    g.fin2 = rng.chance(0.3 + ex * 0.5);
-    g.fluke = g.L * r2(rng, 0.13, 0.19);
+    g.finLen = g.L * r2(rng, 0.34, 0.42);      // long humpback "wings" (season 2: gentle giants overhead)
+    g.fin2 = rng.chance(ex > 0.6 ? 0.5 : 0.08);   // a second pair reads as an aeroplane on gentle worlds
+    g.fluke = g.L * r2(rng, 0.17, 0.21);
     g.ridge = rng.chance(0.4 + ex * 0.4) ? rng.int(6, 12) : 0;
     g.grooves = rng.chance(0.7);
     g.speed = r2(rng, 5, 9);
@@ -358,79 +358,89 @@ function rayGeo(mb, rig, hi) {
 }
 
 function whaleGeo(mb, rig, hi) {
+  // A gentle sky whale after the humpback: a broad flat rostrum, a deep pleated throat, a robust
+  // chest, a long laterally-compressed tail stock, a low dorsal hump, very long pale flippers with a
+  // knobbly leading edge and a wide notched fluke with a scalloped trailing edge. Seen from below
+  // (the usual view: it drifts overhead) the plan silhouette reads at once as a whale: the pale
+  // flippers like wings, the pale fluke underside with its dark rim, the pleated throat.
   const g = rig.g, L = g.L, R = g.R;
   const skinZ = zSkinner(rig, L * 0.06);
-  // body profile (tail → nose). Rounded forehead, deep chest, long tapering peduncle.
+  // [t (fraction of L), half width, top half-height, bottom half-height, centre-line y] in R units
   const prof = [
-    [-0.5, 0.05, 0.07], [-0.44, 0.12, 0.16], [-0.34, 0.3, 0.36], [-0.2, 0.62, 0.66], [-0.05, 0.9, 0.92], [0.1, 1.0, 1.02],
-    [0.25, 0.96, 0.98], [0.36, 0.85, 0.86], [0.44, 0.68 * g.headK, 0.66], [0.49, 0.42 * g.headK, 0.36], [0.515, 0.14, 0.1],
+    [-0.5, 0.05, 0.1, 0.1, 0], [-0.45, 0.09, 0.2, 0.2, 0], [-0.37, 0.22, 0.34, 0.36, 0], [-0.24, 0.52, 0.6, 0.66, 0],
+    [-0.08, 0.86, 0.84, 0.96, 0], [0.08, 1.0, 0.9, 1.08, 0], [0.2, 0.97, 0.84, 1.06, -0.02], [0.3, 0.88, 0.66, 0.9, -0.05],
+    [0.38, 0.74, 0.46, 0.66, -0.08], [0.45, 0.58, 0.3, 0.44, -0.1], [0.495, 0.38, 0.18, 0.26, -0.11], [0.515, 0.16, 0.08, 0.11, -0.11],
   ];
-  const ctrl = prof.map(([t, w, h]) => ({ z: t * L, y: t > 0.3 ? (t - 0.3) * R * 0.3 : 0, w: R * w, ht: R * h * g.flatK, hb: R * h * 1.08 }));
-  const grooves = g.grooves;
-  bodyLoft(mb, ctrl, hi ? 60 : 16, hi ? 28 : 10, skinZ, (i, t, s, out, c, p) => {
-    out[0] = code(p[2] > L * 0.3 ? PART.HEAD : PART.BODY, MAT.SKIN); out[1] = t; out[2] = s; out[3] = 0.55 + 0.45 * Math.max(0, (s + 1) * 0.5);
-  }, {
-    power: 2.05,
-    bulge: hi ? (p, t, c, s) => {
-      let m = 1;
-      if (grooves && s < -0.35 && p[2] > -L * 0.05 && p[2] < L * 0.46) m -= 0.022 * Math.pow(Math.abs(Math.sin(Math.atan2(s, c) * 18)), 3);
-      return m;
-    } : undefined,
-    capStart: 0.5, capEnd: 0.9,
-  });
-  // mouth line (dark) and eyes
+  const ctrl = prof.map(([t, w, ht, hb, y]) => ({ z: t * L, y: y * R, w: R * w, ht: R * ht * g.flatK, hb: R * hb }));
+  bodyLoft(mb, ctrl, hi ? 64 : 16, hi ? 36 : 10, skinZ, (i, t, s, out, c, p) => {
+    // one part id over the whole loft: a BODY -> HEAD switch between rings interpolates the packed
+    // material id through every other id and painted a striped ring around the neck
+    out[0] = code(PART.BODY, MAT.SKIN); out[1] = t; out[2] = s; out[3] = 0.6 + 0.4 * Math.max(0, (s + 1) * 0.5);
+  }, { power: 2.1, capStart: 0.5, capEnd: 0.7 });
+  // small eyes just above the corner of the long mouth (the mouth line itself is drawn by the shader)
   for (const side of [1, -1]) {
-    eye(mb, [side * R * 0.62, -R * 0.12, L * 0.38], R * 0.07, [side, 0.1, 0.25].map((v, i, a) => v / Math.hypot(...a)), 1, hi);
-    if (hi) {
-      const mc = [];
-      for (let i = 0; i <= 6; i++) { const t = i / 6; const z = L * (0.49 - t * 0.14); const rr = R * lerp(0.38, 0.84, Math.sqrt(t)); mc.push({ x: side * rr * 0.92, z, y: -R * 0.28 - t * R * 0.05, w: R * 0.018, ht: R * 0.012 }); }
-      bodyLoft(mb, mc, 10, 5, (z, o) => { o[0] = 1; o[1] = 1; o[2] = 1; }, (i, t, s, out) => { out[0] = code(PART.HEAD, MAT.DARK); out[1] = 1; out[2] = 0; out[3] = 0.4; }, { capStart: 0.5, capEnd: 0.5 });
-    }
+    eye(mb, [side * R * 0.79, -R * 0.2, L * 0.335], R * 0.055, [side, 0.05, 0.3].map((v, i, a) => v / Math.hypot(...a)), 1, hi);
   }
-  // pectoral fins (long, humpback-like, knobbly leading edge)
+  // low dorsal hump two thirds back
+  if (hi) {
+    const dp = [], dw = [], dh = [];
+    for (let i = 0; i <= 6; i++) {
+      const t = i / 6, z = -L * (0.13 + 0.09 * t);
+      const rr = R * 0.86 * (1 - Math.pow(Math.abs(z / L + 0.04) * 2.2, 2)) * g.flatK;
+      dp.push([0, rr + R * 0.1 * Math.sin(Math.PI * Math.pow(t, 0.7)) * 0.9 - R * 0.06, z]);
+      dw.push(R * 0.05 + 1e-3); dh.push(R * (0.03 + 0.07 * Math.sin(Math.PI * Math.min(1, t * 1.05))));
+    }
+    mb.loft({ pts: dp, w: dw, ht: dh, hb: dh, segs: 6, up: [0, 0, 1], skin: (i, t, out) => skinZ(dp[i][2], out),
+      info: (i, t, s, out) => { out[0] = code(PART.BODY, MAT.SKIN); out[1] = 0.5; out[2] = 1; out[3] = 0.9; }, capStart: 0.3, capEnd: 0.3 });
+  }
+  // pectoral flippers: long blades (a near-constant chord, a rounded tip), swept back and a little
+  // drooped like wings in a glide, pale (mostly white like a humpback's), knobs on the leading edge
   const fin = (side, bone, z0, len, root, droop) => {
     const pts = [], w = [], ht = [];
-    const n = hi ? 16 : 5;
+    const n = hi ? 20 : 6;
     for (let i = 0; i <= n; i++) {
       const t = i / n;
-      pts.push([side * (R * 0.7 + len * t * 0.92), -R * 0.35 - len * t * droop, z0 - len * t * 0.38]);
-      w.push(Math.max(0.05, root * (1 - t * 0.75) * (t > 0.85 ? Math.sqrt(Math.max(0.05, 1 - (t - 0.85) / 0.16)) : 1)));
-      ht.push(Math.max(0.03, root * 0.14 * (1 - t * 0.8)));
+      pts.push([side * (R * 0.72 + len * t * 0.9), -R * 0.42 - len * t * droop + len * 0.05 * Math.sin(Math.PI * t), z0 - len * (0.42 * t + 0.08 * t * t)]);
+      const chord = root * (t < 0.12 ? 1.0 - (0.12 - t) * 1.2 : 1.0 - (t - 0.12) * 0.42) * (t > 0.82 ? Math.sqrt(Math.max(0.04, 1 - (t - 0.82) / 0.185)) : 1);
+      w.push(Math.max(0.04, chord));
+      ht.push(Math.max(0.03, root * 0.16 * (1 - t * 0.7)));
     }
-    mb.loft({ pts, w, ht, hb: ht, segs: hi ? 10 : 5, up: [0, 1, 0],
-      skin: (i, t, out) => { const k = sstep(0, 0.2, t); out[0] = bone; out[1] = 0; out[2] = k; },
-      info: (i, t, s, out) => { out[0] = code(PART.FIN, MAT.SKIN); out[1] = t; out[2] = s * 0.8; out[3] = 0.8; },
-      bulge: hi ? (i, t, c, s) => 1 + 0.07 * Math.max(0, side > 0 ? -c : c) * Math.max(0, Math.sin(t * 40)) : undefined,
-      capStart: 0.5, capEnd: 0.5 });
+    mb.loft({ pts, w, ht, hb: ht, segs: hi ? 12 : 5, up: [0, 1, 0],
+      skin: (i, t, out) => { const k = sstep(0, 0.16, t); out[0] = bone; out[1] = 0; out[2] = k; },
+      info: (i, t, s, out) => { out[0] = code(PART.FIN, MAT.SKIN); out[1] = t; out[2] = -0.55 + s * 0.4; out[3] = 0.85; },
+      bulge: hi ? (i, t, c, s) => 1 + 0.09 * Math.max(0, side > 0 ? -c : c) * Math.pow(Math.max(0, Math.sin(t * 52)), 2) * (0.3 + t) : undefined,
+      capStart: 0.4, capEnd: 0.5 });
   };
   for (const side of [1, -1]) {
-    fin(side, side > 0 ? rig.extra.finL : rig.extra.finR, L * 0.14, g.finLen, R * 0.42, 0.25);
-    if (g.fin2) fin(side, side > 0 ? rig.extra.fin2L : rig.extra.fin2R, -L * 0.12, g.finLen * 0.55, R * 0.3, 0.15);
+    fin(side, side > 0 ? rig.extra.finL : rig.extra.finR, L * 0.13, g.finLen, R * 0.5, 0.1);
+    if (g.fin2) fin(side, side > 0 ? rig.extra.fin2L : rig.extra.fin2R, -L * 0.12, g.finLen * 0.5, R * 0.34, 0.12);
   }
-  // flukes (horizontal)
+  // flukes: wide, swept, notched at the centre, a scalloped trailing edge; dark above, pale below
+  // with a dark rim (the countershading does it: s < 0 is the underside)
   const last = rig.tail[rig.tail.length - 1];
   for (const side of [1, -1]) {
     const pts = [], w = [], ht = [];
-    const n = hi ? 14 : 5;
+    const n = hi ? 18 : 6;
     const span = g.fluke;
     for (let i = 0; i <= n; i++) {
       const t = i / n;
-      pts.push([side * span * t, 0, -L * 0.47 - span * 0.35 * Math.pow(t, 1.4)]);
-      w.push(Math.max(0.05, R * 0.3 * (1 - t * 0.55) * (t > 0.8 ? Math.sqrt(Math.max(0.05, 1 - (t - 0.8) / 0.21)) : 1)));
-      ht.push(Math.max(0.03, R * 0.05 * (1 - t * 0.7)));
+      pts.push([side * (R * 0.03 + span * t), 0, -L * 0.485 - span * (0.12 + 0.42 * Math.pow(t, 1.5))]);
+      const scal = hi ? 1 - 0.07 * Math.pow(Math.abs(Math.sin(t * 9.5)), 0.6) : 1;
+      w.push(Math.max(0.05, R * 0.34 * (1 - t * 0.5) * scal * (t > 0.78 ? Math.sqrt(Math.max(0.04, 1 - (t - 0.78) / 0.23)) : 1) * (t < 0.08 ? 0.75 + t * 3.1 : 1)));
+      ht.push(Math.max(0.03, R * 0.055 * (1 - t * 0.7)));
     }
     mb.loft({ pts, w, ht, hb: ht, segs: hi ? 10 : 5, up: [0, 1, 0],
       skin: (i, t, out) => { out[0] = last; out[1] = last; out[2] = 1; },
-      info: (i, t, s, out) => { out[0] = code(PART.FIN, MAT.SKIN); out[1] = t; out[2] = s; out[3] = 0.85; }, capStart: 0.3, capEnd: 0.5 });
+      info: (i, t, s, out, c) => { out[0] = code(PART.FIN, MAT.SKIN); out[1] = t; out[2] = s < 0 ? -0.9 + 0.5 * sstep(0.6, 1, t) : s; out[3] = 0.85; }, capStart: 0.3, capEnd: 0.5 });
   }
-  // dorsal ridge (plates / glowing nodules)
+  // dorsal ridge (plates / glowing nodules) on exotic worlds
   if (g.ridge && hi) {
     for (let k = 0; k < g.ridge; k++) {
       const t = k / (g.ridge - 1);
       const z = L * (0.25 - t * 0.55);
-      const rr = R * (1 - Math.pow(Math.abs(z / L - 0.05) * 1.8, 2)) * 0.95;
+      const rr = R * (1 - Math.pow(Math.abs(z / L - 0.05) * 1.8, 2)) * 0.9;
       const base = [0, Math.max(R * 0.1, rr * g.flatK), z];
-      const size = R * 0.16 * (1 - t * 0.5);
+      const size = R * 0.14 * (1 - t * 0.5);
       const pc = [];
       for (let i = 0; i <= 4; i++) { const u = i / 4; pc.push({ z: base[2] - u * size * 0.6, y: base[1] - size * 0.3 + u * size, w: size * 0.12 * (1 - u * 0.8), ht: size * 0.35 * (1 - u * 0.85) }); }
       bodyLoft(mb, pc, 6, 6, skinZ, (i, u, s, out) => { out[0] = code(PART.SPIKE, k % 2 ? MAT.KERATIN : MAT.GLOW); out[1] = u; out[2] = 1; out[3] = 1; }, { capStart: false, capEnd: 0.4 });

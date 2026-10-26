@@ -789,8 +789,20 @@ class Fauna {
       const sp = pick('whale');
       if (sp) {
         // showcase: the pod drifts low overhead (60–140 m up), crossing the view — megafauna passing over you
-        const { home, agl } = wantSky ? aim((70 + sp.genome.L * 1.1) * this.showDist, 15, -0.05, 30 + sp.genome.R, true) : aim(700, 7, 0.2, 90);
+        const { home, agl } = wantSky ? aim((70 + sp.genome.L * 1.1) * this.showDist, 10, -0.05, 22 + sp.genome.R, true) : aim(700, 7, 0.2, 90);
         mark(this._spawnAir(sp, home, rng.fork('ww'), wantSky ? 3 : undefined, { agl: [agl, agl + 10], heading: across(home, -0.35) }));
+        // look up at them (unless the URL sets a pitch): the explorer small at the bottom of the frame,
+        // the whales filling the sky above her
+        if (wantSky && this.world.params?.pitch === undefined) {
+          try {
+            const pl = this.world.player;
+            if (pl?.lookAt) {
+              const hl = Math.hypot(home[0], home[1], home[2]) || 1;
+              const k = agl * 0.62;
+              pl.lookAt(new THREE.Vector3(home[0] + home[0] / hl * k, home[1] + home[1] / hl * k, home[2] + home[2] / hl * k));
+            }
+          } catch (_) { /* optional neighbour */ }
+        }
       }
     }
     const tod = +(this.world.params?.tod ?? 0.5);

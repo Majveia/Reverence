@@ -202,8 +202,8 @@ export function makeRoster(body) {
       sp.look.back = col(h, 0.24, 0.16);
       sp.look.belly = col(0.1, 0.14, 0.74);
       sp.look.pattern = col(h, 0.12, 0.62);
-      sp.look.patternParams = [2, 0.32, 0.28, 0.55];
-      sp.look.surf = [0.42, 0.12, 1.1, 0.1];
+      sp.look.patternParams = [9, 0.32, 1 / Math.max(1, sp.genome?.R || 6), 1];   // 9 = humpback skin (material.js)
+      sp.look.surf = [0.52, 0.2, 0.5, 0.1];
     }
     if (archetype === 'jelly') {
       // jellies glow in the world's own bioluminescent hue (its most saturated flora colour), not a

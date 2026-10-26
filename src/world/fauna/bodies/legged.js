@@ -85,11 +85,11 @@ export function leggedGenome(rng, kind, style = {}) {
     g.neckLen = r2(rng, 0.62, 0.74);
     g.neckAng = r2(rng, 48, 58);
     g.neckW = r2(rng, 0.17, 0.2);
-    g.headLen = r2(rng, 0.11, 0.13);
-    g.headW = r2(rng, 0.17, 0.2);
-    g.headH = r2(rng, 0.17, 0.2);
+    g.headLen = r2(rng, 0.17, 0.2);      // a long deer-like face (a short broad one read as a turtle / snake)
+    g.headW = r2(rng, 0.115, 0.13);
+    g.headH = r2(rng, 0.125, 0.14);
     g.headPitch = r2(rng, 22, 34);
-    g.snout = r2(rng, 0.55, 0.75);
+    g.snout = r2(rng, 0.72, 0.86);
     g.tailLen = r2(rng, 0.35, 0.5);
     g.tailW = r2(rng, 0.1, 0.13);
     g.tailDroop = r2(rng, 55, 70);
@@ -98,8 +98,8 @@ export function leggedGenome(rng, kind, style = {}) {
     g.belly = r2(rng, 0.0, 0.08);
     g.legThick = r2(rng, 0.62, 0.72);
     g.foot = 'pad';
-    g.ears = { type: 'none', len: 0 };
-    g.horns = { type: 'antler', len: r2(rng, 1.25, 1.5), spread: r2(rng, 0.75, 0.95) };
+    g.ears = { type: 'leaf', len: r2(rng, 0.34, 0.42) };
+    g.horns = { type: 'antler', len: r2(rng, 1.9, 2.3), spread: r2(rng, 0.8, 1.0) };   // a crown of branching wood (the face is slimmer now)
     g.spikes = null;
     g.eyeK = r2(rng, 0.12, 0.15);
     g.pairs = 2;
@@ -172,10 +172,10 @@ export function leggedGenome(rng, kind, style = {}) {
     g.widthK = r2(rng, 0.44, 0.5);
     g.neckLen = r2(rng, 0.6, 0.68);
     g.neckAng = r2(rng, 44, 52);
-    g.neckW = r2(rng, 0.27, 0.31);
-    g.headLen = r2(rng, 0.4, 0.45);
-    g.headW = r2(rng, 0.095, 0.11);
-    g.headH = r2(rng, 0.13, 0.15);
+    g.neckW = r2(rng, 0.35, 0.39);     // a deep, crested neck (a thin one read as a greyhound)
+    g.headLen = r2(rng, 0.38, 0.42);
+    g.headW = r2(rng, 0.12, 0.135);
+    g.headH = r2(rng, 0.16, 0.18);
     g.headPitch = r2(rng, 38, 48);
     g.snout = r2(rng, 0.3, 0.42);
     g.tailLen = r2(rng, 0.62, 0.78);
@@ -184,7 +184,7 @@ export function leggedGenome(rng, kind, style = {}) {
     g.tuft = false;
     g.hump = r2(rng, 0.02, 0.08);
     g.belly = r2(rng, 0.05, 0.12);
-    g.legThick = r2(rng, 1.0, 1.12);
+    g.legThick = r2(rng, 1.15, 1.25);
     g.foot = 'hoof';
     g.ears = { type: 'leaf', len: r2(rng, 0.36, 0.46) };
     g.horns = { type: 'none', len: 0, spread: 0 };
@@ -897,19 +897,19 @@ function maneLocks(mb, g, sp, joints, owners, blends, hi, code, nW) {
     const upv = norm(sub(V(0, 1, 0), [T[0] * T[1], T[1] * T[1], T[2] * T[1]]));
     const root = add(p, upv, sp.ht[k] * 0.9);
     const sk = [0, 0, 1]; chainSkin(sArc, joints, owners, blends, sk);
-    const side = hj(i, 1) < 0.85 ? 1 : -1;
-    const Lm = nW * 2.6 * g.mane * (0.55 + 0.35 * Math.sin(Math.PI * Math.min(1, t * 1.3))) * (0.85 + 0.3 * hj(i, 2));
+    const side = 1;   // all locks fall to one side (stray locks on the far side read as straps)
+    const Lm = nW * 3.1 * g.mane * (0.55 + 0.35 * Math.sin(Math.PI * Math.min(1, t * 1.3))) * (0.7 + 0.6 * hj(i, 2));
     const wid = (s1 - s0) / N * 1.5;
     const pts = [], w = [], ht = [];
     for (let j = 0; j <= 5; j++) {
       const u = j / 5;
       // up and over the crest, then down the side of the neck with a backward sweep
       const over = Math.min(1, u * 2.2);
-      const q = add(add(add(root, upv, nW * 0.3 * Math.sin(over * Math.PI * 0.5) * (1 - u)), V(side, 0, 0), Lm * (0.25 * over + 0.35 * u)),
+      const q = add(add(add(root, upv, nW * 0.45 * Math.sin(over * Math.PI * 0.5) * (1 - u)), V(side, 0, 0), Lm * (0.22 * over + 0.3 * u)),
         upv, -Lm * u * u * 0.85);
       pts.push(add(q, T, -Lm * 0.25 * u * u));
-      w.push(nW * 0.07 * (1 - u * 0.6));
-      ht.push(wid * (1 - u * 0.55));
+      w.push(nW * 0.09 * (1 - u * 0.6));
+      ht.push(wid * 1.3 * (1 - u * 0.88) * (1 + 0.25 * Math.sin(u * Math.PI)));   // locks taper to points
     }
     mb.loft({ pts, w, ht, hb: ht, segs: hi ? 6 : 4, up: T, skin: (ii, tt, o) => { o[0] = sk[0]; o[1] = sk[1]; o[2] = sk[2]; },
       info: (ii, tt, s, o) => { o[0] = code(P.TENTACLE, M.KERATIN); o[1] = 0.1 + tt * 0.5; o[2] = 0.6; o[3] = 0.8 + 0.2 * (1 - tt); }, capEnd: true });

@@ -136,8 +136,10 @@ export class ChainAnimator {
       for (let k = 0; k < rig.tail.length; k++) qeuler(lq, rig.tail[k] * 4, -c.turnRate * 0.25 * (k + 1) / rig.tail.length, amp[k] * (0.7 + 0.5 * flap) * Math.sin(ph - k * 0.75), 0);
       qeuler(lq, 4, c.turnRate * 0.2, -0.03 * Math.sin(ph + 0.8), 0);
       const pad = Math.sin(ph * 0.5 + 0.4);
-      qeuler(lq, E.finL * 4, 0.12 * pad, 0.08 * pad, 0.2 + 0.28 * Math.sin(ph * 0.5));
-      qeuler(lq, E.finR * 4, -0.12 * pad, 0.08 * pad, -0.2 - 0.28 * Math.sin(ph * 0.5));
+      // long flippers held out like wings in a glide, beating slowly a little above and below the
+      // horizontal (a stroke that raised them high read as an aeroplane's tail fins)
+      qeuler(lq, E.finL * 4, 0.1 * pad, 0.06 * pad, -0.06 + 0.2 * Math.sin(ph * 0.5));
+      qeuler(lq, E.finR * 4, -0.1 * pad, 0.06 * pad, 0.06 - 0.2 * Math.sin(ph * 0.5));
       qeuler(lq, E.fin2L * 4, 0, 0, 0.15 + 0.2 * Math.sin(ph * 0.5 - 1.2));
       qeuler(lq, E.fin2R * 4, 0, 0, -0.15 - 0.2 * Math.sin(ph * 0.5 - 1.2));
       bobUp = Math.sin(ph) * rig.g.R * 0.04 * s;
