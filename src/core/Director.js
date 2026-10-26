@@ -81,6 +81,9 @@ export class Director {
       if (this.current) {
         if (opts.push !== false && !opts.replace) this.stack.push({ name: this.currentName, params: this.currentParams });
         try { this.current.exit(); } catch (e) { console.error('[director] exit failed', e); }
+        // an exited mode is never updated, rendered or asked whether it is ready again (the next scale's
+        // code may still be downloading)
+        this.current.entered = false;
         engine.pipeline.effects.length = 0;
         engine.pipeline.resetLook();
       }

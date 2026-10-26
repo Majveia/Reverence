@@ -197,7 +197,8 @@ export class Engine {
     // Before ready: render rarely (progress only). After ready: never render idly — frames are
     // rendered only by advance()/render(), so screenshots never queue behind idle software frames.
     this.step(0, !this.isReady && (this.time.frame % 60) === 0);
-    if (!this.isReady && mode.entered) {
+    // (never ready mid-transition: the mode switching out still reports its own readiness)
+    if (!this.isReady && mode.entered && !this.director.busy) {
       if (mode.isReady()) { if (++this._readyFrames >= 3) { this.isReady = true; this.render(); events.emit('ready'); } }
       else this._readyFrames = 0;
     }
