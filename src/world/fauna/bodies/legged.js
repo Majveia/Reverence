@@ -161,6 +161,38 @@ export function leggedGenome(rng, kind, style = {}) {
     g.eyeK = r2(rng, 0.26, 0.34);
     g.pairs = 1; g.arms = true; g.incline = r2(rng, 30, 48);
     g.walkSpeed = r2(rng, 1.8, 2.6); g.runSpeed = r2(rng, 6, 9);
+  } else if (kind === 'horse') {
+    // season 2 (Ghost of Yotei): wild horses — a grazer rig with a long head, a crested neck, a mane
+    // that falls to one side and a long hair tail (both swing in the wind and the gallop)
+    g.kind = 'grazer'; g.horse = true;
+    g.S = r2(rng, 1.5, 1.75);
+    g.legFrac = r2(rng, 0.54, 0.58);
+    g.bodyLen = r2(rng, 0.98, 1.08);
+    g.depthK = r2(rng, 1.0, 1.08);
+    g.widthK = r2(rng, 0.44, 0.5);
+    g.neckLen = r2(rng, 0.6, 0.68);
+    g.neckAng = r2(rng, 44, 52);
+    g.neckW = r2(rng, 0.27, 0.31);
+    g.headLen = r2(rng, 0.4, 0.45);
+    g.headW = r2(rng, 0.095, 0.11);
+    g.headH = r2(rng, 0.13, 0.15);
+    g.headPitch = r2(rng, 38, 48);
+    g.snout = r2(rng, 0.3, 0.42);
+    g.tailLen = r2(rng, 0.62, 0.78);
+    g.tailW = r2(rng, 0.075, 0.09);
+    g.tailDroop = r2(rng, 50, 62);
+    g.tuft = false;
+    g.hump = r2(rng, 0.02, 0.08);
+    g.belly = r2(rng, 0.05, 0.12);
+    g.legThick = r2(rng, 1.0, 1.12);
+    g.foot = 'hoof';
+    g.ears = { type: 'leaf', len: r2(rng, 0.36, 0.46) };
+    g.horns = { type: 'none', len: 0, spread: 0 };
+    g.spikes = null;
+    g.eyeK = r2(rng, 0.2, 0.24);
+    g.pairs = 2;
+    g.mane = r2(rng, 0.8, 1.15);
+    g.walkSpeed = r2(rng, 1.4, 1.7); g.runSpeed = r2(rng, 10, 13);
   } else if (kind === 'fox') {
     // season 2: the spirit fox (companion + guide): a small quadruped with a pointed muzzle, tall ears
     // and a long bushy tail (rig kind 'critter' + fox flag: paws, sits up)
@@ -170,7 +202,7 @@ export function leggedGenome(rng, kind, style = {}) {
     g.headLen = 0.44; g.headW = 0.14; g.headH = 0.15; g.headPitch = 14; g.snout = 0.9;
     g.tailLen = 1.05; g.tailW = 0.5; g.tailDroop = 28; g.tuft = true;
     g.hump = 0; g.belly = 0.05; g.legThick = 0.82; g.foot = 'paw';
-    g.ears = { type: 'long', len: 1.0 };
+    g.ears = { type: 'long', len: 0.62 };
     g.horns = { type: 'none', len: 0, spread: 0 };
     g.spikes = null; g.eyeK = 0.24; g.pairs = 2;
     g.walkSpeed = 1.3; g.runSpeed = 7.5;
@@ -474,6 +506,9 @@ export function leggedGeometry(rig, lod = 0) {
     capStart: 0.55, capEnd: 0.5,
   });
 
+  // ------------------------------------------------------------------ horse: mane (locks falling to one side)
+  if (g.horse && g.mane) maneLocks(mb, g, sp, joints, owners, blends, hi, code, nW);
+
   // ------------------------------------------------------------------ tail (separate loft emerging from the rump)
   if (rig.Lt > 0.02) {
     const inside = add(add(tp[0], ax, D * 0.22), up, -D * 0.06);
@@ -485,6 +520,12 @@ export function leggedGeometry(rig, lod = 0) {
       { p: lerp3(tp[2], tp[3], 0.55), w: tw * 0.4, ht: tw * 0.4 },
       { p: tp[3], w: tw * 0.2, ht: tw * 0.2 },
     ];
+    if (g.horse) {
+      // a long fall of hair from a short dock (keratin = the mane / tail colour)
+      const k = [1.0, 1.0, 1.55, 1.85, 1.6, 0.9];
+      for (let i = 0; i < tc.length; i++) { tc[i].w = tw * k[i]; tc[i].ht = tw * k[i] * (i > 1 ? 0.7 : 1); }
+      tc.push({ p: add(tp[3], norm(sub(tp[3], tp[2])), tw * 2.2), w: tw * 0.35, ht: tw * 0.3 });
+    }
     if (g.tuft) { tc[4].w *= 1.6; tc[4].ht *= 1.6; tc[5].w = tw * 0.9; tc[5].ht = tw * 0.9; tc.push({ p: add(tp[3], norm(sub(tp[3], tp[2])), tw * 1.2), w: tw * 0.3, ht: tw * 0.3 }); }
     const tsp = spline(tc, hi ? 26 : 7, ['w', 'ht']);
     const nearT = (pt) => { let best = 0, bd = Infinity; tsp.pts.forEach((q, i) => { const d = len(sub(q, pt)); if (d < bd) { bd = d; best = i; } }); return tsp.s[best]; };
@@ -492,7 +533,7 @@ export function leggedGeometry(rig, lod = 0) {
     mb.loft({
       pts: tsp.pts, w: tsp.w, ht: tsp.ht, hb: tsp.ht, segs: hi ? 10 : 5, up: [0, 1, 0],
       skin: (i, t, out) => chainSkin(tsp.s[i], tj, [B.PELVIS, B.TAIL1, B.TAIL2, B.TAIL3], [tw * 1.5, tw * 1.6, tw * 1.4], out),
-      info: (i, t, s, out) => { out[0] = code(P.TENTACLE, M.SKIN); out[1] = t; out[2] = s * 0.8 + 0.1; out[3] = 0.85 + 0.15 * s; },
+      info: (i, t, s, out) => { out[0] = code(P.TENTACLE, g.horse && t > 0.12 ? M.KERATIN : M.SKIN); out[1] = g.horse ? t * 0.45 : t; out[2] = s * 0.8 + 0.1; out[3] = 0.85 + 0.15 * s; },
       capStart: false, capEnd: true,
     });
   }
@@ -724,8 +765,10 @@ function legGeometry(mb, rig, L, hi, code) {
     up: hexa ? [0, 1, 0] : [0, 0, 1],
     skin: (i, t, out) => chainSkin(sp.s[i], joints, owners, blends, out),
     info: (i, t, s, out) => {
-      const isHoof = (g.foot === 'hoof' || g.foot === 'claw' || g.foot === 'pad') && t > hoofStart;
-      out[0] = code(P.LEG, isHoof ? (g.foot === 'pad' ? M.DARK : M.KERATIN) : (hexa ? M.CARAPACE : M.SKIN));
+      // (material ids are interpolated across the ring between skin and foot: only use the adjacent id
+      // KERATIN, never DARK (7), or the in-between ids paint a band of eye / membrane / glow stripes)
+      const isHoof = !g.colossus && (g.foot === 'hoof' || g.foot === 'claw' || g.foot === 'pad') && t > hoofStart;
+      out[0] = code(P.LEG, isHoof ? M.KERATIN : (hexa ? M.CARAPACE : M.SKIN));
       out[1] = t; out[2] = -0.25 + 0.3 * s; out[3] = 0.55 + 0.45 * Math.min(1, t * 2.2);
     },
     capStart: false, capEnd: true,
@@ -833,6 +876,43 @@ function hornsGeometry(mb, rig, g, hi, headSurf, hUp, hw, hh, code) {
       }
       mb.membrane(grid, (i, j, o) => { o[0] = B.HEAD; o[1] = B.HEAD; o[2] = 1; }, (i, j, s, o) => { o[0] = code(P.FIN, M.MEMBRANE); o[1] = j / nj; o[2] = 1; o[3] = 1; }, hw * 0.05);
     }
+  }
+}
+
+/** Horse mane: flat locks rooted along the neck crest (poll → withers), falling to the creature's
+ *  left with a slight backward sweep; each lock is skinned to the neck bone under its root so it
+ *  follows the head; keratin material (= mane colour, darker toward the tips). */
+function maneLocks(mb, g, sp, joints, owners, blends, hi, code, nW) {
+  const P = PART, M = MAT;
+  const n = sp.pts.length;
+  const hj = (i, k) => { const x = Math.sin(i * 91.7 + k * 271.3) * 43758.5453; return x - Math.floor(x); };
+  const s0 = joints[1] + (joints[2] - joints[1]) * 0.55, s1 = joints[4] - nW * 0.6;   // withers → poll
+  const N = hi ? 22 : 7;
+  for (let i = 0; i < N; i++) {
+    const t = (i + 0.5) / N;
+    const sArc = s0 + (s1 - s0) * t;
+    let k = 0; while (k < n - 1 && sp.s[k] < sArc) k++;
+    const p = sp.pts[k], a = sp.pts[Math.max(0, k - 1)], b = sp.pts[Math.min(n - 1, k + 1)];
+    const T = norm(sub(b, a));
+    const upv = norm(sub(V(0, 1, 0), [T[0] * T[1], T[1] * T[1], T[2] * T[1]]));
+    const root = add(p, upv, sp.ht[k] * 0.9);
+    const sk = [0, 0, 1]; chainSkin(sArc, joints, owners, blends, sk);
+    const side = hj(i, 1) < 0.85 ? 1 : -1;
+    const Lm = nW * 2.6 * g.mane * (0.55 + 0.35 * Math.sin(Math.PI * Math.min(1, t * 1.3))) * (0.85 + 0.3 * hj(i, 2));
+    const wid = (s1 - s0) / N * 1.5;
+    const pts = [], w = [], ht = [];
+    for (let j = 0; j <= 5; j++) {
+      const u = j / 5;
+      // up and over the crest, then down the side of the neck with a backward sweep
+      const over = Math.min(1, u * 2.2);
+      const q = add(add(add(root, upv, nW * 0.3 * Math.sin(over * Math.PI * 0.5) * (1 - u)), V(side, 0, 0), Lm * (0.25 * over + 0.35 * u)),
+        upv, -Lm * u * u * 0.85);
+      pts.push(add(q, T, -Lm * 0.25 * u * u));
+      w.push(nW * 0.07 * (1 - u * 0.6));
+      ht.push(wid * (1 - u * 0.55));
+    }
+    mb.loft({ pts, w, ht, hb: ht, segs: hi ? 6 : 4, up: T, skin: (ii, tt, o) => { o[0] = sk[0]; o[1] = sk[1]; o[2] = sk[2]; },
+      info: (ii, tt, s, o) => { o[0] = code(P.TENTACLE, M.KERATIN); o[1] = 0.1 + tt * 0.5; o[2] = 0.6; o[3] = 0.8 + 0.2 * (1 - tt); }, capEnd: true });
   }
 }
 

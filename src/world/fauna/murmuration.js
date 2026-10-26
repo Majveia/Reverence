@@ -115,8 +115,9 @@ export class Murmuration {
     let h = 0x9e3779b9 >>> 0;
     const rnd = () => { h ^= h << 13; h >>>= 0; h ^= h >>> 17; h ^= h << 5; h >>>= 0; return h / 4294967296; };
     for (let i = 0; i < n; i++) {
+      // concentrated toward the core (sum of three uniforms): a dense dark heart with thinning, ragged edges
       let u, v;
-      do { u = rnd(); v = rnd(); } while ((u - 0.5) ** 2 + (v - 0.5) ** 2 > 0.25);
+      do { u = (rnd() + rnd() + rnd()) / 3; v = (rnd() + rnd() + rnd()) / 3; u = 0.5 + (u - 0.5) * 1.7; v = 0.5 + (v - 0.5) * 1.7; } while ((u - 0.5) ** 2 + (v - 0.5) ** 2 > 0.25);
       seeds[i * 4] = u; seeds[i * 4 + 1] = v; seeds[i * 4 + 2] = rnd(); seeds[i * 4 + 3] = rnd();
     }
     base.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 4));
@@ -125,7 +126,7 @@ export class Murmuration {
     this.u = {
       uT: { value: 0 }, uCenter: { value: new THREE.Vector3() },
       uE: { value: new THREE.Vector3(1, 0, 0) }, uU: { value: new THREE.Vector3(0, 1, 0) }, uN: { value: new THREE.Vector3(0, 0, 1) },
-      uSize: { value: new THREE.Vector3(95, 9, 55) }, uSpan: { value: 0.75 }, uPxK: { value: 500 }, uMinPx: { value: 2.2 },
+      uSize: { value: new THREE.Vector3(120, 6, 62) }, uSpan: { value: 0.75 }, uPxK: { value: 500 }, uMinPx: { value: 2.6 },
       uFade: { value: 0 }, uSunDirV: G.uSunDir, uSky: G.uAmbientSky, uSunCol: G.uSunColor,
     };
     const mat = new THREE.ShaderMaterial({

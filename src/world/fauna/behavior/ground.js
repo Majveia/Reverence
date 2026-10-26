@@ -288,6 +288,20 @@ export class Herd {
         wantSpeed = run * s * (0.85 + 0.15 * m.seed);
         if (m.dPlayer < 30) m.look = null;
       }
+      // gentle giants: the explorer standing still nearby for a few seconds → it turns to her and lowers
+      // its head (face to face), until she moves again
+      if (sp.archetype === 'giant' && this.state !== FLEE) {
+        const near = m.dPlayer < 30 * s && env.playerOnGround;
+        m.stillT = near && env.playerSpeed < 0.35 ? (m.stillT || 0) + dt : Math.max(0, (m.stillT || 0) - dt * 2);
+        if (m.stillT > 3) {
+          wx = P[0] - m.pos[0]; wy = P[1] - m.pos[1]; wz = P[2] - m.pos[2];
+          const so = (g.S * 1.6 + 3) * s;
+          wantSpeed = m.dPlayer > so + 1 ? walk * 0.35 * s : 0.003;
+          const fx = m.fwd[0] * wx + m.fwd[1] * wy + m.fwd[2] * wz;
+          graze = m.dPlayer < so + 4 && fx > 0.75 * m.dPlayer ? 0.62 : 0;
+          m.look = P;
+        }
+      }
       // separation
       let sx = 0, sy = 0, sz = 0;
       const minD = this.spacing * 0.75 * s;

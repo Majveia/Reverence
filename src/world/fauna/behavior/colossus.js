@@ -109,7 +109,7 @@ export class ColossusWalk {
         else want = 0.003;          // turn in place
         const fx = m.fwd[0] * dx + m.fwd[1] * dy + m.fwd[2] * dz;
         const facing = d > 1e-3 ? fx / d : 0;
-        graze = d < so + 6 && facing > 0.8 ? 0.84 : 0;
+        graze = d < so + 10 && facing > 0.6 ? 0.84 : 0;
         m.look = H;
         break;
       }

@@ -91,7 +91,7 @@ export class SpiritFox {
     const l = P.length();
     _a.copy(P).divideScalar(l);
     _b.crossVectors(_a, fwd).normalize();                 // left
-    const p = new Float64Array([P.x + _b.x * 1.5 - fwd.x * 1.6, P.y + _b.y * 1.5 - fwd.y * 1.6, P.z + _b.z * 1.5 - fwd.z * 1.6]);
+    const p = new Float64Array([P.x + _b.x * 1.4 + fwd.x * 0.7, P.y + _b.y * 1.4 + fwd.y * 0.7, P.z + _b.z * 1.4 + fwd.z * 0.7]);
     f.env.ground(p[0], p[1], p[2], p, 0);
     const rng = new RNG(hashCombine(this.species.seed, 7));
     const c = f._makeCreature(this.species, this.rt, p, [fwd.x, fwd.y, fwd.z], 1, 0.62, rng);
@@ -166,7 +166,7 @@ export class SpiritFox {
       speedK = 1.6;
     } else {
       this.leading = false;
-      tx = P.x + _b.x * 1.4 - fwd.x * 1.7; ty = P.y + _b.y * 1.4 - fwd.y * 1.7; tz = P.z + _b.z * 1.4 - fwd.z * 1.7;
+      tx = P.x + _b.x * 1.4 + fwd.x * 0.7; ty = P.y + _b.y * 1.4 + fwd.y * 0.7; tz = P.z + _b.z * 1.4 + fwd.z * 0.7;   // at her left side (in the chase-camera frame beside her)
     }
     if (mode !== 'guide') this.leading = false;
     let wx = tx - c.pos[0], wy = ty - c.pos[1], wz = tz - c.pos[2];

@@ -239,6 +239,15 @@ float rvEyeM = 0.0;
       rvCol = mix(bark, mossC, mossM * pPattern.w * (rvMat > 6.5 ? 0.2 : 1.0));
       if (rvMat > 6.5) rvCol *= 0.5;
       rvRough = mix(0.86, 0.95, mossM); rvSheen = 0.12 * mossM; rvBumpAmt = mix(1.7, 0.7, mossM);
+      if (rvPart > 0.5 && rvPart < 1.5 && rvMat < 0.5) {
+        // the face: a pale mask of old weathered wood (a forest spirit's face), grain running down the
+        // muzzle, dark grooves, moss creeping in from the crown; reads at any distance as a pale face
+        float maskM = smoothstep(0.18, 0.36, rvU) * smoothstep(-0.7, -0.25, rvDors) * (1.0 - smoothstep(0.55, 0.95, rvDors + mn * 0.6) * 0.65);
+        float grain = rvVN(vRest * vec3(7.0, 7.0, 0.7) + 21.0);
+        vec3 wood = mix(cKeratin * 0.5, cKeratin * 1.12, smoothstep(0.25, 0.75, grain)) * (0.9 + 0.2 * rvVN(vRest * 1.3));
+        rvCol = mix(rvCol, wood, maskM);
+        rvRough = mix(rvRough, 0.7, maskM); rvSheen *= 1.0 - maskM; rvBumpAmt = mix(rvBumpAmt, 1.2, maskM);
+      }
     } else if (rvMat > 0.5 && rvMat < 1.5) {
       // antlers and the sapling: pale weathered wood, darker in the grooves, moss in the forks
       float wf = rvVN(vRest * vec3(0.8, 5.0, 0.8));
@@ -302,7 +311,10 @@ const FRAG_EMISSIVE = /* glsl */`
     else if (rvMat > 4.5 && rvMat < 5.5 && rvPart > 7.5 && rvPart < 8.5)                                   // tentacles: a trail of glowing beads
       rvGk = (0.3 + 0.9 * smoothstep(0.55, 1.0, sin(rvU * 46.0 - rvTime * 2.2 + rvSeed * 9.0))) * (1.0 - 0.6 * rvU);
   }
-  totalEmissiveRadiance += cGlow * rvGlowM * pGlow.x * (0.08 + 1.4 * night * night) * pulse * (0.7 + 0.6 * vInst.y) * rvGk;
+  // small glowing life fades to faint points with distance (no saturated halos dotting far night terrain);
+  // giants and sky whales (haze-shaded) keep their light
+  float rvFarK = pHaze.x > 0.0 ? 1.0 : mix(1.0, 0.3, smoothstep(90.0, 600.0, length(vViewPosition)));
+  totalEmissiveRadiance += cGlow * rvGlowM * pGlow.x * (0.08 + 1.4 * night * night) * pulse * (0.7 + 0.6 * vInst.y) * rvGk * rvFarK;
   // bioluminescent species read as lit volumes at night, not rim outlines: a dim self-illumination
   // of the whole body (the glow scattered under translucent skin), brighter on the belly and toward
   // the silhouette (fresnel), mottled so it reads organic
@@ -318,6 +330,8 @@ const FRAG_EMISSIVE = /* glsl */`
   }
   // eyeshine: retroreflection in the dark
   totalEmissiveRadiance += cEye * rvEyeM * pGlow.w * night * 2.5;
+  // the colossus' eyes keep a soft inner light by day too (a gentle spirit looking at you)
+  if (pPattern.x > 7.5 && rvMat > 1.5 && rvMat < 2.5) totalEmissiveRadiance += cGlow * (0.35 + 0.65 * smoothstep(0.86, 0.95, rvU)) * (0.6 + 2.0 * night);
 }
 `;
 const FRAG_LIGHT = /* glsl */`
