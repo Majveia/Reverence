@@ -143,6 +143,9 @@ export class UI {
     // ---- engine events
     events.on('discovery', (d) => this._onDiscovery(d));
     events.on('mode:enter', () => { this._dofSet = undefined; this.crumbT = 0; this._renderCrumbs(); this._clearTransient(); this._applyUiPanelParam(); });
+    // a hint belongs to the scale that showed it (the galaxy's "tap a star · double-tap to travel" must not ride
+    // along onto the planet); cleared as the transition starts, before the next mode sets its own
+    events.on('mode:leaving', () => this.hint(null));
     events.on('input:scheme', ({ scheme }) => this.setControls(scheme));
     events.on('input:pointerlock', ({ locked }) => this._onPointerLock(locked));
     events.on('vehicle:exit', () => this.setTelemetry(null));

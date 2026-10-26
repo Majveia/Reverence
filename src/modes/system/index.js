@@ -39,7 +39,12 @@ export default class SystemMode extends Mode {
     if (!this.world || !r?.compileAsync) return;
     const sync = new URLSearchParams(location.search).get('precompile') === 'sync';
     if (!sync && !r.extensions?.has('KHR_parallel_shader_compile')) return;
-    this.warmStats = await precompileAll(r, { scene: this.scene, camera: this.camera, owners: [e.pipeline, ...this.world.order], sync });
+    // the first update patches the scene's materials (cloud shadows), places lights, and the scene's
+    // onBeforeRender builds the environment map: do both now, so the warmed programs are the variants the
+    // first frame draws with (the scene renders into the pipeline's HDR target)
+    try { this.world.update(0); } catch (err) { console.warn('[system] warm-up update', err); }
+    try { this.scene.onBeforeRender?.(r, this.scene, this.camera, e.pipeline.sceneRT); } catch (err) { console.warn('[system] warm-up pre-render', err); }
+    this.warmStats = await precompileAll(r, { scene: this.scene, camera: this.camera, target: e.pipeline.sceneRT, owners: [e.pipeline, ...this.world.order], sync });
   }
 
   update(dt) { this.world.update(dt); }
