@@ -323,6 +323,9 @@ export default class GalaxyMode extends Mode {
   _onStarsComplete() {
     this.starsReady = true;
     this._calibrateStars();
+    // the next stop is a star system: fetch its code while the player looks around (after the galaxy has
+    // settled — choosing a star fetches it at once anyway)
+    this.engine.director?.preloadIdle?.('system', 4000);
   }
 
   /** Global tracer gain: stars carry a fraction of the galaxy's diffuse light. */
@@ -493,6 +496,7 @@ export default class GalaxyMode extends Mode {
     this.rig.flyTo(pos, d, dur, { arc: 0.15 });
     e.audio?.play?.('whoosh');
     this._travelT = dur;
+    e.director?.preload?.('system');   // (no-op when the idle preload already has it)
   }
 
   /** Current pattern-frame position of the selection. */

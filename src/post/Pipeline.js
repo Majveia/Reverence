@@ -627,15 +627,23 @@ export class Pipeline {
       Object.assign(o, aes); o.key = aeKey;
       this.ae.update(r, this.quad, hdr.texture, dt, o);
       // cheap CPU-side screen brightness for the HUD (ui request): one 1×1 readback every ~0.5 s,
-      // display-referred estimate (0..1) of the mean frame luminance after exposure + tone curve
+      // display-referred estimate (0..1) of the mean frame luminance after exposure + tone curve.
+      // Live play reads it asynchronously (a synchronous read made the CPU wait for the GPU to finish the
+      // frame twice a second: a small periodic hitch in every scale); captures keep the exact sync read.
       const now = performance.now();
-      if (!(now - (this._avgT || 0) < 500)) {
+      if (!(now - (this._avgT || 0) < 500) && !this._avgBusy) {
         this._avgT = now;
-        const m = this.ae.read(r);
-        if (m && Number.isFinite(m.lum)) {
-          const e = (s.exposure ?? 1) * THREE.MathUtils.clamp(Math.pow(aeKey / Math.max(m.lum, 1e-6), aes.strength ?? 0.7), aes.min ?? 0.4, aes.max ?? 4);
+        const exposure = s.exposure ?? 1, strength = aes.strength ?? 0.7, lo = aes.min ?? 0.4, hi = aes.max ?? 4;
+        const toHud = (m) => {
+          if (!m || !Number.isFinite(m.lum)) return;
+          const e = exposure * THREE.MathUtils.clamp(Math.pow(aeKey / Math.max(m.lum, 1e-6), strength), lo, hi);
           const x = m.lum * e, t = x / (1 + x);
           st.avgLum = +(t <= 0.0031308 ? t * 12.92 : 1.055 * Math.pow(t, 1 / 2.4) - 0.055).toFixed(3);
+        };
+        if (eng.shot || !r.readRenderTargetPixelsAsync) toHud(this.ae.read(r));
+        else {
+          this._avgBusy = true;
+          this.ae.readAsync(r).then(toHud, () => {}).finally(() => { this._avgBusy = false; });
         }
       }
     } else st.avgLum = null;

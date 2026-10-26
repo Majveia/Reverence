@@ -475,7 +475,7 @@ export class MountainClouds {
 
   update(dt) {
     if (!this.mat) return;
-    if (!this.ready) this._bake(3);
+    if (!this.ready) this._bake(this.world.engine?.loading ? 40 : 3);   // (behind the transition veil: bake faster)
     // wind drift (m): the clouds slide slowly around the mountain
     const W = G.uWindDir?.value, ws = 6 + 10 * (G.uWindStrength?.value ?? 0.4);
     if (W) this.windOff.addScaledVector(W, -Math.min(dt || 0, 0.1) * ws);

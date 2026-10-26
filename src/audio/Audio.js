@@ -85,7 +85,7 @@ export class Audio {
   _listen() {
     try {
       events.on('mode:leaving', (p) => { if (p?.from) this.play('warp', { intensity: p.to === 'system' ? 1 : 0.8 }); });
-      events.on('mode:enter', () => { this._arrivePending = 0.12; });
+      events.on('mode:shown', () => { this._arrivePending = 0.12; });
       events.on('discovery', (p) => {
         this.play('discover', { kind: p?.kind, source: p?.source });
         this.discoveryPulse = 1;

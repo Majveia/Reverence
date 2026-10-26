@@ -210,9 +210,10 @@ export class Sfx {
     sub.connect(subG); subG.connect(m.sfxIn); sub.start(t); srcs.push(sub); nodes.push(subG);
     m.duck('music', 0.5, t + 0.1, 0.25, 1.2, 2.4); m.duck('amb', 0.55, t + 0.3, 0.4, 1.2, 2);
     this.warpState = { t0: t, peak: t + R, srcs, nodes, gains: [ng, sg, subG], bp, vel };
-    // no arrival within ~6 s (load stalled, or a warp inside one mode): fade the tunnel out on its own
-    this.warpState.auto = t + R + 4.5;
-    this._warpRelease(t + R + 4.5, 1.5, true);
+    // no arrival within ~10 s (load stalled, or a warp inside one mode): fade the tunnel out on its own
+    // (the director holds the veil until the new world has streamed in, up to ~6.5 s after it is built)
+    this.warpState.auto = t + R + 8.5;
+    this._warpRelease(t + R + 8.5, 1.5, true);
   }
 
   _warpRelease(t, tc = 0.08, scheduledOnly = false) {
@@ -226,7 +227,7 @@ export class Sfx {
     } else W.srcs[0].onended = () => { for (const nd of W.nodes) try { nd.disconnect(); } catch (_) { /* ignore */ } if (this.warpState === W) this.warpState = null; };
   }
 
-  /** Arrival ('mode:enter'): the tunnel makes one last swell, then the impact lands ~100 ms after its peak. */
+  /** Arrival ('mode:shown'): the tunnel makes one last swell, then the impact lands ~100 ms after its peak. */
   _arrive(t) {
     const ctx = this.ctx, m = this.mix, W = this.warpState;
     let hit = t + 0.05;

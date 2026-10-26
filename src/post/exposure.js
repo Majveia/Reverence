@@ -99,9 +99,20 @@ export class AutoExposure {
   read(renderer) {
     try {
       renderer.readRenderTargetPixels(this.adaptB, 0, 0, 1, 1, this._px);
-      const l = THREE.DataUtils.fromHalfFloat(this._px[0]), c = THREE.DataUtils.fromHalfFloat(this._px[1]);
-      return { logLum: +l.toFixed(3), lum: +Math.pow(2, l).toFixed(4), coverage: +c.toFixed(3) };
+      return this._decode(this._px);
     } catch (e) { return { error: String(e) }; }
+  }
+
+  /** The same read-back without stalling (fence + pixel buffer): resolves a frame or two later. */
+  async readAsync(renderer) {
+    const px = new Uint16Array(4);
+    await renderer.readRenderTargetPixelsAsync(this.adaptB, 0, 0, 1, 1, px);
+    return this._decode(px);
+  }
+
+  _decode(px) {
+    const l = THREE.DataUtils.fromHalfFloat(px[0]), c = THREE.DataUtils.fromHalfFloat(px[1]);
+    return { logLum: +l.toFixed(3), lum: +Math.pow(2, l).toFixed(4), coverage: +c.toFixed(3) };
   }
 
   dispose() {
