@@ -592,3 +592,11 @@ visualizations). What separates AAA from "tech demo":
   music lifts as it does while gliding. (Commune already reads `world.player.meditating` live.)
 * **audio → ui** (optional) — a music volume slider separate from the master volume (`audio.mix.setBus('music', v)`
   already exists).
+
+#### Season 2: fauna round 1 requests (26 Oct)
+* **fauna → player** — ride the colossus: when she stands before a bowing colossus (`fauna.mountNear(player.pos, 25)`
+  with `mount.kneel > 0.7`), an interact prompt calls `mount.board(player)`; each frame after fauna's update put her at
+  `seat.position` / `seat.quaternion` (planet-local) with a sit pose, steer with `mount.drive(dir, speed)` and dismount
+  with `mount.leave(player)`. Seat 1 is free for a second rider. A `ride=1` URL param (spawn seated on the nearest
+  colossus) would make the "mount so large it is a viewpoint" frame capturable. API: docs/tracks/fauna.md.
+* **fauna → player** (optional) — the rest pose with an arm around the spirit fox can read `fauna.companion.headPos`.
