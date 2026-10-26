@@ -48,7 +48,7 @@ void main(){
     float b = sin(t * (0.8 + sp * 0.9) + ph * 11.0);
     float blink = 0.15 + 0.85 * smoothstep(0.05, 0.9, b);
     a = blink * smoothstep(0.35, 0.8, uNight) * aOn;
-    size = aSeed.w * 0.42;
+    size = aSeed.w * 0.56;
   } else {
     vec3 V = normalize(p - uCam);
     vSun = pow(max(dot(V, uSunDir), 0.0), 3.0);
@@ -101,7 +101,7 @@ export class Motes {
     const on = new Float32Array(this.count);
     const bs = fauna.body.seed | 0;
     for (let i = 0; i < this.count; i++) {
-      const kind = i % 5 < 2 ? 1 : 0;       // 60 % fireflies, 40 % pollen
+      const kind = i % 8 < 5 ? 1 : 0;       // 37 % fireflies (fewer, larger: a few coloured points of light), 63 % pollen
       seed[i * 4] = hash01(bs + i * 7);
       seed[i * 4 + 1] = 0.5 + hash01(bs + i * 13) * 1.0;
       seed[i * 4 + 2] = kind;

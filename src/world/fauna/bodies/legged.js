@@ -73,6 +73,38 @@ export function leggedGenome(rng, kind, style = {}) {
     g.eyeK = r2(rng, 0.13, 0.18);
     g.pairs = 2;
     g.walkSpeed = r2(rng, 1.3, 2.0); g.runSpeed = r2(rng, 3.0, 4.5);
+  } else if (kind === 'colossus') {
+    // season 2: the gentle colossus made of the world (wood, roots, moss, blossom): a tall, spindly,
+    // long-legged forest spirit that walks slowly through the mist (rig kind 'giant' + colossus flag)
+    g.kind = 'giant'; g.colossus = true;
+    g.S = r2(rng, 17, 21);
+    g.legFrac = r2(rng, 0.76, 0.8);
+    g.bodyLen = r2(rng, 0.42, 0.5);
+    g.depthK = r2(rng, 1.0, 1.1);
+    g.widthK = r2(rng, 0.5, 0.58);
+    g.neckLen = r2(rng, 0.62, 0.74);
+    g.neckAng = r2(rng, 48, 58);
+    g.neckW = r2(rng, 0.17, 0.2);
+    g.headLen = r2(rng, 0.11, 0.13);
+    g.headW = r2(rng, 0.17, 0.2);
+    g.headH = r2(rng, 0.17, 0.2);
+    g.headPitch = r2(rng, 22, 34);
+    g.snout = r2(rng, 0.55, 0.75);
+    g.tailLen = r2(rng, 0.35, 0.5);
+    g.tailW = r2(rng, 0.1, 0.13);
+    g.tailDroop = r2(rng, 55, 70);
+    g.tuft = false;
+    g.hump = r2(rng, 0.25, 0.4);
+    g.belly = r2(rng, 0.0, 0.08);
+    g.legThick = r2(rng, 0.62, 0.72);
+    g.foot = 'pad';
+    g.ears = { type: 'none', len: 0 };
+    g.horns = { type: 'antler', len: r2(rng, 1.25, 1.5), spread: r2(rng, 0.75, 0.95) };
+    g.spikes = null;
+    g.eyeK = r2(rng, 0.12, 0.15);
+    g.pairs = 2;
+    g.moss = r2(rng, 0.6, 1.0);
+    g.walkSpeed = r2(rng, 1.25, 1.5); g.runSpeed = r2(rng, 2.4, 3.0);
   } else if (kind === 'hexapod') {
     g.S = r2(rng, 0.8, 1.7);
     g.legFrac = r2(rng, 0.32, 0.42);
@@ -129,6 +161,19 @@ export function leggedGenome(rng, kind, style = {}) {
     g.eyeK = r2(rng, 0.26, 0.34);
     g.pairs = 1; g.arms = true; g.incline = r2(rng, 30, 48);
     g.walkSpeed = r2(rng, 1.8, 2.6); g.runSpeed = r2(rng, 6, 9);
+  } else if (kind === 'fox') {
+    // season 2: the spirit fox (companion + guide): a small quadruped with a pointed muzzle, tall ears
+    // and a long bushy tail (rig kind 'critter' + fox flag: paws, sits up)
+    g.kind = 'critter'; g.fox = true;
+    g.S = 0.46; g.legFrac = 0.56; g.bodyLen = 1.42; g.depthK = 1.0; g.widthK = 0.46;
+    g.neckLen = 0.36; g.neckAng = 38; g.neckW = 0.27;
+    g.headLen = 0.44; g.headW = 0.14; g.headH = 0.15; g.headPitch = 14; g.snout = 0.9;
+    g.tailLen = 1.05; g.tailW = 0.5; g.tailDroop = 28; g.tuft = true;
+    g.hump = 0; g.belly = 0.05; g.legThick = 0.82; g.foot = 'paw';
+    g.ears = { type: 'long', len: 1.0 };
+    g.horns = { type: 'none', len: 0, spread: 0 };
+    g.spikes = null; g.eyeK = 0.24; g.pairs = 2;
+    g.walkSpeed = 1.3; g.runSpeed = 7.5;
   } else { // critter
     g.S = r2(rng, 0.2, 0.42);
     g.legFrac = r2(rng, 0.3, 0.42);
@@ -270,7 +315,7 @@ export function leggedRig(g) {
         const z = front ? shP[2] - D * 0.05 : hipP[2] + D * 0.05;
         const x = side * W * 0.62;
         root = V(x, (front ? shP[1] : hipP[1]) - D * 0.05, z);
-        knee = V(x, yB * 0.52, z + (front ? -D * 0.04 : D * 0.08));
+        knee = g.colossus ? V(x * 1.08, yB * 0.56, z + (front ? -D * 0.32 : D * 0.42)) : V(x, yB * 0.52, z + (front ? -D * 0.04 : D * 0.08));
         ankle = V(x, S * 0.07, z + (front ? D * 0.02 : -D * 0.02));
         contact = V(x, 0, z + D * 0.05);
         pole = front ? V(0, 0, -1) : V(0, 0, 1);
@@ -583,6 +628,9 @@ export function leggedGeometry(rig, lod = 0) {
     }
   }
 
+  // ------------------------------------------------------------------ colossus: a garden on its back
+  if (g.colossus) colossusGarden(mb, rig, sp, joints, owners, blends, hi, code);
+
   // ------------------------------------------------------------------ legs
   for (const L of rig.legs) legGeometry(mb, rig, L, hi, code);
   for (const A of rig.arms) {
@@ -681,9 +729,16 @@ function legGeometry(mb, rig, L, hi, code) {
       out[1] = t; out[2] = -0.25 + 0.3 * s; out[3] = 0.55 + 0.45 * Math.min(1, t * 2.2);
     },
     capStart: false, capEnd: true,
+    // colossus: legs of twisted roots (fluted ridges spiralling down the leg, flaring into the ground)
+    bulge: g.colossus && hi ? (i, t, c, s) => {
+      const th0 = Math.atan2(s, c);
+      const r = Math.sin(th0 * 5 + t * 7.5 + L.side * 1.3);
+      const flare = 1 + 0.55 * Math.pow(Math.max(0, (t - 0.82) / 0.18), 2);
+      return (1 + 0.16 * Math.max(0, r) - 0.06 * Math.max(0, -r)) * flare;
+    } : undefined,
   });
-  // giant toenails
-  if (g.foot === 'pad' && hi) {
+  // giant toenails (a colossus stands on roots instead: no nails)
+  if (g.foot === 'pad' && hi && !g.colossus) {
     for (let k = -1; k <= 1; k++) {
       const p = add(add(cont, [0, 1, 0], rFoot * 0.25), [Math.sin(k * 0.5), 0, Math.cos(k * 0.5)], rFoot * 1.08);
       mb.ellipsoid(p, rFoot * 0.2, rFoot * 0.18, rFoot * 0.12, 6, 4, (t, o) => { o[0] = L.foot; o[1] = L.foot; o[2] = 1; }, (t, s, o) => { o[0] = code(P.LEG, M.KERATIN); o[1] = 0.3; o[2] = 0; o[3] = 0.9; });
@@ -778,5 +833,96 @@ function hornsGeometry(mb, rig, g, hi, headSurf, hUp, hw, hh, code) {
       }
       mb.membrane(grid, (i, j, o) => { o[0] = B.HEAD; o[1] = B.HEAD; o[2] = 1; }, (i, j, s, o) => { o[0] = code(P.FIN, M.MEMBRANE); o[1] = j / nj; o[2] = 1; o[3] = 1; }, hw * 0.05);
     }
+  }
+}
+
+/** Colossus: a moss mound with flowering shrubs along the spine, a sapling on the withers and hanging
+ *  moss / root beards under the belly and neck — the giant is made of the world it walks through. */
+function colossusGarden(mb, rig, sp, joints, owners, blends, hi, code) {
+  const S = rig.S, D = rig.D;
+  const P = PART, M = MAT;
+  const n = sp.pts.length;
+  // deterministic jitter (no RNG in geometry): hash of the index
+  const hj = (i, k) => { const x = Math.sin(i * 127.1 + k * 311.7) * 43758.5453; return x - Math.floor(x); };
+  const skinAt = (sArc) => { const o = [0, 0, 1]; chainSkin(sArc, joints, owners, blends, o); return o; };
+  const frame = (k) => {
+    const p = sp.pts[k], a = sp.pts[Math.max(0, k - 1)], b = sp.pts[Math.min(n - 1, k + 1)];
+    const T = norm(sub(b, a));
+    const upv = norm(sub(V(0, 1, 0), [T[0] * T[1], T[1] * T[1], T[2] * T[1]]));
+    return { p, T, upv };
+  };
+  // find the main-loft range rump → withers (sp.s between pelvis and the neck base)
+  const sNeck = joints[2];
+  let k0 = 0, k1 = 0;
+  for (let k = 0; k < n; k++) { if (sp.s[k] < sNeck * 0.96) k1 = k; }
+  k0 = Math.round(k1 * 0.08);
+  const blobs = hi ? 15 : 6;
+  for (let i = 0; i < blobs; i++) {
+    const t = i / (blobs - 1);
+    const k = Math.round(k0 + (k1 - k0) * t);
+    const { p, T, upv } = frame(k);
+    const side = (hj(i, 1) - 0.5) * 2;
+    const lat = [T[2], 0, -T[0]];
+    const ll = len(lat) || 1;
+    const lx = [lat[0] / ll, 0, lat[2] / ll];
+    const top = sp.ht[k];
+    const w = sp.w[k];
+    const r = D * (0.2 + 0.16 * hj(i, 2)) * (0.75 + 0.5 * Math.sin(Math.PI * t));
+    const c = add(add(p, upv, top * 0.78 + r * 0.25), lx, side * w * 0.45);
+    const sk = skinAt(sp.s[k]);
+    const blossom = hj(i, 3) < 0.55;
+    // moss cushion
+    mb.ellipsoid(c, r * 1.25, r * 0.55, r * 1.1, hi ? 9 : 5, hi ? 5 : 3, (tt, o) => { o[0] = sk[0]; o[1] = sk[1]; o[2] = sk[2]; },
+      (tt, s, o) => { o[0] = code(P.MOSS, M.SKIN); o[1] = tt; o[2] = s; o[3] = 0.6 + 0.4 * Math.max(0, s); });
+    // flowering shrub on the cushion
+    if (blossom) {
+      const c2 = add(c, upv, r * (0.55 + 0.3 * hj(i, 4)));
+      mb.ellipsoid(c2, r * 0.85, r * 0.62, r * 0.85, hi ? 9 : 5, hi ? 5 : 3, (tt, o) => { o[0] = sk[0]; o[1] = sk[1]; o[2] = sk[2]; },
+        (tt, s, o) => { o[0] = code(P.BLOSSOM, M.SKIN); o[1] = tt; o[2] = s; o[3] = 0.7 + 0.3 * Math.max(0, s); });
+    }
+  }
+  // a sapling on the withers: a crooked trunk and a crown of blossom (the giant carries a tree)
+  {
+    const k = Math.round(k0 + (k1 - k0) * 0.72);
+    const { p, upv } = frame(k);
+    const sk = skinAt(sp.s[k]);
+    const base = add(p, upv, sp.ht[k] * 0.8);
+    const hgt = S * 0.22;
+    const pts = [], w = [];
+    for (let j = 0; j <= 6; j++) {
+      const t = j / 6;
+      pts.push(add(add(base, V(0, 1, 0), hgt * t), V(Math.sin(t * 2.4) * hgt * 0.12, 0, -Math.sin(t * 1.7) * hgt * 0.1), 1));
+      w.push(D * 0.07 * (1 - t * 0.6));
+    }
+    mb.loft({ pts, w, segs: hi ? 7 : 4, up: [0, 0, 1], skin: (ii, tt, o) => { o[0] = sk[0]; o[1] = sk[1]; o[2] = sk[2]; },
+      info: (ii, tt, s, o) => { o[0] = code(P.HORN, M.KERATIN); o[1] = tt; o[2] = s; o[3] = 0.8; }, capEnd: true });
+    const top = pts[pts.length - 1];
+    const crown = hi ? 5 : 2;
+    for (let j = 0; j < crown; j++) {
+      const a = j * 2.39996;
+      const rr = D * (0.32 + 0.12 * hj(j, 7));
+      const c = add(top, V(Math.cos(a) * D * 0.35, (hj(j, 8) - 0.3) * D * 0.3, Math.sin(a) * D * 0.35), 1);
+      mb.ellipsoid(c, rr, rr * 0.75, rr, hi ? 9 : 5, hi ? 5 : 3, (tt, o) => { o[0] = sk[0]; o[1] = sk[1]; o[2] = sk[2]; },
+        (tt, s, o) => { o[0] = code(P.BLOSSOM, M.SKIN); o[1] = tt; o[2] = s; o[3] = 0.65 + 0.35 * Math.max(0, s); });
+    }
+  }
+  if (!hi) return;
+  // hanging moss / root beards under the belly and the neck (rigidly skinned to their root bone)
+  const strands = 22;
+  const sHead = joints[4];
+  for (let i = 0; i < strands; i++) {
+    const t = hj(i, 11);
+    const onNeck = i % 3 === 0;
+    const sArc = onNeck ? sNeck + (sHead - sNeck) * (0.15 + 0.7 * t) : sp.s[k0] + (sp.s[k1] - sp.s[k0]) * (0.1 + 0.85 * t);
+    let k = 0; while (k < n - 1 && sp.s[k] < sArc) k++;
+    const { p } = frame(k);
+    const side = (hj(i, 12) - 0.5) * 1.6;
+    const root = add(add(p, V(0, -1, 0), sp.hb[k] * 0.85), V(1, 0, 0), side * sp.w[k] * 0.6);
+    const Lm = D * (0.5 + 1.1 * hj(i, 13)) * (onNeck ? 0.7 : 1);
+    const sk = skinAt(sArc);
+    const pts = [], w = [];
+    for (let j = 0; j <= 5; j++) { const tt = j / 5; pts.push(add(root, V(Math.sin(tt * 3 + i) * D * 0.04, -Lm * tt, Math.cos(tt * 2 + i) * D * 0.03), 1)); w.push(D * (0.035 + 0.02 * hj(i, 14)) * (1 - tt * 0.8)); }
+    mb.loft({ pts, w, segs: 4, up: [0, 0, 1], skin: (ii, tt, o) => { o[0] = sk[0]; o[1] = sk[1]; o[2] = sk[2]; },
+      info: (ii, tt, s, o) => { o[0] = code(P.MOSS, M.SKIN); o[1] = 0.3 + tt * 0.7; o[2] = -0.6; o[3] = 0.75; }, capEnd: true });
   }
 }

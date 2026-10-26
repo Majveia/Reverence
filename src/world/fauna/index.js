@@ -29,13 +29,19 @@ import { moveGround, Herd, tangentBasis, clearingPush } from './behavior/ground.
 import { Flock, Pod, Swarm, School } from './behavior/air.js';
 import { cellsPerFace, cellsAround, cellDir } from './cells.js';
 import { Motes, Splashes } from './particles.js';
+import { ColossusWalk } from './behavior/colossus.js';
+import { SpiritFox } from './companion.js';
+import { Murmuration } from './murmuration.js';
+import { G } from '../../core/Uniforms.js';
+import { Mount } from './mount.js';
 
-const LEGGED = new Set(['grazer', 'giant', 'hexapod', 'hopper', 'critter']);
-const GROUND = new Set([...LEGGED, 'serpent']);
-const SHOW = { serpents: 'serpent', snake: 'serpent', birds: 'bird', bird: 'bird', rays: 'ray', ray: 'ray', whales: 'whale', whale: 'whale', jellies: 'jelly', jelly: 'jelly', fish: 'fish' };
+const LEGGED = new Set(['grazer', 'giant', 'hexapod', 'hopper', 'critter', 'colossus', 'fox']);
+const GROUND = new Set(['grazer', 'giant', 'hexapod', 'hopper', 'critter', 'serpent']);   // herd archetypes (&fauna= showcase)
+const SHOW = { colossi: 'colossus', mount: 'colossus', murmuration: 'murmuration', flock: 'murmuration', serpents: 'serpent', snake: 'serpent', birds: 'bird', bird: 'bird', rays: 'ray', ray: 'ray', whales: 'whale', whale: 'whale', jellies: 'jelly', jelly: 'jelly', fish: 'fish' };
 // per archetype: draw distance (m), LOD0 distance, discovery distance
 const DIST = {
   grazer: [900, 95, 70], giant: [2000, 160, 220], hexapod: [900, 95, 70], hopper: [700, 70, 60], critter: [300, 40, 25],
+  colossus: [3400, 340, 700], fox: [260, 45, 0],
   serpent: [320, 45, 30], bird: [750, 70, 140], ray: [1200, 140, 220], whale: [7000, 1100, 1800], jelly: [600, 90, 90], fish: [180, 30, 45],
 };
 const _v3 = new THREE.Vector3(), _sph = new THREE.Sphere(), _mat = new THREE.Matrix4();
@@ -101,7 +107,8 @@ class Fauna {
     };
     this.animCtx = { ground: this.env.ground, sample: true, t: 0, R: this.R };
     this.showcase = String(world.params?.fauna ?? '').toLowerCase();
-    this.showDist = Math.max(0.3, Math.min(4, parseFloat(world.params?.faunadist ?? 1) || 1));   // showcase distance multiplier
+    this.showRaw = Math.max(0.02, Math.min(4, parseFloat(world.params?.faunadist ?? 1) || 1));
+    this.showDist = Math.max(0.3, this.showRaw);   // showcase distance multiplier (colossus: showRaw ≤ 0.25 = face to face)
     this.motes = null;
     try { this.motes = new Motes(this); } catch (e) { console.warn('[fauna] motes disabled', e); }
     this.splashes = null;
@@ -111,6 +118,27 @@ class Fauna {
         this.env.splash = (p, up, k) => this.splashes.burst(p, up, k, this.t);
       } catch (e) { console.warn('[fauna] splashes disabled', e); }
     }
+    // season 2: colossi (+ their mounts), the spirit fox companion, the dusk murmuration, Resonance pulses
+    this.colossusSp = null;
+    this.colossi = [];
+    this.mounts = [];
+    this._colT = 0; this._colN = 0;
+    this.companion = null;
+    this.murmur = null;
+    this.pulses = [];
+    this._offPulse = null;
+    try { this._offPulse = world.events?.on?.('player:pulse', (e) => this._onPulse(e)) || null; } catch (_) { this._offPulse = null; }
+  }
+
+  /** the mount nearest to the player (or null) */
+  get mount() { return this.mountNear(this.playerPos, 1e9); }
+
+  /** nearest mount within r metres of planet-local pos ({x,y,z} or Float64Array) */
+  mountNear(pos, r = 40) {
+    const px = pos.x ?? pos[0], py = pos.y ?? pos[1], pz = pos.z ?? pos[2];
+    let best = null, bd = r;
+    for (const m of this.mounts) { const d = Math.hypot(m.pos.x - px, m.pos.y - py, m.pos.z - pz); if (d < bd) { bd = d; best = m; } }
+    return best;
   }
 
   // ------------------------------------------------------------------------------ species runtime
@@ -122,8 +150,11 @@ class Fauna {
       const rig = leggedRig(sp.genome);
       const lods = [leggedGeometry(rig, 0), leggedGeometry(rig, 1)];
       const animator = new LeggedAnimator(rig);
-      const crowd = new Crowd(this.root, { name: sp.name, bones: rig.nb, pivots: rig.pivots, lods, look: sp.look, castShadow: shadows, capacity: 16 });
+      const crowd = new Crowd(this.root, { name: sp.name, bones: rig.nb, pivots: rig.pivots, lods, look: sp.look, castShadow: shadows, capacity: sp.archetype === 'colossus' || sp.archetype === 'fox' ? 4 : 16 });
       rt = { rig, animator, crowd, radius: Math.max(rig.length, rig.height) * 0.6, height: rig.height, centerUp: rig.height * 0.5 };
+      // giants are mostly haze and silhouette (paler and cooler with distance, heads before feet)
+      if (sp.archetype === 'colossus') crowd.look.pHaze.value.set(1.0, rig.height, 0.0024, 1.0);
+      else if (sp.archetype === 'giant') crowd.look.pHaze.value.set(0.75, rig.height, 0.0017, 0.85);
     } else {
       const rig = chainRig(sp.genome);
       const lods = [chainGeometry(rig, 0), chainGeometry(rig, 1)];
@@ -135,6 +166,7 @@ class Fauna {
         transparent: jelly, opacity: 0.72, renderOrder: jelly ? 2 : 0,
       });
       rt = { rig, animator, crowd, radius: rig.radius, height: rig.height, centerUp: rig.center || 0 };
+      if (sp.archetype === 'whale') crowd.look.pHaze.value.set(0.8, 1, 0.0009, 0.0);
     }
     const D = DIST[sp.archetype] || [800, 90, 70];
     rt.far = D[0] * (sp.archetype === 'whale' ? 1 : this.dd);
@@ -326,6 +358,11 @@ class Fauna {
   _removeGroup(grp) {
     const i = this.groups.indexOf(grp);
     if (i >= 0) this.groups.splice(i, 1);
+    if (grp.colossus) {
+      const k = this.colossi.indexOf(grp);
+      if (k >= 0) this.colossi.splice(k, 1);
+      if (grp.mount) { grp.mount.dispose(); const j = this.mounts.indexOf(grp.mount); if (j >= 0) this.mounts.splice(j, 1); }
+    }
     const set = new Set(grp.members);
     this.creatures = this.creatures.filter((c) => !set.has(c));
   }
@@ -349,6 +386,105 @@ class Fauna {
   _pickLayer(rng, layer) {
     const cands = this.roster.filter((s) => s.layer === layer).map((s) => [s, s.density ?? 1]);
     return cands.length ? rng.weighted(cands) : null;
+  }
+
+  // ------------------------------------------------------------------------------ colossi
+  /** spawn one colossus at planet-local ground point pos, heading angle (spawnAir convention) */
+  _spawnColossus(pos, heading, rng, welcome = false) {
+    const sp = this.colossusSp;
+    if (!sp) return null;
+    const rt = this.runtime(sp);
+    const ul = Math.hypot(pos[0], pos[1], pos[2]);
+    tangentBasis(pos[0] / ul, pos[1] / ul, pos[2] / ul, _e, _n);
+    const fwd = [_e[0] * Math.cos(heading) + _n[0] * Math.sin(heading), _e[1] * Math.cos(heading) + _n[1] * Math.sin(heading), _e[2] * Math.cos(heading) + _n[2] * Math.sin(heading)];
+    const c = this._makeCreature(sp, rt, pos, fwd, rng.range(0.9, 1.08), rng.next(), rng);
+    c.turnSpeed = 0.32; c.accel = 0.45; c.decel = 0.6; c.maxSlope = 0.85;
+    c.born = welcome ? 1 : 0;
+    const rig = rt.rig;
+    // root → face distance when it bows its head to her (rest metres)
+    const standoff = rig.shP[2] * 0.85 + rig.Lh + 2.8;   // (bowed head ≈ above the front feet, muzzle beyond)
+    const grp = new ColossusWalk(sp, c, rng.fork('col'), this.env, { standoff });
+    c.group = grp;
+    if (welcome) grp.welcome = true;
+    this.creatures.push(c);
+    this.groups.push(grp);
+    this.colossi.push(grp);
+    try { grp.mount = new Mount(this, grp); this.mounts.push(grp.mount); } catch (e) { console.warn('[fauna] mount failed', e); }
+    return grp;
+  }
+
+  /** keep 1–3 colossi walking the land around the player (they walk in from 400–650 m away) */
+  _streamColossi(dt) {
+    if (!this.colossusSp) return;
+    this._colT -= dt;
+    if (this._colT > 0) return;
+    this._colT = 1.2;
+    const P = this.playerPos;
+    for (const g of [...this.colossi]) {
+      const c = g.members[0];
+      const d = Math.hypot(c.pos[0] - P[0], c.pos[1] - P[1], c.pos[2] - P[2]);
+      if (d > 1800 && !g.carrying) this._removeGroup(g);
+    }
+    const l = Math.hypot(P[0], P[1], P[2]);
+    const ux = P[0] / l, uy = P[1] / l, uz = P[2] / l;
+    const alt = l - this.R - Math.max(this.sea, this.surface.height(ux, uy, uz));
+    if (alt > 3000) return;
+    const want = { low: 1, med: 2, high: 2, ultra: 3 }[this.q.tier || 'high'] ?? 2;
+    let tries = 0;
+    while (this.colossi.length < want && tries++ < 2) {
+      const rng = new RNG(hashCombine(this.body.seed, 0xc01, this._colN++));
+      tangentBasis(ux, uy, uz, _e, _n);
+      for (let k = 0; k < 10; k++) {
+        const a = rng.range(0, Math.PI * 2), r = rng.range(420, 680);
+        const x = P[0] + (_e[0] * Math.cos(a) + _n[0] * Math.sin(a)) * r, y = P[1] + (_e[1] * Math.cos(a) + _n[1] * Math.sin(a)) * r, z = P[2] + (_e[2] * Math.cos(a) + _n[2] * Math.sin(a)) * r;
+        const L = Math.hypot(x, y, z);
+        const h = this.surface.height(x / L, y / L, z / L);
+        if (h < this.sea + 4 || clearingPush(this.env, x, y, z, 40)) continue;
+        const rr = this.R + h;
+        // walk across the player's surroundings (tangent to the bearing, gently inward)
+        const head = a + Math.PI * 0.5 * (rng.chance(0.5) ? 1 : -1) + rng.range(-0.5, 0.5) + Math.PI * 0.15;
+        this._spawnColossus(new Float64Array([x / L * rr, y / L * rr, z / L * rr]), head, rng);
+        break;
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------------------ Resonance pulse
+  _onPulse(e) {
+    const p = e?.pos;
+    if (!p) return;
+    this.pulses.push({ x: p.x ?? p[0], y: p.y ?? p[1], z: p.z ?? p[2], t0: this.t, R: e.radius || 62 });
+    if (this.pulses.length > 4) this.pulses.shift();
+  }
+
+  /** the curtain of light (≈ 25 m/s) reaches a creature → it lifts its head to the sky; giants bow */
+  _applyPulses(dt) {
+    for (let i = this.pulses.length - 1; i >= 0; i--) {
+      const pu = this.pulses[i];
+      const wave = (this.t - pu.t0) * 25;
+      if (wave > pu.R + 20) { this.pulses.splice(i, 1); continue; }
+      for (const c of this.creatures) {
+        if (c.companion || c._pulse === pu) continue;
+        const d = Math.hypot(c.pos[0] - pu.x, c.pos[1] - pu.y, c.pos[2] - pu.z);
+        const reach = pu.R * (c.group?.colossus ? 2.5 : 1);
+        if (d < reach && d < wave + (c.group?.colossus ? 60 : 0)) {
+          c._pulse = pu; c.pulseT = 4 + (c.seed || 0) * 1.5;
+          if (c.group?.colossus) c.group.pulse();
+        }
+      }
+    }
+    for (const c of this.creatures) {
+      if (!(c.pulseT > 0)) continue;
+      c.pulseT -= dt;
+      if (c.group?.colossus) continue;
+      // look up at the sky, a little toward the light's source
+      const ls = c.lookSky || (c.lookSky = new Float64Array(3));
+      const P = this.playerHead;
+      ls[0] = c.pos[0] + c.up[0] * 40 + (P[0] - c.pos[0]) * 0.4;
+      ls[1] = c.pos[1] + c.up[1] * 40 + (P[1] - c.pos[1]) * 0.4;
+      ls[2] = c.pos[2] + c.up[2] * 40 + (P[2] - c.pos[2]) * 0.4;
+      if (!c.air) { c.look = ls; c.grazeTarget = 0; c.alert = Math.max(c.alert || 0, 0.7); if (c.wantSpeed > 0) c.wantSpeed *= 0.4; }
+    }
   }
 
   // ------------------------------------------------------------------------------ streaming
@@ -501,7 +637,8 @@ class Fauna {
     const rx = fy * uz - fz * uy, ry = fz * ux - fx * uz, rz = fx * uy - fy * ux;   // right
     const rng = new RNG(hashCombine(this.body.seed, 0x3e1c, Math.round(C.x), Math.round(C.z)));
     this._nearCol = (this.world.colliders || []).filter((c) => c.pos && Math.hypot(c.pos.x - C.x, c.pos.y - C.y, c.pos.z - C.z) < 260);
-    const want = SHOW[this.showcase] || this.showcase;
+    let want = SHOW[this.showcase] || this.showcase;
+    if (want === 'giant' && !this.roster.some((x) => x.archetype === 'giant')) want = 'colossus';
     const entry = { groups: [] };
     this.cells.set('welcome', entry);
     const mark = (g) => { if (g) { g.welcome = true; entry.groups.push(g); } return g; };
@@ -546,6 +683,43 @@ class Fauna {
           if (hg) { hg.timer = 75; hg.tame = true; }
         }
       }
+    }
+    // ---- the colossus: one walks across the far view on every world (or framed by &fauna=colossus;
+    //      &faunadist ≤ 0.25 brings it face to face, bowing its head to her)
+    if (this.colossusSp && (!want || want === 'colossus')) {
+      const rig = this.runtime(this.colossusSp).rig;
+      const close = want === 'colossus' && this.showRaw <= 0.25;
+      const base = want === 'colossus' ? (close ? Math.max(18, 120 * this.showRaw) : 230 * this.showRaw) : 430;
+      const angs = want ? [0.18, -0.18, 0.35, -0.35, 0, 0.55, -0.55] : [0.32, -0.32, 0.5, -0.5, 0.15, -0.15];
+      let done = false;
+      for (const k of [1, 0.8, 1.25, 0.6]) {
+        for (const ang of angs) {
+          const p = at(dirAt(ang), base * k);
+          const h = this.env.ground(p[0], p[1], p[2], _d, 0);
+          if (h < this.sea + 3 || clearingPush(this.env, _d[0], _d[1], _d[2], 30)) continue;
+          if (!close && !this._clearView(C, _d[0], _d[1], _d[2], rig.height * 0.55)) continue;
+          const dl = Math.hypot(_d[0], _d[1], _d[2]);
+          tangentBasis(_d[0] / dl, _d[1] / dl, _d[2] / dl, _e, _n);
+          // across the view (right → left or left → right), or toward her when close
+          let hd = Math.atan2(rx * _n[0] + ry * _n[1] + rz * _n[2], rx * _e[0] + ry * _e[1] + rz * _e[2]) + (ang > 0 ? Math.PI : 0) + (ang > 0 ? -0.25 : 0.25);
+          if (close) hd = Math.atan2(-(fx * _n[0] + fy * _n[1] + fz * _n[2]), -(fx * _e[0] + fy * _e[1] + fz * _e[2])) + 0.5;
+          const g = this._spawnColossus(Float64Array.from(_d), hd, rng.fork('wcol'), true);
+          if (g) {
+            mark(g);
+            if (close) { g.bowHold = 40; }
+            else { g.state = 'walk'; g.timer = 120; }
+            this.showcaseInfo = { ...(this.showcaseInfo || {}), colossus: Math.round(base * k) };
+          }
+          done = true; break;
+        }
+        if (done) break;
+      }
+    }
+    if (want === 'murmuration' && this.murmur) {
+      this.murmur.forced = true;
+      const sp = (24 + 210 * this.showDist);
+      this.murmur.place([C.x, C.y, C.z], [fx * Math.cos(0.1) + rx * Math.sin(0.1), fy * Math.cos(0.1) + ry * Math.sin(0.1), fz * Math.cos(0.1) + rz * Math.sin(0.1)], sp, 55 + sp * 0.18);
+      this.showcaseInfo = { ...(this.showcaseInfo || {}), murmuration: Math.round(sp) };
     }
     // ---- sky life framed in the spawn view
     const wantSky = SHOW[this.showcase];
@@ -592,7 +766,8 @@ class Fauna {
     if (wantSky === 'whale' || !want) {
       const sp = pick('whale');
       if (sp) {
-        const { home, agl } = wantSky ? aim((200 + sp.genome.L * 2.2) * this.showDist, 7, -0.08, 14 + sp.genome.R, true) : aim(700, 7, 0.2, 90);
+        // showcase: the pod drifts low overhead (60–140 m up), crossing the view — megafauna passing over you
+        const { home, agl } = wantSky ? aim((70 + sp.genome.L * 1.1) * this.showDist, 30, -0.05, 45 + sp.genome.R, true) : aim(700, 7, 0.2, 90);
         mark(this._spawnAir(sp, home, rng.fork('ww'), wantSky ? 3 : undefined, { agl: [agl, agl + 10], heading: across(home, -0.35) }));
       }
     }
@@ -747,6 +922,7 @@ class Fauna {
       }
       try { this._welcome(); } catch (e) { console.warn('[fauna] welcome failed', e); }
       this._streamCells();
+      try { this._streamColossi(0); } catch (e) { console.warn('[fauna] colossi failed', e); }
       this._lastStream = Float64Array.from(this.playerPos);
       this._streamT = 2.0;
       this.ready = true;
@@ -759,20 +935,32 @@ class Fauna {
         this._lastStream = Float64Array.from(P);
         this._streamT = 2.0;
       }
+      try { this._streamColossi(dt); } catch (e) { if (!this._colErr) { this._colErr = true; console.warn('[fauna] colossi failed', e); } }
     }
+    if (this.companion) { try { this.companion.update(dt); } catch (e) { if (!this._compErr) { this._compErr = true; console.warn('[fauna] companion failed', e); } } }
     if (this.hasOcean) { try { this._underwater(dt); } catch (e) { if (!this._uwErr) { this._uwErr = true; console.warn('[fauna] underwater life failed', e); } } }
     if (dt <= 0) { this._animateAll(0); return; }
     for (const g of this.groups) {
       try { g.update(dt, this.env); } catch (e) { if (!g._err) { g._err = true; console.warn('[fauna] group update failed', e); } }
       this._alarmCheck(g);
     }
+    if (this.pulses.length || this._pulseLive) { this._applyPulses(dt); this._pulseLive = this.creatures.some((c) => c.pulseT > 0); }
     for (const c of this.creatures) {
+      if (c.born !== undefined && c.born < 1) c.born = Math.min(1, c.born + dt / 6);
       if (c.air || !c.want) continue;
       const every = c.dist < c.rt.lod0 ? 1 : c.dist < 250 ? 3 : 6;
       moveGround(c, dt, this.env, every);
     }
     this._animateAll(dt);
+    for (const m of this.mounts) m.update();
     this.motes?.update(dt, t);
+    if (this.murmur) {
+      try {
+        const P = this.playerPos, l = Math.hypot(P[0], P[1], P[2]) || 1, S = G.uSunDir.value;
+        const el = Math.asin(Math.max(-1, Math.min(1, (S.x * P[0] + S.y * P[1] + S.z * P[2]) / l))) * 180 / Math.PI;
+        this.murmur.update(dt, t, el);
+      } catch (e) { if (!this._murErr) { this._murErr = true; console.warn('[fauna] murmuration failed', e); } }
+    }
   }
 
   /** 'creature:alarm' {archetype, species, name, pos, dist, count} when a herd bolts or a flock scatters
@@ -825,6 +1013,7 @@ class Fauna {
     const cp = cam.position;   // planet-local (camera is a child of root)
     for (const rt of this.rt.values()) rt.crowd.begin();
     for (const c of this.creatures) {
+      if (c.hidden) { c.visible = false; continue; }
       const rt = c.rt;
       const s = c.scale;
       const k = rt.centerUp * s;
@@ -838,7 +1027,8 @@ class Fauna {
       _sph.radius = rt.radius * s * 1.3 + 2;
       if (dist > 30 && !this.frustum.intersectsSphere(_sph)) continue;
       c.visible = true;
-      c.fade = Math.min(1, (far - dist) / (far * 0.12));
+      c.fade = Math.min(1, (far - dist) / (far * 0.12)) * (c.born ?? 1);
+      if (c.fade < 0.02) { c.visible = false; continue; }
       rt.crowd.add(c, dist < rt.lod0 * (0.7 + 0.3 * s) ? 0 : 1);
     }
     for (const rt of this.rt.values()) rt.crowd.commit(O);
@@ -852,7 +1042,7 @@ class Fauna {
     let best = null, bestD = Infinity;
     for (const c of this.creatures) {
       const sp = c.species;
-      if (!c.visible || this.discovered.has(sp.id)) continue;
+      if (!c.visible || c.companion || this.discovered.has(sp.id)) continue;
       if (c.dist < c.rt.discover && c.dist < bestD) { best = c; bestD = c.dist; }
     }
     if (!best) return;
@@ -866,7 +1056,7 @@ class Fauna {
     const P = from || this.playerPos;
     let best = null, bd = Infinity;
     for (const c of this.creatures) {
-      if (archetype && c.species.archetype !== archetype) continue;
+      if (c.companion || (archetype && c.species.archetype !== archetype)) continue;
       const d = Math.hypot(c.pos[0] - P[0], c.pos[1] - P[1], c.pos[2] - P[2]);
       if (d < bd) { bd = d; best = c; }
     }
@@ -908,12 +1098,19 @@ class Fauna {
       motes: this.motes?.getState?.(),
       discovered: [...this.discovered].map((id) => this.roster.find((s) => s.id === id)?.name),
       showcase: this.showcaseInfo || null,
+      colossi: this.colossi.map((g) => { const c = g.members[0]; return { state: g.state, dist: Math.round(c.dist), bow: +(g.bowW || 0).toFixed(2), riders: g.carrying || 0 }; }),
+      companion: this.companion?.getState?.() || null,
+      murmuration: this.murmur?.getState?.() || null,
     };
   }
 
   onOriginShift() { /* positions are planet-local; the root group follows the origin in lateUpdate */ }
 
   dispose() {
+    try { this._offPulse?.(); } catch (_) { /* ignore */ }
+    for (const m of this.mounts) m.dispose();
+    this.mounts.length = 0; this.colossi.length = 0;
+    this.murmur?.dispose();
     for (const rt of this.rt.values()) rt.crowd.dispose();
     this.rt.clear();
     this.motes?.dispose();
@@ -936,6 +1133,16 @@ export default {
       await new Promise((r) => setTimeout(r, 0));
     }
     f.roster = f.roster.filter((sp) => f.rt.has(sp.id));
+    // the colossus walks its own layer (not a herd species); the spirit fox companion; the dusk murmuration
+    f.colossusSp = f.roster.find((sp) => sp.archetype === 'colossus') || null;
+    const cp = String(world.params?.companion ?? '');
+    if (cp !== '0' && cp !== 'wolf' && f.showcase !== 'none') {
+      try { f.companion = new SpiritFox(f); } catch (e) { console.warn('[fauna] companion failed', e); f.companion = null; }
+    }
+    if (f.roster.some((sp) => sp.archetype === 'bird')) {
+      const n = { low: 450, med: 900, high: 1600, ultra: 2400 }[f.q.tier || 'high'] ?? 1600;
+      try { f.murmur = new Murmuration(f, n); } catch (e) { console.warn('[fauna] murmuration failed', e); f.murmur = null; }
+    }
     return f;
   },
 };

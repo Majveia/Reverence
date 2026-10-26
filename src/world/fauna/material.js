@@ -56,6 +56,8 @@ uniform vec4 pPattern;   // type, scale, threshold, amount
 uniform vec4 pGlow;      // strength, type, pulse speed, eyeshine
 uniform vec4 pSurf;      // roughness, sheen, bump, furness
 uniform vec4 pExtra;     // socks, iridescence, translucency, belly contrast
+uniform vec4 pHaze;      // strength, body height (rest m), density (1/m), ground-mist bias
+uniform vec3 rvHaze;     // sky ambient (≈ haze colour)
 uniform float uNight;
 uniform float rvTime;
 uniform vec3 rvSunDir;
@@ -215,6 +217,50 @@ float rvEyeM = 0.0;
   }
   if (rvPart > 2.5 && rvPart < 3.5 && rvMat < 0.5) rvThin = 0.6;   // ears are thin skin
   rvGlowM = rvGlowMask(vRest, rvU, rvDors, rvPart, rvMat);
+  if (pPattern.x > 7.5) {
+    rvGlowM *= smoothstep(0.15, 0.7, uNight);     // its spirit light shows only at dusk and night
+    // ---- made of the world (colossus): bark and twisted root, lichen, moss cushions, blossom, old wood
+    bool legP = rvPart > 1.5 && rvPart < 2.5;
+    vec3 fp = legP ? vRest * vec3(1.9, 0.22, 1.9) : vRest * vec3(1.3, 1.3, 0.24);
+    float fib = rvFbm(fp * 1.6 + 3.0);
+    float crev = smoothstep(0.32, 0.62, rvVN(fp * 3.4 + fib * 1.7));
+    vec3 bark = mix(cBack * 0.42, cBack * 1.18, crev) * (0.82 + 0.36 * rvVN(vRest * 0.45 + 11.0));
+    // lichen rosettes (pale grey-green) on the bark
+    vec2 lw = rvWor(vRest * 1.25 + 4.0);
+    float lich = (1.0 - smoothstep(0.16, 0.3, lw.x)) * smoothstep(0.35, 0.7, rvVN(vRest * 0.35));
+    bark = mix(bark, cBelly * (0.85 + 0.3 * rvVN(vRest * 6.0)), lich * 0.75);
+    // moss creeping over every up-facing surface and the upper legs
+    float mn = rvFbm(vRest * 0.55 + 2.0) - 0.5;
+    float mossM = legP ? smoothstep(0.62, 0.15, rvU + mn * 0.5) * smoothstep(-0.6, 0.2, rvDors + mn)
+                       : smoothstep(-0.25, 0.35, rvDors + mn * 1.2);
+    mossM = max(mossM, smoothstep(0.62, 0.78, rvFbm(vRest * 0.32 + 7.0)) * 0.85);     // moss patches anywhere
+    vec3 mossC = cPattern * (0.7 + 0.6 * rvVN(vRest * 2.6 + 5.0));
+    if (rvMat < 0.5 || rvMat > 6.5) {
+      rvCol = mix(bark, mossC, mossM * pPattern.w * (rvMat > 6.5 ? 0.2 : 1.0));
+      if (rvMat > 6.5) rvCol *= 0.5;
+      rvRough = mix(0.86, 0.95, mossM); rvSheen = 0.12 * mossM; rvBumpAmt = mix(1.7, 0.7, mossM);
+    } else if (rvMat > 0.5 && rvMat < 1.5) {
+      // antlers and the sapling: pale weathered wood, darker in the grooves, moss in the forks
+      float wf = rvVN(vRest * vec3(0.8, 5.0, 0.8));
+      rvCol = mix(cKeratin * 0.45, cKeratin, smoothstep(0.2, 0.8, wf));
+      rvCol = mix(rvCol, mossC, smoothstep(0.55, 0.85, rvFbm(vRest * 0.9)) * 0.5);
+      rvRough = 0.8; rvSheen = 0.0; rvBumpAmt = 1.1;
+    }
+    if (rvPart > 9.5 && rvPart < 10.5) {
+      // moss cushions and hanging moss: velvety, lighter tips
+      rvCol = mossC * mix(0.75, 1.25, smoothstep(-0.4, 0.9, rvDors)) * (0.85 + 0.3 * rvVN(vRest * 9.0));
+      rvRough = 0.96; rvSheen = 0.45; rvBumpAmt = 0.5; rvThin = 0.25;
+    } else if (rvPart > 10.5) {
+      // blossom: florets packed over leafy shrubs, translucent petals glowing when backlit
+      vec2 wv = rvWor(vRest * 4.6 + 9.0);
+      float fl = 1.0 - smoothstep(0.3, 0.52, wv.x);
+      float vary = rvVN(vRest * 1.3);
+      vec3 petal = cAccent * (0.82 + 0.3 * vary);
+      rvCol = mix(cPattern * 1.15, petal, clamp(fl * 1.1 + 0.25, 0.0, 1.0));
+      rvRough = 0.72; rvSheen = 0.2; rvBumpAmt = 0.4; rvThin = 0.85;
+      rvGlowM = max(rvGlowM, fl * 0.35);
+    }
+  }
 }
 vec4 diffuseColor = vec4(rvCol, opacity);
 `;
@@ -248,7 +294,15 @@ const FRAG_EMISSIVE = /* glsl */`
 {
   float night = clamp(uNight, 0.0, 1.0);
   float pulse = 0.75 + 0.25 * sin(rvTime * pGlow.z + rvSeed * 20.0 + rvU * 6.0);
-  totalEmissiveRadiance += cGlow * rvGlowM * pGlow.x * (0.08 + 1.4 * night * night) * pulse * (0.7 + 0.6 * vInst.y);
+  float rvGk = 1.0;
+  {
+    vec3 Vj = normalize(vViewPosition);
+    float frj = pow(1.0 - clamp(abs(dot(normal, Vj)), 0.0, 1.0), 2.0);
+    if (rvMat > 5.5 && rvMat < 6.5) rvGk = 0.18 + 1.7 * frj + 0.35 * smoothstep(0.2, 1.0, rvU);          // translucent bell: glowing rim, clear centre
+    else if (rvMat > 4.5 && rvMat < 5.5 && rvPart > 7.5 && rvPart < 8.5)                                   // tentacles: a trail of glowing beads
+      rvGk = (0.3 + 0.9 * smoothstep(0.55, 1.0, sin(rvU * 46.0 - rvTime * 2.2 + rvSeed * 9.0))) * (1.0 - 0.6 * rvU);
+  }
+  totalEmissiveRadiance += cGlow * rvGlowM * pGlow.x * (0.08 + 1.4 * night * night) * pulse * (0.7 + 0.6 * vInst.y) * rvGk;
   // bioluminescent species read as lit volumes at night, not rim outlines: a dim self-illumination
   // of the whole body (the glow scattered under translucent skin), brighter on the belly and toward
   // the silhouette (fresnel), mottled so it reads organic
@@ -304,7 +358,32 @@ const FRAG_LIGHT = /* glsl */`
     vec3 R = reflect(-V, N);
     reflectedLight.indirectSpecular += (amb * 1.4 + vec3(0.006)) * pow(clamp(R.y * 0.5 + 0.5, 0.0, 1.0), 8.0);
   }
+  // backlight rim: the silhouette catches the sun when the creature stands against it (rim light
+  // carries the form, as in the reference frames), plus a faint sky rim on every silhouette
+  {
+    float behind = clamp(dot(-V, Lv), 0.0, 1.0);
+    float edge = pow(1.0 - ndv, 2.6);
+    float rimK = edge * (0.12 + 0.88 * behind * behind) * (1.0 - 0.5 * rvThin);
+    reflectedLight.directDiffuse += (diffuseColor.rgb * 0.6 + 0.05) * rvSunColor * rimK * 0.55 * ao;
+    reflectedLight.indirectDiffuse += amb * edge * 0.35 * (diffuseColor.rgb + 0.04) * ao;
+  }
 }
+`;
+const FRAG_HAZE = /* glsl */`
+{
+  // giants are mostly haze and silhouette: the farther, the paler and cooler, and the mist takes the
+  // head before the feet (height above the creature's own ground, rest frame)
+  if (pHaze.x > 0.0) {
+    float d = length(vViewPosition);
+    float hk = clamp(vRest.y / max(pHaze.y, 0.01), 0.0, 1.25);
+    float fog = (1.0 - exp(-d * pHaze.z)) * pHaze.x * mix(1.0, 0.25 + 0.75 * smoothstep(0.0, 1.0, hk), pHaze.w);
+    vec3 Lh = normalize((viewMatrix * vec4(rvSunDir, 0.0)).xyz);
+    float fs = pow(clamp(dot(normalize(-vViewPosition), Lh), 0.0, 1.0), 6.0);
+    vec3 hc = rvHaze * vec3(0.95, 1.0, 1.07) + rvSunColor * fs * 0.07;
+    outgoingLight = mix(outgoingLight, hc, clamp(fog, 0.0, 0.9));
+  }
+}
+#include <opaque_fragment>
 `;
 
 /** Shared per-species look uniforms (colors & params). */
@@ -317,6 +396,8 @@ export function createLookUniforms(boneTexture, look) {
     pGlow: { value: new THREE.Vector4(...look.glowParams) },
     pSurf: { value: new THREE.Vector4(...look.surf) },
     pExtra: { value: new THREE.Vector4(...look.extra) },
+    pHaze: { value: new THREE.Vector4(0, 1, 0, 0) },
+    rvHaze: G.uAmbientSky,
     uNight: G.uNight,
     rvTime: G.uTime,
     rvSunDir: G.uSunDir,
@@ -345,9 +426,10 @@ export function createCreatureMaterials(lookUniforms, rowOffset, { transparent =
       .replace('#include <metalnessmap_fragment>', FRAG_METAL)
       .replace('#include <normal_fragment_maps>', FRAG_NORMAL)
       .replace('#include <emissivemap_fragment>', FRAG_EMISSIVE)
-      .replace('#include <lights_fragment_end>', FRAG_LIGHT);
+      .replace('#include <lights_fragment_end>', FRAG_LIGHT)
+      .replace('#include <opaque_fragment>', FRAG_HAZE);
   };
-  mat.customProgramCacheKey = () => (transparent ? 'rv-fauna-skin-t3' : 'rv-fauna-skin-3');
+  mat.customProgramCacheKey = () => (transparent ? 'rv-fauna-skin-t4' : 'rv-fauna-skin-4');
 
   const depth = new THREE.MeshDepthMaterial();
   depth.onBeforeCompile = (shader) => {

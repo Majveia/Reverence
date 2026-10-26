@@ -96,7 +96,7 @@ export class LeggedAnimator {
     let lo = 0, hi = 3.4;
     for (let i = 0; i < 26; i++) { const mid = (lo + hi) / 2; if (muzzleY(mid) > rig.S * 0.02) lo = mid; else hi = mid; }
     this.grazeA = lo;
-    if (this.kind === 'giant') this.grazeA *= 0.62;   // giants browse bushes / low trees
+    if (this.kind === 'giant' && !rig.g.colossus) this.grazeA *= 0.62;   // giants browse bushes / low trees (a colossus bows to the ground)
   }
 
   /** allocate per-creature animation state */
@@ -237,11 +237,13 @@ export class LeggedAnimator {
     c.breath += dt * (moving ? 1.8 + speed * 0.1 : 1.1);
     const breathe = Math.sin(c.breath) * 0.012;
     const sway = moving ? Math.sin(ph) * 0.035 * (gw[0] + gw[1] * 0.5) : 0;
-    const liftY = c.bodyLift + bob + hop + (c.crouch || 0) * -rig.S * s * 0.12 - (c.rear || 0) * rig.S * s * 0.1;
+    // sit (companion): haunches down onto the heels, chest up, front legs straight
+    const sitW = c.sit || 0, sitE = sitW * sitW * (3 - 2 * sitW);
+    const liftY = c.bodyLift + bob + hop + (c.crouch || 0) * -rig.S * s * 0.12 - (c.rear || 0) * rig.S * s * 0.1 - sitE * this.legH * s * 0.95;
     // pelvis local translation (root-local up)
     c.rear = (c.rear || 0) + ((c.rearTarget || 0) - (c.rear || 0)) * damp((c.rearTarget || 0) > (c.rear || 0) ? 4 : 6, dt);
     const rear = c.rear * c.rear * (3 - 2 * c.rear);
-    qeuler(lq, B.PELVIS * 4, sway * 0.6 - c.turn * 0.05, c.bodyPitch + gallopRock + (c.lean || 0) + c.graze * this.grazeBody - rear * 1.2, sway * 0.5 + c.bodyRoll);
+    qeuler(lq, B.PELVIS * 4, sway * 0.6 - c.turn * 0.05, c.bodyPitch + gallopRock + (c.lean || 0) + c.graze * this.grazeBody - rear * 1.2 - sitE * 0.45, sway * 0.5 + c.bodyRoll);
     qeuler(lq, B.SPINE * 4, -c.turn * 0.12 - sway * 0.5, -gallopRock * 0.3 + breathe * 0.4, 0);
     qeuler(lq, B.CHEST * 4, -c.turn * 0.12 - sway * 0.4, -gallopRock * 0.4 - breathe, -sway * 0.3);
     // -------------------------------------------------- neck & head (graze + look + idle)
@@ -271,9 +273,9 @@ export class LeggedAnimator {
     // graze: the (slim) neck swings down from the withers almost straight (base 55 %, mid 18 %) and
     // the head tips toward vertical (40 %): neck, throat and jaw read as separate masses, not one tube
     const gHead = c.graze * this.grazeHeadTotal - g * (this.grazeK1 + this.grazeK2);
-    qeuler(lq, B.NECK1 * 4, c.hy * 0.3, g * this.grazeK1 + c.hp * 0.3 + walkNod * 0.5 + runNeck + rear * 0.55, 0);
+    qeuler(lq, B.NECK1 * 4, c.hy * 0.3, g * this.grazeK1 + c.hp * 0.3 + walkNod * 0.5 + runNeck + rear * 0.55 + sitE * 0.28, 0);
     qeuler(lq, B.NECK2 * 4, c.hy * 0.3, g * this.grazeK2 + c.hp * 0.3 + walkNod * 0.3 + rear * 0.3, 0);
-    qeuler(lq, B.HEAD * 4, c.hy * 0.4, gHead + c.hp * 0.4 - walkNod * 0.6 + chew - runNeck * 0.8 + rear * 0.3, -c.hy * 0.15);
+    qeuler(lq, B.HEAD * 4, c.hy * 0.4, gHead + c.hp * 0.4 - walkNod * 0.6 + chew - runNeck * 0.8 + rear * 0.3 + sitE * 0.14, -c.hy * 0.15);
     // ears
     c.earT += dt;
     const flick = Math.max(0, Math.sin(c.earT * 0.9 + c.seed * 9) - 0.93) * 12;
