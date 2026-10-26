@@ -193,7 +193,9 @@ export default class CosmicMode extends Mode {
         const q = new THREE.Mesh(s.tri, m); q.frustumCulled = false; scene.add(q);
       }
       for (const p of [s.depPts, s.depHiPts, v.accPts]) { const c = new THREE.Points(p.geometry, p.material); c.frustumCulled = false; scene.add(c); }
-      r.compileAsync(scene, s.qCam).catch(() => { /* compiled on first use instead */ });
+      // (without the extension compileAsync only warns and compiles right away, so do that directly)
+      if (r.extensions?.has('KHR_parallel_shader_compile')) r.compileAsync(scene, s.qCam).catch(() => { /* compiled on first use instead */ });
+      else r.compile(scene, s.qCam);
     } catch (_) { /* optional */ }
   }
 

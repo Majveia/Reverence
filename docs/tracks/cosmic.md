@@ -248,8 +248,8 @@ and new paths at 3, 17 and 26 s differ by 0.06–0.19/255 on average.
    when the old code would have run it. The render density fields are triple-buffered (newest, previous, and
    the spare a planned step writes), so nothing on screen changes before the commit. Captures keep the
    synchronous path; `simsched=1` runs the scheduler under capture and gives bit-identical frames.
-3. **Shader compiles**: the sim and render programs compile in the background (`compileAsync`) while the
-   initial-conditions worker runs.
+3. **Shader compiles**: the sim and render programs compile while the initial-conditions worker runs: in
+   the background with `KHR_parallel_shader_compile`, otherwise right away (`compile`).
 
 The engine also drops resolution within half a second when the frame rate falls far below target, and base
 Apple M chips use the `high` tier. Captures now count only simulated frames (the harness's idle `dt = 0`
