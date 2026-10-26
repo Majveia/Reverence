@@ -67,6 +67,37 @@ time each species is visible within its discovery distance (≥ 2.5 s apart).
 dist, count})` when a herd bolts (FLEE) or a flock scatters (player sprinting / driving close);
 rate-limited to one per 1.2 s (audio: alarm calls, stampede / wing bursts).
 
+## Season 2 (Ghost of Yotei, gentle life)
+
+* **Colossi** (`behavior/colossus.js`, body `bodies/legged.js` kind `colossus`): every living world has one
+  colossus species made of the world: a 28-32 m tall, spindly, long-legged forest spirit with legs of twisted
+  root and bark, lichen, moss creeping over every up-facing surface, a garden on its back (moss cushions,
+  flowering shrubs, a blossoming sapling on the withers), hanging moss beards, pale weathered-wood antlers and
+  a pale wooden face mask with softly lit eyes. One or two walk slow curving paths 400-700 m around the player
+  (streamed, deterministic per world). Distance haze is height-weighted (`pHaze`): the farther, the paler and
+  cooler, the head goes into the mist before the feet. **The bow:** stand still within ~50 m for 3 s (or send a
+  Resonance pulse) and it walks up, turns to face her and lowers its head until its face is in front of hers.
+  Never steps on the player (personal-space steering), avoids water, cliffs and town clearings.
+* **Mount API** (`mount.js`), two seat sockets on every colossus (see API below).
+* **Spirit fox companion** (`companion.js`, `fauna.companion`): a small white-silver fox with gold-tipped
+  ears and tail that trots at her left side, runs ahead toward the nearest wonder (World Tree, sacred site,
+  wonder / monument / ruin POI) and waits looking back, and sits beside her when she rests or meditates
+  (`player.resting` / `player.meditating`). The Player uses it instead of its own fallback wolf.
+* **Wild horses** (Yotei): naturalistic worlds (exotic <= 0.4) get a herd species of horses (bay, chestnut,
+  dun, dappled grey, black, palomino, white) with a long head, a mane of locks falling to one side and a long
+  hair tail. `&fauna=horse` frames a herd.
+* **Gentle giants** (`giant` herds): stand still within ~30 m for 3 s and they turn to her and lower their heads.
+* **Murmuration** (`murmuration.js`): a flock as weather, 600-4000 birds (by tier) in one instanced draw,
+  evaluated entirely in the vertex shader (a folding, rolling sheet with travelling density waves), placed
+  across the low sun at dusk and dawn (sun elevation -5..16 deg).
+* **Sky whales** read as gentle volumes: dark cool slate back, pale throat, pale scars, long humpback
+  pectorals (0.3-0.4 of body length); the showcase aims them into the upper third of the actual lens view.
+* **Inbox done**: space -> fauna (small glowing life fades to faint points beyond ~90-600 m, so far night terrain is
+  not dotted with saturated halos; giants and whales keep their light); player -> fauna (`player:pulse` head lift,
+  fauna-owned companion); fix of a striped band at the colossus / giant pad feet (interpolated material ids).
+* **Resonance** (`player:pulse`): the curtain of light (25 m/s) reaches creatures, they lift their heads to the
+  sky for ~4 s; colossi in 2.5x the radius bow.
+
 ## API
 
 ```js
@@ -74,11 +105,27 @@ const fauna = world.get('fauna');   // null on lifeless / gas bodies
 fauna.roster        // [{ id, name, archetype, layer, genome, look, glowing, temper, … }]
 fauna.creatures     // live individuals: { species, pos: Float64Array(3) planet-local, fwd, up, speed, … }
 fauna.nearest(archetype?, fromFloat64Array3?)
-fauna.getState()    // { species, roster, groups, creatures, byKind, drawn, meshes, motes, discovered, showcase }
+fauna.getState()    // { species, roster, groups, creatures, byKind, drawn, meshes, motes, discovered, showcase, colossi, companion, murmuration }
+fauna.near(pos, r)  // creatures whose body sphere meets (pos, r): [{creature, pos, radius, dist, archetype, name}]
+
+// companion (null with &companion=0|wolf or &fauna=none)
+fauna.companion     // { pos, headPos, forward, up (Vector3, planet-local), mode: 'follow'|'guide'|'sit', seated,
+                    //   leading, target (Vector3|null: the wonder it leads to), creature, setMode('auto'|'follow'|'sit'|'stay') }
+
+// mounts (one per live colossus)
+fauna.mounts        // [Mount]
+fauna.mount         // the mount nearest to the player (or null)
+fauna.mountNear(pos, r = 40)
+mount.seats[0|1]    // THREE.Object3D children of world.root, planet-local; +Z = its forward, +Y = up (two seats side
+                    // by side just behind the withers; they follow the chest bone every frame, after fauna's update)
+mount.board(rider, i?) -> seat Object3D | null ;  mount.leave(rider)
+mount.drive(dirVector3 | null, speed 0..1.6)   // steer while ridden; null = it walks its own scenic path
+mount.kneel         // 0..1 how far it has lowered its head (bows when a rider stands still before it)
+mount.pos / forward / up (Vector3), mount.height (seat height above its feet, m), mount.name, mount.speed
 // events: 'discovery' {kind:'creature', name, species, archetype} · 'creature:alarm' {archetype, species, name, pos, dist, count}
 ```
 
-URL params: `fauna=<grazer|giant|hexapod|hopper|critter|serpent|birds|rays|whales|jellies|fish|none>` frames a
+URL params: `fauna=<grazer|horse|giant|colossus|murmuration|hexapod|hopper|critter|serpent|birds|rays|whales|jellies|fish|none>` frames a
 showcase group in front of the spawn camera (clear line of sight vs terrain + colliders; herds stay
 grazing, broadside, until the player moves); `faunadist=<0.3..4>` scales the showcase distance.
 Without `fauna=`, a herd + a bird flock (+ rays / a whale pod when the roster has them, jellies at
@@ -87,6 +134,22 @@ night) are framed anyway.
 ## Best capture URLs
 
 All verified at 1280×720 with the default post pipeline (`post=legacy` also works).
+
+Season 2 (round 2):
+* **Gentle giant, face to face** (W2 meadow, the colossus bows its head to her, the spirit fox at her side):
+  `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=5.3479&lon=24.1607&yaw=241.5&pitch=14&tod=0.33&props=0&fauna=colossus&faunadist=0.15` steps `[{"advance":4}]`
+  (`faunadist <= 0.25` = face to face; otherwise the showcase colossus walks across the view at `230 x faunadist` m
+  with a second one 2.4x farther back for two layers of haze).
+* **Colossus in the haze before the volcano** (W2):
+  `/?mode=system&galaxy=0&star=11&planet=0&view=surface&lat=5.3479&lon=24.1607&yaw=241.5&pitch=10&tod=0.3&weather=fog&props=0&fauna=colossus&faunadist=0.5`
+* **Murmuration across the setting sun** (W1):
+  `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.74&fauna=murmuration&faunadist=0.8&lat=9.08&lon=30.92&yaw=270&pitch=8&props=0`
+* **Sky whales overhead** (W3 dunes, the white spires below):
+  `/?mode=system&galaxy=0&star=9&planet=2&view=surface&tod=0.3&pitch=14&fauna=whales&faunadist=0.6&props=0`
+* **Wild horses in the autumn field** (W1):
+  `/?mode=system&galaxy=0&star=6&planet=1&view=surface&lat=9.08&lon=30.92&yaw=297&pitch=4&tod=0.3&fauna=horse&faunadist=1.4&props=0`
+
+Round 1 views:
 
 * Herd close-up, W1 savanna: `/?mode=system&galaxy=0&star=6&planet=1&view=fp&tod=0.3&fauna=grazer&lat=9.08&lon=30.92&yaw=200&faunadist=0.7` steps `[{"advance":3}]`
 * Bird flock at sunset, W1: `/?mode=system&galaxy=0&star=6&planet=1&view=surface&tod=0.74&fauna=birds&lat=9.08&lon=30.92&yaw=270` steps `[{"advance":3}]`
@@ -102,6 +165,16 @@ W9 hexapod whale* · W10 giant* ray* jelly* · W11 whale*.
 
 ## Known issues
 
+* Riding the colossus needs the player track (the mount API and seat sockets are live; see Requests).
+* The far colossus can be hidden by a tree line in forested spawns (the showcase checks terrain and nearby
+  colliders only); streamed colossi walk 420-1800 m out and are often behind ridges.
+* Horse manes and tails are skinned rigidly to the neck and tail bones (they follow the gait and head, but
+  have no wind sway of their own yet).
+* Per-vertex material ids are interpolated: a loft whose rings switch between non-adjacent ids (e.g. hexapod
+  SKIN -> CARAPACE) can show a thin band of in-between materials; pad feet were fixed this round.
+* `node tools/check.mjs` can time out on `system-surface` (180 s) when the shared software-GL machine is busy;
+  the same URL boots without errors in 233 s with a longer timeout.
+
 * Fish are only readable when they leap (the water surface hides them at grazing angles); showcase
   schools leap in bursts every ~0.25 s, ambient ones every 2.5–8 s. No splash particles yet.
 * Grazers are stylised (lofted, 8–11 k tris hero LOD) — clean silhouettes, but no fur cards/shells.
@@ -113,6 +186,16 @@ W9 hexapod whale* · W10 giant* ray* jelly* · W11 whale*.
 * No sound hooks yet (audio could key off `fauna.nearest()` / discovery events).
 
 ## Requests
+
+* **player** (season 2, round 2) — ride the colossus: when she stands before a bowing colossus
+  (`fauna.mountNear(player.pos, 25)` with `mount.kneel > 0.7`), an interact prompt boards it:
+  `const seat = mount.board(player)`; each frame (after fauna's update, e.g. in `lateUpdate`) put her at
+  `seat.position` (planet-local) with `seat.quaternion`, play a sit pose, steer with `mount.drive(dir, speed)`
+  (dir = planet-local tangent Vector3, or `null` for its own scenic walk); `mount.leave(player)` to dismount.
+  Seat 1 is free for a second rider (the two-on-a-gentle-giant frame). A `ride=1` URL param (spawn seated on the
+  nearest colossus) would make the "mount so large it is a viewpoint" frame capturable.
+* **player** — `fauna.companion` (the spirit fox) is live on every living world and the Player already uses it
+  instead of its wolf; the arm-around-it rest pose can read `companion.headPos`.
 
 * **player** — expose a way to face a target at spawn (e.g. `world.player.lookAt(pos)`) so the
   `fauna=` showcase can frame creatures without hand-picked `yaw` values.

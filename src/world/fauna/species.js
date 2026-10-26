@@ -108,6 +108,27 @@ export function makeLook(rng, art, archetype, st, glowing) {
   };
 }
 
+/** Wild horse coats: bay, chestnut, dun, grey (dappled), black, palomino, white; mane & tail in
+ *  `keratin` (also the hooves). Countershading kept subtle (horses are nearly uniform). */
+function horseLook(rng, look) {
+  const coat = rng.weighted([['bay', 3], ['chestnut', 2], ['dun', 1.2], ['grey', 1.4], ['black', 1], ['palomino', 0.8], ['white', 0.7]]);
+  const C = {
+    bay: [[0.045, 0.62, 0.22], [0.05, 0.45, 0.32], [0.06, 0.15, 0.05]],
+    chestnut: [[0.04, 0.68, 0.27], [0.045, 0.5, 0.36], [0.05, 0.6, 0.2]],
+    dun: [[0.095, 0.42, 0.45], [0.1, 0.3, 0.6], [0.07, 0.2, 0.08]],
+    grey: [[0.1, 0.04, 0.58], [0.1, 0.03, 0.74], [0.1, 0.03, 0.42]],
+    black: [[0.06, 0.12, 0.06], [0.06, 0.1, 0.12], [0.06, 0.1, 0.035]],
+    palomino: [[0.11, 0.55, 0.5], [0.11, 0.45, 0.66], [0.12, 0.35, 0.86]],
+    white: [[0.1, 0.06, 0.82], [0.1, 0.05, 0.9], [0.1, 0.05, 0.86]],
+  }[coat];
+  look.back = col(...C[0]); look.belly = col(...C[1]); look.keratin = col(...C[2]);
+  look.pattern = coat === 'grey' ? col(0.1, 0.03, 0.82) : col(C[0][0], C[0][1], C[0][2] * 0.55);
+  look.patternParams = coat === 'grey' ? [5, 2.4, 0.3, 0.55] : [0, 1, 0.3, 0];
+  look.glowParams = [0, 1, 1, 0.6];
+  look.surf = [0.62, 0.55, 0.8, 0.55];   // short glossy coat
+  look.horse = coat;
+}
+
 /** The colossus is made of the world: bark and root (back), lichen (belly), moss (pattern), blossom
  *  (accent, from the world's flora palette when it has a pink / white / warm flower), pale old wood
  *  (antlers, sapling) and a faint spirit glow in the world's accent hue at night. */
@@ -164,7 +185,7 @@ export function makeRoster(body) {
       ...extra,
     };
     if (['grazer', 'giant', 'hexapod', 'hopper', 'critter'].includes(archetype)) {
-      sp.genome = leggedGenome(r, archetype, st);
+      sp.genome = leggedGenome(r, extra.horse ? 'horse' : archetype, st);
       sp.habitat = HABITAT[archetype];
     } else {
       sp.genome = chainGenome(r, archetype, st);
@@ -172,6 +193,18 @@ export function makeRoster(body) {
       if (HABITAT[archetype]) sp.habitat = HABITAT[archetype];
     }
     sp.look = makeLook(r, art, archetype, st, glowing);
+    if (extra.horse) horseLook(r, sp.look);
+    if (archetype === 'whale') {
+      // sky whales: strong countershading reads as volume against any sky (dark cool slate back, pale
+      // throat and grooves), pale scars / barnacle spots, a slightly wet sheen
+      const hb = hslOf(sp.look.back);
+      const h = 0.56 + (hb.h - 0.56) * 0.25 + (r.next() - 0.5) * 0.06;
+      sp.look.back = col(h, 0.24, 0.16);
+      sp.look.belly = col(0.1, 0.14, 0.74);
+      sp.look.pattern = col(h, 0.12, 0.62);
+      sp.look.patternParams = [2, 0.32, 0.28, 0.55];
+      sp.look.surf = [0.42, 0.12, 1.1, 0.1];
+    }
     if (archetype === 'jelly') {
       // jellies glow in the world's own bioluminescent hue (its most saturated flora colour), not a
       // stray accent: one colour of light per night biome
@@ -216,6 +249,14 @@ export function makeRoster(body) {
     sp.genome = leggedGenome(rc, 'colossus', st);
     sp.look = colossusLook(rc, art, cold);
     list.push(sp);
+  }
+  // season 2 (Ghost of Yotei): wild horses on the naturalistic worlds (appended after the colossus with
+  // their own RNG, so every other species stays as it was)
+  const rh = new RNG(hashCombine(body.seed, 0x40453));
+  if (atmo && st.exotic <= 0.4 && rh.chance(0.85)) {
+    const sp = add('grazer', 'ground', { group: [5, 11], density: 1.15, temper: 'calm', horse: true, glowBias: 0 });
+    sp.name = `${word(rh, 2, 3)} ${rh.pick(['Horse', 'Wild Horse', 'Steed', 'Mare', 'Stallion'])}`;
+    sp.horse = true;
   }
   return list;
 }

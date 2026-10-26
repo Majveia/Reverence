@@ -37,7 +37,7 @@ import { Mount } from './mount.js';
 
 const LEGGED = new Set(['grazer', 'giant', 'hexapod', 'hopper', 'critter', 'colossus', 'fox']);
 const GROUND = new Set(['grazer', 'giant', 'hexapod', 'hopper', 'critter', 'serpent']);   // herd archetypes (&fauna= showcase)
-const SHOW = { colossi: 'colossus', mount: 'colossus', murmuration: 'murmuration', flock: 'murmuration', serpents: 'serpent', snake: 'serpent', birds: 'bird', bird: 'bird', rays: 'ray', ray: 'ray', whales: 'whale', whale: 'whale', jellies: 'jelly', jelly: 'jelly', fish: 'fish' };
+const SHOW = { horses: 'horse', colossi: 'colossus', mount: 'colossus', murmuration: 'murmuration', flock: 'murmuration', serpents: 'serpent', snake: 'serpent', birds: 'bird', bird: 'bird', rays: 'ray', ray: 'ray', whales: 'whale', whale: 'whale', jellies: 'jelly', jelly: 'jelly', fish: 'fish' };
 // per archetype: draw distance (m), LOD0 distance, discovery distance
 const DIST = {
   grazer: [900, 95, 70], giant: [2000, 160, 220], hexapod: [900, 95, 70], hopper: [700, 70, 60], critter: [300, 40, 25],
@@ -390,14 +390,14 @@ class Fauna {
 
   // ------------------------------------------------------------------------------ colossi
   /** spawn one colossus at planet-local ground point pos, heading angle (spawnAir convention) */
-  _spawnColossus(pos, heading, rng, welcome = false) {
+  _spawnColossus(pos, heading, rng, welcome = false, scale = 0) {
     const sp = this.colossusSp;
     if (!sp) return null;
     const rt = this.runtime(sp);
     const ul = Math.hypot(pos[0], pos[1], pos[2]);
     tangentBasis(pos[0] / ul, pos[1] / ul, pos[2] / ul, _e, _n);
     const fwd = [_e[0] * Math.cos(heading) + _n[0] * Math.sin(heading), _e[1] * Math.cos(heading) + _n[1] * Math.sin(heading), _e[2] * Math.cos(heading) + _n[2] * Math.sin(heading)];
-    const c = this._makeCreature(sp, rt, pos, fwd, rng.range(0.9, 1.08), rng.next(), rng);
+    const c = this._makeCreature(sp, rt, pos, fwd, scale || rng.range(0.95, 1.5), rng.next(), rng);
     c.turnSpeed = 0.32; c.accel = 0.45; c.decel = 0.6; c.maxSlope = 0.85;
     c.born = welcome ? 1 : 0;
     const rig = rt.rig;
@@ -646,9 +646,10 @@ class Fauna {
     const at = (dir, dist, side = 0) => [C.x + dir[0] * dist + rx * side, C.y + dir[1] * dist + ry * side, C.z + dir[2] * dist + rz * side];
 
     // ---- ground herd (default, or the requested legged archetype)
-    const legged = GROUND.has(want);
+    if (want === 'horse' && !this.roster.some((x) => x.horse)) want = 'grazer';
+    const legged = GROUND.has(want) || want === 'horse';
     if (!want || legged) {
-      let sp = legged ? this.roster.find((x) => x.archetype === want) : null;
+      let sp = legged ? this.roster.find((x) => (want === 'horse' ? x.horse : x.archetype === want && !x.horse)) : null;
       const probe = sp || this.roster.find((x) => x.layer === 'ground' && x.archetype === 'grazer');
       if (probe) {
         const g = probe.genome;
@@ -702,12 +703,30 @@ class Fauna {
           tangentBasis(_d[0] / dl, _d[1] / dl, _d[2] / dl, _e, _n);
           // across the view (right → left or left → right), or toward her when close
           let hd = Math.atan2(rx * _n[0] + ry * _n[1] + rz * _n[2], rx * _e[0] + ry * _e[1] + rz * _e[2]) + (ang > 0 ? Math.PI : 0) + (ang > 0 ? -0.25 : 0.25);
-          if (close) hd = Math.atan2(-(fx * _n[0] + fy * _n[1] + fz * _n[2]), -(fx * _e[0] + fy * _e[1] + fz * _e[2])) + 0.5;
-          const g = this._spawnColossus(Float64Array.from(_d), hd, rng.fork('wcol'), true);
+          if (close) hd = Math.atan2(-(fx * _n[0] + fy * _n[1] + fz * _n[2]), -(fx * _e[0] + fy * _e[1] + fz * _e[2])) + 0.2;
+          const g = this._spawnColossus(Float64Array.from(_d), hd, rng.fork('wcol'), true, close ? 1 : 1.55);   // far: a 45 m giant over the treeline
           if (g) {
             mark(g);
-            if (close) { g.bowHold = 40; }
-            else { g.state = 'walk'; g.timer = 120; }
+            if (close) { g.bowHold = 40; g.bowW = 0.6; }   // already lowering its head when the view opens
+            else {
+              g.state = 'walk'; g.timer = 120;
+              // a second one further back, across the view: two layers of haze (the farther, the paler and cooler)
+              if (want === 'colossus' && !this._col2) {
+                this._col2 = true;
+                for (const a2 of [-ang * 1.6 - 0.25, -ang - 0.45, 0.6, -0.6]) {
+                  const p2 = at(dirAt(a2), base * k * 2.4);
+                  const h2 = this.env.ground(p2[0], p2[1], p2[2], _e, 0);
+                  if (h2 < this.sea + 3 || clearingPush(this.env, _e[0], _e[1], _e[2], 30)) continue;
+                  const q = Float64Array.from(_e);
+                  const ql = Math.hypot(q[0], q[1], q[2]);
+                  tangentBasis(q[0] / ql, q[1] / ql, q[2] / ql, _e, _n);
+                  const hd2 = Math.atan2(rx * _n[0] + ry * _n[1] + rz * _n[2], rx * _e[0] + ry * _e[1] + rz * _e[2]) + (a2 > 0 ? Math.PI : 0);
+                  const g2 = this._spawnColossus(q, hd2, rng.fork('wcol2'), true, 1.3);
+                  if (g2) { mark(g2); g2.state = 'walk'; g2.timer = 120; }
+                  break;
+                }
+              }
+            }
             this.showcaseInfo = { ...(this.showcaseInfo || {}), colossus: Math.round(base * k) };
           }
           done = true; break;
@@ -725,6 +744,8 @@ class Fauna {
     const wantSky = SHOW[this.showcase];
     const pick = (a) => this.roster.find((x) => x.archetype === a);
     const F3 = [fx, fy, fz];      // horizontal view direction (the player camera settles near the horizon)
+    _v3.setFromMatrixColumn(cam.matrixWorld, 1).normalize();
+    const camUp = [_v3.x, _v3.y, _v3.z];   // the lens' own up: view3d lifts stay inside the frame on slopes
     /** point `dist` m along the camera's 3D view ray (turned by yawOff rad, raised by liftDeg) →
      *  { home: ground point beneath, agl } (never below minAgl above ground / sea) */
     const aim = (dist, liftDeg, yawOff = 0, minAgl = 4, view3d = false) => {
@@ -734,7 +755,8 @@ class Fauna {
       const B = view3d ? [f3x, f3y, f3z] : F3;
       let dx = B[0] * c + rx * s2, dy = B[1] * c + ry * s2, dz = B[2] * c + rz * s2;
       const lr = liftDeg * Math.PI / 180;
-      dx += ux * Math.tan(lr); dy += uy * Math.tan(lr); dz += uz * Math.tan(lr);
+      const U = view3d ? camUp : [ux, uy, uz];
+      dx += U[0] * Math.tan(lr); dy += U[1] * Math.tan(lr); dz += U[2] * Math.tan(lr);
       const dl = Math.hypot(dx, dy, dz);
       const px = C.x + dx / dl * dist, py = C.y + dy / dl * dist, pz = C.z + dz / dl * dist;
       const pl = Math.hypot(px, py, pz);
@@ -767,7 +789,7 @@ class Fauna {
       const sp = pick('whale');
       if (sp) {
         // showcase: the pod drifts low overhead (60–140 m up), crossing the view — megafauna passing over you
-        const { home, agl } = wantSky ? aim((70 + sp.genome.L * 1.1) * this.showDist, 30, -0.05, 45 + sp.genome.R, true) : aim(700, 7, 0.2, 90);
+        const { home, agl } = wantSky ? aim((70 + sp.genome.L * 1.1) * this.showDist, 15, -0.05, 30 + sp.genome.R, true) : aim(700, 7, 0.2, 90);
         mark(this._spawnAir(sp, home, rng.fork('ww'), wantSky ? 3 : undefined, { agl: [agl, agl + 10], heading: across(home, -0.35) }));
       }
     }
@@ -1140,7 +1162,7 @@ export default {
       try { f.companion = new SpiritFox(f); } catch (e) { console.warn('[fauna] companion failed', e); f.companion = null; }
     }
     if (f.roster.some((sp) => sp.archetype === 'bird')) {
-      const n = { low: 450, med: 900, high: 1600, ultra: 2400 }[f.q.tier || 'high'] ?? 1600;
+      const n = { low: 600, med: 1200, high: 2600, ultra: 4000 }[f.q.tier || 'high'] ?? 2600;
       try { f.murmur = new Murmuration(f, n); } catch (e) { console.warn('[fauna] murmuration failed', e); f.murmur = null; }
     }
     return f;
