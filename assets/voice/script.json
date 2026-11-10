@@ -1,0 +1,24 @@
+{
+  "note": "Narration for Reverence. One calm, warm, unhurried voice — a storyteller at the edge of a campfire the size of the universe. Leave air around every sentence.",
+  "lines": [
+    { "id": "intro-1", "text": "Before the first light, there was a silence so complete that nothing had ever broken it." },
+    { "id": "intro-2", "text": "Then — everything. Every sun, every sea, every atom of you, flung outward in a single breath." },
+    { "id": "intro-3", "text": "Gravity gathered the dark into rivers. And the rivers caught fire." },
+    { "id": "intro-4", "text": "A hundred billion suns began to turn together, slow as a thought." },
+    { "id": "intro-5", "text": "Around them, small worlds waited to see what they would become." },
+    { "id": "intro-6", "text": "Some of them woke. They raised cities. They made music. They looked up." },
+    { "id": "intro-7", "text": "All of it is made of the same first light. So are you." },
+    { "id": "intro-8", "text": "Welcome home, wanderer." },
+    { "id": "realm-cosmos", "text": "This is everything there is. Every thread of light is a hundred thousand galaxies." },
+    { "id": "realm-galaxy", "text": "Canticle. Four hundred billion suns, and one of them is yours." },
+    { "id": "realm-galaxy-other", "text": "Another island of suns. No one has named these stars yet." },
+    { "id": "realm-source", "text": "The Source. Here, even light kneels." },
+    { "id": "first-flight", "text": "Go on. The sky was never a ceiling." },
+    { "id": "first-orbit", "text": "From up here, every border is invisible." },
+    { "id": "first-night", "text": "Look up. That river of light is home, seen from the inside." },
+    { "id": "first-ride", "text": "There it is. That feeling. Stay in it." },
+    { "id": "monument", "text": "Someone stood here once, and wondered the same things you do." },
+    { "id": "new-world", "text": "A new world. Walk softly. It has never met you before." },
+    { "id": "rest", "text": "Take your time. The universe is in no hurry." }
+  ]
+}

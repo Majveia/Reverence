@@ -1,0 +1,12 @@
+{
+  "name": "reverence",
+  "version": "0.1.0",
+  "description": "Reverence — a playable, simulated universe in Three.js: cosmic web → galaxies → star systems → living worlds.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "start": "node tools/serve.mjs 8080",
+    "shot": "node tools/shot.cjs"
+  }
+}
