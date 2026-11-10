@@ -219,6 +219,9 @@ so vehicles can seat the wanderer.
 
 - ES modules, no build, 2-space indent, semicolons. JSDoc the public surface of your module at the top of its
   index.js (what it exports, events it emits, shots it registers). Split big modules into several files.
+- Typography (loaded by index.html from `assets/fonts/`): `font-family: var(--rv-display)` — Cormorant Garamond,
+  for titles / narration / place names;  `var(--rv-ui)` — Jost, for interface text. Small sizes, wide tracking, restraint.
+- Narration script: `assets/voice/script.json` (ids + text); recorded lines + timings in `assets/voice/manifest.json`.
 - Deterministic: seed everything from `body.seed` / `site.seed` / `hash32(...)`. No `Math.random()` for world content.
 - Dispose what you create (`onPlanetExit`, `onSystemExit`): geometries, materials, textures, render targets, workers.
 - Don't write planning/notes files into the repo. Don't commit: the lead commits.
