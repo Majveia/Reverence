@@ -47,10 +47,19 @@ async function boot() {
     if (!engine.harness) engine.ui?.showStart?.({ quick: true });
   } else {
     // The entrance: a still title, one gesture to wake the sound, then the overture.
-    await engine.ui?.showStart?.({});
-    if (engine.intro?.play) await engine.intro.play();
+    if (!engine.harness) await engine.ui?.showStart?.({});
+    if (engine.intro?.play) {
+      const playing = engine.intro.play();
+      if (engine.harness) {
+        // Automation: report ready as soon as the intro has its first (or sought, ?introAt=) frame in place.
+        await Promise.race([Promise.resolve(engine.intro.ready).then(() => engine.wait(0.05)), playing]);
+        RV.ready = true; engine.events.emit('ready');
+      }
+      await playing;
+    }
     if (!engine.realm || engine.realm.name === 'intro') await engine.travel({ realm: engine.realms.system ? 'system' : Object.keys(engine.realms)[0] }, { instant: !engine.realm });
   }
+  if (RV.ready) return;
   RV.ready = true;
   engine.events.emit('ready');
 }

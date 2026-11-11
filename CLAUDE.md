@@ -31,8 +31,9 @@ pixel-accurate). It loads `/?harness=1&<q>`, waits for `RV.ready`, lets the worl
 `--frames N` rendered frames, default 40), saves a PNG and prints JSON: console errors/warnings + render stats.
 See the header of `tools/shot.cjs` for `--eval`, `--after`, `--print`, `--script`, `--mobile`, `--w/--h/--dpr`.
 **Always look at your screenshots (Read the PNG) and fix what you see.** Console errors = failure.
-Write screenshots to `shots/<your-area>-*.png` (git-ignored). Do not start servers on port 8080 if one is running
-(the harness reuses it); never `pkill node` — other agents share this machine. Be frugal: ≤ 1280×720, few frames.
+Write screenshots to `shots/<your-area>-*.png` (git-ignored). You never need to start a server: the harness uses the
+shared one on :8080 if present, else a private one for the run. Never `pkill node` — other agents share this
+machine. Be frugal: ≤ 1280×720, few frames.
 
 In harness mode time is deterministic (fixed dt 1/60 per rendered frame) and the DOM UI is hidden unless `ui=1`.
 

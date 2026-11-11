@@ -16,7 +16,8 @@
  *   --script <file>    CommonJS module exporting async ({page, shot, settle, RV}) => {} for multi-shot scenarios.
  *                        shot(name) saves <outdir>/<name>.png,  settle(frames) waits for idle + frames
  *   --mobile           emulate a phone (touch, 844x390 landscape, dpr 2)
- *   --port <n>         dev server port (default 8080; one is started automatically if nothing is listening)
+ *   --port <n>         shared dev server port (default 8080); if nothing listens there a private server is started
+ *                        on a free port for the duration of this run
  *   --timeout <ms>     overall timeout (default 240000)
  *   --ui 0|1           hide/show DOM UI (default: hidden unless the query sets ui=1)
  *
@@ -72,10 +73,13 @@ function portOpen(port) {
   }
   process.on('exit', () => { try { fs.rmSync(slot, { recursive: true, force: true }); } catch {} });
 
-  let server = null;
+  // Use the shared dev server if one is listening; otherwise start a private one on a free port (so concurrent
+  // harness runs never depend on each other's server lifetime).
+  let server = null, usePort = port;
   if (!(await portOpen(port))) {
-    server = spawn(process.execPath, [path.join(root, 'tools/serve.mjs'), String(port), '--quiet'], { stdio: 'ignore', detached: false });
-    for (let i = 0; i < 50 && !(await portOpen(port)); i++) await new Promise((r) => setTimeout(r, 100));
+    usePort = await new Promise((res) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
+    server = spawn(process.execPath, [path.join(root, 'tools/serve.mjs'), String(usePort), '--quiet'], { stdio: 'ignore', detached: false });
+    for (let i = 0; i < 80 && !(await portOpen(usePort)); i++) await new Promise((r) => setTimeout(r, 100));
   }
 
   const browser = await chromium.launch({
@@ -101,7 +105,7 @@ function portOpen(port) {
   let q = String(o.q || '');
   if (!/(^|&)ui=/.test(q) && o.ui === undefined) q += (q ? '&' : '') + 'ui=0';
   if (o.ui !== undefined) q += (q ? '&' : '') + 'ui=' + o.ui;
-  const url = `http://localhost:${port}/?harness=1${q ? '&' + q : ''}`;
+  const url = `http://localhost:${usePort}/?harness=1${q ? '&' + q : ''}`;
 
   let code = 0;
   const killer = setTimeout(async () => {
