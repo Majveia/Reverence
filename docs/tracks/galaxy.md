@@ -235,6 +235,10 @@ Galaxy types for seed 1: 0 ring (4 arms), 1 spiral (3), 2 barred (3), 3/4/6/16/1
 * (s2r2) Black-hole disk arcs: 3 layers of hash-only dashes per disk crossing (cheaper than the old 3-octave
   simplex noise); nebula halo: 4 noise fetches per pixel per active nebula, analytic column (no extra steps).
 
+* (stability pass, 12 Nov) After a GPU reset the director rebuilds the galaxy in place: `resumeState()` →
+  `{ galaxy, resume: { target, distance, yaw, pitch } }`, and `enter({ resume })` restores the camera after the
+  focus framing, without the title card.
+
 ## Known issues
 
 * (s2r2) Pillars are richer in colour but still read as soft "cotton" columns; the cluster's self-shadowing gives

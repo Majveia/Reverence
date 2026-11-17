@@ -11,6 +11,8 @@
 //   __rv.state()                    JSON snapshot: mode, time, fps, + mode.getState()
 //   __rv.render()                   force a render
 //   __rv.engine / __rv.mode         live objects for debugging
+//   __rv.gpuReset(ms)               simulate a GPU reset: lose the WebGL context, restore it after ms (null: never)
+//   __rv.gfx                        { lost, failed, halted, recovering, losses, tier }
 import { events } from './events.js';
 
 export function installTestAPI(engine) {
@@ -26,6 +28,15 @@ export function installTestAPI(engine) {
     look: (dxDeg, dyDeg) => engine.input.simLook(dxDeg * Math.PI / 180, dyDeg * Math.PI / 180),
     click: (px, py) => engine.input.simClick(px, py),
     render: () => engine.render(),
+    gpuReset(ms = 1000) {
+      // (WEBGL_lose_context must be fetched while the context is alive: keep it for later calls)
+      const ext = engine._loseExt ||= engine.renderer.getContext().getExtension('WEBGL_lose_context');
+      if (!ext) return false;
+      ext.loseContext();
+      if (ms !== null && ms !== undefined) setTimeout(() => ext.restoreContext(), ms);
+      return true;
+    },
+    get gfx() { return { ...engine.gfx, tier: engine.quality.tier }; },
     async go(name, params = {}) {
       engine.isReady = false;
       engine._readyFrames = 0;

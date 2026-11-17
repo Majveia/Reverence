@@ -236,6 +236,27 @@ export class Pipeline {
     this._lastFrame = -10;
   }
 
+  /**
+   * After a GPU reset (engine: webglcontextrestored) or a live tier change (engine.degrade): drop every
+   * tier-dependent or lazily created resource (TAA, GTAO, SMAA, DOF targets), rebuild the scene target with the
+   * tier's MSAA and the bloom chain with its levels, and forget all history (eye adaptation, flare, TAA). three
+   * re-creates the remaining targets and re-uploads data textures (the grade LUT) on first use.
+   */
+  rebuild() {
+    this.q = this.engine.quality;
+    const drop = (o) => { try { o?.dispose?.(); } catch (_) { /* built on a lost context */ } };
+    drop(this.taa); drop(this.ssao); drop(this.smaa); drop(this.ldrB);
+    this.taa = null; this.ssao = null; this.smaa = null; this.ldrB = null;
+    if (this.cam._dofRT) { for (const rt of Object.values(this.cam._dofRT)) drop(rt); this.cam._dofRT = null; }
+    drop(this.sceneRT);
+    this.sceneRT.samples = this.q.msaa || 0;
+    this._resizeBloom();
+    this._broken = 0; this._ssaoBroken = false;
+    this.ae.snap = true; this.lens.snap = true;
+    this._lutSig = null;
+    this._lastFrame = -10; this._prevCam = null; this._prevScene = null; this._prevMode = null;
+  }
+
   // ------------------------------------------------------------------ bloom
   _buildBloom() {
     this.bloomMips = [];

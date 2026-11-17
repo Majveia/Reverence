@@ -164,6 +164,9 @@ Mode `cosmic` (standard Mode contract). URL extras (all optional):
 | `split` | mixed-resolution splatting: `0` off (one full-resolution pass), `1` forces it on software GL, which otherwise splits only during the fog |
 | `simsched` | `1` runs the live step scheduler under capture (`shot=1`), `0` the old one-frame steps in live play (testing) |
 
+Director params: `returning` (back from a galaxy: τ = `T_OPEN + 6`, camera memory, no title, 15 s veil), `resume`
+(rebuild after a GPU reset, from `resumeState()`).
+
 Test helpers on the mode (`__rv.mode`): `visibleCluster()`, `screenOfCluster(k)`, `hoverAt(x, y)`,
 `debugStats()` (column-density percentiles R, their log levels l, current toe/toeW/knee/bright), `getState()` → `{tau, a, z, ageGyr, pmSteps, particles,
 galaxies, clusters, hover, …}`.
@@ -211,7 +214,8 @@ move the rig with an eval step, e.g.
 - At z ≈ 2–4 the projected web is physically low-contrast at this resolution: it reads as a proto-web of
   ~10 Mpc/h pancakes (cloudy) rather than threads; threads appear from ~15 s (z ≈ 1.5).
 - Subhalo clumps catch the composite's sculpted relief and can read as small glossy spheres in close-ups.
-- 64³ (phone / `low`) tier is necessarily coarser (3 Mpc/h resolution, blobbier filaments).
+- 64³ (phones, tablets, `med`/`low`, small-memory PCs; `quality.cosmicN`) is necessarily coarser (3 Mpc/h
+  resolution, blobbier filaments).
 - Without float readback (`EXT_color_buffer_float` missing) the levels fall back to a fixed schedule, and
   without the PM field there is no veil (particles carry everything).
 - The redshift / cosmic-age telemetry labels can overlap at the bottom right (UI CSS, see Requests).
@@ -228,6 +232,31 @@ move the rig with an eval step, e.g.
 - (done, thanks) ui: marker kind `'cosmic'`; cosmic now passes `sub` explicitly.
 - (done) ui → cosmic: "sharper, earlier first frame": structure now forms earlier (shell crossing ~12 s) and
   the first seconds show the real primordial ripples instead of a near-uniform fog.
+
+## Memory and stability (stability pass, 12 Nov)
+
+The user saw the page restart on phones and PCs: the browser killed it (out of memory) or reset the GPU.
+
+1. **Lattice size is a quality policy** (`quality.cosmicN`, core/Quality.js): 128³ (~560 MB of float textures
+   + ~100 MB of JS at boot) only on desktops at `high`/`ultra` with no touch screen and ≥ 8 GB
+   (`navigator.deviceMemory`, a desktop that does not say counts as 8). Phones, tablets — iPads report a Mac
+   UA and used to get 128³ at `high` (681 MB GPU measured) — `med`/`low` PCs, small-memory PCs and a boot after
+   a crash (`quality.safe`) run 64³ (~60 MB). `n=` still overrides.
+2. **No CPU copies of the IC atlases**: the psi DataTextures drop `image.data` once uploaded and the mode drops
+   `atlasA/atlasB` after the 2LPT camera framing (−96 MB of JS at 128³). Safe because a GPU reset rebuilds
+   the mode from scratch (below), never re-uploads.
+3. **At most two COLA steps per frame on screen.** A return from a galaxy jumps τ to `T_OPEN + 6` and gravity
+   catches up ~20 steps; if the IC worker outlasted the veil, all of them used to run in one frame (seconds on
+   an integrated GPU: Windows resets a GPU after 2 s). Now: 4 per frame behind the veil (`engine.loading`), 2
+   on screen (`tauJumped`), and the live scheduler's catch-up adds at most one step to the commit. A return
+   (or a rebuild) holds the veil up to 15 s (`holdMs`) and `isReady()` stays false until gravity has caught
+   up. Captures keep 64 steps per frame (unchanged).
+4. **GPU reset → rebuilt in place**: `resumeState()` returns `{ resume: { tau, target, yaw, pitch, distance } }`;
+   `enter({ resume })` restores the timeline (catching up behind the veil) and the camera, without the title.
+5. **Float filtering**: the accumulation layers are RGBA32F only when `OES_texture_float_linear` exists as well
+   as `EXT_float_blend` (they are sampled LINEAR); otherwise RGBA16F instead of a black web.
+
+Desktop captures (`/?ui=1&q=high`, 1280×720, advance 26) are byte-identical to before.
 
 ## Opening performance (lead, 26 Oct)
 

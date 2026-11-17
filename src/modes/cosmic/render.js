@@ -580,7 +580,9 @@ export class CosmicRenderer {
     this.r = engine.renderer;
     this.sim = sim;
     this.opt = opt;
-    const accType = sim.floatBlend ? THREE.FloatType : THREE.HalfFloatType;
+    // the accumulation layers are filtered (LINEAR): 32-bit float needs OES_texture_float_linear as well as
+    // EXT_float_blend — without it the texture is incomplete and samples black; half float filters everywhere
+    const accType = sim.floatBlend && this.r.extensions.has('OES_texture_float_linear') ? THREE.FloatType : THREE.HalfFloatType;
     let maxPt = 64;
     try { const gl = this.r.getContext(); maxPt = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)?.[1] || 64; } catch (_) { /* keep default */ }
     this.maxPoint = maxPt;

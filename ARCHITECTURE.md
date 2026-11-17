@@ -32,8 +32,9 @@ feature (a city, a vehicle, a creature herd), make it easy to frame: e.g. docume
 
 `window.__rv` (deterministic in `shot=1`): `ready`, `advance(sec)`, `hold(code, sec)`,
 `press(code)`, `move(x, y, sec)`, `look(dxDeg, dyDeg)`, `click(px, py)`, `go(mode, params)`,
-`state()`, `render()`. Sim time is frozen until the mode is ready, then advances only via
-`advance()` — screenshots are reproducible.
+`state()`, `render()`; `gpuReset(ms)` simulates a GPU reset in live play (lose the WebGL context, restore it
+after `ms`; `null` = never) and `gfx` reports `engine.gfx` + the tier. Sim time is frozen until the mode is
+ready, then advances only via `advance()` — screenshots are reproducible.
 
 ### Showcase worlds (galaxy 0 — test your track on SEVERAL of these, not just one)
 
@@ -115,7 +116,10 @@ feature (a city, a vehicle, a creature herd), make it easy to frame: e.g. docume
 ## 4. Core APIs (stable — add, don't rename)
 
 * `engine`: `renderer`, `quality`, `input`, `director`, `pipeline`, `universe`, `ui`, `audio`,
-  `events`, `time {t, dt, frame}`, `params`, `shot`, `width/height`, `reversedDepth`, `loading`.
+  `events`, `time {t, dt, frame}`, `params`, `shot`, `width/height`, `reversedDepth`, `loading`,
+  `gfx {lost, failed, halted, recovering, losses}`, `degrade(reason)` (one tier down now, in place),
+  `reloadLower()` (reload at the next lower tier, same place), `markCleanExit()` (call before any deliberate
+  reload, e.g. the menu's quality change, so the next boot is not taken for a crash).
 * **Transitions** (`Director`, live play): `go(name, params, {transition, hold})` closes the veil (black; a
   `'white'` transition flashes white only on arrival) while the warp cutscene starts (`mode:leaving`); the old
   mode exits, the new one is built (`enter`), its shaders are linked in parallel (`mode.warmup()`), and it
@@ -127,6 +131,29 @@ feature (a city, a vehicle, a creature herd), make it easy to frame: e.g. docume
   own `preload` export (system: every world subsystem) — ahead of time; the cosmic and galaxy modes call them
   on fly-tos and in idle time. Shot mode (`transition: 'none'`) skips all of this. `world.loadStats` records
   per-subsystem import / create times, `mode.settleMs` how long the veil was held.
+  **A failed enter never leaves a black screen** (live play): the half-built mode is exited, the director goes
+  back to the previous scale on the stack (else the cosmic web, retried once) and emits `mode:failed`; an
+  allocation failure (or the second failure) also lowers the tier (`engine.degrade('memory')`). `go()` then
+  returns false — `director.current?.entered` says whether something is on screen. Captures keep the old
+  behaviour. `director.recover()` rebuilds the current scale in place (after a GPU reset): it re-enters it with
+  `mode.resumeState()` (cosmic: timeline + camera, galaxy: camera; params key `resume`, never kept in
+  `currentParams`) and, on a planet, the UI's share state (lat/lon/yaw/view/tod). A mode built on a lost context
+  is `stale`: never updated, rendered or resized again. `director.bail()` leaves a scale whose update/render
+  throws 30 frames in a row (engine step guard).
+* **Quality policy** (`src/core/Quality.js`, `engine.quality`): phones and tablets (`quality.mobile`; iPads too,
+  though iPadOS reports a Mac UA; `quality.tablet`) get `med`, or `low` with `navigator.deviceMemory <= 4` or a
+  weak GPU (older Adreno / Mali / PowerVR); desktops keep their GPU rules (Intel `med`, big discrete `ultra`,
+  else `high`; software GL `high` + capture profile). Device fields: `touch`, `gpu`, `deviceMemory` (GB; a
+  desktop that does not say counts as 8, a phone as 4), `memBudget` (rough MB, GPU + JS, the page may use —
+  size optional caches and pools by it), `cosmicN` (128 only at high/ultra, no touch, ≥ 8 GB), `safe` (booted
+  after a crash, or degraded: smallest footprint). **Staying alive**: `src/core/Sentinel.js` keeps a
+  sessionStorage record while the page is visible; a boot that finds it (the page died in the foreground — an
+  out-of-memory kill) starts one tier lower, `safe`, and emits `gfx:degraded {reason: 'crash'}`; the lowered
+  tier caps auto-detection for the rest of the tab session. A GPU reset lowers one tier and rebuilds the scale.
+  `engine.degrade()` / `applyTier()` rebuild the quality object **in place**: read `engine.quality` when you
+  create things (do not copy fields into module state), and keep GPU caches that outlive a mode either
+  re-creatable from their CPU source or dropped on `gfx:restored` (three re-uploads textures and buffers that
+  still hold their data; render-target contents are simply gone).
 * `Input` (`src/core/Input.js`): `axis('move'|'look')`, `held/down/up(action)`, `zoom`,
   `pointer {nx, ny, clicked, doubleClicked, dragging}`, `setScheme('orbit'|'character'|'vehicle'|'flight')`,
   `setVirtual(action, bool)` (touch buttons), `touchSticks` (for UI rendering),
@@ -163,9 +190,18 @@ feature (a city, a vehicle, a creature herd), make it easy to frame: e.g. docume
   them; the player/vehicles collide against them (spatial hash recommended).
 * POIs (`world.pois`): `{ kind: 'city'|'village'|'monument'|'ruin'|'landing'|'creature'|'wonder',
   name, pos, radius }` — used by UI markers, discovery toasts, audio, spawn selection.
-* Events (`engine.events` / `world.events`): `discovery {kind,name}`, `mode:leaving {from,to,params}` (the
-  warp starts), `mode:enter` (built, still behind the veil), `mode:shown` (revealed — arrival sounds, title cards
-  and discovery timers key on this one),
+* Events (`engine.events` / `world.events`): `discovery {kind,name}`, `mode:leaving {from,to,params,quiet}` (the
+  warp starts; `from` is null and `quiet` true for an in-place rebuild — no warp), `mode:enter` (built, still behind
+  the veil), `mode:shown` (revealed — arrival sounds, title cards and discovery timers key on this one),
+  `mode:failed {name, error, to}` (a scale could not be opened / kept running; `to` = where the director goes),
+  **graphics** (live play; the UI shows them, the engine falls back to `ui.toast` when nobody listens):
+  `gfx:lost {}` (WebGL context lost: nothing touches GL — show "Restoring graphics…"; the rebuild runs behind the
+  transition veil `#rv-fade` (z-index 50), so the card must sit above it, like the warp),
+  `gfx:restored {tier}` (the scale was rebuilt in place, emitted as it is revealed), `gfx:failed {tier, next,
+  reason}` (no restore within 4 s, a second loss within a minute, a failed context creation or rebuild — offer
+  "Reload at lower quality" → `engine.reloadLower()`; a late restore after a timeout still recovers and emits
+  `gfx:restored`), `gfx:degraded {tier, reason, from}` (quality lowered automatically: `'crash'` the previous page
+  died, `'context'` after a GPU reset, `'memory'` a failed allocation),
   `origin:shift {delta}`, `vehicle:enter|exit {type}`, `player:land`, `player:jump`,
   `poi:add`, `input:gesture`, `input:scheme`, `ready`.
 * `UI` (`src/ui/UI.js`): `setLocation`, `showTitle`, `prompt(id,text,action)`, `clearPrompt`,

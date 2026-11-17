@@ -4,9 +4,20 @@
 // Normal mode: rAF loop, variable dt (clamped), dynamic resolution.
 // Shot mode (?shot=1): deterministic. Sim time is frozen until the mode reports ready; the
 // harness then drives time via window.__rv.advance(seconds) and captures frames.
+//
+// Staying alive (live play):
+//   GPU reset    'webglcontextlost' stops every GL call (the loop keeps input, UI and audio running) and emits
+//                'gfx:lost'; on 'webglcontextrestored' the quality drops one tier, the pipeline is rebuilt and the
+//                current scale is re-entered where the player was (director.recover) → 'gfx:restored' +
+//                'gfx:degraded'. No restore within 4 s, a second loss within a minute, or a failed context
+//                creation → 'gfx:failed' (the UI offers engine.reloadLower()).
+//   errors       an update/render that throws is logged once; 30 failing frames in a row (or 3 s) leave the
+//                scale (director.bail). Shot mode lets errors through to the harness, as before.
+//   crashes      core/Sentinel.js (main.js): a page that died boots one tier lower ('gfx:degraded' reason 'crash').
 import * as THREE from 'three';
-import { Params } from './Params.js';
-import { detectQuality } from './Quality.js';
+import { Params, buildQuery } from './Params.js';
+import { detectQuality, applyTier, lowerTier } from './Quality.js';
+import { Sentinel } from './Sentinel.js';
 import { Input } from './Input.js';
 import { Director } from './Director.js';
 import { G, updateCameraUniforms } from './Uniforms.js';
@@ -23,8 +34,11 @@ function noopProxy(name) {
   return new Proxy({}, handler);
 }
 
+const TIER_LABEL = { low: 'Low', med: 'Medium', high: 'High', ultra: 'Ultra' };
+
 export class Engine {
-  constructor() {
+  /** @param {object} opts  { crashTier, tierCap } from the crash sentinel (main.js) */
+  constructor(opts = {}) {
     this.params = Params;
     this.canvas = document.getElementById('rv-canvas');
     this.events = events;
@@ -52,7 +66,7 @@ export class Engine {
     this.renderer.info.autoReset = false;
     this.renderer.setClearColor(0x000000, 1);
 
-    this.quality = detectQuality(Params.quality, this.renderer);
+    this.quality = detectQuality(Params.quality, this.renderer, { crashTier: opts.crashTier, cap: opts.tierCap });
     this.renderScale = 1.0;       // dynamic resolution multiplier
     this.width = window.innerWidth;
     this.height = window.innerHeight;
@@ -86,6 +100,14 @@ export class Engine {
     window.addEventListener('resize', () => this.resize());
     window.visualViewport?.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => { this._lastNow = performance.now(); });
+
+    // GPU resets. three registered its own listeners first (WebGLRenderer constructor), so when ours run on
+    // 'webglcontextrestored' its state is already re-initialised.
+    this.gfx = { lost: false, failed: false, halted: false, recovering: false, losses: 0, lostAt: 0, restoredAt: 0 };
+    this._errRun = 0;
+    this.canvas.addEventListener('webglcontextlost', (e) => this._onContextLost(e), false);
+    this.canvas.addEventListener('webglcontextrestored', () => { this._onContextRestored(); }, false);
+    this.canvas.addEventListener('webglcontextcreationerror', () => this._gfxFailed('creation'), false);
 
     events.on('input:gesture', () => this.audio?.unlock?.());
   }
@@ -138,7 +160,8 @@ export class Engine {
     G.uResolution.value.copy(db);
     G.uPixelRatio.value = pr;
     this.pipeline.setSize(db.x, db.y);
-    this.director.current?.onResize(w, h);
+    const m = this.director.current;
+    if (m && !m.stale) m.onResize(w, h);   // (a scale built on a lost GPU context is about to be replaced)
     this.ui?.onResize?.(w, h);
   }
 
@@ -170,17 +193,43 @@ export class Engine {
     G.uFrame.value = time.frame;
 
     this.input.update(dt);
-    if (this.input.down('back') && !this.director.busy) this.director.back();
-    this.director.update(time.dt, time.t);
-    this.ui?.update?.(dt);
-    this.audio?.update?.(dt);
-    if (render) this.render();
-    this.input.endFrame();
+    // without a GPU context nothing may touch GL: the scale waits, the UI and the music go on
+    const gl = !this.gfx.lost && !this.gfx.halted;
+    let ok = true;
+    try {
+      if (gl) {
+        if (this.input.down('back') && !this.director.busy) this.director.back();
+        ok = this._guard('update', () => this.director.update(time.dt, time.t));
+      }
+      this.ui?.update?.(dt);
+      this.audio?.update?.(dt);
+      if (render && gl) ok = this._guard('render', () => this.render()) && ok;
+    } finally {
+      this.input.endFrame();
+    }
+    // a scale that throws on every frame for ~30 frames (or 3 s on a slow device) is left: director.bail()
+    if (ok) this._errRun = 0;
+    else {
+      if (this._errRun++ === 0) this._errSince = time.real;
+      if ((this._errRun >= 30 || (this._errRun >= 5 && time.real - this._errSince > 3)) && !this.director.busy) {
+        this._errRun = 0;
+        this.director.bail();
+      }
+    }
+  }
+
+  /** Live play: run fn, log the first error of a failing run of frames (shot mode: errors reach the harness). */
+  _guard(where, fn) {
+    if (this.shot) { fn(); return true; }
+    try { fn(); return true; } catch (e) {
+      if (this._errRun === 0) console.error(`[engine] ${where} failed (${this.director.currentName})`, e);
+      return false;
+    }
   }
 
   render() {
     const mode = this.director.current;
-    if (!mode || !mode.entered) return;
+    if (!mode || !mode.entered || mode.stale) return;
     this.renderer.info.reset();
     mode.camera.updateMatrixWorld();
     updateCameraUniforms(mode.camera);
@@ -226,12 +275,128 @@ export class Engine {
     }
   }
 
+  // ---------------------------------------------------------------- staying alive
+  /** Emit `name`; when nobody listens (the UI did not load, or predates the event) run `fallback` instead. */
+  _emit(name, payload, fallback) {
+    const heard = events.count(name) > 0;
+    events.emit(name, payload);
+    if (!heard && fallback) { try { fallback(); } catch (_) { /* optional */ } }
+  }
+
+  _toast(text, ms = 5200) { try { if (this.ui && !this.ui.isNoop) this.ui.toast?.(text, { eyebrow: 'Graphics', ms }); } catch (_) { /* optional */ } }
+
+  _onContextLost(e) {
+    e?.preventDefault?.();   // (three does too) — without it the browser never restores the context
+    const g = this.gfx, now = performance.now();
+    // a second reset within a minute of the last one (or of its recovery): this GPU cannot hold the scene
+    const again = g.losses > 0 && now - Math.max(g.lostAt, g.restoredAt) < 60000;
+    g.lost = true; g.losses++; g.lostAt = now;
+    console.warn(`[engine] WebGL context lost (#${g.losses})`);
+    this.loading = false;
+    // the scale's GPU state is gone: never update or draw it again (the dead canvas shows blank; the rebuild
+    // runs behind the transition veil, so the UI's card belongs above it)
+    this.director.markStale();
+    this._emit('gfx:lost', {}, () => this._toast('Graphics reset — restoring…', 6000));
+    clearTimeout(this._gfxTimer);
+    if (again) { this._gfxFailed('repeat'); return; }
+    this._gfxTimer = setTimeout(() => { if (g.lost) this._gfxFailed('timeout'); }, 4000);
+  }
+
+  async _onContextRestored() {
+    const g = this.gfx;
+    clearTimeout(this._gfxTimer);
+    if (g.halted) { console.warn('[engine] WebGL context restored after a failure: staying stopped (reload to continue)'); return; }
+    console.warn('[engine] WebGL context restored: rebuilding one tier lower');
+    g.lost = false; g.failed = false; g.recovering = true;
+    this.director.markStale();
+    this.renderer.setClearColor(0x000000, 1);
+    const from = this.quality.tier;
+    const tier = this.degrade('context', { notify: false }) || from;
+    let shown = false;
+    const done = () => {
+      if (shown) return;
+      shown = true;
+      g.restoredAt = performance.now();
+      this._emit('gfx:restored', { tier }, () => this._toast('Graphics restored', 3000));
+      if (tier !== from) this._notifyDegraded('context', from);
+    };
+    try { await this.director.recover({ onShown: done }); } catch (e) { console.error('[engine] rebuild after the GPU reset failed', e); }
+    g.recovering = false;
+    if (!shown) { if (this.director.current?.entered) done(); else if (!g.lost) this._gfxFailed('rebuild'); }
+  }
+
+  /** The GPU could not be brought back: tell the UI (it offers engine.reloadLower()). */
+  _gfxFailed(reason) {
+    const g = this.gfx;
+    if (reason === 'repeat' || reason === 'creation' || reason === 'rebuild') g.halted = true;
+    if (g.failed) return;
+    g.failed = true;
+    const tier = this.quality.tier, next = lowerTier(tier);
+    console.error(`[engine] graphics could not be restored (${reason})`);
+    if (!this.shot) Sentinel.setCap(next);   // a manual reload now boots lower too
+    this._emit('gfx:failed', { tier, next, reason }, () => {
+      this.director.fade(0, 300);   // (nobody shows a card: let the toast through the veil)
+      this._toast('Graphics stopped responding — reload the page to continue at a lower quality', 12000);
+    });
+  }
+
+  /**
+   * 'gfx:degraded' { tier, reason, from } — reason 'crash' (the previous page died), 'context' (after a GPU
+   * reset) or 'memory' (a failed allocation) — or a toast when nobody listens.
+   */
+  _notifyDegraded(reason, from = null) {
+    const tier = this.quality.tier, label = TIER_LABEL[tier] || tier;
+    const text = reason === 'crash' ? (from && from !== tier ? `Reverence restarted after running out of memory — quality lowered to ${label}` : 'Reverence restarted after running out of memory — memory use reduced')
+      : `Quality lowered to ${label} to keep the game running`;
+    this._emit('gfx:degraded', { tier, reason, from }, () => this._toast(text, 7000));
+  }
+
+  /**
+   * Lower the quality one tier now (a GPU reset, a failed allocation). The quality object changes in place
+   * (cosmic web 64³, `quality.safe`), the pipeline drops its tier-dependent targets and the drawing buffer is
+   * resized; the current scale keeps what it built — the next scale entered (or the rebuilt one) uses the new
+   * tier. Returns the new tier, or null when already at 'low'.
+   */
+  degrade(reason = 'memory', { notify = true } = {}) {
+    const q = this.quality, from = q.tier, to = lowerTier(from);
+    applyTier(q, to, { safe: true });
+    try { this.pipeline.rebuild?.(); } catch (e) { console.warn('[engine] pipeline rebuild', e); }
+    this.resize();
+    if (!this.shot) { Sentinel.update({ tier: to }); Sentinel.setCap(to); }
+    if (to === from) return null;
+    console.warn(`[engine] quality lowered ${from} → ${to} (${reason})`);
+    if (notify) this._notifyDegraded(reason, from);
+    return to;
+  }
+
+  /** The next boot is not a crash (call before a deliberate reload, e.g. the menu's quality change). */
+  markCleanExit() { Sentinel.markCleanExit(); }
+
+  /** Reload the page at the next lower tier, at the same place (the menu's hash-reload path). */
+  reloadLower() {
+    const tier = lowerTier(this.quality.tier);
+    let st = null;
+    try { if (this.ui && !this.ui.isNoop) st = this.ui.shareState?.(); } catch (_) { st = null; }
+    if (!st || typeof st !== 'object' || !st.mode) {
+      const d = this.director, p = d.currentParams || {};
+      st = { mode: d.currentName || 'cosmic' };
+      for (const k of ['galaxy', 'star', 'planet']) if (p[k] !== undefined && p[k] !== null) st[k] = p[k];
+    }
+    st.q = tier;
+    if (!this.shot) Sentinel.setCap(tier);
+    this.markCleanExit();
+    // reload via the hash: embedded hosts (artifact previews, file shares) may drop ?query (core/hashParams.js)
+    const q = buildQuery(st).slice(1);
+    try { history.replaceState(null, '', location.pathname + '#' + q); location.reload(); }
+    catch (_) { location.href = location.pathname + '?' + q; }
+  }
+
   // ---------------------------------------------------------------- perf
   _trackPerf(dt) {
     const ft = this._frameTimes;
     // behind the transition veil frames are deliberately heavy (streaming with big budgets): they say nothing
     // about the scene's real cost, and must not leave the revealed world at a low resolution
-    if (this.loading) { ft.length = 0; this._dynTimer = 0; return; }
+    if (this.loading || this.gfx.lost || this.gfx.recovering) { ft.length = 0; this._dynTimer = 0; return; }
     ft.push(dt);
     if (ft.length > 90) ft.shift();
     this._dynTimer += dt;

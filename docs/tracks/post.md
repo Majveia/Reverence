@@ -155,6 +155,11 @@ debugView: 'scene'   // composite the raw scene target (bisecting)
 ```
 The grade LUT is rebuilt only when grade-relevant settings change (`gradeSignature`).
 
+`pipeline.rebuild()` (stability pass, 12 Nov; called by the engine after a GPU reset and by `engine.degrade()`):
+disposes TAA / GTAO / SMAA / the DOF targets (re-created lazily for the new tier), re-creates the scene target
+with the tier's MSAA and the bloom chain with its levels, and drops all history (eye adaptation, flare, TAA,
+the LUT signature). Other targets are re-created by three on first use after a context restore.
+
 `stats.avgLum` (ui request): display-referred mean frame brightness 0..1, from one 1×1 readback every ~0.5 s
 (system mode with eye adaptation; `null` elsewhere).
 

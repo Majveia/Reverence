@@ -16,6 +16,8 @@ export class Events {
     return off;
   }
   off(name, fn) { this.map.get(name)?.delete(fn); }
+  /** Number of listeners for `name` (an emitter can fall back to something else when nobody listens). */
+  count(name) { return this.map.get(name)?.size ?? 0; }
   emit(name, payload) {
     const set = this.map.get(name);
     if (!set) return;

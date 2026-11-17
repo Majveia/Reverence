@@ -142,6 +142,9 @@ export default class GalaxyMode extends Mode {
     const minD = this.blackHole ? this.blackHole.rs * 2.2 : 1e-10;
     this.rig = new GalaxyCamera(this.camera, { distance: dist, yaw, pitch, minDistance: minD, maxDistance: R * 12, maxTarget: R * 1.6 });
     this._applyFocus(params);
+    // (resume: a rebuild after a GPU reset puts the camera back where it was — resumeState())
+    const res = params.resume;
+    if (res && Array.isArray(res.target)) this.rig.setView({ target: new THREE.Vector3().fromArray(res.target), distance: res.distance, yaw: res.yaw, pitch: res.pitch });
 
     // per-type look: early types are metered for their huge bulges and kept creamy (not orange)
     if (gal.type === 'lenticular' || gal.type === 'elliptical') {
@@ -150,7 +153,7 @@ export default class GalaxyMode extends Mode {
       if (!this._expSet) this.look.exposure = gal.type === 'lenticular' ? 1.0 : 1.7;
     }
     e.ui.setLocation({ scale: 'Galaxy', title: gal.name, subtitle: `${gal.type} galaxy` });
-    e.ui.showTitle(gal.name.toUpperCase(), `${gal.type} galaxy · ${(gal.starCount / 1e9).toFixed(0)} billion stars`, 2600);
+    if (!res) e.ui.showTitle(gal.name.toUpperCase(), `${gal.type} galaxy · ${(gal.starCount / 1e9).toFixed(0)} billion stars`, 2600);
     e.ui.hint('drag to orbit · scroll or pinch to zoom · tap a star to select · double-tap to travel');
     e.audio.setScene('galaxy');
   }
@@ -672,6 +675,13 @@ export default class GalaxyMode extends Mode {
     super.onResize(w, h);
     const p = this.engine.pipeline;
     this.volume?.setSize(p.width, p.height);
+  }
+
+  /** Where a rebuild picks up (director.recover after a GPU reset): the camera. */
+  resumeState() {
+    const r = this.rig;
+    if (!r) return {};
+    return { galaxy: this.galaxyIndex, resume: { target: r.target.toArray(), distance: r.targetDistance, yaw: r.yaw, pitch: r.pitch } };
   }
 
   isReady() {

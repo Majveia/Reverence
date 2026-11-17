@@ -89,8 +89,10 @@ export default class CosmicMode extends Mode {
     const tier = q.tier || 'high';
     this.params = params;
     const num = (k) => { const v = raw?.get?.(k); if (v === null || v === undefined || v === '') return undefined; const f = parseFloat(v); return Number.isFinite(f) ? f : undefined; };
-    // 128³ lattice ≈ 400 MB of float textures: desktop only; phones and 'low' run 64³ (≈ 50 MB)
-    const N = num('n') ?? (tier === 'low' || q.mobile ? 64 : 128);
+    // 128³ lattice ≈ 560 MB of float textures + ~100 MB of JS: only desktops with a high/ultra GPU and ≥ 8 GB
+    // (quality.cosmicN, core/Quality.js); phones, tablets, med/low, small-memory PCs and a boot after a crash
+    // run 64³ (≈ 60 MB)
+    const N = num('n') ?? q.cosmicN ?? (tier === 'low' || q.mobile ? 64 : 128);
     const M = num('mesh') ?? N;             // PM mesh = particle lattice (COLA needs force resolution ≥ lattice)
     BOX = N === 64 ? 192 : 256;
     const K = num('k') ?? (N === 64 ? 3 : tier === 'med' ? 2 : tier === 'ultra' ? 4 : 3);
@@ -103,7 +105,12 @@ export default class CosmicMode extends Mode {
       accumScale: tier === 'low' ? 0.75 : 1,
       galaxyMax: tier === 'low' ? 9000 : tier === 'med' ? 18000 : tier === 'ultra' ? 48000 : 30000,
     };
-    this.startTau = params.returning ? T_OPEN + 6 : (num('ct') ?? params.ct ?? 0);
+    // (resume: a rebuild after a GPU reset picks up the timeline and the camera where they were — resumeState())
+    const res = params.resume && typeof params.resume === 'object' && Number.isFinite(params.resume.tau) ? params.resume : null;
+    this.startTau = res ? Math.max(0, res.tau) : params.returning ? T_OPEN + 6 : (num('ct') ?? params.ct ?? 0);
+    // a return (or a rebuild) jumps the timeline ahead: keep the veil up while gravity catches up (a few PM
+    // steps per frame behind it, at most two per frame once the web is on screen — see update())
+    if (params.returning || res) this.holdMs = 15000;
     this.focusCluster = Math.max(0, Math.floor(num('cl') ?? 0));
     this.focusGalaxy = num('gal');
     this._schedTest = num('simsched');
@@ -142,7 +149,12 @@ export default class CosmicMode extends Mode {
     });
     this.rig = r0;
 
-    if (params.returning && MEMORY) {
+    if (res && Array.isArray(res.target)) {
+      this.returned = true;
+      r0.target.fromArray(res.target); r0._target.copy(r0.target);
+      r0.yaw = r0._yaw = res.yaw ?? r0.yaw; r0.pitch = r0._pitch = res.pitch ?? r0.pitch;
+      r0.distance = r0._dist = res.distance ?? r0.distance;
+    } else if (params.returning && MEMORY) {
       this.returned = true;
       r0.target.copy(MEMORY.target); r0._target.copy(MEMORY.target);
       r0.yaw = r0._yaw = MEMORY.yaw; r0.pitch = r0._pitch = MEMORY.pitch;
@@ -154,7 +166,7 @@ export default class CosmicMode extends Mode {
     this._precompile();
 
     e.ui?.setLocation?.({ scale: 'Universe', title: 'Cosmic Web', subtitle: `${BOX} Mpc/h · ΛCDM` });
-    if (!params.returning) e.ui?.showTitle?.('REVERENCE', 'a universe, alive', 5200);
+    if (!params.returning && !res) e.ui?.showTitle?.('REVERENCE', 'a universe, alive', 5200);
     e.ui?.hint?.('drag to orbit · scroll or pinch to zoom · WASD to drift · tap a cluster to descend', 9000);
     e.audio?.setScene?.('cosmic');
   }
@@ -203,6 +215,9 @@ export default class CosmicMode extends Mode {
     const s = this.sim;
     const t = new THREE.DataTexture(data, s.W, s.H, THREE.RGBAFormat, THREE.FloatType);
     t.minFilter = t.magFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true;
+    // the IC atlases are uploaded once and only read on the GPU: drop the CPU copy (32 MB each at 128³). After
+    // a GPU reset the mode is rebuilt from scratch (director.recover), never re-uploaded from here.
+    t.onUpdate = () => { t.image.data = null; };
     (this._texs ||= []).push(t);
     return t;
   }
@@ -223,9 +238,12 @@ export default class CosmicMode extends Mode {
       this.icStage = 2;
       if (this.engine.params.debug) console.log(`[cosmic] stage2 ${msg.stats.ms.toFixed(0)} ms`, msg.stats, msg.galaxies.count, msg.clusters.count);
       this.worker?.terminate(); this.worker = null;
-      // jump along the timeline (URL ct / returning): the sim catches up in update()
-      if (this.startTau > 0) { this.tau = this.startTau; this.tauJumped = true; }
+      // jump along the timeline (URL ct / returning / resume): the sim catches up in update() (never backwards:
+      // a rebuild early in the opening may already have played past its resume point)
+      if (this.startTau > 0) { this.tau = Math.max(this.tau, this.startTau); this.tauJumped = true; }
       if (!this.returned) this._frameInitialCamera();
+      // (the CPU atlases only served the 2LPT camera framing above)
+      this.atlasA = this.atlasB = null;
     }
   }
 
@@ -300,6 +318,13 @@ export default class CosmicMode extends Mode {
     this._texs = [];
   }
 
+  /** Where a rebuild picks up (director.recover after a GPU reset): the timeline and the camera. */
+  resumeState() {
+    const r = this.rig;
+    if (!r) return {};
+    return { resume: { tau: this.tau, target: r.target.toArray(), yaw: r.yaw, pitch: r.pitch, distance: r.distance } };
+  }
+
   isReady() {
     if (this.icStage < 0) return true;
     if (this.icStage < 2) return false;
@@ -334,7 +359,14 @@ export default class CosmicMode extends Mode {
     const s = this.sim;
     if (!s?.ok || this.icStage < 2) return;
     if (s.job && this._needStep()) s.commitStep();
-    if (this._needStep()) this._advanceSim(3);     // more than one step due at once (a long stall): catch up
+    // more than one step due at once (a long stall): catch up — in live play one more step per frame at most and
+    // nothing else this frame (with the commit above, two: a 128³ step is ~0.25 s on an integrated GPU, and
+    // Windows resets a GPU that spends 2 s on one frame)
+    if (this._needStep()) {
+      const e = this.engine, burst = e.params.shot || e.loading;
+      this._advanceSim(burst ? 3 : 1);
+      if (!burst) return;
+    }
     if (!s.job) {
       const from = s.aState ?? A_PM0;
       const tDue = this._tauOfA(from);
@@ -402,8 +434,9 @@ export default class CosmicMode extends Mode {
       // one-frame steps in live play)
       const sync = shot ? this._schedTest !== 1 : this._schedTest === 0;
       // (a return to the web catches gravity up ~20 steps: behind the transition veil a few per frame, so the
-      //  GPU keeps drawing the warp between them)
-      if (sync || this.tauJumped) this._advanceSim(shot ? 64 : this.tauJumped ? (e.loading ? 4 : 64) : 3);
+      //  GPU keeps drawing the warp between them; on screen never more than two per frame — one frame of 20
+      //  steps is seconds on an integrated GPU, past the 2 s after which Windows resets the GPU)
+      if (sync || this.tauJumped) this._advanceSim(shot ? 64 : this.tauJumped ? (e.loading ? 4 : 2) : 3);
       else this._scheduleSim(dt);
     }
     if (this.tauJumped && !this._needStep()) this.tauJumped = false;
